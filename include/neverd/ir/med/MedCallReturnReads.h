@@ -13,6 +13,7 @@
 #define NEVERD_IR_MED_MEDCALLRETURNREADS_H
 
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/med/MedIntegerReturnRange.h"
 
 #include <cstddef>
 #include <string>
@@ -33,7 +34,8 @@ struct MedFunc;
 bool validateSourceCallReturnReads(
     const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
     size_t WorkLimit = limits::ir::kSourceCallReturnReadWork,
-    const LowFunc *FreshSource = nullptr);
+    const LowFunc *FreshSource = nullptr,
+    const MedCallReturnRanges *CallReturns = nullptr);
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDCALLRETURNREADS_H

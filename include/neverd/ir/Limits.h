@@ -341,6 +341,8 @@ inline constexpr size_t kMedMutableSourceMaxPropagationWords = 16 * 1024 * 1024;
 
 // lib/ir/med/pass/MedStackAlignment.cpp
 inline constexpr size_t kMedStackAlignmentMaxProofSteps = 1 << 16;
+// Bound leaf admission before building a scalar definition index.
+inline constexpr size_t kMedIntegerReturnRangeMaxOps = 4096;
 
 // include/neverd/ir/high/HighSwiftErrorProjection.h
 inline constexpr int

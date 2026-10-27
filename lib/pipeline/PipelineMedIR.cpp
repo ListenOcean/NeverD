@@ -22,6 +22,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceCallABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -43,9 +44,11 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <memory>
 #include <optional>
 #include <set>
 #include <string>
+#include <utility>
 #include <vector>
 
 #define DEBUG_TYPE "neverd-pipeline"
@@ -61,7 +64,8 @@ MedStackProjection medStackProjection(const PipelineOptions &Options) {
 
 void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
-                             MedStackProjection Projection) {
+                             MedStackProjection Projection,
+                             const MedCallReturnRanges *CallReturns) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
     return;
@@ -70,9 +74,31 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
   std::string Diagnostic;
   if (!validateSourceCallReturnReads(Func, Image, Diagnostic,
                                      limits::ir::kSourceCallReturnReadWork,
-                                     &Source))
+                                     &Source, CallReturns))
     throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
+}
+
+MedCallReturnRanges sourceCallReturnRanges(const BinaryImage &Image,
+                                           const PipelineResult &Result) {
+  MedCallReturnRanges Ranges;
+  if (!getTargetRegInfo(Image.Arch).ReturnOperandIsValue)
+    return Ranges;
+  const size_t Total = Result.LowFuncs.size();
+  std::vector<std::optional<MedIntegerReturnRange>> Proven(Total);
+  std::vector<uint64_t> Weight(Total, 1);
+  for (size_t I = 0; I < Total; ++I)
+    for (const auto &Block : Result.LowFuncs[I].Blocks)
+      Weight[I] += Block.Ops.size();
+  parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
+    for (size_t I; (I = Claim()) < N;)
+      Proven[I] =
+          integerReturnRange(Result.MedFuncs[I], Result.LowFuncs[I], Image);
+  });
+  for (size_t I = 0; I < Total; ++I)
+    if (Proven[I])
+      Ranges.try_emplace(Result.LowFuncs[I].Entry, *Proven[I]);
+  return Ranges;
 }
 
 void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
@@ -221,7 +247,40 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     Local.setFormattedCalls(&Result.FormattedCalls);
     Local.setStackProbeSlots(&StackProbeSlots);
   };
+  // A projected LowIR body must remain alive until the source stack checks.
+  // Each conversion owns its slot; no worker reads another worker's MedIR.
+  std::vector<std::unique_ptr<LowFunc>> ProjectedFunctions(Total);
+  std::vector<uint8_t> Converted(Total, 0);
+  std::vector<uint8_t> PendingStackProof(Total, 0);
+  auto FallbackOne = [&](size_t I) {
+    Converted[I] = 0;
+    ProjectedFunctions[I].reset();
+    syncWarning() << "pipeline: low->med threw on " << Result.LowFuncs[I].Name
+                  << "\n";
+    const LowFunc &LF = Result.LowFuncs[I];
+    MedFunc Fallback;
+    Fallback.Name = LF.Name;
+    Fallback.Entry = LF.Entry;
+    Fallback.OriginalSize = LF.OriginalSize;
+    Fallback.DebugName = LF.DebugName;
+    Fallback.SourceFile = LF.SourceFile;
+    Fallback.SourceLine = LF.SourceLine;
+    Fallback.ExceptionMetadata = LF.ExceptionMetadata;
+    Fallback.JumpTables = LF.JumpTables;
+    for (const auto &LB : LF.Blocks) {
+      MedBlock MB;
+      MB.Id = LB.Id;
+      MB.StartAddr = LB.StartAddr;
+      MB.EndAddr = LB.EndAddr;
+      MB.Succs = LB.Succs;
+      MB.Preds = LB.Preds;
+      Fallback.Blocks.push_back(std::move(MB));
+    }
+    Result.MedFuncs[I] = std::move(Fallback);
+  };
   auto ConvertOne = [&](LowToMedConverter &Local, size_t I) {
+    Converted[I] = 0;
+    PendingStackProof[I] = 0;
     try {
       const auto Sites = SourceSites.find(Result.LowFuncs[I].Entry);
       Local.setSourceCallSiteHints(Opts.usesSourceDeclarations() &&
@@ -229,25 +288,23 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
                                        ? &Sites->second
                                        : nullptr);
       const auto Frame = Opts.SourceStackFrames.find(Result.LowFuncs[I].Entry);
-      std::optional<LowFunc> Projected;
+      auto &Projected = ProjectedFunctions[I];
+      Projected.reset();
       if (!Opts.usesMachineMedIR() && Frame != Opts.SourceStackFrames.end()) {
         std::string Error;
-        Projected = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
-                                            Frame->second, Error);
-        if (!Projected)
+        auto FrameSource = projectSourceStackFrame(Result.LowFuncs[I], Img.Arch,
+                                                   Frame->second, Error);
+        if (!FrameSource)
           throw std::runtime_error(Error);
+        Projected = std::make_unique<LowFunc>(std::move(*FrameSource));
       }
       Result.MedFuncs[I] =
           Local.convert(Projected ? *Projected : Result.LowFuncs[I], Img.Arch,
                         Img.abiFormat());
-      Result.MedFuncs[I].AnalystStackFrame = Projected.has_value();
+      Result.MedFuncs[I].AnalystStackFrame = bool(Projected);
       auto &MF = Result.MedFuncs[I];
       auto &LF = Result.LowFuncs[I];
       trimFuncStorage(MF);
-      prepareMedStackAccesses(MF, Projected ? *Projected : LF, Img,
-                              medStackProjection(Opts));
-      if (medStackProjection(Opts) == MedStackProjection::Source)
-        expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
       MF.OriginalSize = LF.OriginalSize;
       MF.DebugName = LF.DebugName;
       MF.SourceFile = LF.SourceFile;
@@ -255,6 +312,26 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       auto Hint = SourceHints.find(MF.Entry);
       if (Hint != SourceHints.end())
         MF.SourceTypeHint = *Hint->second;
+      Converted[I] = 1;
+    } catch (const LowToMedConversionError &Error) {
+      ConversionErrors[I] = Error.what();
+    } catch (...) {
+      FallbackOne(I);
+    }
+  };
+  MedCallReturnRanges CallReturns;
+  auto FinishOne = [&](size_t I) {
+    if (!Converted[I] || ConversionErrors[I])
+      return;
+    bool StackPrepared = false;
+    try {
+      auto &MF = Result.MedFuncs[I];
+      const auto &Projected = ProjectedFunctions[I];
+      prepareMedStackAccesses(MF, Projected ? *Projected : Result.LowFuncs[I],
+                              Img, medStackProjection(Opts), &CallReturns);
+      StackPrepared = true;
+      if (medStackProjection(Opts) == MedStackProjection::Source)
+        expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
       size_t MedOps = 0;
       for (const auto &Block : MF.Blocks)
         MedOps += Block.Ops.size();
@@ -263,37 +340,46 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
         inferMedTypes(MF, Img.Arch);
     } catch (const LowToMedConversionError &Error) {
       ConversionErrors[I] = Error.what();
+      PendingStackProof[I] = !StackPrepared;
     } catch (...) {
-      syncWarning() << "pipeline: low->med threw on " << Result.LowFuncs[I].Name
-                    << "\n";
-      const LowFunc &LF = Result.LowFuncs[I];
-      MedFunc Fallback;
-      Fallback.Name = LF.Name;
-      Fallback.Entry = LF.Entry;
-      Fallback.OriginalSize = LF.OriginalSize;
-      Fallback.DebugName = LF.DebugName;
-      Fallback.SourceFile = LF.SourceFile;
-      Fallback.SourceLine = LF.SourceLine;
-      Fallback.ExceptionMetadata = LF.ExceptionMetadata;
-      Fallback.JumpTables = LF.JumpTables;
-      for (const auto &LB : LF.Blocks) {
-        MedBlock MB;
-        MB.Id = LB.Id;
-        MB.StartAddr = LB.StartAddr;
-        MB.EndAddr = LB.EndAddr;
-        MB.Succs = LB.Succs;
-        MB.Preds = LB.Preds;
-        Fallback.Blocks.push_back(std::move(MB));
-      }
-      Result.MedFuncs[I] = std::move(Fallback);
+      FallbackOne(I);
     }
+    if (!PendingStackProof[I])
+      ProjectedFunctions[I].reset();
+  };
+  auto CompleteStackProofs = [&] {
+    std::vector<size_t> Pending;
+    std::vector<uint64_t> PendingWeight;
+    for (size_t I = 0; I < Total; ++I)
+      if (PendingStackProof[I]) {
+        Pending.push_back(I);
+        PendingWeight.push_back(Weight[I]);
+      }
+    if (Pending.empty())
+      return;
+    // Ordinary local proofs already completed the other functions. Only a
+    // missing stack proof asks for the complete, immutable callee table, after
+    // every conversion has joined. A second refusal remains a real error.
+    CallReturns = sourceCallReturnRanges(Img, Result);
+    parallelForEachWeighted(PendingWeight, [&](auto Claim, size_t N) {
+      for (size_t J; (J = Claim()) < N;) {
+        const size_t I = Pending[J];
+        ConversionErrors[I].reset();
+        PendingStackProof[I] = 0;
+        FinishOne(I);
+        ProjectedFunctions[I].reset();
+      }
+    });
   };
   parallelForEachWeighted(Weight, [&](auto Claim, size_t N) {
     LowToMedConverter Local;
     Configure(Local);
-    for (size_t I; (I = Claim()) < N;)
+    for (size_t I; (I = Claim()) < N;) {
       ConvertOne(Local, I);
+      FinishOne(I);
+    }
   });
+  CompleteStackProofs();
 
   // Discover bounded incoming-stack leaves from this conversion, then only
   // reconvert their definitions and exact callers. Call operands must
@@ -405,12 +491,16 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     std::vector<uint64_t> ReconvertWeights;
     for (size_t I : Indices)
       ReconvertWeights.push_back(Weight[I]);
+    CallReturns.clear();
     parallelForEachWeighted(ReconvertWeights, [&](auto Claim, size_t N) {
       LowToMedConverter Local;
       Configure(Local);
-      for (size_t J; (J = Claim()) < N;)
+      for (size_t J; (J = Claim()) < N;) {
         ConvertOne(Local, Indices[J]);
+        FinishOne(Indices[J]);
+      }
     });
+    CompleteStackProofs();
   }
 
   for (size_t I = 0; I < Total; ++I) {

@@ -15097,6 +15097,29 @@ optimization on and off. Variant 8 supplies a complete later store and executes
 both generated C routes at O0/O2 with an independent provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
 
+`MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
+x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
+unknown and address-valued results, incomplete coverage, independent roots,
+calls, malformed edges, return occurrence binding and admission budgets.
+`CallResultBoundsSurviveTruncationAndSignExtension` checks bounded allocation
+arithmetic and negative/wrapping counterexamples at x86, x64, ARM and ARM64
+pointer widths. `SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
+keeps the physical CALL-slot rejection when a result can raise SP or has no
+summary.
+`PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
+checks serial/parallel batches, reversed function order and replacement of a
+bounded callee by an unknown one without retaining stale facts.
+`PipelineSourceStackAccesses.BoundedCalleeKeepsDynamicFrameRestores` runs actual
+x64 call/allocation/restore bytes through source LLVM emission in COFF, ELF and
+Mach-O at one and four threads. A loaded 16-bit result supplies a bounded
+allocation; a 32-bit result whose sign extension can raise SP remains refused.
+The successful modules pass LLVM verification.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` retains
+the larger PE whole-module compilation fixture. Its runtime relocator uses the
+same 16-bit section-count proof. This does not establish bounds for the other
+dynamic allocations in its printf helpers: an omitted stack probe supplies no
+scalar range fact. Native Windows execution is separate from cross-compilation.
+
 `MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
 direct and indirect CALLs whose only SP use precedes an explicit restore at an
 exception-handler join. Both paths retain the same proven frame. Run the entry

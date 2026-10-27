@@ -874,6 +874,47 @@ TEST(SourceCallReturnReads, BoundedAllocationsSeparateTheFixedFrame) {
     }
 }
 
+TEST(SourceCallReturnReads, BoundedCallResultsKeepPhysicalSlotChecks) {
+  auto Image = callSlotImage();
+  Image.Segments.front().Data[16] = 0xe8;
+  for (bool HasRange : {false, true})
+    for (bool Negative : {false, true}) {
+      auto Func = observedCallSlot();
+      auto &Ops = Func.Blocks.front().Ops;
+      // The saved word is above both call slots when the allocation only
+      // lowers SP. A signed negative count can instead raise it into that word.
+      Ops[2].Opcode = NdOp::INT_ADD;
+      auto Result = temp(40);
+      Result.Kind = MedVar::Reg;
+      Result.RegOff = getTargetRegInfo(Image.Arch).IntReturnReg;
+      auto Query = op(NdOp::CALL, Result, {MedVar::makeConst(0x2000, 8)});
+      Query.Addr = 0x1008;
+      auto Narrow = temp(41);
+      Narrow.Size = 4;
+      Ops[4].Addr = 0x1010;
+      Ops[4].Inputs[0] = MedVar::makeConst(0x3000, 8);
+      Ops[5].Addr = 0x1015;
+      Ops.insert(Ops.begin() + 4,
+                 {Query,
+                  op(NdOp::SUBBYTES, Narrow, {Result, MedVar::makeConst(0, 4)}),
+                  op(NdOp::INT_SEXT, temp(42), {Narrow}),
+                  op(NdOp::INT_SUB, sp(2), {sp(1), temp(42)})});
+      MedCallReturnRanges Ranges;
+      if (HasRange)
+        Ranges.try_emplace(
+            0x2000, MedIntegerReturnRange{Image.Arch, 8, 0,
+                                          Negative ? UINT32_MAX : UINT16_MAX});
+      std::string Error;
+      EXPECT_EQ(validateSourceCallReturnReads(
+                    Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+                    nullptr, &Ranges),
+                HasRange && !Negative)
+          << Error;
+      if (!HasRange || Negative)
+        EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+    }
+}
+
 TEST(SourceCallReturnReads, SparseStackWritesNeedOnlyOneOperationScan) {
   auto Func = observedCallSlot();
   auto &Ops = Func.Blocks.front().Ops;

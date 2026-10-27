@@ -270,7 +270,8 @@ RegistrationCalls registrationCalls(
 bool validateSourceCallReturnReads(const MedFunc &Func,
                                    const BinaryImage &Image,
                                    std::string &Diagnostic, size_t WorkLimit,
-                                   const LowFunc *FreshSource) {
+                                   const LowFunc *FreshSource,
+                                   const MedCallReturnRanges *CallReturns) {
   Diagnostic.clear();
   // Link-register targets have no implicit stack write. The current source
   // call encoding authority authenticates x86 near CALL/JMP occurrences.
@@ -381,8 +382,9 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
         UnboundedStacks.push_back(Found->second);
       }
   if (!UnboundedCalls.empty()) {
-    const auto Bounds = entryStackOffsetRanges(
-        Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    const auto Bounds =
+        entryStackOffsetRanges(Func, UnboundedStacks, Image.Arch,
+                               Image.abiFormat(), Func.EntryKind, CallReturns);
     for (size_t I = 0; I < Bounds.size(); ++I)
       CallEnds.at(UnboundedCalls[I]) = Bounds[I];
   }
@@ -416,7 +418,8 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       if (!charge(Remaining, Pending.size()))
         return Exhausted();
       const auto Bounds = entryStackOffsetUpperBounds(
-          Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
+          Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind,
+          CallReturns);
       for (size_t I = 0; I < Pending.size(); ++I)
         if (Bounds[I])
           CallBelow.emplace(Pending[I], *Bounds[I]);
