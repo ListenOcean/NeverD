@@ -249,6 +249,20 @@ public:
   /// offset, leaves no bound.
   std::optional<int64_t> upperBound(const MedVar &Value) {
     Steps = 0;
+    const auto *SavedCallReturns = CallReturns;
+    const auto RestoreCalls =
+        llvm::scope_exit([&] { CallReturns = SavedCallReturns; });
+    if (CallReturns && !CallReturns->empty()) {
+      // A nonnegative call result can still move the complete offset across
+      // the native signed boundary. Admit new callee facts only when both
+      // endpoints fit; otherwise keep the existing local one-sided proof.
+      const auto Bounded = resolveRange(Value, 0);
+      if (Steps > kMaxProofSteps)
+        return std::nullopt;
+      if (Bounded)
+        return Bounded->Max;
+      CallReturns = nullptr;
+    }
     struct Edge {
       Key From;
       int64_t Delta;

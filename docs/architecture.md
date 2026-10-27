@@ -343,6 +343,8 @@ Calls, intrinsics, independent/exceptional entries, incompatible source
 contracts and incomplete bodies provide no fact. Truncation and sign extension
 retain machine-width wrapping; a possible negative displacement cannot prove
 that an allocation only lowers the stack pointer, including on 32-bit targets.
+Call-derived facts also require both complete stack-offset endpoints to fit
+the native width; an upper bound alone cannot hide offset wraparound.
 Source conversion first uses its local stack proofs. A missing proof defers
 that caller until the parallel conversion joins; only then does the pipeline
 build the immutable callee range table and recheck pending callers. Successful

@@ -289,6 +289,36 @@ TEST(MedStackAlignment, CallResultBoundsSurviveTruncationAndSignExtension) {
   }
 }
 
+TEST(MedStackAlignment, CallBoundsDoNotHideNativeWidthOffsetWrap) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    auto Func = frameWithEntrySP(Architecture);
+    const auto &TRI = getTargetRegInfo(Architecture);
+    const auto Width = TRI.PointerSize;
+    auto Result = reg(1, Architecture);
+    Result.Id = 50;
+    Result.RegOff = TRI.IntReturnReg;
+    const auto Allocated = reg(2, Architecture);
+    auto &Ops = Func.Blocks.front().Ops;
+    Ops.push_back(op(NdOp::INT_SUB, reg(1, Architecture), reg(0, Architecture),
+                     MedVar::makeConst(64, Width)));
+    Ops.push_back(op(NdOp::CALL, Result, MedVar::makeConst(0x2000, Width)));
+    Ops.push_back(op(NdOp::INT_SUB, Allocated, reg(1, Architecture), Result));
+    const uint64_t Maximum = (uint64_t{1} << (Width * 8 - 1)) - 1;
+    MedCallReturnRanges Ranges;
+    Ranges.try_emplace(0x2000,
+                       MedIntegerReturnRange{Architecture, Width, 0, Maximum});
+    // Every count is nonnegative, but the most negative resulting offset
+    // crosses the native signed boundary. An upper endpoint of -64 alone
+    // would hide an address that aliases a positive entry-relative offset.
+    EXPECT_FALSE(entryStackOffsetRanges(Func, {Allocated}, Architecture,
+                                        BinaryFormat::COFF,
+                                        StackEntryKind::Call, &Ranges)[0]);
+    EXPECT_FALSE(entryStackOffsetUpperBounds(Func, {Allocated}, Architecture,
+                                             BinaryFormat::COFF,
+                                             StackEntryKind::Call, &Ranges)[0]);
+  }
+}
+
 TEST(MedStackAlignment, BoundedDynamicOffsetsAreNotExactOffsets) {
   for (Arch Architecture : {Arch::X64, Arch::AArch64})
     for (BinaryFormat Format :

@@ -417,9 +417,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     if (!Pending.empty()) {
       if (!charge(Remaining, Pending.size()))
         return Exhausted();
+      // Callee facts already served the complete range query above. The
+      // remaining values need a local one-sided proof; retrying the same
+      // failed range with callee facts cannot establish native-width bounds.
       const auto Bounds = entryStackOffsetUpperBounds(
-          Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind,
-          CallReturns);
+          Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
       for (size_t I = 0; I < Pending.size(); ++I)
         if (Bounds[I])
           CallBelow.emplace(Pending[I], *Bounds[I]);

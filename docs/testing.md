@@ -15103,7 +15103,10 @@ unknown and address-valued results, incomplete coverage, independent roots,
 calls, malformed edges, return occurrence binding and admission budgets.
 `CallResultBoundsSurviveTruncationAndSignExtension` checks bounded allocation
 arithmetic and negative/wrapping counterexamples at x86, x64, ARM and ARM64
-pointer widths. `SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
+pointer widths. `CallBoundsDoNotHideNativeWidthOffsetWrap` rejects a nonnegative
+callee result whose complete stack offset crosses the signed native boundary,
+even when its upper endpoint alone fits.
+`SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
 keeps the physical CALL-slot rejection when a result can raise SP or has no
 summary.
 `PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
