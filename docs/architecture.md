@@ -353,6 +353,9 @@ retain machine-width wrapping; a possible negative displacement cannot prove
 that an allocation only lowers the stack pointer, including on 32-bit targets.
 Call-derived facts also require both complete stack-offset endpoints to fit
 the native width; an upper bound alone cannot hide offset wraparound.
+The implicit CALL push must fit that coordinate too. An observing load whose
+extent crosses the native boundary refuses projection; it cannot disappear
+from the observation set. A store with such an extent proves no overwrite.
 Source conversion first uses its local stack proofs. A missing proof defers
 that caller until the parallel conversion joins; only then does the pipeline
 build the immutable callee range table and recheck pending callers. Successful

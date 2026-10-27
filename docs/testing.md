@@ -15235,6 +15235,11 @@ even when its upper endpoint alone fits.
 `SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
 keeps the physical CALL-slot rejection when a result can raise SP or has no
 summary.
+`SourceCallReturnReads.NativeWidthExtentsDoNotHidePhysicalCallSlots` checks
+x86/x64 CALL pushes and loads that cross the native offset boundary even when
+their starting SP or address fits. An independent byte-wise modular oracle
+checks the aliases, and the adjacent representable intervals remain accepted
+when the required callee bound is available.
 `PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
 checks serial/parallel batches, reversed function order and replacement of a
 bounded callee by an unknown one without retaining stale facts.

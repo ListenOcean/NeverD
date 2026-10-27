@@ -29,6 +29,7 @@
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -323,6 +324,8 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   if (!Remaining)
     return Exhausted();
   const auto Width = getTargetRegInfo(Image.Arch).PointerSize;
+  const int64_t MinimumOffset = llvm::minIntN(Width * 8);
+  const int64_t MaximumOffset = llvm::maxIntN(Width * 8);
   std::vector<MedVar> Values;
   for (const auto *Op : Memory)
     Values.push_back(Op->Inputs[0]);
@@ -340,9 +343,18 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     const auto *Op = Memory[I];
     const auto Size =
         Op->Opcode == NdOp::LOAD ? Op->Output.Size : Op->Inputs[1].Size;
-    if (!Offsets[I] || !Size ||
-        *Offsets[I] > std::numeric_limits<int64_t>::max() - Size)
+    if (!Offsets[I] || !Size)
       continue;
+    // The beginning fits the native coordinate by entryStackOffsets. Keep
+    // the whole access in that coordinate too: skipping a wrapping load
+    // would remove an observer, while a wrapping store proves no overwrite.
+    if (*Offsets[I] > MaximumOffset - Size) {
+      if (Op->Opcode == NdOp::LOAD)
+        return Refuse("load at 0x" + llvm::utohexstr(Op->Addr) +
+                      " exceeds the native stack-offset interval; refusing "
+                      "an unproved frame projection");
+      continue;
+    }
     const auto [Block, Position] = Positions.at(Op);
     Access A{Op, Block, Position, *Offsets[I], *Offsets[I] + Size};
     if (Op->Opcode == NdOp::LOAD)
@@ -357,6 +369,15 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       CallEnds.emplace(Calls[I], EntryStackOffsetRange{*Offset, *Offset});
     else
       CallEnds.emplace(Calls[I], std::nullopt);
+  const auto CallSlotBegin =
+      [&](const EntryStackOffsetRange &End) -> std::optional<int64_t> {
+    // SP can fit while the implicit push crosses the native coordinate.
+    // Such a write has no representable interval in this proof.
+    if (End.Min < MinimumOffset + Width || End.Max > MaximumOffset ||
+        End.Min > End.Max)
+      return std::nullopt;
+    return End.Min - Width;
+  };
   // Whether every load's history reaches no CALL write in Ends, which are
   // bounded from above by Bounds where they have no range.
   const auto Observe = [&](const std::map<const MedOp *,
@@ -373,11 +394,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                               Below->second);
           continue;
         }
-      if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
+      const auto Begin = End ? CallSlotBegin(*End) : std::nullopt;
+      if (!Begin) {
         UnknownLocation = true;
         continue;
       }
-      Ranges.emplace_back(End->Min - Width, End->Max);
+      Ranges.emplace_back(*Begin, End->Max);
     }
     llvm::sort(Ranges);
     std::vector<std::pair<int64_t, int64_t>> Merged;
@@ -484,10 +506,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       Cut(Store.End);
     }
     for (const auto &[Op, End] : Ends) {
-      if (End && End->Min >= std::numeric_limits<int64_t>::min() + Width) {
-        Cut(End->Min - Width);
-        Cut(End->Max);
-      }
+      if (End)
+        if (const auto Begin = CallSlotBegin(*End)) {
+          Cut(*Begin);
+          Cut(End->Max);
+        }
       if (const auto Below = Bounds.find(Op); Below != Bounds.end())
         Cut(Below->second);
     }
@@ -543,11 +566,10 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                              ? Everything
                              : Covered(std::numeric_limits<int64_t>::min(),
                                        Below->second);
-          else if (Call->second->Min <
-                   std::numeric_limits<int64_t>::min() + Width)
-            Item.Range = Everything;
+          else if (const auto Begin = CallSlotBegin(*Call->second))
+            Item.Range = Covered(*Begin, Call->second->Max);
           else
-            Item.Range = Covered(Call->second->Min - Width, Call->second->Max);
+            Item.Range = Everything;
         }
         Row.push_back(Item);
       }
