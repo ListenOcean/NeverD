@@ -2245,3 +2245,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## اختبارات تصريحات الدوال المحددة
 
 يجمع `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` العناوين مع تطبيقات تعيد أعداداً صحيحة أو مؤشرات أو قيماً عائمة أو void. ينفذ `AddressOnlyCallbackConvertsToItsKnownParameterType` استدعاءً عكسياً مكتوباً. يقارن `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` التحديد المنفصل والوحدة الكاملة والذاكرة المخبئية الباردة والدافئة. ينفذ C الناتج من نماذج x64/ARM64 لتنسيقات PE وELF وMach-O على المضيف مع O0/O2 وUBSan؛ ولا يثبت التنفيذ الأصلي على جميع المنصات. شغّل اختبارات عقود الاستدعاء وإسقاط المؤشرات وABI المصدر وذاكرة الدوال المستدعاة بعد تغيير هذه الحدود.
+
+عند تعديل شرط الذاكرة بعد الاستدعاء، شغّل `NeverDSymbolicCallEffectTests` و`NeverDSymbolicIntegerIntrinsicTests` و`NeverDSymMemoryKnowledgeTests` معًا. تغطي هذه الاختبارات القيم المحفوظة والنتائج الشرطية والحالات المجهولة الجديدة وأهداف الاستدعاء السابقة ورفض الإدخال غير الصالح.

@@ -66,6 +66,7 @@ struct LinuxDatagramConnection {
 /// byte stream or readiness. A failed description must be closed before reuse.
 struct LinuxTCPConnectFailures {
   uint32_t Error = 0;
+  /// Finite supplied outcomes, 1..UINT32_MAX; no per-attempt storage is kept.
   uint32_t Count = 0;
 };
 struct LinuxNetworkOptions {
@@ -74,7 +75,8 @@ struct LinuxNetworkOptions {
   std::vector<LinuxStreamConnection> Connections;
   std::vector<LinuxDatagramConnection> DatagramConnections;
   /// Absence preserves exact-peer refusal. Never bypasses an unconsumed
-  /// ordered attempt; Count shares the aggregate TCP/UDP attempt budget.
+  /// ordered attempt. Count is independent of the stored TCP/UDP entry bound;
+  /// ordinary execution budgets still apply to every consumed failure.
   std::optional<LinuxTCPConnectFailures> TCPConnectFailures;
 };
 } // namespace neverd::emulation

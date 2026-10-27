@@ -5,6 +5,7 @@ add_neverd_unittest(NeverDSignatureTests
   PatternGeneratorTests.cpp
   VTableEvidenceTests.cpp
   RuntimePointerEvidenceTests.cpp
+  CodeLayoutEvidenceTests.cpp
   PatternParserTests.cpp
   RichHeaderTests.cpp
   SignatureCacheTests.cpp
@@ -13,6 +14,7 @@ add_neverd_unittest(NeverDSignatureTests
   LocalDataEvidenceTests.cpp
   SignatureVTableContextTests.cpp
   SignatureRuntimePointerContextTests.cpp
+  SignatureCodeLayoutContextTests.cpp
   SignatureMatcherTests.cpp
   SignatureTreeTests.cpp
   X86ReferenceBoundaryTests.cpp

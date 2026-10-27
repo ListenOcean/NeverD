@@ -757,6 +757,47 @@ TEST(X86_32_FunctionDiscovery, KeepsAnExportThatEndsAtANoReturnImport) {
          ".text";
 }
 
+TEST(X86_32_FunctionDiscovery, ImportScanIncludesFinalCompleteVeneer) {
+  for (bool Is64 : {false, true}) {
+    for (bool PIC : {false, true}) {
+      if (Is64 && PIC)
+        continue;
+      for (size_t Offset : {size_t(0), size_t(1), size_t(128)}) {
+        SCOPED_TRACE(Is64);
+        SCOPED_TRACE(PIC);
+        SCOPED_TRACE(Offset);
+        const va_t Target = 0x402000;
+        std::vector<uint8_t> Bytes(Offset + 6, 0xFF);
+        Bytes[Offset] = 0xFF;
+        Bytes[Offset + 1] = PIC ? 0xA3 : 0x25;
+        const uint32_t Field =
+            static_cast<uint32_t>(Is64  ? Target - (0x401000 + Offset + 6)
+                                  : PIC ? Target - 0x403000
+                                        : Target);
+        writeLE(Bytes.data() + Offset + 2, Field);
+        auto Image = makePeText(std::move(Bytes));
+        Image.KnownCodeRanges.clear();
+        Image.Arch = Is64 ? Arch::X64 : Arch::X86;
+        Image.Bits = Is64 ? Bitness::Bits64 : Bitness::Bits32;
+        Image.DynInfo.PltGotAddr = PIC ? 0x403000 : 0;
+        Import Imported;
+        Imported.IATAddr = Target;
+        Imported.Name = "imported";
+        Image.Imports.push_back(Imported);
+        auto Truncated = Image;
+        Truncated.Segments[0].Data.pop_back();
+
+        scanImportThunks(Image);
+        EXPECT_TRUE(Image.isImportStubAt(0x401000 + Offset));
+        ASSERT_EQ(Image.Symbols.size(), 1u);
+        EXPECT_EQ(Image.Symbols[0].Addr, 0x401000 + Offset);
+        scanImportThunks(Truncated);
+        EXPECT_TRUE(Truncated.Symbols.empty());
+      }
+    }
+  }
+}
+
 TEST(X86_32_FunctionDiscovery, DecompileIncludesImportStubs) {
   std::vector<uint8_t> Bytes(0x20, 0xCC);
   // jmp dword ptr [0x402000]

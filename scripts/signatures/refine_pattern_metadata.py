@@ -119,7 +119,7 @@ def refine(existing: list[Path], evidence: list[Path],
             state = None
             selected = line is not None and (names is None or any(
                 name.partition(" ")[2] in names for name in line.names))
-            if selected and (local_data or external_data or caller_code or not line.require_caller) and not line.is_vtable and not line.is_load_config:
+            if selected and (local_data or external_data or caller_code or not line.require_caller) and not line.is_vtable and not line.is_load_config and not line.is_code_layout:
                 shape = builder.Shape.of(line.key)
                 if shape.fully_verified():
                     state = Evidence(line, local_data=local_data,

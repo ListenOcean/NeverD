@@ -151,6 +151,7 @@ private:
   /// A read-only replica is checked against the owner's loaded input and
   /// committed sidecars before any expensive operation is admitted.
   Json analysisSnapshot();
+  Json browseCacheIdentity();
   Json restoreAnalysis(const Json &snapshot);
   Json updateAnalysisNames(const Json &snapshot);
   Json restoredSnapshot_;
@@ -168,6 +169,7 @@ private:
   /// from elsewhere replace the comments, not these edits.
   bool sectionsDirty_ = false;
   bool readOnly_ = false;
+  bool browseCacheEnabled_ = true;
   /// Whether idle time analyzes the open file: function discovery and the
   /// reference index.  A cross-reference request still builds the index.
   bool backgroundAnalysis_ = true;

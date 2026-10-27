@@ -165,15 +165,17 @@ void recordRelocatedLiteralTargets(BinaryImage &Img);
 inline void runPostLoadDiscovery(BinaryImage &Img,
                                  [[maybe_unused]] llvm::StringRef DebugTag,
                                  const LoadProgress &Progress = {}) {
-  Progress.report("load-discovery", 0, 1);
+  Progress.report("load-discovery", 0, 1, "relocated literals");
   recordRelocatedLiteralTargets(Img);
   // Format-stated entries come before every heuristic scan.
   Progress.check();
+  Progress.report("load-discovery", 0, 1, "loader entries");
   registerLoaderRunFunctions(Img);
   Progress.check();
   // A `--func` PE load already has `.pdata` ranges and the requested body.
   // Import-thunk scanning walks every executable byte looking for IAT veneers
   // outside that table; skip it when the caller named the work set.
+  Progress.report("load-discovery", 0, 1, "import thunks");
   if (Img.LoadOnlyFunctionEntries.empty())
     scanImportThunks(Img);
   // x64/ARM PE .pdata is the format-native function table, the same role as
@@ -191,10 +193,13 @@ inline void runPostLoadDiscovery(BinaryImage &Img,
     // Before the padding scan, which would otherwise record a hotpatch entry
     // after padding as a mere boundary guess.
     Progress.check();
+    Progress.report("load-discovery", 0, 1, "hotpatch entries");
     scanX86HotpatchEntries(Img, Progress);
     Progress.check();
+    Progress.report("load-discovery", 0, 1, "padding boundaries");
     scanPaddingBoundaries(Img, Progress);
     Progress.check();
+    Progress.report("load-discovery", 0, 1, "data function pointers");
     scanDataFuncPointers(Img, Progress);
   }
   Progress.report("load-discovery", 1, 1);

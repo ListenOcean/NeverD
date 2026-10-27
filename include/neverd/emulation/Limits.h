@@ -31,7 +31,8 @@ inline constexpr size_t kMaxLinuxResidencyObservations = 1024;
 inline constexpr size_t kMaxLinuxResidencyPages = 65536;
 inline constexpr size_t kMaxLinuxResidencyObservationBytes = 1024 * 1024;
 
-/// Offline stream and datagram connections admitted together.
+/// Stored offline stream and datagram entries admitted together. Counted
+/// failures retain only a cursor and do not consume this inventory.
 inline constexpr int kMaxNetworkConnections = 4096;
 /// Receive and expected-send event entries admitted per connection.
 inline constexpr int kMaxNetworkEvents = 4096;

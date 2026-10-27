@@ -415,3 +415,28 @@ source declarations veto selection. Ordinary caller strength limits are unchange
 Runtime matching uses loader-recorded immutable relocated slots and validates every
 body wildcard against independently bound storage. These are candidates, not
 source identity or a prediction of a pointer's value after the OS loads an image.
+
+
+### Complete source code contributions
+
+`neverd-sigmaker --code-layout-evidence --machine x64 LIBRARY -o source.jsonl`
+collects complete non-COMDAT COFF code contributions and explicit refusals.
+The source must own every function offset and canonical import/data relocation;
+no target program or evaluation names participate. COMDAT fragments cannot
+establish fixed relative positions across functions.
+
+```sh
+python3 scripts/signatures/supplement_code_layouts.py \
+  --evidence source.jsonl --existing signatures/pe/x86/64 \
+  --producer build-signatures/bin/neverd-sigmaker \
+  --output library.npat --report layout-selection.json
+```
+
+The selector removes exact duplicates and preserves different nominal claims.
+Native validation is mandatory and completes before output replacement. Retain
+input archives, evidence, generator identity and the report hashes for review.
+Qualify the selected tree on held-out images and measure matching, loading and
+memory. Layouts use the name index, add no global byte-index records and retain
+the independent automatic-name gate. See
+[signature quality](../../docs/signature-quality.md) for the complete runtime
+requirements and frozen-evidence policy.

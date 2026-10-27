@@ -365,32 +365,192 @@ struct PartialFixture {
   SymRef Input;
   unsigned Width, Degree;
   bool Neighbor;
+  unsigned Observed, High, Complement;
 
   llvm::APInt oracle(const std::array<llvm::APInt, 3> &V) const {
-    auto Result = llvm::APInt(Width, 3).shl(Width - 6);
+    auto Result = llvm::APInt(Width, 3).shl(Width - Observed);
     const auto Mask = ~llvm::APInt(Width, 1);
+    const auto ZMask = ~llvm::APInt(Width, (1u << (High - 1)) - 1);
+    const auto X = Complement == 1   ? V[0] ^ llvm::APInt(Width, 1)
+                   : Complement == 2 ? ~V[0]
+                                     : V[0];
     for (unsigned I = 0; I < Degree; ++I)
-      Result *= (V[0] + 2 * I + unsigned(Neighbor && I == 0)) ^
-                (((V[1] + I) & Mask) * ((V[2] + 2 * I) & Mask));
+      Result *= (X + 2 * I + unsigned(Neighbor && I == 0)) ^
+                (((V[1] + I) & Mask) * ((V[2] + 2 * I) & ZMask));
     return Result;
   }
 };
 
 PartialFixture partialFixture(SymContext &Ctx, unsigned Width, unsigned Degree,
-                              bool Neighbor = false) {
-  const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+                              bool Neighbor = false, unsigned Observed = 6,
+                              unsigned High = 2, unsigned Complement = 0,
+                              bool ReverseConstruction = false) {
+  auto X = Ctx.mkVar("x", Width);
+  const auto Y = Ctx.mkVar("y", Width);
   const auto Z = Ctx.mkVar("z", Width);
+  if (Complement)
+    X = Complement == 1 ? Ctx.mkXor(X, Ctx.mkConst(Width, 1)) : Ctx.mkNot(X);
   const auto Mask = Ctx.mkConst(~llvm::APInt(Width, 1));
+  const auto ZMask = Ctx.mkConst(~llvm::APInt(Width, (1u << (High - 1)) - 1));
   llvm::SmallVector<SymRef, 32> Factors{
-      Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - 6))};
-  for (unsigned I = 0; I < Degree; ++I) {
+      Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - Observed))};
+  for (unsigned Step = 0; Step < Degree; ++Step) {
+    const unsigned I = ReverseConstruction ? Degree - 1 - Step : Step;
     auto A =
         Ctx.mkAdd(X, Ctx.mkConst(Width, 2 * I + unsigned(Neighbor && I == 0)));
     auto B = Ctx.mkAnd(Ctx.mkAdd(Y, Ctx.mkConst(Width, I)), Mask);
-    auto C = Ctx.mkAnd(Ctx.mkAdd(Z, Ctx.mkConst(Width, 2 * I)), Mask);
+    auto C = Ctx.mkAnd(Ctx.mkAdd(Z, Ctx.mkConst(Width, 2 * I)), ZMask);
     Factors.push_back(Ctx.mkXor(A, Ctx.mkMul(B, C)));
   }
-  return {Ctx.mkMul(Factors), Width, Degree, Neighbor};
+  return {Ctx.mkMul(Factors), Width, Degree,    Neighbor,
+          Observed,           High,  Complement};
+}
+
+TEST(SymMBAWidePairs, UnfinishedProductsPreserveIndependentLinearTails) {
+  std::mt19937_64 Random(0x4c494e4541525441);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 257u})
+    for (unsigned High : {2u, 3u}) {
+      SCOPED_TRACE(::testing::Message() << Width << ':' << High);
+      SymContext Ctx;
+      const auto F = partialFixture(Ctx, Width, 192, false, 8, High, 1);
+      const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+      const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+      const auto Input =
+          Ctx.mkAdd({F.Input, Ctx.mkXor(X, Y),
+                     Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(X, Y)),
+                     Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+      MBAOptions Options;
+      Options.MaxWork = 65536;
+      const auto Result = simplifyMBADeep(Ctx, Input, Options);
+      ASSERT_TRUE(Result.Changed);
+      EXPECT_LE(Result.SizeAfter + 10, Result.SizeBefore);
+      EXPECT_LE(Result.Work, Options.MaxWork);
+      EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+      SymEvalPlan Reduced(Ctx, Result.Expr);
+      for (unsigned Trial = 0; Trial < 256; ++Trial) {
+        std::array<llvm::APInt, 4> Values;
+        for (auto &Value : Values) {
+          Value = llvm::APInt(Width, 0);
+          for (unsigned Bit = 0; Bit < Width; Bit += 64)
+            Value |= llvm::APInt(Width, Random()).shl(Bit);
+        }
+        Values[0].clearLowBits(8);
+        Values[0] |= llvm::APInt(Width, Trial);
+        const auto Expected = F.oracle({Values[0], Values[1], Values[2]}) +
+                              Values[0] + Values[1] + Values[2] + Values[3];
+        ASSERT_EQ(Reduced.eval(Values), Expected);
+      }
+    }
+}
+
+TEST(SymMBAWidePairs,
+     BatchedCorrectionsKeepOddCompletionsAndEvenResidualQuality) {
+  std::mt19937_64 Random(0x434f525245435453);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Degree : {48u, 65u})
+      for (unsigned Complement : {0u, 1u, 2u})
+        for (bool Neighbor : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Width << ':' << Degree << ':'
+                                            << Complement << ':' << Neighbor);
+          SymContext Ctx;
+          const auto F =
+              partialFixture(Ctx, Width, Degree, Neighbor, Degree == 65 ? 7 : 8,
+                             2, Complement, Complement == 2);
+          const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
+          const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
+          const auto Input =
+              Ctx.mkAdd({F.Input, Ctx.mkXor(X, Y),
+                         Ctx.mkMul(Ctx.mkConst(Width, 2), Ctx.mkAnd(X, Y)),
+                         Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
+          MBAOptions Options;
+          Options.MaxWork = 65536;
+          const auto Result = simplifyMBADeep(Ctx, Input, Options);
+          EXPECT_LE(Result.Work, Options.MaxWork);
+          EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          if (!Neighbor && Width <= 64) {
+            if (Degree == 65) {
+              EXPECT_LT(Result.Work, Options.MaxWork);
+              EXPECT_LT(Result.SizeAfter, Result.SizeBefore / 4);
+            } else if (Complement == 2) {
+              // A refused partial-even proof must preserve enough of the
+              // shared allowance for the established independent rewrites.
+              EXPECT_LE(Result.SizeAfter + 19, Result.SizeBefore);
+            }
+          }
+          SymEvalPlan Reduced(Ctx, Result.Expr);
+          for (unsigned Trial = 0; Trial < 128; ++Trial) {
+            std::array<llvm::APInt, 4> Values;
+            for (auto &Value : Values) {
+              Value = llvm::APInt(Width, 0);
+              for (unsigned Bit = 0; Bit < Width; Bit += 64)
+                Value |= llvm::APInt(Width, Random()).shl(Bit);
+              if (Trial < 3)
+                Value = Trial == 1 ? llvm::APInt::getAllOnes(Width)
+                                   : llvm::APInt(Width, Trial == 2);
+            }
+            const auto Expected = F.oracle({Values[0], Values[1], Values[2]}) +
+                                  Values[0] + Values[1] + Values[2] + Values[3];
+            ASSERT_EQ(Reduced.eval(Values), Expected);
+          }
+        }
+}
+
+TEST(SymMBAWidePairs, ReassociatedComplementsRetainExactCorrections) {
+  std::mt19937_64 Random(0x5349474e41545552);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 257u})
+    for (unsigned Degree : {15u, 23u, 31u})
+      for (unsigned Complement : {1u, 2u})
+        for (bool Neighbor : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Width << ':' << Degree << ':'
+                                            << Complement << ':' << Neighbor);
+          SymContext Ctx;
+          const auto F =
+              partialFixture(Ctx, Width, Degree, Neighbor, 6, 2, Complement);
+          detail::WorkBudget Budget(65536);
+          size_t Storage = 1 << 24;
+          const auto Result =
+              detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+          if (!Neighbor) {
+            ASSERT_NE(Result, F.Input);
+            EXPECT_LT(detail::readingCost(Ctx, Result),
+                      detail::readingCost(Ctx, F.Input));
+          }
+          EXPECT_LE(Budget.used(), 65536u);
+          SymEvalPlan Reduced(Ctx, Result);
+          for (unsigned Trial = 0; Trial < 256; ++Trial) {
+            std::array<llvm::APInt, 3> Values;
+            for (auto &Value : Values) {
+              Value = llvm::APInt(Width, 0);
+              for (unsigned Bit = 0; Bit < Width; Bit += 64)
+                Value |= llvm::APInt(Width, Random()).shl(Bit);
+            }
+            Values[0].clearLowBits(8);
+            Values[0] |= llvm::APInt(Width, Trial);
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+        }
+}
+
+TEST(SymMBAWidePairs, ExhaustsReassociatedComplementLowWords) {
+  SymContext Ctx;
+  const auto F = partialFixture(Ctx, 8, 15, false, 6, 2, 1);
+  detail::WorkBudget Budget(65536);
+  size_t Storage = 1 << 24;
+  const auto Result =
+      detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+  ASSERT_NE(Result, F.Input);
+  SymEvalPlan Reduced(Ctx, Result);
+  for (uint64_t X = 0; X < 64; ++X)
+    for (uint64_t Y = 0; Y < 64; ++Y)
+      for (uint64_t Z = 0; Z < 64; ++Z) {
+        uint64_t Expected = 12;
+        for (unsigned I = 0; I < 15; ++I)
+          Expected *= ((X ^ 1) + 2 * I) ^
+                      (((Y + I) & ~uint64_t(1)) * ((Z + 2 * I) & ~uint64_t(1)));
+        ASSERT_EQ(Reduced.evalU64({X, Y, Z}), Expected & 255)
+            << X << ':' << Y << ':' << Z;
+      }
 }
 
 TEST(SymMBAWidePairs, OddPartialBlocksRetainUnpairedFullWords) {

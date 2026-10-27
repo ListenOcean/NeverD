@@ -273,6 +273,7 @@ class PatternLine:
     is_vtable: bool = False
     load_config_fields: tuple[tuple[int, str, str], ...] = ()
     local_sites: frozenset[int] = frozenset()
+    is_code_layout: bool = False
 
     def reference_kind(self, offset: int) -> int:
         return 2 if offset in self.local_sites else int(offset in self.data_sites)
@@ -287,7 +288,7 @@ class PatternLine:
                   local_sites: frozenset[int] | None = None) -> "PatternLine":
         """This line stating only `refs`."""
 
-        if self.is_vtable or self.is_load_config:
+        if self.is_vtable or self.is_load_config or self.is_code_layout:
             if refs != self.refs or require not in (None, False) or data_sites or local_sites:
                 raise BuildError("metadata fields cannot be refined as function references")
             return self
@@ -345,7 +346,7 @@ def aliases_of(lines: list[PatternLine]) -> PatternLine:
     name any of them gives it.
     """
 
-    if any(line.is_vtable or line.is_load_config for line in lines):
+    if any(line.is_vtable or line.is_load_config or line.is_code_layout for line in lines):
         raise BuildError("table declarations cannot be folded into function aliases")
     names = tuple(sorted({name for line in lines for name in line.names}, key=alias_order))
     merged = common_refs(lines)
@@ -557,8 +558,9 @@ def parse_line(text: str, *, evidence: bool = False) -> PatternLine | None:
     caller = tokens[index] == "!caller"
     vtable = tokens[index] == "!vtable"
     load_config = tokens[index] == "!loadcfg"
+    code_layout = tokens[index] == "!layout"
     config_pairs = defaultdict(dict)
-    if required or caller or vtable or load_config or raw_evidence:
+    if required or caller or vtable or load_config or code_layout or raw_evidence:
         index += 1
     while index < len(tokens):
         token = tokens[index]
@@ -609,12 +611,22 @@ def parse_line(text: str, *, evidence: bool = False) -> PatternLine | None:
                 any(offset < 0 or offset % 8 or offset + 8 > shape.total or
                     set(pair) != {False, True} for offset, pair in config_pairs.items()):
             raise BuildError("invalid load-configuration pointer/default pairs")
+    if code_layout:
+        shape = Shape.of(" ".join(rest))
+        if not shape.fully_verified() or shape.crc_len or int(shape.crc, 16) or \
+                len(shape.lead + shape.tail) != 2 * shape.total or \
+                len(set(int(n.split()[0][1:], 16) for n in names)) < 2 or \
+                len({n.split()[1] for n in names}) != len(names) or \
+                any(kind == 2 for kind in kinds.values()):
+            raise BuildError("invalid complete source code layout")
+        # Canonical operand and budget validation belongs to the native reader.
+        # Dedicated layout publication requires neverd-sigmaker --verify.
     normalized = " ".join([*tokens[:4], *tokens[5:]]) if raw_evidence else stripped
     return PatternLine(normalized, " ".join(rest), tuple(names), tuple(sorted(refs)), required, caller,
                        frozenset(offset for offset, is_data in kinds.items() if is_data), vtable,
                        tuple(sorted((offset, pair[True], pair[False])
                                     for offset, pair in config_pairs.items())),
-                       frozenset(offset for offset, kind in kinds.items() if kind == 2))
+                       frozenset(offset for offset, kind in kinds.items() if kind == 2), code_layout)
 
 
 @dataclass
@@ -663,7 +675,7 @@ def fold(lines: list[str], *, evidence: bool = False) -> FoldResult:
         parsed = parse_line(raw, evidence=evidence)
         if parsed is None:
             continue
-        if parsed.is_vtable or parsed.is_load_config:
+        if parsed.is_vtable or parsed.is_load_config or parsed.is_code_layout:
             raise BuildError("metadata declarations require their dedicated selector")
         if parsed.require_caller:
             callers[parsed.text] = parsed

@@ -110,6 +110,9 @@ void registerLoaderRunFunctions(BinaryImage &Img) {
 }
 
 ImportThunkCandidates::ImportThunkCandidates(const BinaryImage &Img) {
+  Entries.reserve(Img.Symbols.size() + Img.COFFPDataRecords.size());
+  Bodies.reserve(Img.KnownCodeRanges.size() + Img.Symbols.size() +
+                 Img.COFFPDataRecords.size());
   // One ELF FDE can cover a whole PLT, including several callable veneers.
   // Only a wholly contained range has that loader-owned role. Stated function
   // symbols still own their bodies, even when they overlap such a range.
@@ -133,7 +136,7 @@ ImportThunkCandidates::ImportThunkCandidates(const BinaryImage &Img) {
     if (!Sym.IsFunc)
       continue;
     const va_t Start = normalizeCodeAddress(Sym.Addr, Img.Arch, Img.Mode);
-    Entries.insert(Start);
+    Entries.push_back(Start);
     if (Sym.Size && Sym.Size < InvalidVA - Start &&
         (Sym.Origin != NameOrigin::Synthesized ||
          !IsPLT(Start, Start + Sym.Size)))
@@ -143,9 +146,11 @@ ImportThunkCandidates::ImportThunkCandidates(const BinaryImage &Img) {
   for (const auto &Record : Img.COFFPDataRecords)
     if (Record.BeginRVA < Record.EndRVA &&
         Record.EndRVA < InvalidVA - Img.Base) {
-      Entries.insert(Img.Base + Record.BeginRVA);
+      Entries.push_back(Img.Base + Record.BeginRVA);
       Add(Img.Base + Record.BeginRVA, Img.Base + Record.EndRVA);
     }
+  llvm::sort(Entries);
+  Entries.erase(std::unique(Entries.begin(), Entries.end()), Entries.end());
   llvm::sort(Bodies);
   size_t Count = 0;
   for (const auto &Range : Bodies) {
@@ -161,7 +166,7 @@ ImportThunkCandidates::ImportThunkCandidates(const BinaryImage &Img) {
 bool ImportThunkCandidates::allows(va_t Start, uint64_t Size) const {
   if (!Size || Size >= InvalidVA - Start)
     return false;
-  if (Entries.count(Start))
+  if (std::binary_search(Entries.begin(), Entries.end(), Start))
     return true;
   const auto Next = std::lower_bound(
       Bodies.begin(), Bodies.end(), Start + Size,
@@ -378,6 +383,10 @@ void recordRelocatedLiteralTargets(BinaryImage &Img) {
       Objects.push_back(Addr);
     }
   }
+  // With no proved literal, neither publication nor relocation reclassification
+  // can change the image. Avoid building their image-wide code indices.
+  if (Objects.empty())
+    return;
   // Existing code metadata, including a function's exclusive end, has priority
   // over this proof. Reuse the shared rules used for debug data objects.
   recordDataInCode(Img, Objects);

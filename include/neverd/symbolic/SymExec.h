@@ -42,6 +42,7 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/symbolic/SymState.h"
 
+#include <optional>
 #include <vector>
 
 namespace neverd::symbolic {
@@ -103,6 +104,13 @@ struct SymCallEffect {
   /// win. Omitted bytes retain the configured preservation/havoc policy.
   /// Invalid register writes reject the call before any state mutation.
   std::vector<SymCallRegisterWrite> Registers;
+  /// Complete available memory after the call, captured in this context.
+  /// When supplied, replaces Memory's preservation/havoc policy before Writes.
+  /// Omitted bytes belong to a fresh unknown epoch; listed facts may preserve
+  /// caller inputs or describe conditional results. This grants no alias,
+  /// accessibility or lifetime facts. Later Writes use normal invalidation.
+  /// Invalid knowledge rejects the call without changing the state.
+  std::optional<SymState::MemoryKnowledge> MemoryAfter;
 };
 
 /// Shape accepted for a single CMPXCHG preservation commit: default memory,

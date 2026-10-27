@@ -17,6 +17,8 @@
 
 #include "neverd/Common.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <cstdint>
 #include <map>
 
@@ -24,6 +26,7 @@ namespace neverd {
 
 struct BinaryImage;
 struct MedFunc;
+struct MedReturnReg;
 struct MedOp;
 struct PipelineResult;
 class DebugContext;
@@ -68,6 +71,12 @@ enum class StructReturnEvidence : uint8_t {
   /// may return an extra register that its callers ignore.
   CallersAndBody,
 };
+
+/// Whether every normal return supplies the caller-observed fields. Used for
+/// selected definitions and bounded omitted-callee bodies alike.
+bool returnsStructFields(const MedFunc &Function,
+                         llvm::ArrayRef<MedReturnReg> Shape, Arch Architecture,
+                         BinaryFormat Format);
 
 /// Recover a multi-register (or single wide-vector) return shape from a
 /// callee's own body when no direct caller reveals it.  AArch64 only.

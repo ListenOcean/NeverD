@@ -34,6 +34,10 @@ def patch_pages(worker, expected):
         refused = worker.call("patches", payload)
         assert refused["status"] != "ok" and refused["error"]["code"] == code, refused
     assert ok(worker, "patches")["items"] == expected
+    ranges = [{"address": row["va"], "size": row["size"]} for row in expected]
+    for _ in range(2):
+        assert ok(worker, "patches", {"ranges_only": True}) == {
+            "items": ranges, "total": total, "complete": True}
 
 
 def run(executable, real=False):
@@ -61,7 +65,8 @@ def run(executable, real=False):
             request["expected"] = original
             ok(worker, "patch_apply", request)
             assert ok(worker, "bytes", {"address": hex(at), "size": 1})["data"] == "2a"
-            assert ok(worker, "patches", {"ranges_only": True})["items"] == [{"address": hex(at), "size": 1}]
+            assert ok(worker, "patches", {"ranges_only": True}) == {
+                "items": [{"address": hex(at), "size": 1}], "total": 1, "complete": True}
             last = ok(worker, "history")["items"][-1]
             assert last["kind"] == "patch" and last["details_omitted"]
             assert int(last["address"], 16) == at, last
@@ -77,7 +82,8 @@ def run(executable, real=False):
             with Client(executable) as replica:
                 ok(replica, "analysis_restore", snapshot)
                 assert ok(replica, "bytes", {"address": hex(at), "size": 1})["data"] == "2a"
-                assert ok(replica, "patches", {"ranges_only": True})["items"] == [{"address": hex(at), "size": 1}]
+                assert ok(replica, "patches", {"ranges_only": True}) == {
+                    "items": [{"address": hex(at), "size": 1}], "total": 1, "complete": True}
                 denied = replica.call("patch_apply", {**request, "expected": "2a"})
                 assert denied["error"]["code"] == "read_only", denied
             assert int(ok(worker, "undo")["address"], 16) == at
@@ -102,7 +108,8 @@ def run(executable, real=False):
             assert patch_file.read_bytes() == patch_text and patch_file.stat().st_mtime_ns == patch_time
             ok(worker, "patch_revert", {"address": hex(at), "ranges": [{"address": row["va"], "size": row["size"]} for row in rows]})
             assert ok(worker, "patches")["total"] == 0
-            assert ok(worker, "patches", {"ranges_only": True})["items"] == []
+            assert ok(worker, "patches", {"ranges_only": True}) == {
+                "items": [], "total": 0, "complete": True}
             ok(worker, "undo")
             assert ok(worker, "patches")["total"] == len(rows)
             assert annotations.read_bytes() == note_bytes

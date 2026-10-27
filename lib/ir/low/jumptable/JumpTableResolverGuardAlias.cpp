@@ -23,6 +23,7 @@
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/solver/BitVectorSolver.h"
 #include "neverd/symbolic/SymExpr.h"
 
@@ -1604,6 +1605,39 @@ bool CFGBuilder::inferBoundsFromPreciseGuards(
           CertifiedEdgeOverrides);
       // The ordinary table representation requires a dense zero-based
       // prefix. Sparse domains keep their existing specialized owner.
+      if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
+          Masks.size() == 1 && Results[0] && Masks[0] &&
+          (Masks[0] & (Masks[0] + 1)) == 0) {
+        const uint32_t Bound = std::bit_width(Masks[0]);
+        if (Bound >= limits::kMinJumpTableEntries) {
+          if (Info.MaxEntries == 0 || Bound < Info.MaxEntries)
+            Info.MaxEntries = Bound;
+          Info.IncompleteGuardDomain = false;
+          Info.SemanticGuardDomainAmbiguous = false;
+          return true;
+        }
+      }
+      if (Complete.size() != 1 || !Complete[0])
+        SawIncompleteProofQuery = true;
+    }
+    // A bounded lookup loop can read its selector from immutable records
+    // without comparing the selector itself. Explore exact scalar states on
+    // the same rooted graph; neither adjacent bytes nor a physical table run
+    // supplies its bound. Normal candidate replay rechecks newly found edges.
+    if (!GuardedGroupProofContext && !Info.IndexValueDefinedAtUse &&
+        CurrentImg && supportsImmutableImageReads(*CurrentImg)) {
+      JumpTableValueQuery Lookup;
+      Lookup.Candidate = Info.IndexValueAtUse;
+      Lookup.UseAddr = Info.IndexUseAddr;
+      Lookup.UseSeq = Info.IndexUseSeq;
+      Lookup.Relation = JumpTableValueRelation::ReadonlyUnsignedEnvelope;
+      Lookup.UnsignedUpperBound = 64;
+      std::vector<bool> Complete;
+      std::vector<uint64_t> Masks;
+      const auto Results = tableValuesMatchAtUses(
+          {Lookup}, nullptr, &Complete, InvalidVA, nullptr,
+          CandidateEvidenceBudget, 0, nullptr, &Masks, GuardValueDepth,
+          CertifiedEdgeOverrides);
       if (Results.size() == 1 && Complete.size() == 1 && Complete[0] &&
           Masks.size() == 1 && Results[0] && Masks[0] &&
           (Masks[0] & (Masks[0] + 1)) == 0) {

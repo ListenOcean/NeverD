@@ -380,15 +380,16 @@ QString Session::platformName() const {
   return {};
 }
 
-QueryService::SubscriptionId Session::read(const QString &operation,
-                                           const QJsonObject &payload,
-                                           QObject *owner, Reply done,
-                                           Failure failed) {
+QueryService::SubscriptionId
+Session::read(const QString &operation, const QJsonObject &payload,
+              QObject *owner, Reply done, Failure failed,
+              QueryService::QuerySpec::Priority priority) {
   auto &service = AnalysisService::handles(operation)
                       ? analysis_.queries(payload, owner ? owner : &reads_)
                       : queries_;
   return service.subscribe(
-      {operation, payload}, owner ? owner : &reads_,
+      {operation, payload, QueryService::QuerySpec::Latest, {}, priority},
+      owner ? owner : &reads_,
       [this, done = std::move(done),
        failed = std::move(failed)](const QJsonObject &response) {
         const auto status = response.value("status").toString();
@@ -845,8 +846,17 @@ void Session::sendOpen(const QString &requested, const QString &path,
         analysis_.setSnapshotBlocked(options.analysis && native && large);
         if (options.analysis && native && !large &&
             functionCount_ >=
-                ::neverd::limits::gui::kSessionSendOpenFunctionCountLimit)
-          analysis_.prefetchSource(entryAddress());
+                ::neverd::limits::gui::kSessionSendOpenFunctionCountLimit) {
+          // Speculative source preparation must follow the initial browsing
+          // reads instead of starting a replica and snapshot ahead of them.
+          connect(
+              &queries_, &QueryService::idle, this,
+              [this, opened = epoch(), entry = entryAddress()] {
+                if (loaded_ && epoch() == opened)
+                  analysis_.prefetchSource(entry);
+              },
+              Qt::SingleShotConnection);
+        }
         emit opened();
         emit stateChanged();
         refreshHistory();

@@ -48,6 +48,7 @@
 #include <QSignalSpy>
 #include <QStyle>
 #include <QStyleOption>
+#include <QSvgRenderer>
 #include <QTabBar>
 #include <QTemporaryDir>
 #include <QTest>
@@ -320,6 +321,11 @@ private slots:
   }
 
   void menusKeepActionIconsWithPlatformDefaults() {
+    const QDir icons(QStringLiteral(":/neverd/icons"));
+    for (const auto &name : icons.entryList({"*.svg"}, QDir::Files)) {
+      const QSvgRenderer renderer(icons.filePath(name));
+      QVERIFY2(renderer.isValid(), qPrintable(name));
+    }
     // The macOS platform enables this after QApplication is constructed.
     QCoreApplication::setAttribute(Qt::AA_DontShowIconsInMenus, true);
     Theme::instance().apply();

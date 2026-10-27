@@ -1,6 +1,7 @@
 #include "ComparisonService.h"
 #include "Engine.h"
 #include "LineageService.h"
+#include "LoadProgress.h"
 #include "Protocol.h"
 #include "ResourceLimits.h"
 #include "UnwindQuery.h"
@@ -499,6 +500,7 @@ void executeLoop(State &state, Transport &transport) {
       };
       Json result;
       Engine::EncodedPayload encodedPayload;
+      LoadProgress loadProgress;
       try {
         if (value.contains("expected_revision") &&
             value["expected_revision"] != revision())
@@ -513,6 +515,10 @@ void executeLoop(State &state, Transport &transport) {
         engine.setLoadProgressSink([&](const char *Phase, std::uint64_t Done,
                                        std::uint64_t Total,
                                        const char *Detail) {
+          // The loader still checks cancellation at every checkpoint.
+          if (!loadProgress.publish(Phase ? Phase : "", Done, Total,
+                                    Detail ? Detail : ""))
+            return;
           transport.send(response(value, engine.revision(), engine.projectId(),
                                   "progress",
                                   {{"phase", Phase ? Phase : ""},

@@ -66,6 +66,7 @@ NEVERD_PATTERN_STRING(RequiredReferences, "!refs")
 NEVERD_PATTERN_STRING(RequiredCaller, "!caller")
 NEVERD_PATTERN_STRING(VTableContext, "!vtable")
 NEVERD_PATTERN_STRING(LoadConfigContext, "!loadcfg")
+NEVERD_PATTERN_STRING(CodeLayoutContext, "!layout")
 NEVERD_PATTERN_STRING(CollisionEvidenceOnly, "!evidence")
 
 // A reference's offset is where its branch starts, except that an ARM-state

@@ -46,6 +46,12 @@ add_neverd_unittest(NeverDCOFFExceptionV2Tests
   eh/COFFExceptionV2Tests.cpp
   LINK_COMPONENTS Loader)
 
+add_neverd_unittest(NeverDCOFFExceptionModelTests
+  eh/COFFExceptionTests.cpp
+  LINK_COMPONENTS Loader)
+target_include_directories(NeverDCOFFExceptionModelTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/loader/COFF/unwind)
+
 add_neverd_unittest(NeverDDirectTailCallMetadataTests
   core/DirectTailCallMetadataTests.cpp
   LINK_COMPONENTS IRLow Lift

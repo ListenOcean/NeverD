@@ -19,6 +19,10 @@
 // mostly-wildcard patterns; byte count alone never proves function identity.
 NEVERD_SIGS_LIMIT(MinStatedBytes, 16)
 
+// Complete source code contributions queried through an existing strong root.
+NEVERD_SIGS_LIMIT(MaxCodeLayoutBytes, 64 * 1024)
+NEVERD_SIGS_LIMIT(MaxCodeLayoutPublicNames, 128)
+
 // A generated line states this many leading bytes one by one, as FLIRT's
 // lines do, and no function shorter than this has a line.
 NEVERD_SIGS_LIMIT(DefaultLeadingBytes, 32)

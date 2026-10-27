@@ -1,5 +1,6 @@
 #include "Listing.h"
 
+#include "BrowseCache.h"
 #include "Config.h"
 #include "EngineSymbols.h"
 #include "OperandFormatDetail.h"
@@ -21,6 +22,7 @@
 #include <cctype>
 #include <charconv>
 #include <cstring>
+#include <exception>
 #include <limits>
 #include <list>
 #include <map>
@@ -40,10 +42,13 @@ using ImportSlotsFunction = const char *(*)(neverd_session_t);
 using UnwindFrameFunction = unwind_query::Function;
 using FunctionChunksFunction = const char *(*)(neverd_session_t);
 using PointerRefsFunction = const char *(*)(neverd_session_t, neverd_va_t, int);
+using MetadataVisitFunction = decltype(&neverd_visit_metadata_items);
 using DiscoverFunctionsFunction = int (*)(neverd_session_t);
 using PointerAtFunction = int (*)(neverd_session_t, neverd_va_t, neverd_va_t *,
                                   neverd_va_t *);
 using DataSymbolsFunction = const char *(*)(neverd_session_t);
+using FunctionPresentationFunction = const char *(*)(neverd_session_t,
+                                                     neverd_va_t);
 using StringsExFunction = const char *(*)(neverd_session_t, const char *);
 using StringsPageFunction = const char *(*)(neverd_session_t, const char *,
                                             neverd_va_t, int);
@@ -97,8 +102,8 @@ Json takeJson(const char *value) {
   if (text.empty())
     return nullptr;
   try {
-    return Json::parse(text);
-  } catch (const Json::exception &) {
+    return parseJson(text, MaxBackendBytes);
+  } catch (const Error &) {
     throw Error("engine_error", "Engine returned malformed JSON");
   }
 }
@@ -207,6 +212,7 @@ struct Function {
   std::uint64_t entry = 0, end = 0, size = 0;
   /// Display name; engineName is the engine's own spelling of it.
   std::string name, engineName;
+  std::string prototype, prototypeName;
   bool library = false, exported = false;
   /// An executable veneer forwarding to an import (ELF PLT entry, stub).
   bool thunk = false;
@@ -235,6 +241,7 @@ struct Instruction {
   /// The stack pointer's offset from its value at the function's entry
   /// before this instruction, when every path to it agrees.
   std::optional<std::int64_t> stackDelta;
+  std::optional<std::int64_t> frameDelta;
 };
 /// An unwind frame a listing marks.
 struct UnwindMark {
@@ -258,6 +265,7 @@ struct DecodedFunction {
   /// lie below it and arguments above the return address and saved frame
   /// pointer.
   std::int64_t frameBase = 0;
+  bool semanticFrame = false;
   /// Stack variables by offset from the frame's base, with their bytes.
   std::map<std::int64_t, unsigned> frame;
 };
@@ -327,7 +335,11 @@ enum class ItemKind : std::uint8_t {
   /// A slot of a switch's jump table.
   SwitchEntry,
   /// A value of one to eight bytes the user defined.
-  Data
+  Data,
+  /// A loader-decoded data structure, including its typed RVA fields.
+  Metadata,
+  /// A repeated padding byte in a gap between recovered code items.
+  Repeat
 };
 struct Item {
   std::uint64_t start = 0, size = 1;
@@ -336,6 +348,15 @@ struct Item {
   std::size_t index = 0;
   std::uint64_t alignment = 0;
   bool userCode = false;
+};
+struct MetadataField {
+  std::uint64_t offset = 0, size = 0, target = 0;
+  std::string name, role;
+};
+struct MetadataItem {
+  std::uint64_t address = 0, size = 0;
+  std::string type;
+  std::vector<MetadataField> fields;
 };
 /// An item the listing lays out from what it knows besides the bytes: a
 /// named object as large as its symbol says, or data the code reads or
@@ -504,6 +525,9 @@ struct Listing::Impl {
   UnwindFrameFunction unwindFrame = nullptr;
   FunctionChunksFunction functionChunks = nullptr;
   PointerRefsFunction pointerRefs = nullptr;
+  PointerRefsFunction metadataQuery = nullptr;
+  MetadataVisitFunction metadataVisit = nullptr;
+  FunctionPresentationFunction functionPresentation = nullptr;
   DiscoverFunctionsFunction discoverFunctions = nullptr;
   DiscoverFunctionsFunction discoverFunctionsStep = nullptr;
   PointerAtFunction pointerAtQuery = nullptr;
@@ -565,6 +589,10 @@ struct Listing::Impl {
   std::set<std::uint64_t> runtimeEntries;
 
   bool built = false;
+  bool initialCatalog = true;
+  bool initialPage = true;
+  BrowseCache cache;
+  std::string inventoryKey;
   int builtFunctionCount = -1;
   /// The names, or the user's items, changed since the listing was built:
   /// the next query reads them again over what the build scanned.
@@ -576,6 +604,15 @@ struct Listing::Impl {
   std::uint64_t generation = 1;
   std::vector<Region> regions;
   std::vector<Function> functions;
+  // Loader metadata changes with the image, not with function discovery.
+  bool metadataBuilt = false;
+  std::vector<MetadataItem> metadataItems;
+  std::vector<std::uint64_t> metadataBoundaries;
+  std::set<std::uint64_t> dataBoundaries;
+  std::vector<Reference> metadataReferences;
+  using MetadataRole =
+      std::pair<std::pair<std::uint64_t, std::uint64_t>, std::string>;
+  std::vector<MetadataRole> metadataRoles;
   /// The first function listed under each name, and how many functions are
   /// not chunks, as functions held them at generation (namedFunction and
   /// indexState read them; a listing holds tens of thousands of functions).
@@ -682,6 +719,12 @@ struct Listing::Impl {
     functionChunks =
         engineSymbol<FunctionChunksFunction>("neverd_function_chunks_json");
     pointerRefs = engineSymbol<PointerRefsFunction>("neverd_pointer_refs_json");
+    metadataQuery =
+        engineSymbol<PointerRefsFunction>("neverd_metadata_items_json");
+    metadataVisit =
+        engineSymbol<MetadataVisitFunction>("neverd_visit_metadata_items");
+    functionPresentation = engineSymbol<FunctionPresentationFunction>(
+        "neverd_function_presentation_json");
     discoverFunctions = engineSymbol<DiscoverFunctionsFunction>(
         "neverd_session_discover_functions");
     discoverFunctionsStep = engineSymbol<DiscoverFunctionsFunction>(
@@ -755,8 +798,12 @@ struct Listing::Impl {
     elf = format.find("ELF") != std::string::npos;
     macho = format.find("Mach") != std::string::npos;
     buildRegions();
+    buildMetadata();
+    const bool initialFunctions = initialCatalog && !discovered;
     buildFunctions(count);
+    buildInventoryKey();
     buildNames(/*Rescan=*/true);
+    buildDataBoundaries();
     decoded.clear();
     decodedOrder.clear();
     recoveredReferences.clear();
@@ -764,7 +811,24 @@ struct Listing::Impl {
     maxRecoveredInstructionSize = 0;
     alignCache.clear();
     applyDisplayNames();
+    if (initialFunctions && cache.writable())
+      cache.defer("initial-functions-" + std::to_string(count),
+                  [this, catalog = functions] {
+                    const auto bytes = Json::to_cbor(functionTable(catalog));
+                    return std::string(bytes.begin(), bytes.end());
+                  });
     discoveryListingPending = false;
+  }
+
+  void buildInventoryKey() {
+    std::string inventory;
+    for (const auto &function : functions) {
+      for (const auto value :
+           {function.entry, function.size, function.chunkOf.value_or(0)})
+        for (unsigned byte = 0; byte < 8; ++byte)
+          inventory.push_back(static_cast<char>(value >> (byte * 8)));
+    }
+    inventoryKey = BrowseCache::digest(inventory);
   }
 
   /// Read the names and the user's items again over what the last build
@@ -774,7 +838,9 @@ struct Listing::Impl {
     namesStale = false;
     ++generation;
     buildFunctions(count);
+    buildInventoryKey();
     buildNames(/*Rescan=*/false);
+    buildDataBoundaries();
     decoded.clear();
     decodedOrder.clear();
     recoveredReferences.clear();
@@ -791,6 +857,273 @@ struct Listing::Impl {
   /// Classic names for functions the engine leaves generic: import thunks
   /// after their import, the image entry point, and main as passed to the C
   /// runtime's start routine.  Engine, symbol and user names always win.
+  void readPresentation(Function &function) {
+    if (!functionPresentation)
+      return;
+    const auto value = takeJson(functionPresentation(session, function.entry));
+    if (!value.is_object())
+      return;
+    function.thunk |= value.value("thunk", false);
+    function.prototype = value.value("prototype", std::string());
+    function.prototypeName = value.value("prototype_name", std::string());
+  }
+
+  void addMetadata(MetadataItem item) {
+    for (const auto &field : item.fields) {
+      metadataReferences.push_back(
+          {field.target, item.address + field.offset, RefKind::Offset});
+      metadataRoles.emplace_back(
+          std::pair{item.address + field.offset, field.target}, field.role);
+      metadataBoundaries.push_back(field.target);
+    }
+    metadataBoundaries.push_back(item.address);
+    metadataBoundaries.push_back(item.address + item.size);
+    metadataItems.push_back(std::move(item));
+  }
+
+  void buildMetadata() {
+    if (metadataBuilt)
+      return;
+    metadataItems.clear();
+    metadataBoundaries.clear();
+    metadataReferences.clear();
+    metadataRoles.clear();
+    if (const auto saved = cache.read("metadata")) {
+      try {
+        const auto document = Json::from_cbor(*saved, true, false);
+        if (document.is_array() && document.size() == 2 &&
+            document.at(0).is_array() && document.at(1).is_binary()) {
+          const auto &layouts = document.at(0);
+          const auto &bytes = document.at(1).get_binary();
+          std::vector<MetadataItem> templates;
+          for (const auto &layout : layouts) {
+            MetadataItem item;
+            item.type = layout.at(0).get<std::string>();
+            item.size = layout.at(1).get<std::uint64_t>();
+            for (const auto &field : layout.at(2))
+              item.fields.push_back({field.at(0).get<std::uint64_t>(),
+                                     field.at(1).get<std::uint64_t>(), 0,
+                                     field.at(2).get<std::string>(),
+                                     field.at(3).get<std::string>()});
+            templates.push_back(std::move(item));
+          }
+          std::size_t cursor = 0;
+          const auto number = [&]() {
+            if (bytes.size() - cursor < 8)
+              throw Error("cache_invalid", "Truncated metadata cache row");
+            std::uint64_t value = 0;
+            for (unsigned i = 0; i < 8; ++i)
+              value |= std::uint64_t(bytes[cursor++]) << (i * 8);
+            return value;
+          };
+          while (cursor < bytes.size()) {
+            const auto address = number();
+            auto item = templates.at(number());
+            item.address = address;
+            for (auto &field : item.fields)
+              field.target = number();
+            addMetadata(std::move(item));
+          }
+          finishMetadata();
+          return;
+        }
+        throw Error("cache_invalid", "Invalid metadata cache document");
+      } catch (const std::exception &error) {
+        cache.reject(error.what());
+        metadataItems.clear();
+        metadataBoundaries.clear();
+        metadataReferences.clear();
+        metadataRoles.clear();
+      }
+    }
+    if (!metadataVisit && !metadataQuery)
+      return;
+    for (std::optional<std::uint64_t> cursor = 0; cursor;) {
+      if (metadataVisit) {
+        struct Context {
+          Impl &listing;
+          std::exception_ptr error;
+        } context{*this, {}};
+        const auto consume =
+            [](void *opaque, const neverd_metadata_item_v1 *record) noexcept {
+              auto &context = *static_cast<Context *>(opaque);
+              try {
+                MetadataItem item;
+                item.address = record->address;
+                item.size = record->size;
+                item.type = record->type;
+                item.fields.reserve(record->field_count);
+                for (std::size_t i = 0; i < record->field_count; ++i) {
+                  const auto &field = record->fields[i];
+                  item.fields.push_back({field.offset, field.size, field.target,
+                                         field.name, field.role});
+                }
+                context.listing.addMetadata(std::move(item));
+                return 1;
+              } catch (...) {
+                context.error = std::current_exception();
+                return 0;
+              }
+            };
+        neverd_va_t next = 0;
+        const auto count = metadataVisit(
+            session, *cursor, ::neverd::limits::worker::kListingPointerPage,
+            consume, &context, &next);
+        if (context.error)
+          std::rethrow_exception(context.error);
+        if (count < 0)
+          throw Error("engine_error", takeString(neverd_last_error(session)));
+        cursor = next ? std::optional<std::uint64_t>(next) : std::nullopt;
+        continue;
+      }
+      const auto page = takeJson(metadataQuery(
+          session, *cursor, ::neverd::limits::worker::kListingPointerPage));
+      if (!page.is_object())
+        return;
+      cursor.reset();
+      for (const auto &row : page.at("items")) {
+        MetadataItem item;
+        item.address = jsonAddress(row.at("address"));
+        item.size = row.at("size").get<std::uint64_t>();
+        item.type = row.at("type").get<std::string>();
+        for (const auto &field : row.at("fields")) {
+          MetadataField value{field.at("offset").get<std::uint64_t>(),
+                              field.at("size").get<std::uint64_t>(),
+                              jsonAddress(field.at("target")),
+                              field.at("name").get<std::string>(),
+                              field.at("role").get<std::string>()};
+          item.fields.push_back(std::move(value));
+        }
+        addMetadata(std::move(item));
+      }
+      if (!page.at("next_address").is_null())
+        cursor = jsonAddress(page.at("next_address"));
+    }
+    finishMetadata();
+    cache.defer("metadata", [this] {
+      Json layouts = Json::array();
+      std::map<std::string, std::uint64_t> known;
+      std::vector<std::uint8_t> bytes;
+      const auto number = [&](std::uint64_t value) {
+        for (unsigned i = 0; i < 8; ++i)
+          bytes.push_back(static_cast<std::uint8_t>(value >> (i * 8)));
+      };
+      for (const auto &item : metadataItems) {
+        Json fields = Json::array();
+        for (const auto &field : item.fields)
+          fields.push_back({field.offset, field.size, field.name, field.role});
+        Json layout = {item.type, item.size, std::move(fields)};
+        const auto [found, added] =
+            known.try_emplace(layout.dump(), layouts.size());
+        if (added)
+          layouts.push_back(std::move(layout));
+        number(item.address);
+        number(found->second);
+        for (const auto &field : item.fields)
+          number(field.target);
+      }
+      const auto encoded =
+          Json::to_cbor(Json::array({layouts, Json::binary(bytes)}));
+      return std::string(encoded.begin(), encoded.end());
+    });
+  }
+
+  void finishMetadata() {
+    const auto order = [](const auto &a, const auto &b) {
+      return a.first < b.first;
+    };
+    if (!std::is_sorted(metadataRoles.begin(), metadataRoles.end(), order))
+      std::stable_sort(metadataRoles.begin(), metadataRoles.end(), order);
+    metadataRoles.erase(std::unique(metadataRoles.begin(), metadataRoles.end(),
+                                    [](const auto &a, const auto &b) {
+                                      return a.first == b.first;
+                                    }),
+                        metadataRoles.end());
+    std::sort(metadataBoundaries.begin(), metadataBoundaries.end());
+    metadataBoundaries.erase(
+        std::unique(metadataBoundaries.begin(), metadataBoundaries.end()),
+        metadataBoundaries.end());
+    metadataBuilt = true;
+  }
+
+  const std::string *metadataRole(std::uint64_t from, std::uint64_t to) const {
+    const auto key = std::pair{from, to};
+    const auto found =
+        std::lower_bound(metadataRoles.begin(), metadataRoles.end(), key,
+                         [](const MetadataRole &role, const auto &key) {
+                           return role.first < key;
+                         });
+    return found != metadataRoles.end() && found->first == key ? &found->second
+                                                               : nullptr;
+  }
+
+  const MetadataItem *metadataAt(std::uint64_t address) const {
+    const auto next =
+        std::upper_bound(metadataItems.begin(), metadataItems.end(), address,
+                         [](std::uint64_t at, const MetadataItem &item) {
+                           return at < item.address;
+                         });
+    if (next == metadataItems.begin())
+      return nullptr;
+    const auto &item = *std::prev(next);
+    return address - item.address < item.size ? &item : nullptr;
+  }
+
+  void buildDataBoundaries() {
+    dataBoundaries.clear();
+    for (const auto &[address, name] : dataNames)
+      dataBoundaries.insert(address);
+    for (const auto &[address, item] : userItems) {
+      dataBoundaries.insert(address);
+      dataBoundaries.insert(address + item.size);
+    }
+  }
+
+  void clipGap(std::uint64_t address, std::uint64_t &start,
+               std::uint64_t &end) const {
+    const auto clip = [&](const auto &boundaries, auto next) {
+      if (next != boundaries.end())
+        end = std::min(end, *next);
+      if (next != boundaries.begin())
+        start = std::max(start, *std::prev(next));
+    };
+    clip(metadataBoundaries,
+         std::upper_bound(metadataBoundaries.begin(), metadataBoundaries.end(),
+                          address));
+    clip(dataBoundaries, dataBoundaries.upper_bound(address));
+    if (indexState == IndexState::Ready) {
+      const auto next = std::upper_bound(
+          references.begin(), references.end(), address,
+          [](std::uint64_t at, const Reference &ref) { return at < ref.to; });
+      if (next != references.end())
+        end = std::min(end, next->to);
+      if (next != references.begin())
+        start = std::max(start, std::prev(next)->to);
+    }
+  }
+
+  void repeatItem(Item &item, std::uint64_t start, std::uint64_t end,
+                  std::uint64_t address) const {
+    const auto chunk = ::neverd::limits::worker::kListingMaxRepeatBytes;
+    const auto first = start + (address - start) / chunk * chunk;
+    const auto size = std::min(chunk, end - first);
+    std::vector<unsigned char> bytes(size);
+    if (neverd_read_bytes(session, first, bytes.data(),
+                          static_cast<int>(size)) != static_cast<int>(size))
+      return;
+    const auto value = bytes[address - first];
+    std::size_t begin = address - first, finish = begin + 1;
+    while (begin && bytes[begin - 1] == value)
+      --begin;
+    while (finish < bytes.size() && bytes[finish] == value)
+      ++finish;
+    if (finish - begin < ::neverd::limits::worker::kListingMinRepeatBytes)
+      return;
+    item.kind = ItemKind::Repeat;
+    item.start = first + begin;
+    item.size = finish - begin;
+  }
+
   void applyDisplayNames() {
     for (auto &function : functions)
       if (const auto name = pdbDisplayNames.find(function.entry);
@@ -830,17 +1163,30 @@ struct Listing::Impl {
     const auto entry = neverd_session_entry_addr(session);
     imageEntry = entry;
     runtimeEntries.clear();
+    std::string entryName(EntryFunctionName);
     if (const auto rows = takeJson(neverd_entrypoints_json(session));
         rows.is_array())
       for (const auto &row : rows) {
         const auto type = row.value("type", std::string());
+        if (type == "entry")
+          entryName = row.value("suggested_name", entryName);
 #define NEVERD_RUNTIME_ENTRY_TYPE(Type)                                        \
   if (type == Type)                                                            \
     runtimeEntries.insert(jsonAddress(row.value("addr", Json())));
 #include "ListingVocabulary.def"
       }
-    if (auto *function = functionAtEntry(entry))
-      rename(*function, std::string(EntryFunctionName));
+    if (auto *function = functionAtEntry(entry)) {
+      rename(*function, entryName);
+      readPresentation(*function);
+      if (function->thunk && entryName != EntryFunctionName &&
+          functionPresentation) {
+        const auto value = takeJson(functionPresentation(session, entry));
+        if (value.is_object() && value.contains("thunk_target"))
+          if (auto *target =
+                  functionAtEntry(jsonAddress(value.at("thunk_target"))))
+            rename(*target, function->name + "_0");
+      }
+    }
     aliases.clear();
     for (const auto &function : functions)
       if (function.name != function.engineName) {
@@ -1057,15 +1403,49 @@ struct Listing::Impl {
   void buildFunctions(int count) {
     functions.clear();
     functions.reserve(std::max(count, 0));
-    for (int index = 0; index < count; ++index) {
-      Function function;
-      function.entry = neverd_func_entry(session, index);
-      function.size = static_cast<std::uint64_t>(
-          std::max(0, neverd_func_size(session, index)));
-      function.name = takeString(neverd_func_name(session, index));
-      function.engineName = function.name;
-      functions.push_back(std::move(function));
+    const bool cachedCatalog = initialCatalog && !discovered;
+    initialCatalog = false;
+    const auto key = "catalog-" + std::to_string(count);
+    const auto saved = cachedCatalog ? cache.read(key) : std::nullopt;
+    Json catalog = saved ? Json::from_cbor(*saved, true, false) : Json();
+    bool restored = false;
+    if (saved) {
+      try {
+        if (!catalog.is_array() ||
+            catalog.size() != static_cast<std::size_t>(count))
+          throw Error("cache_invalid", "Invalid function catalog cache");
+        for (const auto &row : catalog) {
+          Function function;
+          function.entry = row.at(0).get<std::uint64_t>();
+          function.size = row.at(1).get<std::uint64_t>();
+          function.engineName = function.name = row.at(2).get<std::string>();
+          functions.push_back(std::move(function));
+        }
+        restored = true;
+      } catch (const std::exception &error) {
+        cache.reject(error.what());
+        functions.clear();
+      }
     }
+    if (!restored) {
+      for (int index = 0; index < count; ++index) {
+        Function function;
+        function.entry = neverd_func_entry(session, index);
+        function.size = static_cast<std::uint64_t>(
+            std::max(0, neverd_func_size(session, index)));
+        function.name = takeString(neverd_func_name(session, index));
+        function.engineName = function.name;
+        functions.push_back(std::move(function));
+      }
+    }
+    if (cachedCatalog && !restored && cache.writable())
+      cache.defer(key, [catalog = functions] {
+        Json rows = Json::array();
+        for (const auto &function : catalog)
+          rows.push_back({function.entry, function.size, function.engineName});
+        const auto bytes = Json::to_cbor(rows);
+        return std::string(bytes.begin(), bytes.end());
+      });
     std::stable_sort(
         functions.begin(), functions.end(),
         [](const Function &a, const Function &b) { return a.entry < b.entry; });
@@ -1108,6 +1488,27 @@ struct Listing::Impl {
           function.library = owner->library;
           function.thunk = owner->thunk;
         }
+  }
+
+  Json functionTable(const std::vector<Function> &catalog) {
+    Json rows = Json::array();
+    for (const auto &function : catalog) {
+      if (function.chunkOf)
+        continue;
+      Json row = {{"name", function.name},
+                  {"address", hexAddress(function.entry)},
+                  {"size", function.end - function.entry},
+                  {"library", function.library},
+                  {"thunk", function.thunk},
+                  {"exported", function.exported}};
+      if (function.engineName != function.name)
+        row["engine_name"] = function.engineName;
+      if (const auto &readable = demangledName(function.name);
+          !readable.empty())
+        row["demangled_name"] = readable;
+      rows.push_back(std::move(row));
+    }
+    return rows;
   }
 
   /// List the parts of functions that lie apart from their bodies, as the
@@ -1790,12 +2191,101 @@ struct Listing::Impl {
     return instructionRows(takeJson(raw));
   }
 
-  /// The stack variables of a function: offsets it addresses through the
-  /// frame register its prologue sets up (`push rbp; mov rbp, rsp`, after an
-  /// optional endbr), or through the stack register where the stack pointer
-  /// is tracked.  An offset starts a variable as wide as its widest access (a
-  /// byte when only its address is taken), unless it falls inside the
-  /// variable below it.
+  /// Project the owning function's proved entry-SP coordinates. Frame aliases
+  /// are instruction-specific; an unknown or overwritten register cannot keep
+  /// the preceding alias. This also handles noncanonical prologues and chunks.
+  bool buildSemanticFrame(DecodedFunction &body, std::uint64_t owner) {
+    using Inspect =
+        const char *(*)(neverd_session_t, neverd_va_t, const char *);
+    const auto inspect = engineSymbol<Inspect>("neverd_stack_frame_json");
+    if (!wide || pointerSize != 8 || !inspect)
+      return false;
+    const auto policy = stackFrames.find(owner);
+    const auto options =
+        policy == stackFrames.end() ? "{}" : policy->second.dump();
+    const auto flow = cache.query(
+        "frame-" + inventoryKey + "-" + std::to_string(owner) + "-" + options,
+        [&] { return takeJson(inspect(session, owner, options.c_str())); },
+        [](const Json &value) {
+          return value.is_object() && value.value("valid", false) &&
+                 value.contains("instructions") &&
+                 value.at("instructions").is_array();
+        });
+    if (flow.is_null())
+      return false;
+    const auto &rows = flow.at("instructions");
+    if (rows.empty() || !rows.front().contains("frame_before"))
+      return false;
+    body.semanticFrame = true;
+    body.stackRegister = "rsp";
+    std::optional<std::int64_t> preferredFrame;
+    std::map<std::uint64_t, std::pair<std::optional<std::int64_t>,
+                                      std::optional<std::int64_t>>>
+        coordinates;
+    for (const auto &row : rows) {
+      const auto number = [&](const char *key) -> std::optional<std::int64_t> {
+        return row.at(key).is_number_integer()
+                   ? std::optional(row.at(key).get<std::int64_t>())
+                   : std::nullopt;
+      };
+      const auto frame = number("frame_before");
+      const auto address = jsonAddress(row.at("address"));
+      coordinates.emplace(address, std::pair{number("before"), frame});
+      if (!preferredFrame && frame && address >= owner)
+        preferredFrame = frame;
+    }
+    for (auto &instruction : body.instructions) {
+      if (const auto point = coordinates.find(instruction.address);
+          point != coordinates.end()) {
+        instruction.stackDelta = point->second.first;
+        instruction.frameDelta = point->second.second;
+      }
+      if (body.frameRegister.empty() && instruction.frameDelta) {
+        body.frameRegister = "rbp";
+        body.frameBase = preferredFrame.value_or(*instruction.frameDelta);
+      }
+    }
+    std::map<std::int64_t, unsigned> accesses;
+    for (const auto &instruction : body.instructions) {
+      auto access = instruction.frameDelta
+                        ? x86FrameAccess(instruction.operands, "rbp")
+                        : std::nullopt;
+      auto coordinate = instruction.frameDelta;
+      if (!access && instruction.stackDelta) {
+        access = x86FrameAccess(instruction.operands, "rsp");
+        coordinate = instruction.stackDelta;
+      }
+      if (!access || !coordinate)
+        continue;
+      const auto entryOffset = *coordinate + access->offset;
+      // Return-address storage and a conventional pushed frame pointer keep
+      // their ABI roles. Other observed negative slots may hold saved state.
+      if ((entryOffset >= 0 && entryOffset < pointerSize) ||
+          (body.frameBase == -static_cast<std::int64_t>(pointerSize) &&
+           entryOffset == body.frameBase))
+        continue;
+      auto &size = accesses[entryOffset - body.frameBase];
+      size = std::max(size, access->size);
+    }
+    std::int64_t covered = std::numeric_limits<std::int64_t>::min();
+    for (const auto &[offset, size] : accesses) {
+      if (offset < covered)
+        continue;
+      const auto bytes = std::max(1u, size);
+      body.frame.emplace(offset, bytes);
+      covered = offset + bytes;
+    }
+    if (policy != stackFrames.end())
+      for (const auto &variable :
+           policy->second.value("variables", Json::array())) {
+        const auto offset =
+            variable.at("offset").get<std::int64_t>() - body.frameBase;
+        body.manualNames[offset] = variable.at("name").get<std::string>();
+        body.frame[offset] = variable.at("bytes").get<unsigned>();
+      }
+    return true;
+  }
+
   void buildFrame(DecodedFunction &body) const {
     const auto &instructions = body.instructions;
     std::size_t first =
@@ -1972,6 +2462,8 @@ struct Listing::Impl {
     if (const auto It = body.manualNames.find(offset);
         It != body.manualNames.end())
       return It->second;
+    if (offset >= 0 && offset + body.frameBase < 0)
+      return std::string(SavedPrefix) + upperHex(offset);
     return offset < 0 ? std::string(LocalPrefix) + upperHex(-offset)
                       : std::string(ArgumentPrefix) +
                             upperHex(offset - argumentBase(body));
@@ -1993,12 +2485,17 @@ struct Listing::Impl {
     auto &function = functions[index];
     if (auto it = decoded.find(function.entry); it != decoded.end())
       return it->second;
+    readPresentation(function);
     DecodedFunction body;
     body.entry = function.entry;
     std::uint64_t cursor = function.entry;
     std::uint64_t furthestTarget = 0;
     bool stop = false;
-    bool recovered = functionDisasm && native;
+    // Presentation has proved a forwarding entry's transfer. Recovering its
+    // callee's CFG just to trim it back to this instruction delays browsing
+    // and cannot contribute a frame to the forwarding entry.
+    const bool forwarding = function.thunk && !function.chunkOf;
+    bool recovered = functionDisasm && native && !forwarding;
     bool complete = true;
     if (recovered) {
       // A distant chunk projects its owner's recovered CFG. Selecting the
@@ -2008,11 +2505,23 @@ struct Listing::Impl {
       cursor = 0; // A continuation may precede its function's entry.
       std::optional<std::uint64_t> previousAddress;
       for (;;) {
-        const char *raw = functionDisasm(
-            session, entry, cursor,
-            ::neverd::limits::worker::kListingMaxDecodeChunk,
-            NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK | NEVERD_DISASM_OPERANDS);
-        if (!raw) {
+        const auto page = cache.query(
+            "disasm-" + inventoryKey + "-" + std::to_string(entry) + "-" +
+                std::to_string(cursor),
+            [&] {
+              return takeJson(functionDisasm(
+                  session, entry, cursor,
+                  ::neverd::limits::worker::kListingMaxDecodeChunk,
+                  NEVERD_DISASM_FLOW | NEVERD_DISASM_STACK |
+                      NEVERD_DISASM_OPERANDS));
+            },
+            [](const Json &value) {
+              return value.is_object() && value.value("lift_complete", false) &&
+                     value.contains("instructions") &&
+                     value.at("instructions").is_array() &&
+                     value.contains("next_address");
+            });
+        if (page.is_null()) {
           const auto reason = takeString(neverd_last_error(session));
           if (previousAddress)
             throw Error("analysis_failed", reason);
@@ -2023,7 +2532,6 @@ struct Listing::Impl {
           recovered = false;
           break;
         }
-        const auto page = takeJson(raw);
         complete &= page.value("lift_complete", false);
         auto chunk = instructionRows(page.at("instructions"));
         for (auto &instruction : chunk) {
@@ -2071,8 +2579,9 @@ struct Listing::Impl {
     // An unsized body usually ends within a few dozen instructions; growing
     // chunks keep the engine from lifting far past its terminator.
     std::size_t chunkSize =
-        function.size ? ::neverd::limits::worker::kListingMaxDecodeChunk
-                      : ::neverd::limits::worker::kListingFirstUnsizedChunk;
+        forwarding      ? 1
+        : function.size ? ::neverd::limits::worker::kListingMaxDecodeChunk
+                        : ::neverd::limits::worker::kListingFirstUnsizedChunk;
     while (!stop && cursor < function.end &&
            body.instructions.size() <
                ::neverd::limits::worker::kListingMaxUnsizedInstructions) {
@@ -2096,13 +2605,31 @@ struct Listing::Impl {
         body.instructions.push_back(std::move(instruction));
         // An unsized function's body ends at a terminator that no earlier
         // branch jumps beyond.
-        if (!function.size && !fallsThrough(flow) && cursor > furthestTarget) {
+        if ((forwarding || !function.size) && !fallsThrough(flow) &&
+            cursor > furthestTarget) {
           stop = true;
           break;
         }
       }
       if (chunk.size() < requested)
         break;
+    }
+    // A pure forwarding entry owns the transfer instruction, even when the
+    // loader's unwind range also covers padding or the original function.
+    // Keep the runtime range in the engine; trim only this listing identity.
+    if (function.thunk) {
+      const auto head = std::lower_bound(
+          body.instructions.begin(), body.instructions.end(), function.entry,
+          [](const Instruction &i, std::uint64_t at) {
+            return i.address < at;
+          });
+      if (head != body.instructions.end() && head->address == function.entry &&
+          (head->flow == Flow::Jump || head->flow == Flow::IndirectJump)) {
+        Instruction transfer = *head;
+        cursor = transfer.address + transfer.size;
+        body.instructions = {std::move(transfer)};
+        function.end = std::min(function.end, cursor);
+      }
     }
     body.end = body.instructions.empty() ? function.entry + 1 : cursor;
     if (!function.size)
@@ -2141,6 +2668,8 @@ struct Listing::Impl {
       if (indexState == IndexState::Ready) {
         std::erase_if(references, [&](const Reference &reference) {
           if (!overlay.contains(reference.from))
+            return false;
+          if (metadataRole(reference.from, reference.to))
             return false;
           // These facts are owned by relocated storage and switch recovery,
           // not the instruction scan whose results this body supersedes.
@@ -2181,12 +2710,11 @@ struct Listing::Impl {
             it->kind == RefKind::IndirectJump)
           body.labels.insert(it->to);
     }
-    // A chunk runs in its function's frame, which its own code does not
-    // set up: its stack operands stay as they are.
-    if (dialect == OperandDialect::X86 && !function.chunkOf)
+    if (!forwarding && dialect == OperandDialect::X86 &&
+        !buildSemanticFrame(body, ownerOf(index).entry) && !function.chunkOf)
       buildFrame(body);
     if (const auto Frame = stackFrames.find(function.entry);
-        Frame != stackFrames.end()) {
+        !body.semanticFrame && Frame != stackFrames.end()) {
       using Inspect =
           const char *(*)(neverd_session_t, neverd_va_t, const char *);
       if (const auto inspect =
@@ -2416,6 +2944,14 @@ struct Listing::Impl {
     Item item;
     item.region = r;
     item.start = address;
+    if (const auto *metadata = metadataAt(address);
+        metadata && metadata->address >= region.start &&
+        metadata->size <= region.end - metadata->address) {
+      item.kind = ItemKind::Metadata;
+      item.start = metadata->address;
+      item.size = metadata->size;
+      return item;
+    }
     if (address >= region.initializedEnd) {
       if (const auto *data = autoDataAt(address)) {
         item.kind =
@@ -2503,13 +3039,16 @@ struct Listing::Impl {
               before.address + before.length + before.unit > gapStart)
             gapStart = before.address + before.length + before.unit;
       }
-      if (gapStart <= address && address < gapEnd)
+      if (gapStart <= address && address < gapEnd) {
+        clipGap(address, gapStart, gapEnd);
         if (const auto alignment = paddingAlignment(gapStart, gapEnd)) {
           item.kind = ItemKind::Align;
           item.start = gapStart;
           item.size = gapEnd - gapStart;
           item.alignment = alignment;
-        }
+        } else
+          repeatItem(item, gapStart, gapEnd, address);
+      }
       return item;
     }
     if (asSwitchEntry(item, region, address))
@@ -2701,6 +3240,11 @@ struct Listing::Impl {
   }
 
   std::string locationText(std::uint64_t address) {
+    if (metadataAt(address)) {
+      const auto region = regionIndex(address);
+      return (region < 0 ? "?" : regions[region].name) + ":" +
+             upperHex(address, addressDigits);
+    }
     if (const int f = functionIndexCoarse(address); f >= 0) {
       // A chunk's code reads as its function's, before or after the entry.
       const auto &function = ownerOf(f);
@@ -2751,6 +3295,7 @@ struct Listing::Impl {
              : functions[item.function].library ? AddressClass::LibraryFunction
                                                 : AddressClass::RegularFunction;
     case ItemKind::Byte:
+    case ItemKind::Repeat:
       return AddressClass::Unexplored;
     case ItemKind::Slot:
       return AddressClass::External;
@@ -2760,6 +3305,7 @@ struct Listing::Impl {
     case ItemKind::Pointer:
     case ItemKind::SwitchEntry:
     case ItemKind::Data:
+    case ItemKind::Metadata:
       return AddressClass::Data;
     }
     return AddressClass::Unexplored;
@@ -3038,7 +3584,11 @@ struct Listing::Impl {
       frame = [this, body](std::int64_t offset) {
         return frameSlot(*body, offset);
       };
-      facts.frameRegister = body->frameRegister;
+      if (!body->semanticFrame || instruction.frameDelta) {
+        facts.frameRegister = body->frameRegister;
+        if (instruction.frameDelta)
+          facts.frameDepth = body->frameBase - *instruction.frameDelta;
+      }
       if (const auto depth = stackDepth(*body, instruction)) {
         facts.stackRegister = body->stackRegister;
         facts.stackDepth = *depth;
@@ -3168,11 +3718,17 @@ struct Listing::Impl {
       addLine(out, item, item.start, "blank", {});
       // A mangled name reads demangled above, where a classic listing puts
       // the prototype.
-      if (const auto &readable = demangledName(function.name);
-          !readable.empty()) {
+      auto prototype = function.prototype;
+      if (!function.prototypeName.empty())
+        if (const auto at = prototype.find(function.prototypeName + "(");
+            at != std::string::npos)
+          prototype.replace(at, function.prototypeName.size(), function.name);
+      if (prototype.empty())
+        prototype = demangledName(function.name);
+      if (!prototype.empty()) {
         StyledText line = lead(
             base - ::neverd::limits::worker_config::kListingNameColumnWidth);
-        line.append("; " + readable, ListingRole::AutoComment);
+        line.append("; " + prototype, ListingRole::AutoComment);
         addLine(out, item, item.start, "comment", std::move(line));
       }
       // The entry point is public like every export.
@@ -3362,6 +3918,35 @@ struct Listing::Impl {
       head.append(name.text, name.role, item.start);
     };
     switch (item.kind) {
+    case ItemKind::Metadata: {
+      const auto &record = *metadataAt(item.start);
+      named(ListingRole::Plain);
+      head.padTo(base);
+      head.append(record.type, ListingRole::Keyword);
+      head.append(" <", ListingRole::Punctuation);
+      for (const auto &field : record.fields) {
+        if (&field != &record.fields.front())
+          head.append(", ", ListingRole::Punctuation);
+        head.append("rva ", ListingRole::Keyword);
+        const auto name = nameOf(field.target, NameUse::Address, {});
+        head.append(name.text.empty() ? hexAddress(field.target) : name.text,
+                    name.role, field.target);
+      }
+      head.append(">", ListingRole::Punctuation);
+      break;
+    }
+    case ItemKind::Repeat: {
+      named(ListingRole::Plain);
+      head.padTo(base);
+      head.append("db ", ListingRole::Directive);
+      head.append(x86Number(item.size), ListingRole::Number);
+      head.append(" dup(", ListingRole::Directive);
+      unsigned char value = 0;
+      neverd_read_bytes(session, item.start, &value, 1);
+      head.append(x86Number(value), ListingRole::Number);
+      head.append(")", ListingRole::Punctuation);
+      break;
+    }
     case ItemKind::Byte: {
       named(ListingRole::Plain);
       head.padTo(base);
@@ -3745,6 +4330,8 @@ struct Listing::Impl {
           cursor = jsonAddress(next);
       }
     indexState = IndexState::Ready;
+    references.insert(references.end(), metadataReferences.begin(),
+                      metadataReferences.end());
     references.insert(references.end(), switchReferences.begin(),
                       switchReferences.end());
     sortReferences();
@@ -3766,7 +4353,8 @@ struct Listing::Impl {
                             overlay.ranges.end());
     covered.mergeRanges();
     std::erase_if(references, [&](const Reference &reference) {
-      return covered.contains(reference.from);
+      return covered.contains(reference.from) &&
+             !metadataRole(reference.from, reference.to);
     });
     for (const auto &[entry, overlay] : recoveredReferences)
       references.insert(references.end(), overlay.rows.begin(),
@@ -4050,7 +4638,19 @@ struct Listing::Impl {
 
 Listing::Listing(neverd_session_t session)
     : impl_(std::make_unique<Impl>(session)) {}
-Listing::~Listing() = default;
+Listing::~Listing() { impl_->cache.flush(); }
+
+void Listing::configureCache(std::filesystem::path folder,
+                             std::function<Json()> identity, bool writable,
+                             AtomicWriter writer) {
+  impl_->cache.configure(std::move(folder), std::move(identity), writable,
+                         writer);
+}
+
+bool Listing::cachePending() const { return impl_->cache.pending(); }
+void Listing::flushCacheOne() { impl_->cache.flushOne(); }
+void Listing::flushCache() { impl_->cache.flush(); }
+Json Listing::cacheStats() const { return impl_->cache.stats(); }
 
 void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
   impl_->stackFrames.clear();
@@ -4062,16 +4662,22 @@ void Listing::setStackFrames(const Json &rows, const std::string &imageHash) {
 }
 
 void Listing::invalidate() {
+  impl_->cache.invalidate();
   impl_->built = false;
+  impl_->metadataBuilt = false;
   ++impl_->generation;
 }
 
 void Listing::namesChanged() {
+  impl_->cache.invalidate();
   impl_->namesStale = true;
   ++impl_->generation;
 }
 
+void Listing::commentsChanged() { impl_->cache.invalidate(); }
+
 void Listing::reloadNumberFormats() {
+  impl_->cache.invalidate();
   impl_->dataElementTypes.clear();
   // A listing that is not built yet reads them as it builds.
   if (impl_->built)
@@ -4244,6 +4850,32 @@ Json Listing::indexState() const {
 
 Json Listing::page(const Json &payload) {
   auto &d = *impl_;
+  const bool initial = std::exchange(d.initialPage, false) && !d.discovered &&
+                       d.decoded.empty() && d.recoveredReferences.empty();
+  // Reuse the first bounded structured viewport before reconstructing the
+  // whole browsing index. Later queries use the live listing. Only a page
+  // produced from the untouched loader catalog is eligible for this shortcut.
+  if (!initial)
+    return uncachedPage(payload);
+  const auto count = neverd_func_count(d.session);
+  auto result = d.cache.query(
+      "initial-page-" + std::to_string(count) + "-" + payload.dump(),
+      [&] { return uncachedPage(payload); },
+      [&](const Json &page) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               page.is_object() && page.contains("lines") &&
+               page.at("lines").is_array() && page.contains("anchor") &&
+               page.at("anchor").is_number_integer() &&
+               page.contains("at_start") && page.at("at_start").is_boolean() &&
+               page.contains("at_end") && page.at("at_end").is_boolean();
+      });
+  result["generation"] = std::to_string(d.generation);
+  result["index"] = indexState();
+  return result;
+}
+
+Json Listing::uncachedPage(const Json &payload) {
+  auto &d = *impl_;
   d.build();
   if (d.regions.empty())
     return {{"lines", Json::array()},
@@ -4256,7 +4888,7 @@ Json Listing::page(const Json &payload) {
                 ::neverd::limits::worker::kListingMaxOpcodeBytes));
   const auto before = sizeField(payload, "before", 0,
                                 ::neverd::limits::worker::kListingMaxPageLines);
-  const auto after =
+  auto after =
       sizeField(payload, "after",
                 ::neverd::limits::worker::kListingPageAfterSizeFieldDefault,
                 ::neverd::limits::worker::kListingMaxPageLines);
@@ -4315,8 +4947,18 @@ Json Listing::page(const Json &payload) {
   }
   std::vector<Line> backward(forward.begin(), forward.begin() + sub);
   forward.erase(forward.begin(), forward.begin() + sub);
+  if (const auto complete = payload.find("complete_anchor_item");
+      complete != payload.end()) {
+    if (!complete->is_boolean())
+      throw Error("invalid_request", "complete_anchor_item must be boolean");
+    if (complete->get<bool>())
+      after = std::max(
+          after, std::min(forward.size(),
+                          ::neverd::limits::worker::kListingMaxPageLines));
+  }
   std::optional<Item> next = anchor, previous = anchor;
-  bool atEnd = false, atStart = false;
+  bool atEnd = false;
+  bool atStart = sub == 0 && anchor->start == d.regions.front().start;
   while (forward.size() < after) {
     next = d.nextItem(*next);
     if (!next) {
@@ -4341,7 +4983,8 @@ Json Listing::page(const Json &payload) {
     for (auto it = lines.rbegin(); it != lines.rend(); ++it)
       reversed.push_back(std::move(*it));
   }
-  if (!atStart && reversed.empty() && sub == 0 && !d.previousItem(*anchor))
+  if (before && !atStart && reversed.empty() && sub == 0 &&
+      !d.previousItem(*anchor))
     atStart = true;
   if (reversed.size() > before)
     reversed.resize(before);
@@ -4362,6 +5005,24 @@ Json Listing::page(const Json &payload) {
 }
 
 Json Listing::overview(const Json &payload) {
+  auto &d = *impl_;
+  if (d.discovered || !d.decoded.empty() || !d.recoveredReferences.empty())
+    return uncachedOverview(payload);
+  const auto count = neverd_func_count(d.session);
+  auto result = d.cache.query(
+      "initial-overview-" + std::to_string(count) + "-" + payload.dump(),
+      [&] { return uncachedOverview(payload); },
+      [&](const Json &value) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               value.is_object() && value.contains("regions") &&
+               value.at("regions").is_array() && value.contains("buckets") &&
+               value.at("buckets").is_string();
+      });
+  result["generation"] = std::to_string(d.generation);
+  return result;
+}
+
+Json Listing::uncachedOverview(const Json &payload) {
   auto &d = *impl_;
   d.build();
   const auto buckets = std::max<std::size_t>(
@@ -4473,7 +5134,8 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
   Json items = Json::array();
   std::size_t total = 0;
   const auto row = [&](std::uint64_t from, std::uint64_t to, RefKind kind) {
-    const int f = d.functionIndexCoarse(direction == "to" ? from : to);
+    const auto location = direction == "to" ? from : to;
+    const int f = d.metadataAt(location) ? -1 : d.functionIndexCoarse(location);
     Json item = {{"address", hexAddress(direction == "to" ? from : to)},
                  {"from", hexAddress(from)},
                  {"to", hexAddress(to)},
@@ -4483,6 +5145,10 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
                  {"function", f >= 0 ? d.ownerOf(f).name : std::string()}};
     if (f >= 0)
       item["function_address"] = hexAddress(d.ownerOf(f).entry);
+    if (const auto *role = d.metadataRole(from, to)) {
+      item["provenance"] = "metadata";
+      item["metadata_role"] = *role;
+    }
     return item;
   };
   if (direction == "to") {
@@ -4506,24 +5172,35 @@ Json Listing::references(std::uint64_t address, const Json &payload) {
          it != end && items.size() < limit; ++it)
       items.push_back(row(it->from, it->to, it->kind));
   } else if (direction == "from") {
-    std::vector<std::pair<std::uint64_t, RefKind>> refs;
-    if (auto item = d.itemAt(address);
-        item && item->kind == ItemKind::Instruction) {
-      const auto &instruction = d.instructionOf(*item);
-      if (instruction.target) {
-        const auto kind = instruction.flow == Flow::Call   ? RefKind::Call
-                          : instruction.flow == Flow::Jump ? RefKind::Jump
-                                                           : RefKind::CondJump;
-        refs.push_back({*instruction.target, kind});
+    if (const auto *record = d.metadataAt(address)) {
+      total = record->fields.size();
+      for (std::size_t i = std::min(offset, total);
+           i < total && items.size() < limit; ++i) {
+        const auto &field = record->fields[i];
+        items.push_back(
+            row(record->address + field.offset, field.target, RefKind::Offset));
       }
-      for (const auto &ref : instruction.refs)
-        refs.push_back(ref);
-      address = instruction.address;
+    } else {
+      std::vector<std::pair<std::uint64_t, RefKind>> refs;
+      if (auto item = d.itemAt(address);
+          item && item->kind == ItemKind::Instruction) {
+        const auto &instruction = d.instructionOf(*item);
+        if (instruction.target) {
+          const auto kind = instruction.flow == Flow::Call ? RefKind::Call
+                            : instruction.flow == Flow::Jump
+                                ? RefKind::Jump
+                                : RefKind::CondJump;
+          refs.push_back({*instruction.target, kind});
+        }
+        for (const auto &ref : instruction.refs)
+          refs.push_back(ref);
+        address = instruction.address;
+      }
+      total = refs.size();
+      for (std::size_t i = std::min(offset, total);
+           i < total && items.size() < limit; ++i)
+        items.push_back(row(address, refs[i].first, refs[i].second));
     }
-    total = refs.size();
-    for (std::size_t i = std::min(offset, total);
-         i < total && items.size() < limit; ++i)
-      items.push_back(row(address, refs[i].first, refs[i].second));
   } else {
     throw Error("invalid_request", "direction must be to or from");
   }
@@ -4791,6 +5468,10 @@ std::string_view itemKindName(ItemKind kind) {
     return "switch_entry";
   case ItemKind::Data:
     return "data";
+  case ItemKind::Metadata:
+    return "metadata";
+  case ItemKind::Repeat:
+    return "repeat";
   }
   return "byte";
 }
@@ -4881,27 +5562,32 @@ Json Listing::blockLines(std::uint64_t start, std::uint64_t end) {
 
 const Json &Listing::functionRows() {
   auto &d = *impl_;
+  if (d.built || d.discovered)
+    return uncachedFunctionRows();
+  const auto count = neverd_func_count(d.session);
+  if (!d.functionRowsCache.is_null() &&
+      d.functionRowsGeneration == d.generation &&
+      d.functionRowsCache.size() == static_cast<std::size_t>(count))
+    return d.functionRowsCache;
+  auto rows = d.cache.query(
+      "initial-functions-" + std::to_string(count),
+      [&] { return Json(uncachedFunctionRows()); },
+      [&](const Json &value) {
+        return !d.discovered && neverd_func_count(d.session) == count &&
+               value.is_array() &&
+               value.size() == static_cast<std::size_t>(count);
+      });
+  d.functionRowsCache = std::move(rows);
+  d.functionRowsGeneration = d.generation;
+  return d.functionRowsCache;
+}
+
+const Json &Listing::uncachedFunctionRows() {
+  auto &d = *impl_;
   d.build();
   if (d.functionRowsGeneration != d.generation ||
       d.functionRowsCache.is_null()) {
-    Json rows = Json::array();
-    for (const auto &function : d.functions) {
-      if (function.chunkOf)
-        continue;
-      Json row = {{"name", function.name},
-                  {"address", hexAddress(function.entry)},
-                  {"size", function.end - function.entry},
-                  {"library", function.library},
-                  {"thunk", function.thunk},
-                  {"exported", function.exported}};
-      if (function.engineName != function.name)
-        row["engine_name"] = function.engineName;
-      if (const auto &readable = d.demangledName(function.name);
-          !readable.empty())
-        row["demangled_name"] = readable;
-      rows.push_back(std::move(row));
-    }
-    d.functionRowsCache = std::move(rows);
+    d.functionRowsCache = d.functionTable(d.functions);
     d.functionRowsGeneration = d.generation;
   }
   return d.functionRowsCache;
@@ -4969,6 +5655,7 @@ Json Listing::regions() {
 }
 
 Json Listing::assemblySymbols(std::uint64_t address) {
+  impl_->build();
   Json result = Json::object();
   const auto item = impl_->itemAt(address);
   if (!item || item->function < 0)

@@ -90,15 +90,17 @@ void NavigationBand::requestOverview() {
   if (!session_.loaded())
     return;
   const quint64 serial = ++serial_;
-  session_.read(QStringLiteral("overview"), {{"buckets", bandRect().width()}},
-                this, [this, serial](const QJsonObject &payload) {
-                  if (serial != serial_)
-                    return;
-                  classes_ = payload.value("buckets").toString().toLatin1();
-                  space_.reset(payload.value("regions").toArray());
-                  emit spaceChanged();
-                  update();
-                });
+  session_.read(
+      QStringLiteral("overview"), {{"buckets", bandRect().width()}}, this,
+      [this, serial](const QJsonObject &payload) {
+        if (serial != serial_)
+          return;
+        classes_ = payload.value("buckets").toString().toLatin1();
+        space_.reset(payload.value("regions").toArray());
+        emit spaceChanged();
+        update();
+      },
+      {}, QueryService::QuerySpec::Visible);
 }
 
 void NavigationBand::setCurrent(std::optional<Address> address) {

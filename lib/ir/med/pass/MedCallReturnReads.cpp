@@ -357,7 +357,430 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       CallEnds.emplace(Calls[I], EntryStackOffsetRange{*Offset, *Offset});
     else
       CallEnds.emplace(Calls[I], std::nullopt);
+  // Whether every load's history reaches no CALL write in Ends, which are
+  // bounded from above by Bounds where they have no range.
+  const auto Observe = [&](const std::map<const MedOp *,
+                                          std::optional<EntryStackOffsetRange>>
+                               &Ends,
+                           const std::map<const MedOp *, int64_t> &Bounds,
+                           size_t &Budget) {
+    std::vector<std::pair<int64_t, int64_t>> Ranges;
+    bool UnknownLocation = false;
+    for (const auto &[Call, End] : Ends) {
+      if (!End)
+        if (const auto Below = Bounds.find(Call); Below != Bounds.end()) {
+          Ranges.emplace_back(std::numeric_limits<int64_t>::min(),
+                              Below->second);
+          continue;
+        }
+      if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
+        UnknownLocation = true;
+        continue;
+      }
+      Ranges.emplace_back(End->Min - Width, End->Max);
+    }
+    llvm::sort(Ranges);
+    std::vector<std::pair<int64_t, int64_t>> Merged;
+    for (const auto &Range : Ranges) {
+      if (Merged.empty() || Merged.back().second < Range.first)
+        Merged.push_back(Range);
+      else
+        Merged.back().second = std::max(Merged.back().second, Range.second);
+    }
+    auto OverlapsCall = [&](const Access &Load) {
+      if (UnknownLocation)
+        return true;
+      const auto It = std::lower_bound(Merged.begin(), Merged.end(), Load.Begin,
+                                       [](const auto &Range, int64_t Begin) {
+                                         return Range.second <= Begin;
+                                       });
+      return It != Merged.end() && It->first < Load.End;
+    };
+    if (llvm::none_of(Loads, OverlapsCall))
+      return true;
+    for (const MedBlock &Block : Func.Blocks)
+      if (!charge(Budget, Block.Preds.size()) ||
+          !charge(Budget, Block.Succs.size()) ||
+          !charge(Budget, Block.ExceptionalPreds.size()) ||
+          !charge(Budget, Block.ExceptionalSuccs.size()))
+        return Exhausted();
+    const MedBlockIdIndex Blocks(Func);
+    const safety::detail::ExactPhiGraph Graph(Func);
+    for (const MedBlock &Block : Func.Blocks)
+      if (!Graph.hasCompleteNormalPredecessors(Block))
+        return Refuse("CALL return-slot observation requires a complete normal "
+                      "control-flow graph");
+    std::map<int, std::set<ExceptionalEdge>> ExceptionalIncoming;
+    for (const MedBlock &Block : Func.Blocks)
+      for (const ExceptionalEdge &Edge : Block.ExceptionalSuccs) {
+        if (!charge(Budget, Edge.contexts().size()))
+          return Exhausted();
+        if (Edge.BlockId >= 0) {
+          auto Reverse = Edge;
+          Reverse.BlockId = Block.Id;
+          ExceptionalIncoming[Edge.BlockId].insert(std::move(Reverse));
+        }
+      }
+    // Once stack addresses are fixed, only a proven STORE or a possible CALL
+    // write changes this byte history. Canonicalize operation prefixes to these
+    // events so arithmetic, loads and repeated exception prefixes share states.
+    std::map<int, std::vector<size_t>> Events;
+    for (const MedBlock &Block : Func.Blocks)
+      Events.try_emplace(Block.Id);
+    for (const auto &[Op, Store] : Stores)
+      Events.at(Store.Block).push_back(Store.Position);
+    for (const auto &[Op, End] : Ends) {
+      const auto [Block, Position] = Positions.at(Op);
+      Events.at(Block).push_back(Position);
+    }
+    if (!charge(Budget, Stores.size() + Ends.size()))
+      return Exhausted();
+    for (auto &[Block, Positions] : Events)
+      llvm::sort(Positions);
+    const auto Prefix = [&](int Block, size_t Position) {
+      const auto &Positions = Events.at(Block);
+      return size_t(
+          std::lower_bound(Positions.begin(), Positions.end(), Position) -
+          Positions.begin());
+    };
+    // A byte's history changes only at a STORE of the byte and at a CALL whose
+    // return slot may cover it. Bytes between consecutive ends of those writes
+    // and of the observing loads meet every such test alike, so one bit
+    // carries the history of a whole interval.
+    std::vector<const Access *> Observers;
+    std::vector<std::pair<int64_t, int64_t>> Spans;
+    for (const Access &Load : Loads)
+      if (OverlapsCall(Load)) {
+        Observers.push_back(&Load);
+        Spans.emplace_back(Load.Begin, Load.End);
+      }
+    llvm::sort(Spans);
+    size_t SpanCount = 0;
+    for (const auto &Span : Spans)
+      if (SpanCount && Spans[SpanCount - 1].second >= Span.first)
+        Spans[SpanCount - 1].second =
+            std::max(Spans[SpanCount - 1].second, Span.second);
+      else
+        Spans[SpanCount++] = Span;
+    Spans.resize(SpanCount);
+    const auto Inside = [&](int64_t Byte) {
+      const auto It =
+          llvm::upper_bound(Spans, Byte, [](int64_t Value, const auto &Span) {
+            return Value < Span.first;
+          });
+      return It != Spans.begin() && Byte < std::prev(It)->second;
+    };
+    std::vector<int64_t> Cuts;
+    for (const auto &[Begin, End] : Spans) {
+      Cuts.push_back(Begin);
+      Cuts.push_back(End);
+    }
+    const auto Cut = [&](int64_t Byte) {
+      if (Inside(Byte))
+        Cuts.push_back(Byte);
+    };
+    for (const auto &[Op, Store] : Stores) {
+      Cut(Store.Begin);
+      Cut(Store.End);
+    }
+    for (const auto &[Op, End] : Ends) {
+      if (End && End->Min >= std::numeric_limits<int64_t>::min() + Width) {
+        Cut(End->Min - Width);
+        Cut(End->Max);
+      }
+      if (const auto Below = Bounds.find(Op); Below != Bounds.end())
+        Cut(Below->second);
+    }
+    if (!charge(Budget, Cuts.size()))
+      return Exhausted();
+    llvm::sort(Cuts);
+    Cuts.erase(std::unique(Cuts.begin(), Cuts.end()), Cuts.end());
+    std::vector<int64_t> SegmentBegins, SegmentEnds;
+    for (size_t I = 0; I + 1 < Cuts.size(); ++I)
+      if (Inside(Cuts[I])) {
+        SegmentBegins.push_back(Cuts[I]);
+        SegmentEnds.push_back(Cuts[I + 1]);
+      }
+    using Intervals = std::pair<size_t, size_t>;
+    // Every cut range covers each interval wholly or not at all.
+    const auto Covered = [&](int64_t Begin, int64_t End) {
+      const size_t Low =
+          llvm::upper_bound(SegmentEnds, Begin) - SegmentEnds.begin();
+      const size_t High =
+          llvm::lower_bound(SegmentBegins, End) - SegmentBegins.begin();
+      return Intervals{Low, std::max(Low, High)};
+    };
+    const Intervals Everything{0, SegmentBegins.size()};
+    const auto IndexOf = [&](const MedBlock *Block) {
+      return size_t(Block - Func.Blocks.data());
+    };
+    const size_t BlockCount = Func.Blocks.size();
+    // The events of each block in order: the intervals a STORE ends and those
+    // a CALL's return slot may write.
+    struct Write {
+      const MedOp *Op = nullptr;
+      bool Call = false;
+      Intervals Range;
+    };
+    std::vector<std::vector<Write>> Table(BlockCount);
+    for (const auto &[Id, Ordered] : Events) {
+      const MedBlock *Block = Blocks.first(Id);
+      if (!Block)
+        return Refuse("CALL return-slot observation has a missing block");
+      auto &Row = Table[IndexOf(Block)];
+      for (size_t Position : Ordered) {
+        if (Position >= Block->Ops.size())
+          return Refuse("CALL return-slot observation has a missing block");
+        Write Item;
+        Item.Op = &Block->Ops[Position];
+        if (const auto Store = Stores.find(Item.Op); Store != Stores.end()) {
+          Item.Range = Covered(Store->second.Begin, Store->second.End);
+        } else if (const auto Call = Ends.find(Item.Op); Call != Ends.end()) {
+          Item.Call = true;
+          const auto Below = Bounds.find(Item.Op);
+          if (!Call->second)
+            Item.Range = Below == Bounds.end()
+                             ? Everything
+                             : Covered(std::numeric_limits<int64_t>::min(),
+                                       Below->second);
+          else if (Call->second->Min <
+                   std::numeric_limits<int64_t>::min() + Width)
+            Item.Range = Everything;
+          else
+            Item.Range = Covered(Call->second->Min - Width, Call->second->Max);
+        }
+        Row.push_back(Item);
+      }
+    }
+    // Histories run backward along the predecessors each block lists.
+    std::vector<std::vector<size_t>> Predecessors(BlockCount),
+        Successors(BlockCount);
+    std::vector<char> MissingPredecessor(BlockCount, 0);
+    for (size_t Index = 0; Index < BlockCount; ++Index) {
+      const MedBlock &Block = Func.Blocks[Index];
+      if (Blocks.first(Block.Id) != &Block)
+        continue;
+      for (int Id : Block.Preds)
+        if (const auto *Pred = Blocks.first(Id)) {
+          Predecessors[Index].push_back(IndexOf(Pred));
+          Successors[IndexOf(Pred)].push_back(Index);
+        } else {
+          MissingPredecessor[Index] = 1;
+        }
+    }
+    // An exception can leave before a later store executes, so a handler's
+    // history enters every operation prefix of its protected source.
+    struct Raise {
+      size_t First, Last, Handler;
+    };
+    std::vector<std::vector<Raise>> Raises(BlockCount);
+    std::vector<std::vector<size_t>> Protected(BlockCount);
+    // Loads observe their intervals at their operation prefixes.
+    struct Observation {
+      size_t State;
+      Intervals Range;
+      const Access *Load;
+    };
+    std::vector<std::vector<Observation>> Observations(BlockCount);
+    for (const Access *Load : Observers) {
+      const auto *Block = Blocks.first(Load->Block);
+      if (!Block)
+        return Refuse("CALL return-slot observation has a missing block");
+      Observations[IndexOf(Block)].push_back(
+          {Prefix(Load->Block, Load->Position), Covered(Load->Begin, Load->End),
+           Load});
+    }
+    for (auto &Loaded : Observations)
+      llvm::stable_sort(Loaded, [](const auto &Left, const auto &Right) {
+        return Left.State < Right.State;
+      });
+    const auto Mask = [](const Intervals &Range, size_t Word) -> uint64_t {
+      const size_t From = std::max(Range.first, Word * 64);
+      const size_t To = std::min(Range.second, Word * 64 + 64);
+      if (From >= To)
+        return 0;
+      const uint64_t Ones =
+          To - From == 64 ? ~uint64_t(0) : (uint64_t(1) << (To - From)) - 1;
+      return Ones << (From - Word * 64);
+    };
+    // Bits of one word of intervals live at each block start.
+    std::vector<uint64_t> Words(BlockCount);
+    // A refusal names a load that the write reaches: follow one of the
+    // intervals forward from the write to a load of it.
+    const auto Witness = [&](size_t Word, size_t Index, size_t State,
+                             uint64_t Bits) -> const Access * {
+      const uint64_t Bit = Bits & (~Bits + 1);
+      std::vector<char> Reached(BlockCount, 0);
+      std::vector<std::pair<size_t, size_t>> Pending{{Index, State}};
+      while (!Pending.empty()) {
+        const auto [Block, Start] = Pending.back();
+        Pending.pop_back();
+        const auto &Row = Table[Block];
+        bool Alive = true;
+        for (size_t At = Start; Alive && At <= Row.size(); ++At) {
+          for (const Observation &Seen : Observations[Block])
+            if (Seen.State == At && (Mask(Seen.Range, Word) & Bit))
+              return Seen.Load;
+          for (const Raise &Into : Raises[Block])
+            if (Into.First <= At && At <= Into.Last && !Reached[Into.Handler]) {
+              Reached[Into.Handler] = 1;
+              Pending.emplace_back(Into.Handler, 0);
+            }
+          if (At < Row.size() && !Row[At].Call &&
+              (Mask(Row[At].Range, Word) & Bit))
+            Alive = false;
+        }
+        if (Alive)
+          for (size_t Next : Successors[Block])
+            if (!Reached[Next]) {
+              Reached[Next] = 1;
+              Pending.emplace_back(Next, 0);
+            }
+      }
+      return nullptr;
+    };
+    const auto Observed = [&](const Access *Load) {
+      return Load ? "load at 0x" + llvm::utohexstr(Load->Op->Addr) + " "
+                  : std::string("a load ");
+    };
+    std::vector<char> Entered(BlockCount, 0);
+    const auto Enter = [&](size_t Word, size_t Index) {
+      const MedBlock &Block = Func.Blocks[Index];
+      auto UnprovedEntry = [&] {
+        const Access *Load = Witness(Word, Index, 0, Words[Index]);
+        return Refuse("CALL return-slot observation" +
+                      (Load ? " at 0x" + llvm::utohexstr(Load->Op->Addr)
+                            : std::string()) +
+                      " reaches an unproved exceptional entry at 0x" +
+                      llvm::utohexstr(Block.StartAddr));
+      };
+      std::set<ExceptionalEdge> Declared;
+      for (const ExceptionalEdge &Edge : Block.ExceptionalPreds) {
+        if (!charge(Budget, Edge.contexts().size()))
+          return Exhausted();
+        Declared.insert(Edge);
+      }
+      if (Declared != ExceptionalIncoming[Block.Id])
+        return UnprovedEntry();
+      for (const ExceptionalEdge &Edge : Declared) {
+        const auto *Pred = Blocks.first(Edge.BlockId);
+        if (!Pred || Edge.TargetVA != Block.StartAddr)
+          return UnprovedEntry();
+        size_t Begin = 0, End = Pred->Ops.size();
+        if (Edge.SourceVA != InvalidVA) {
+          if (!charge(Budget, Pred->Ops.size()))
+            return Exhausted();
+          Begin = Pred->Ops.size();
+          End = 0;
+          for (size_t I = 0; I < Pred->Ops.size(); ++I)
+            if (Pred->Ops[I].Addr == Edge.SourceVA) {
+              Begin = std::min(Begin, I);
+              End = I + 1;
+            }
+          if (Begin == Pred->Ops.size())
+            return UnprovedEntry();
+        }
+        // Include both sides of a throwing instruction: its CALL may push,
+        // whereas its STORE need not complete. A protected range
+        // conservatively includes every operation prefix in the block.
+        if (!charge(Budget, 1))
+          return Exhausted();
+        Raises[IndexOf(Pred)].push_back(
+            {Prefix(Pred->Id, Begin), Prefix(Pred->Id, End), Index});
+        Protected[Index].push_back(IndexOf(Pred));
+      }
+      if (MissingPredecessor[Index])
+        return Refuse("CALL return-slot observation has a missing predecessor");
+      return true;
+    };
+    std::vector<size_t> Work;
+    std::vector<char> Queued(BlockCount, 0);
+    const auto Queue = [&](size_t Index) {
+      if (!Queued[Index]) {
+        Queued[Index] = 1;
+        Work.push_back(Index);
+      }
+    };
+    // Recompute one block backward from its successors' starts, the handlers
+    // its operation prefixes raise into and its own loads.
+    const auto Pass = [&](size_t Word, size_t Index) {
+      const auto &Row = Table[Index];
+      const auto &Into = Raises[Index];
+      const auto &Loaded = Observations[Index];
+      if (!charge(Budget, (Row.size() + 1) * (Into.size() + 1) + Loaded.size() +
+                              Successors[Index].size()))
+        return Exhausted();
+      // States are visited from the last down, as the loads are sorted.
+      size_t Unread = Loaded.size();
+      const auto Raised = [&](size_t State) {
+        uint64_t Result = 0;
+        for (; Unread && Loaded[Unread - 1].State == State; --Unread)
+          Result |= Mask(Loaded[Unread - 1].Range, Word);
+        for (const Raise &From : Into)
+          if (From.First <= State && State <= From.Last)
+            Result |= Words[From.Handler];
+        return Result;
+      };
+      uint64_t Current = Raised(Row.size());
+      for (size_t Successor : Successors[Index])
+        Current |= Words[Successor];
+      for (size_t State = Row.size(); State; --State) {
+        const Write &Item = Row[State - 1];
+        if (const uint64_t Hit = Current & Mask(Item.Range, Word)) {
+          if (Item.Call)
+            return Refuse(Observed(Witness(Word, Index, State, Hit)) +
+                          "observes a physical CALL return slot from 0x" +
+                          llvm::utohexstr(Item.Op->Addr) +
+                          "; the ordinary C frame does not represent that "
+                          "write; refusing a stale frame value");
+          Current &= ~Hit;
+        }
+        Current |= Raised(State - 1);
+      }
+      if (!(Current & ~Words[Index]))
+        return true;
+      Words[Index] |= Current;
+      if (!Entered[Index]) {
+        Entered[Index] = 1;
+        if (!Enter(Word, Index))
+          return false;
+      }
+      for (size_t Source : Predecessors[Index])
+        Queue(Source);
+      for (size_t Source : Protected[Index])
+        Queue(Source);
+      return true;
+    };
+    // Every load's intervals flow backward together, one word at a time, to a
+    // fixed point; a write that a live interval meets refuses the projection.
+    for (size_t Word = 0; Word * 64 < Everything.second; ++Word) {
+      if (!charge(Budget, BlockCount))
+        return Exhausted();
+      llvm::fill(Words, 0);
+      for (size_t Index = BlockCount; Index--;)
+        for (const Observation &Seen : Observations[Index])
+          if (Mask(Seen.Range, Word))
+            Queue(Index);
+      while (!Work.empty()) {
+        const size_t Next = Work.back();
+        Work.pop_back();
+        Queued[Next] = 0;
+        if (!Pass(Word, Next))
+          return false;
+      }
+    }
+    return true;
+  };
   if (llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
+    // A CALL without an exact slot may write any byte. When the loads stay
+    // separated from every such write, no bound below can change the
+    // answer, and those bounds cost far more than this proof. Its attempt
+    // has its own allowance: a refusal or exhaustion leaves the bounded
+    // proof its whole budget.
+    size_t Allowance = Remaining;
+    if (Observe(CallEnds, {}, Allowance))
+      return true;
+    Diagnostic.clear();
     const auto Registration =
         registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
     if (!Remaining)
@@ -427,198 +850,6 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
           CallBelow.emplace(Pending[I], *Bounds[I]);
     }
   }
-  std::vector<std::pair<int64_t, int64_t>> Ranges;
-  bool UnknownLocation = false;
-  for (const auto &[Call, End] : CallEnds) {
-    if (!End)
-      if (const auto Below = CallBelow.find(Call); Below != CallBelow.end()) {
-        Ranges.emplace_back(std::numeric_limits<int64_t>::min(), Below->second);
-        continue;
-      }
-    if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
-      UnknownLocation = true;
-      continue;
-    }
-    Ranges.emplace_back(End->Min - Width, End->Max);
-  }
-  llvm::sort(Ranges);
-  std::vector<std::pair<int64_t, int64_t>> Merged;
-  for (const auto &Range : Ranges) {
-    if (Merged.empty() || Merged.back().second < Range.first)
-      Merged.push_back(Range);
-    else
-      Merged.back().second = std::max(Merged.back().second, Range.second);
-  }
-  auto OverlapsCall = [&](const Access &Load) {
-    if (UnknownLocation)
-      return true;
-    const auto It = std::lower_bound(
-        Merged.begin(), Merged.end(), Load.Begin,
-        [](const auto &Range, int64_t Begin) { return Range.second <= Begin; });
-    return It != Merged.end() && It->first < Load.End;
-  };
-  if (llvm::none_of(Loads, OverlapsCall))
-    return true;
-  for (const MedBlock &Block : Func.Blocks)
-    if (!charge(Remaining, Block.Preds.size()) ||
-        !charge(Remaining, Block.Succs.size()) ||
-        !charge(Remaining, Block.ExceptionalPreds.size()) ||
-        !charge(Remaining, Block.ExceptionalSuccs.size()))
-      return Exhausted();
-  const MedBlockIdIndex Blocks(Func);
-  const safety::detail::ExactPhiGraph Graph(Func);
-  for (const MedBlock &Block : Func.Blocks)
-    if (!Graph.hasCompleteNormalPredecessors(Block))
-      return Refuse("CALL return-slot observation requires a complete normal "
-                    "control-flow graph");
-  std::map<int, std::set<ExceptionalEdge>> ExceptionalIncoming;
-  for (const MedBlock &Block : Func.Blocks)
-    for (const ExceptionalEdge &Edge : Block.ExceptionalSuccs) {
-      if (!charge(Remaining, Edge.contexts().size()))
-        return Exhausted();
-      if (Edge.BlockId >= 0) {
-        auto Reverse = Edge;
-        Reverse.BlockId = Block.Id;
-        ExceptionalIncoming[Edge.BlockId].insert(std::move(Reverse));
-      }
-    }
-  // Once stack addresses are fixed, only a proven STORE or a possible CALL
-  // write changes this byte history. Canonicalize operation prefixes to these
-  // events so arithmetic, loads and repeated exception prefixes share states.
-  std::map<int, std::vector<size_t>> Events;
-  for (const MedBlock &Block : Func.Blocks)
-    Events.try_emplace(Block.Id);
-  for (const auto &[Op, Store] : Stores)
-    Events.at(Store.Block).push_back(Store.Position);
-  for (const auto &[Op, End] : CallEnds) {
-    const auto [Block, Position] = Positions.at(Op);
-    Events.at(Block).push_back(Position);
-  }
-  if (!charge(Remaining, Stores.size() + CallEnds.size()))
-    return Exhausted();
-  for (auto &[Block, Positions] : Events)
-    llvm::sort(Positions);
-  const auto Prefix = [&](int Block, size_t Position) {
-    const auto &Positions = Events.at(Block);
-    return size_t(
-        std::lower_bound(Positions.begin(), Positions.end(), Position) -
-        Positions.begin());
-  };
-  using State = std::pair<int, size_t>;
-  std::map<int, std::vector<State>> ExceptionalPrefixes;
-  std::map<int64_t, std::set<State>> ProvenBytes;
-  // Walk only candidate bytes. A store on one predecessor must not hide an
-  // implicit CALL write reaching the load through another predecessor or loop.
-  for (const Access &Load : Loads) {
-    if (!OverlapsCall(Load))
-      continue;
-    for (int64_t Byte = Load.Begin; Byte < Load.End; ++Byte) {
-      auto &Proven = ProvenBytes[Byte];
-      std::vector<State> Pending{
-          {Load.Block, Prefix(Load.Block, Load.Position)}};
-      std::set<State> Seen;
-      while (!Pending.empty()) {
-        if (!charge(Remaining, 1))
-          return Exhausted();
-        const auto Current = Pending.back();
-        Pending.pop_back();
-        if (Proven.count(Current) || !Seen.insert(Current).second)
-          continue;
-        const auto *Block = Blocks.first(Current.first);
-        if (!Block)
-          return Refuse("CALL return-slot observation has a missing block");
-        if (Current.second) {
-          const auto &Op = Block->Ops[Events.at(Block->Id)[Current.second - 1]];
-          if (const auto It = Stores.find(&Op);
-              It != Stores.end() && It->second.contains(Byte))
-            continue;
-          const auto Call = CallEnds.find(&Op);
-          const auto Below = CallBelow.find(&Op);
-          if (Call != CallEnds.end() &&
-              (!Call->second
-                   ? Below == CallBelow.end() || Byte < Below->second
-                   : Call->second->Min <
-                             std::numeric_limits<int64_t>::min() + Width ||
-                         (Byte < Call->second->Max &&
-                          Byte >= Call->second->Min - Width)))
-            return Refuse("load at 0x" + llvm::utohexstr(Load.Op->Addr) +
-                          " observes a physical CALL return slot from 0x" +
-                          llvm::utohexstr(Op.Addr) +
-                          "; the ordinary C frame does not represent that "
-                          "write; refusing a stale frame value");
-          Pending.emplace_back(Block->Id, Current.second - 1);
-          continue;
-        }
-        // An exception can leave before a later store executes. Follow every
-        // possible source prefix, not the predecessor's final memory state.
-        // This remains unnecessary when a local store ended the byte history.
-        auto [Prefixes, New] = ExceptionalPrefixes.try_emplace(Block->Id);
-        if (New) {
-          auto UnprovedEntry = [&] {
-            return Refuse("CALL return-slot observation at 0x" +
-                          llvm::utohexstr(Load.Op->Addr) +
-                          " reaches an unproved exceptional entry at 0x" +
-                          llvm::utohexstr(Block->StartAddr));
-          };
-          std::set<ExceptionalEdge> Declared;
-          for (const ExceptionalEdge &Edge : Block->ExceptionalPreds) {
-            if (!charge(Remaining, Edge.contexts().size()))
-              return Exhausted();
-            Declared.insert(Edge);
-          }
-          if (Declared != ExceptionalIncoming[Block->Id])
-            return UnprovedEntry();
-          for (const ExceptionalEdge &Edge : Declared) {
-            const auto *Pred = Blocks.first(Edge.BlockId);
-            if (!Pred || Edge.TargetVA != Block->StartAddr)
-              return UnprovedEntry();
-            size_t Begin = 0, End = Pred->Ops.size();
-            if (Edge.SourceVA != InvalidVA) {
-              if (!charge(Remaining, Pred->Ops.size()))
-                return Exhausted();
-              Begin = Pred->Ops.size();
-              End = 0;
-              for (size_t I = 0; I < Pred->Ops.size(); ++I)
-                if (Pred->Ops[I].Addr == Edge.SourceVA) {
-                  Begin = std::min(Begin, I);
-                  End = I + 1;
-                }
-              if (Begin == Pred->Ops.size())
-                return UnprovedEntry();
-            }
-            // Include both sides of a throwing instruction: its CALL may
-            // push, whereas its STORE need not complete. A protected range
-            // conservatively includes every operation prefix in the block.
-            const size_t First = Prefix(Pred->Id, Begin);
-            const size_t Last = Prefix(Pred->Id, End);
-            if (!charge(Remaining, Last - First + 1))
-              return Exhausted();
-            for (size_t I = First; I <= Last; ++I)
-              Prefixes->second.emplace_back(Pred->Id, I);
-          }
-        }
-        if (!charge(Remaining, Prefixes->second.size()))
-          return Exhausted();
-        Pending.insert(Pending.end(), Prefixes->second.begin(),
-                       Prefixes->second.end());
-        if (!charge(Remaining, Block->Preds.size()))
-          return Exhausted();
-        for (int Id : Block->Preds) {
-          const auto *Pred = Blocks.first(Id);
-          if (!Pred)
-            return Refuse(
-                "CALL return-slot observation has a missing predecessor");
-          Pending.emplace_back(Id, Events.at(Id).size());
-        }
-      }
-      // All histories from these states have now completed without a CALL
-      // hazard. Repeated reads and exceptional prefixes share the proof only
-      // for this byte; no partially explored cycle is published.
-      if (!charge(Remaining, Seen.size()))
-        return Exhausted();
-      Proven.insert(Seen.begin(), Seen.end());
-    }
-  }
-  return true;
+  return Observe(CallEnds, CallBelow, Remaining);
 }
 } // namespace neverd

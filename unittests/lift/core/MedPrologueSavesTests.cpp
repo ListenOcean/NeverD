@@ -14,10 +14,13 @@
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/StringExtras.h"
+
 #include <algorithm>
 #include <initializer_list>
 #include <limits>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -1259,6 +1262,59 @@ TEST(SourceCallReturnReads, AStoreOnAnotherPathDoesNotHideACall) {
   Func.Blocks[1].Ops.push_back(Store);
   EXPECT_TRUE(validateSourceCallReturnReads(Func, callSlotImage(), Error))
       << Error;
+}
+
+TEST(SourceCallReturnReads, DistinctSlotsShareOneBackwardHistory) {
+  // A CALL at an unknown stack position may write any slot. Each of many
+  // slots is written again after it and read only after a long chain of
+  // blocks, so every slot's history crosses the whole chain. Those histories
+  // must cross it together, not once per observed byte.
+  constexpr int Slots = 64, Chain = 512;
+  for (int Missing : {-1, 0, 41}) {
+    SCOPED_TRACE(Missing);
+    auto Func = observedCallSlot();
+    auto &Entry = Func.Blocks[0];
+    const auto Call = Entry.Ops[4];
+    Entry.Ops.resize(2);
+    Entry.Ops[1].Inputs[1] = MedVar::makeConst(8 * Slots + 32, 8);
+    std::vector<MedOp> Loads;
+    for (int Slot = 0; Slot < Slots; ++Slot) {
+      Entry.Ops.push_back(op(NdOp::INT_ADD, temp(100 + Slot),
+                             {sp(1), MedVar::makeConst(8 * Slot, 8)}));
+      Loads.push_back(op(NdOp::LOAD, temp(300 + Slot), {temp(100 + Slot)}));
+      Loads.back().Addr = 0x2000 + Slot;
+    }
+    Entry.Ops.push_back(
+        op(NdOp::COPY, sp(2), {MedVar::makeUnspecified(8, Arch::X64)}));
+    Entry.Ops.push_back(Call);
+    for (int Slot = 0; Slot < Slots; ++Slot)
+      if (Slot != Missing)
+        Entry.Ops.push_back(op(NdOp::STORE, none(),
+                               {temp(100 + Slot), MedVar::makeConst(Slot, 8)}));
+    Entry.Succs = {1};
+    for (int Id = 1; Id <= Chain; ++Id) {
+      MedBlock Block;
+      Block.Id = Id;
+      Block.StartAddr = 0x3000 + Id;
+      Block.Preds = {Id - 1};
+      if (Id < Chain)
+        Block.Succs = {Id + 1};
+      Func.Blocks.push_back(std::move(Block));
+    }
+    auto &Reads = Func.Blocks.back().Ops;
+    Reads.insert(Reads.end(), Loads.begin(), Loads.end());
+    Reads.push_back(op(NdOp::RETURN, none(), {temp(300)}));
+    std::string Error;
+    EXPECT_EQ(
+        validateSourceCallReturnReads(Func, callSlotImage(), Error, 16384),
+        Missing < 0)
+        << Error;
+    if (Missing >= 0)
+      EXPECT_NE(Error.find("load at 0x" + llvm::utohexstr(0x2000 + Missing) +
+                           " observes a physical CALL return slot from 0x1008"),
+                std::string::npos)
+          << Error;
+  }
 }
 
 TEST(SourceCallReturnReads, ALaterCallCanReachTheNextLoopIteration) {

@@ -10,6 +10,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "PipelineCallAbiDetail.h"
 #include "PipelineReturnModelingDetail.h"
 
 #include "neverd/ir/TargetRegInfo.h"
@@ -17,6 +18,7 @@
 #include "neverd/libc/LibCNames.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <algorithm>
@@ -52,13 +54,17 @@ void materializeKnownStructReturnCallSites(const BinaryImage &Img,
                                            PipelineResult &Result) {
   const auto &TRI = getTargetRegInfo(Img.Arch);
   if (Img.Arch == Arch::AArch64 && TRI.PointerSize == 8) {
-    auto findCallSite = [](MedFunc &MF, uint32_t SiteId) -> MedOp * {
-      for (auto &Blk : MF.Blocks)
-        for (auto &Op : Blk.Ops)
-          if (Op.CallSiteId == SiteId &&
-              (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL))
-            return &Op;
-      return nullptr;
+    // All candidate queries precede the insertions below. Index the original
+    // occurrences once; no pointer is used after call-site materialization.
+    llvm::DenseMap<std::pair<const MedFunc *, uint32_t>, MedOp *> Calls;
+    for (auto &Function : Result.MedFuncs)
+      if (!Function.StructReturnCandidates.empty())
+        for (auto &Block : Function.Blocks)
+          for (auto &Op : Block.Ops)
+            if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+              Calls.try_emplace({&Function, Op.CallSiteId}, &Op);
+    auto findCallSite = [&](MedFunc &MF, uint32_t SiteId) -> MedOp * {
+      return Calls.lookup({&MF, SiteId});
     };
     auto isTailForwarder = [](const MedFunc &MF) {
       for (const auto &Blk : MF.Blocks)
@@ -127,6 +133,43 @@ void materializeKnownStructReturnCallSites(const BinaryImage &Img,
         continue;
       MRByEntry[MF.Entry] = MF.MultiReturn;
     }
+    // A selection omits callee definitions, not their return-register
+    // effects. Read only caller-observed integer pairs through the same
+    // bounded body reader used for their argument signatures. Floating records
+    // need an omitted HFA declaration as well as their packed field values.
+    std::map<va_t, std::vector<MedReturnReg>> OmittedShapes;
+    std::set<va_t> ConflictingShapes;
+    for (auto &Caller : Result.MedFuncs)
+      for (const auto &Candidate : Caller.StructReturnCandidates) {
+        const MedOp *Call = findCallSite(Caller, Candidate.CallSiteId);
+        if (!Call || Call->Opcode != NdOp::CALL || !Call->NumInputs ||
+            !Call->Inputs[0].isConst() || Call->SourceCallHint ||
+            Result.CallPrototypeArguments.count(Call->Inputs[0].ConstVal) ||
+            Result.CallUserPrototypes.count(Call->Inputs[0].ConstVal) ||
+            ByEntry.count(Call->Inputs[0].ConstVal))
+          continue;
+        auto Shape = candidateShape(Candidate);
+        if (!isCompleteShape(Shape) || Shape.front().IsFP)
+          continue;
+        // Integer aggregate fields occupy whole ABI words even when one
+        // consumer observes only their low bytes, like selected definitions.
+        for (auto &Field : Shape)
+          if (!Field.IsFP)
+            Field.Size = TRI.PointerSize;
+        const va_t Target = Call->Inputs[0].ConstVal;
+        auto [It, Inserted] = OmittedShapes.emplace(Target, Shape);
+        if (!Inserted &&
+            !std::equal(It->second.begin(), It->second.end(), Shape.begin(),
+                        Shape.end(), [](const auto &A, const auto &B) {
+                          return A.RegOff == B.RegOff && A.Size == B.Size &&
+                                 A.IsFP == B.IsFP;
+                        }))
+          ConflictingShapes.insert(Target);
+      }
+    for (va_t Target : ConflictingShapes)
+      OmittedShapes.erase(Target);
+    confirmOmittedStructReturns(Img, Result, OmittedShapes);
+    MRByEntry.insert(OmittedShapes.begin(), OmittedShapes.end());
     for (auto &Caller : Result.MedFuncs) {
       for (const MedStructReturnCandidate &Candidate :
            Caller.StructReturnCandidates) {

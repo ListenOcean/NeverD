@@ -11322,6 +11322,25 @@ private slots:
     QCOMPARE(assembly->currentItem(), std::optional<Address>(Base + 0x44));
   }
 
+  void queryNotificationsDoNotToggleUnavailableActions() {
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    auto *undo = bench.window->findChild<QAction *>("EditUndo");
+    QVERIFY(undo);
+    QVERIFY(!undo->isEnabled());
+    QSignalSpy changes(undo, &QAction::enabledChanged);
+    emit bench.session.stateChanged();
+    emit bench.session.stateChanged();
+    QCoreApplication::processEvents();
+    QCOMPARE(changes.count(), 0);
+    QVERIFY(!undo->isEnabled());
+  }
+
   void initialNavigationOverviewDoesNotWaitForRefreshDebounce() {
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));

@@ -21,6 +21,9 @@
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/ADT/Twine.h"
+#include "llvm/Support/Allocator.h"
+#include "llvm/Support/StringSaver.h"
 
 #include <functional>
 
@@ -35,7 +38,9 @@ enum class Encoding : uint8_t { Plain, Wide, UTF16, UTF32, UTF8 };
 
 struct Token {
   TokenKind Kind = TokenKind::End;
-  std::string Text;
+  /// Ordinary spelling borrows the parse input; generated spelling belongs
+  /// to that parse's arena. Both outlive all tokens, including macro copies.
+  llvm::StringRef Text;
   uint64_t Value = 0;
   /// A quoted literal's prefix; a character constant's type follows it.
   Encoding Quoted = Encoding::Plain;
@@ -79,8 +84,9 @@ const char *const Punctuators[] = {
 
 class Lexer {
 public:
-  Lexer(llvm::StringRef Source, std::vector<SourceProblem> &Problems)
-      : Source(Source), Problems(Problems) {}
+  Lexer(llvm::StringRef Source, std::vector<SourceProblem> &Problems,
+        llvm::StringSaver &Spellings)
+      : Source(Source), Problems(Problems), Spellings(Spellings) {}
 
   std::vector<Token> run() {
     std::vector<Token> Tokens;
@@ -119,7 +125,7 @@ public:
       LineStart = false;
       Token Next = token();
       if (Next.Kind == TokenKind::Word) {
-        expand(Next, Tokens, 0);
+        expand(std::move(Next), Tokens, 0);
         continue;
       }
       if (Next.Kind != TokenKind::End)
@@ -176,7 +182,7 @@ private:
         }
       }
       Result.Kind = TokenKind::Word;
-      Result.Text = Word.str();
+      Result.Text = Word;
       return Result;
     }
     if (llvm::isDigit(C) ||
@@ -198,7 +204,7 @@ private:
           (Hex ? Text.contains_insensitive("p")
                : Text.find_first_of("eE") != llvm::StringRef::npos)) {
         Result.Kind = TokenKind::Number;
-        Result.Text = Text.str();
+        Result.Text = Text;
         Result.Floating = true;
         return Result;
       }
@@ -228,7 +234,7 @@ private:
         Radix = 8;
       }
       Result.Kind = TokenKind::Number;
-      Result.Text = Text.str();
+      Result.Text = Text;
       if (Digits.getAsInteger(Radix, Result.Value))
         problem(Result.Line, Result.Column,
                 "'" + Text.str() + "' is no integer this reads");
@@ -278,7 +284,7 @@ private:
     } else {
       Result.Kind = TokenKind::String;
     }
-    Result.Text = std::move(Text);
+    Result.Text = Spellings.save(Text);
   }
 
   /// A word, or the tokens of the macro it names.
@@ -314,7 +320,9 @@ private:
       Text += Source[At];
       advance();
     }
-    llvm::StringRef Rest = llvm::StringRef(Text).drop_front().ltrim();
+    // Line splicing and nested macro lexers must borrow storage that remains
+    // live after this directive and after a later #undef or redefinition.
+    llvm::StringRef Rest = Spellings.save(Text).drop_front().ltrim();
     const llvm::StringRef Name =
         Rest.take_while([](char C) { return llvm::isAlnum(C) || C == '_'; });
     Rest = Rest.drop_front(Name.size()).ltrim();
@@ -334,7 +342,7 @@ private:
       }
       Token Pragma;
       Pragma.Kind = TokenKind::Pragma;
-      Pragma.Text = Arguments.trim().str();
+      Pragma.Text = Arguments.trim();
       Pragma.Value = DefaultConventionPragma;
       Pragma.Line = L;
       Pragma.Column = Col;
@@ -356,7 +364,7 @@ private:
       }
       Token Pragma;
       Pragma.Kind = TokenKind::Pragma;
-      Pragma.Text = Arguments.str();
+      Pragma.Text = Arguments;
       Pragma.Value = HeaderPragma;
       Pragma.Line = L;
       Pragma.Column = Col;
@@ -389,7 +397,7 @@ private:
         Part = Part.trim();
       if (Parts.size() == 1 && Parts.front() == "show")
         return;
-      std::string Label;
+      llvm::StringRef Label;
       const bool Stack =
           !Parts.empty() && (Parts.front() == "push" || Parts.front() == "pop");
       if (Parts.size() > (Stack ? 3u : 1u)) {
@@ -415,7 +423,7 @@ private:
                    llvm::all_of(Part, [](char C) {
                      return llvm::isAlnum(C) || C == '_';
                    })) {
-          Label = Part.str();
+          Label = Part;
         } else {
           problem(L, Col,
                   "'" + Part.str() +
@@ -428,7 +436,7 @@ private:
         Action = PackAction::Reset;
       Token Pragma;
       Pragma.Kind = TokenKind::Pragma;
-      Pragma.Text = std::move(Label);
+      Pragma.Text = Label;
       Pragma.Value = packToken(Action, Value);
       Pragma.Line = L;
       Pragma.Column = Col;
@@ -443,7 +451,7 @@ private:
       if (Macro.empty() || Body.starts_with("("))
         return;
       std::vector<SourceProblem> Ignored;
-      Lexer Inner(Body, Ignored);
+      Lexer Inner(Body, Ignored, Spellings);
       std::vector<Token> Replacement = Inner.run();
       Replacement.pop_back();
       // A header NeverD renders names a system's types otherwise for
@@ -462,6 +470,7 @@ private:
 
   llvm::StringRef Source;
   std::vector<SourceProblem> &Problems;
+  llvm::StringSaver &Spellings;
   size_t At = 0;
   unsigned Line = 1;
   unsigned Column = 1;
@@ -662,9 +671,9 @@ private:
     fail(peek(), "expected '" + Punct.str() + "' " + Where.str());
     return false;
   }
-  void fail(const Token &At, const std::string &Message) {
+  void fail(const Token &At, const llvm::Twine &Message) {
     if (!Failed)
-      Result.Problems.push_back({At.Line, At.Column, Message});
+      Result.Problems.push_back({At.Line, At.Column, Message.str()});
     Failed = true;
   }
   /// Skips past the declaration a problem was found in: to the semicolon
@@ -781,7 +790,7 @@ private:
   uint32_t Pack = 0;
   struct PackEntry {
     uint32_t Value;
-    std::string Label;
+    llvm::StringRef Label;
   };
   std::vector<PackEntry> PackStack;
   // The system header the declarations come from (#pragma neverd_header).
@@ -1950,7 +1959,8 @@ private:
       // C++ qualified names keep their spelling.
       while (isPunct("::") && peek(1).Kind == TokenKind::Word) {
         take();
-        Name += "::" + take().Text;
+        Name += "::";
+        Name += take().Text;
       }
     }
     // Arrays and parameters, in their order.
@@ -2135,7 +2145,7 @@ private:
       const int Level = Op.Kind == TokenKind::Punct ? precedence(Op.Text) : 0;
       if (!Level || Level <= Lowest)
         break;
-      const std::string Text = take().Text;
+      const llvm::StringRef Text = take().Text;
       std::optional<int64_t> Right = binary(Level);
       if (!Right)
         return std::nullopt;
@@ -2438,7 +2448,7 @@ private:
   /// _Static_assert and static_assert: checked against the layout.
   void staticAssert() {
     const Token At = take();
-    if (!expect("(", "after " + At.Text))
+    if (!expect("(", "after " + At.Text.str()))
       return;
     std::optional<int64_t> Value = constant();
     if (!Value)
@@ -2515,7 +2525,9 @@ ParseResult parseTypes(llvm::StringRef Source, TypeLibrary &Library,
 ParseResult parseCTypes(llvm::StringRef Source, TypeLibrary &Library,
                         const ParseOptions &Options) {
   ParseResult Result;
-  std::vector<Token> Tokens = Lexer(Source, Result.Problems).run();
+  llvm::BumpPtrAllocator Storage;
+  llvm::StringSaver Spellings(Storage);
+  std::vector<Token> Tokens = Lexer(Source, Result.Problems, Spellings).run();
   if (!Result.Problems.empty())
     return Result;
   TypeLibrary Scratch(Library);
@@ -2535,7 +2547,9 @@ FunctionDeclaration parseFunctionDeclaration(llvm::StringRef Source,
   if (!llvm::StringRef(Text).ends_with(";") &&
       !llvm::StringRef(Text).ends_with("}"))
     Text += ";";
-  std::vector<Token> Tokens = Lexer(Text, Result.Problems).run();
+  llvm::BumpPtrAllocator Storage;
+  llvm::StringSaver Spellings(Storage);
+  std::vector<Token> Tokens = Lexer(Text, Result.Problems, Spellings).run();
   if (Result.Problems.empty()) {
     TypeLibrary Scratch(Library);
     ParseOptions One = Options;

@@ -30,10 +30,27 @@
 
 #include "llvm/ADT/StringMap.h"
 #include "llvm/ADT/StringSet.h"
+#include "llvm/BinaryFormat/COFF.h"
 #include "llvm/DebugInfo/DWARF/DWARFContext.h"
 #include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/MemoryBuffer.h"
+
+#ifdef IMAGE_SUBSYSTEM_NATIVE
+#undef IMAGE_SUBSYSTEM_NATIVE
+#endif
+#ifdef IMAGE_SUBSYSTEM_WINDOWS_GUI
+#undef IMAGE_SUBSYSTEM_WINDOWS_GUI
+#endif
+#ifdef IMAGE_SUBSYSTEM_WINDOWS_CUI
+#undef IMAGE_SUBSYSTEM_WINDOWS_CUI
+#endif
+#ifdef IMAGE_FILE_EXECUTABLE_IMAGE
+#undef IMAGE_FILE_EXECUTABLE_IMAGE
+#endif
+#ifdef IMAGE_FILE_DLL
+#undef IMAGE_FILE_DLL
+#endif
 
 using namespace neverd;
 using namespace neverd::sdk;
@@ -201,6 +218,7 @@ bool compatibleLibrary(const Session &S, types::HeaderLibrary Library) {
 /// program's.  One the user added that lays out otherwise, as a
 /// libraries.json edited by hand may name, joins nothing and says why.
 void joinHeaders(Session &S) {
+  S.LocalTypeEntryDeclaration = S.platformEntryDeclaration();
   const auto join = [&](types::HeaderLibrary Library, bool Added) {
     if (llvm::any_of(S.LocalTypeHeaders,
                      [&](const Session::JoinedHeaders &Joined) {
@@ -693,6 +711,16 @@ bool Session::typesChanged(const types::TypeLibrary &Library,
   return Shows;
 }
 
+std::string Session::platformEntryDeclaration() const {
+  if (Img.Format == BinaryFormat::COFF &&
+      (Img.DynInfo.PECharacteristics & llvm::COFF::IMAGE_FILE_DLL) &&
+      (Img.DynInfo.PESubsystem == llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_GUI ||
+       Img.DynInfo.PESubsystem == llvm::COFF::IMAGE_SUBSYSTEM_WINDOWS_CUI))
+    return "BOOL __stdcall DllEntryPoint(HINSTANCE hinstDLL, DWORD fdwReason, "
+           "LPVOID lpReserved)";
+  return {};
+}
+
 types::TypeLibrary *Session::readLocalTypes() { return localTypes(*this); }
 
 bool Session::checkFunctionDeclaration(const std::string &Text,
@@ -781,7 +809,7 @@ DebugContext *Session::decompileDebug() {
       Library ? std::make_shared<types::TypeLibrary>(*Library)
               : std::shared_ptr<types::TypeLibrary>(libraryFor(Img)),
       std::move(Declarations), &Img, std::move(Headers), SigDB.buildNameMap(),
-      LocalTypeEntryType, programMain());
+      LocalTypeEntryType, programMain(), LocalTypeEntryDeclaration);
   return LocalTypesDbg.get();
 }
 

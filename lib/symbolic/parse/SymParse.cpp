@@ -16,6 +16,7 @@
 
 #include "SymParseDetail.h"
 
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/ErrorHandling.h"
 
@@ -124,6 +125,29 @@ SymRef Parser::parseBinary(int MinPrec) {
     L = applyBinary(S, L, R);
     if (Failed)
       return {};
+
+    // Once a product has two nonconstant factors, a longer multiplication
+    // chain cannot expose the builder's single-shift/coefficient fold. Collect
+    // the rest at this width instead of interning every growing prefix. Other
+    // operators and width changes still finish the exact left-associated word.
+    if (S == "*" && Ctx.op(L) == SymOp::Mul &&
+        Ctx.numOperands(L) - unsigned(Ctx.isConst(Ctx.operand(L, 0))) >= 2 &&
+        isPunct("*")) {
+      llvm::SmallVector<SymRef, 16> Factors{L};
+      while (consumePunct("*")) {
+        R = parseBinary(P + 1);
+        if (Failed)
+          return {};
+        if (Ctx.width(R) != Ctx.width(L)) {
+          L = applyBinary("*", Ctx.mkMul(Factors), R);
+          Factors.clear();
+          break;
+        }
+        Factors.push_back(R);
+      }
+      if (!Factors.empty())
+        L = Ctx.mkMul(Factors);
+    }
   }
   return L;
 }

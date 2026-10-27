@@ -90,6 +90,9 @@ struct PatternModule {
   /// `!loadcfg`: source configuration fields pairing external pointer storage
   /// (&) with its default function (^). Metadata, never a byte-index claim.
   bool IsLoadConfig : 1 = false;
+  /// !layout: complete nonsplittable source code contribution. Never enters
+  /// the byte index or supplies individual bodies to reference inference.
+  bool IsCodeLayout : 1 = false;
 
   uint32_t TotalLen = 0;
 
@@ -178,6 +181,9 @@ struct StoredModule {
   /// `!loadcfg`: source configuration fields pairing external pointer storage
   /// (&) with its default function (^). Metadata, never a byte-index claim.
   bool IsLoadConfig : 1 = false;
+  /// !layout: complete nonsplittable source code contribution. Never enters
+  /// the byte index or supplies individual bodies to reference inference.
+  bool IsCodeLayout : 1 = false;
 
   bool isStated(size_t Byte) const {
     return (Stated[Byte / CHAR_BIT] >> (Byte % CHAR_BIT)) & 1;

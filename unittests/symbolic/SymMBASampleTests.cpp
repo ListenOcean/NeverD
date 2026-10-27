@@ -157,6 +157,88 @@ TEST(SymMBASample, UnusedWideVariablesDoNotConsumeRandomWords) {
   expectAtSample(Ctx, Ctx.mkXor(X, Ctx.mkZExt(Y, 64)), X, 6);
 }
 
+TEST(SymMBASample, CancelsOnlyIdenticalCompleteAddends) {
+  for (unsigned W : {8u, 16u, 32u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(W);
+    SymContext Ctx;
+    SymRef X = Ctx.mkVar("x", W), Y = Ctx.mkVar("y", W);
+    SymRef Z = Ctx.mkVar("z", W);
+    llvm::SmallVector<SymRef, 256> Factors;
+    for (unsigned I = 0; I < 256; ++I)
+      Factors.push_back(Ctx.mkXor(Ctx.mkAdd(X, Ctx.mkConst(W, 2 * I)),
+                                  Ctx.mkAnd(Z, Ctx.mkConst(W, 252))));
+    SymRef Product = Ctx.mkMul(Factors);
+    SymRef Tail = Ctx.mkAdd(Ctx.mkXor(X, Y),
+                            Ctx.mkMul(Ctx.mkConst(W, 2), Ctx.mkAnd(X, Y)));
+    SymRef A = Ctx.mkAdd(Product, Tail);
+    SymRef B = Ctx.mkAdd({Product, X, Y});
+    SymRef Scaled = Ctx.mkMul(Ctx.mkConst(W, 3), Product);
+    for (unsigned Samples : {0u, 1u, 3u, 4u, 17u}) {
+      EXPECT_TRUE(referenceAgree(Ctx, A, B, Samples));
+      EXPECT_TRUE(detail::agreeOnSamples(Ctx, A, B, Samples));
+      EXPECT_TRUE(detail::agreeOnSamples(Ctx, B, A, Samples));
+      for (SymRef Other :
+           {Ctx.mkAdd({Product, X, Y, Z}), Ctx.mkAdd({Scaled, X, Y}),
+            Ctx.mkAdd({Product, X, Ctx.mkNot(Y)})}) {
+        EXPECT_EQ(detail::agreeOnSamples(Ctx, A, Other, Samples),
+                  referenceAgree(Ctx, A, Other, Samples));
+        EXPECT_EQ(detail::agreeOnSamples(Ctx, Other, A, Samples),
+                  referenceAgree(Ctx, Other, A, Samples));
+      }
+    }
+  }
+}
+
+TEST(SymMBASample, CanceledInputsKeepTheirOriginalRandomWords) {
+  for (unsigned CanceledWidth : {8u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(CanceledWidth);
+    SymContext Ctx;
+    Ctx.mkVar("unused_before", 257);
+    SymRef Canceled = Ctx.mkVar("canceled", CanceledWidth);
+    Ctx.mkVar("unused_between", 128);
+    SymRef X = Ctx.mkVar("x", 64), Y = Ctx.mkVar("y", 32);
+    SymRef Common = CanceledWidth < 64 ? Ctx.mkZExt(Canceled, 64)
+                                       : Ctx.mkExtract(Canceled, 0, 64);
+    const uint32_t Active[] = {Ctx.varId(Canceled), Ctx.varId(X), Ctx.varId(Y)};
+    const auto Values = referenceAssignments(Ctx, Active, 7);
+    SymRef Base = Ctx.mkAdd(Common, Ctx.mkConst(64, 5));
+    for (unsigned Sample : {0u, 1u, 2u, 3u, 6u}) {
+      SCOPED_TRACE(Sample);
+      SymRef Hit =
+          Ctx.mkAnd(Ctx.mkEq(X, Ctx.mkConst(Values[Sample][Ctx.varId(X)])),
+                    Ctx.mkEq(Y, Ctx.mkConst(Values[Sample][Ctx.varId(Y)])));
+      SymRef Other = Ctx.mkAdd(Base, Ctx.mkZExt(Hit, 64));
+      ASSERT_TRUE(referenceAgree(Ctx, Base, Other, Sample));
+      ASSERT_FALSE(referenceAgree(Ctx, Base, Other, Sample + 1));
+      EXPECT_TRUE(detail::agreeOnSamples(Ctx, Base, Other, Sample));
+      EXPECT_TRUE(detail::agreeOnSamples(Ctx, Other, Base, Sample));
+      EXPECT_FALSE(detail::agreeOnSamples(Ctx, Base, Other, Sample + 1));
+      EXPECT_FALSE(detail::agreeOnSamples(Ctx, Other, Base, Sample + 1));
+    }
+  }
+}
+
+TEST(SymMBASample, ResidualPlansKeepInternalWideArithmetic) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  SymRef Product = Ctx.mkMul(X, Y);
+  SymRef Wide = Ctx.mkUDiv(Ctx.mkZExt(X, 257), Ctx.mkConst(257, 3));
+  SymRef Low = Ctx.mkExtract(Wide, 0, 8);
+  SymRef A = Ctx.mkAdd(Product, Low);
+  SymRef B = Ctx.mkAdd(Product, Ctx.mkUDiv(X, Ctx.mkConst(8, 3)));
+  SymRef Miss = Ctx.mkAdd(Product, X);
+  ASSERT_FALSE(SymEvalPlan(Ctx, Low).fitsU64());
+  for (unsigned Samples : {0u, 1u, 2u, 3u, 4u, 17u}) {
+    EXPECT_TRUE(referenceAgree(Ctx, A, B, Samples));
+    EXPECT_TRUE(detail::agreeOnSamples(Ctx, A, B, Samples));
+    EXPECT_TRUE(detail::agreeOnSamples(Ctx, B, A, Samples));
+    EXPECT_EQ(detail::agreeOnSamples(Ctx, A, Miss, Samples),
+              referenceAgree(Ctx, A, Miss, Samples));
+    EXPECT_EQ(detail::agreeOnSamples(Ctx, Miss, A, Samples),
+              referenceAgree(Ctx, Miss, A, Samples));
+  }
+}
+
 TEST(SymMBASample, ChecksInternalWidthsAndBothPlanOrientations) {
   for (unsigned W : {65u, 128u, 257u}) {
     SCOPED_TRACE(W);

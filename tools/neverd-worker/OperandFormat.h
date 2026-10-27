@@ -130,6 +130,8 @@ struct OperandFacts {
   /// The variables of the function's frame and the frame register, when its
   /// prologue sets one up.
   std::string_view frameRegister;
+  /// Frame base minus this instruction's proven frame-register coordinate.
+  std::int64_t frameDepth = 0;
   const FrameNamer *frame = nullptr;
   /// The stack register and its distance below the frame's base at this
   /// instruction, when known: operands through it name frame variables too.

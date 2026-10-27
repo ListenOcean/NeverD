@@ -14,6 +14,7 @@
 
 #include "PipelineCallAbiDetail.h"
 #include "PipelineIncomingStack.h"
+#include "PipelineReturnModelingDetail.h"
 
 #include "neverd/Limits.h"
 #include "neverd/decode/Decoder.h"
@@ -1346,6 +1347,52 @@ readIncomingStackCallees(const BinaryImage &Image, PipelineResult &Result,
   return Hints;
 }
 
+void confirmOmittedStructReturns(
+    const BinaryImage &Image, const PipelineResult &Result,
+    std::map<va_t, std::vector<MedReturnReg>> &Candidates) {
+  if (Candidates.empty())
+    return;
+  if (auto *Memo = Result.CalleeSignatureMemo.get())
+    Memo->adopt(Image, Result);
+  CalleeReader Reader(Image, Result);
+  if (!Reader.init()) {
+    Candidates.clear();
+    return;
+  }
+  size_t Inspected = 0, Operations = 0;
+  for (auto It = Candidates.begin(); It != Candidates.end();) {
+    bool Proven = false;
+    if (Inspected < limits::kMaxCallEffectExtraLifts &&
+        Reader.reads(It->first)) {
+      ++Inspected;
+      OmittedCalleeMemo::Callee Local;
+      auto &Read = Reader.callee(It->first, Local);
+      std::optional<LowFunc> Low;
+      Reader.readLift(It->first, Read, Low);
+      bool Fits = Read.BlockOps.has_value();
+      if (Fits)
+        for (size_t Count : *Read.BlockOps) {
+          if (Count > limits::kMaxSSAFunctionOps - Operations) {
+            Fits = false;
+            break;
+          }
+          Operations += Count;
+        }
+      if (Fits) {
+        const auto &Conversion =
+            Reader.conversion(It->first, Read, &Read != &Local, Low);
+        Proven = Conversion.Body && !Conversion.Body->SourceParametersBound &&
+                 returnsStructFields(*Conversion.Body, It->second, Image.Arch,
+                                     Image.abiFormat());
+      }
+    }
+    if (Proven)
+      ++It;
+    else
+      It = Candidates.erase(It);
+  }
+}
+
 AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
                                        const PipelineResult &Summaries,
                                        llvm::ArrayRef<va_t> Functions) {
@@ -1879,6 +1926,14 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   // arguments merely because output was restricted to its caller.
   std::map<va_t, RecoveredArgumentBound> SignatureBounds;
   std::set<va_t> DirectTargets, DeclaredTargets;
+  std::map<va_t, uint16_t> ReturnBytes;
+  for (const MedFunc &Function : Result.MedFuncs)
+    for (const MedBlock &Block : Function.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst()) {
+          auto &Bytes = ReturnBytes[Op.Inputs[0].ConstVal];
+          Bytes = std::max(Bytes, Op.Output.Size);
+        }
   for (const MedFunc &Function : Result.MedFuncs)
     for (const MedCallInfo &Call : Function.CallInfos)
       if (!Call.IsIndirect) {
@@ -1898,7 +1953,10 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
         !Result.CallUserPrototypes.count(F.Entry))
       if (auto Declaration =
               scalarCalleeDeclaration(Img, F, Omitted[I].Parameters))
-        Result.OmittedCalleeDeclarations.push_back(std::move(*Declaration));
+        // A cached scalar body cannot narrow a caller-proven register pair.
+        // Leave the wider declaration to the ordinary call-result emitter.
+        if (ReturnBytes[F.Entry] <= Declaration->ReturnType->Size)
+          Result.OmittedCalleeDeclarations.push_back(std::move(*Declaration));
     if (I < Recovered) {
       const OmittedRecovery &Callee = Omitted[I];
       if (Callee.Body) {

@@ -2219,3 +2219,5 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 ## 選択した関数の宣言テスト
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` は整数、ポインター、浮動小数点、void の実装とアドレス出力を結合する。`AddressOnlyCallbackConvertsToItsKnownParameterType` は型付きコールバックを実行する。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` は個別選択と単位全体、冷・温キャッシュを比較する。x64/ARM64 の PE、ELF、Mach-O 入力モデルから生成した C をホスト上で O0/O2 と UBSan で実行する。全対象でのネイティブ実行を意味しない。この境界の変更後は呼び出し契約、ポインター投影、ソース ABI、呼び出し先キャッシュのテストを実行する。
+
+メモリ事後条件の変更時には、保持値、条件付き結果、新しい未知状態、呼び出し前のターゲット、不正入力の拒否を確認する `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests` を実行してください。

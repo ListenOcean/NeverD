@@ -306,6 +306,17 @@ generateRuntimePointerEvidence(const llvm::object::ObjectFile &Obj,
                                llvm::ArrayRef<std::string> Names,
                                llvm::raw_ostream &OS);
 
+/// Complete nonsplittable COFF x64 code contributions and explicit refusals.
+/// Every relocation needs a canonical import/shared-data operand. Other
+/// formats, COMDAT fragments and missing ownership never become source layouts.
+struct CodeLayoutEvidenceStats {
+  unsigned Complete = 0;
+  unsigned Incomplete = 0;
+};
+llvm::Expected<CodeLayoutEvidenceStats>
+generateCodeLayoutEvidence(const llvm::object::ObjectFile &Obj,
+                           llvm::raw_ostream &OS);
+
 /// Writes one .pat line per function \p Obj defines.
 ///
 /// COFF objects are read through their own symbol table: a function is a

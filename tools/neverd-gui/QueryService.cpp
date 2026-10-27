@@ -390,6 +390,8 @@ struct QueryService::State {
     subscriptions.insert(id,
                          {owner, owner, std::move(complete), epoch, job->id});
     job->subscribers.append(id);
+    if (candidate && candidate->spec.priority == Spec::Visible)
+      job->spec.priority = Spec::Visible;
     if (!owners.contains(owner))
       owners.insert(
           owner, QObject::connect(owner, &QObject::destroyed, q, [this, owner] {
@@ -455,7 +457,21 @@ struct QueryService::State {
   void pump() {
     if (active || queue.isEmpty() || !available)
       return;
-    const auto job = jobs.value(queue.dequeue());
+    // A navigation reply can enqueue its viewport behind inventory queries.
+    // Prefer that visible content, but never cross an accepted command.
+    qsizetype next = 0;
+    for (qsizetype index = 0; index < queue.size(); ++index) {
+      const auto queued = jobs.value(queue[index]);
+      if (!queued)
+        continue;
+      if (queued->kind == Command)
+        break;
+      if (queued->spec.priority == Spec::Visible) {
+        next = index;
+        break;
+      }
+    }
+    const auto job = jobs.value(queue.takeAt(next));
     if (!job) {
       schedulePump();
       return;

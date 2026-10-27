@@ -1638,6 +1638,38 @@ bool proveArithmeticIdentity(SymContext &Ctx, SymRef Before, SymRef After,
 static SymRef solveArithmeticImpl(SymContext &Ctx, SymRef E,
                                   const MBAOptions &Opts, WorkBudget &Budget,
                                   SolveReport &Rep, bool ExpandComplements) {
+  // A literal plus a complemented atom is already a complete affine reading:
+  // C + ~X = (C - 1) - X at the full word width. Avoid building polynomial
+  // tables for each such leaf after a large product proof. Compound arithmetic
+  // words retain normalization, which can expose further cancellations.
+  if (ExpandComplements && Ctx.op(E) == SymOp::Add && Ctx.numOperands(E) == 2 &&
+      Ctx.isConst(Ctx.operand(E, 0)) &&
+      Ctx.op(Ctx.operand(E, 1)) == SymOp::Not) {
+    const SymRef Atom = Ctx.operand(Ctx.operand(E, 1), 0);
+    if (Ctx.op(Atom) != SymOp::Add && Ctx.op(Atom) != SymOp::Mul) {
+      const size_t Words = (size_t(Ctx.width(E)) - 1) / 64 + 1;
+      ArithmeticResources Resources(Budget, Opts.MaxTableBytes);
+      if (!Resources.charge(
+              2 + 3 * Words,
+              3 * sizeof(SymNode) + 4 * sizeof(SymRef) +
+                  3 * (sizeof(llvm::APInt) + Words * sizeof(uint64_t)))) {
+        Rep.BudgetExhausted = true;
+        Rep.Outcome = MBAOutcome::BudgetExhausted;
+        return E;
+      }
+      auto Constant = Ctx.constValue(Ctx.operand(E, 0));
+      --Constant;
+      const SymRef Candidate = Ctx.mkSub(Ctx.mkConst(Constant), Atom);
+      if (readingScore(Ctx, Candidate) < readingScore(Ctx, E) &&
+          agreeOnSamples(Ctx, E, Candidate, Opts.VerifySamples)) {
+        Rep.NumAtoms = 1;
+        Rep.Outcome = MBAOutcome::Rewritten;
+        Rep.Evidence = MBAEvidence::Derivation;
+        return Candidate;
+      }
+      return E;
+    }
+  }
   // Keep a complete common monomial outside normalization. Its value may be
   // any fixed-width word, so proving the remaining quotient suffices without
   // expanding and re-factoring the same large powers in every parent.

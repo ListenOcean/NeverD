@@ -1,3 +1,4 @@
+#include "LoadProgress.h"
 #include "Protocol.h"
 
 #include <cstdlib>
@@ -124,6 +125,36 @@ void sidecarLayout() {
         "Sidecar replacement handling changed");
 }
 int main() {
+  {
+    using namespace std::chrono_literals;
+    LoadProgress progress;
+    const LoadProgress::Clock::time_point start{};
+    check(progress.publish("copy", 0, 1000, "image", start),
+          "Initial progress was suppressed");
+    for (unsigned done = 1; done < 1000; ++done)
+      check(!progress.publish("copy", done, 1000, "image", start + 1ms),
+            "Intermediate progress burst was not coalesced");
+    check(!progress.publish("copy", 999, 1000, "image", start + 49ms),
+          "Progress advanced before its display interval");
+    check(progress.publish("copy", 999, 1000, "image", start + 50ms),
+          "Display interval boundary was suppressed");
+    check(progress.publish("copy", 1000, 1000, "image", start + 50ms),
+          "Completed step was suppressed");
+    check(progress.publish("copy", 0, 1000, "image", start + 50ms),
+          "Restarted step was suppressed");
+    check(progress.publish("hash", 1, 1000, "image", start + 50ms),
+          "Changed phase was suppressed");
+    check(progress.publish("hash", 1, 1000, "symbols", start + 50ms),
+          "Changed detail was suppressed");
+    check(!progress.publish("hash", 2, 0, "symbols", start + 51ms),
+          "Unknown-total progress did not obey display cadence");
+    check(progress.publish("hash", 2, 0, "symbols", start + 100ms),
+          "Unknown-total progress was never published");
+    LoadProgress nextRequest;
+    check(nextRequest.publish("hash", 2, 0, "symbols", start + 100ms),
+          "A previous request suppressed a new request's first progress");
+  }
+
   backendJson();
   sidecarLayout();
   const Json escapedSidecar = Json::array(

@@ -232,7 +232,7 @@ TEST(LowScalarConstant, UnknownOperandsAndMalformedWidthsStayUnknown) {
         Op.Inputs[1] = NdVar::reg(8, 4);
         break;
       case 2:
-        Op.Inputs[0].Size = 2;
+        Op.Inputs[0].Size = 0;
         break;
       case 3:
         Op.Inputs[1].Size = 8;
@@ -252,6 +252,22 @@ TEST(LowScalarConstant, UnknownOperandsAndMalformedWidthsStayUnknown) {
       }
       EXPECT_FALSE(lowScalarConstantResult(Op, constant));
     }
+}
+
+TEST(LowScalarConstant, NarrowImmediatesAreZeroExtendedBeforeArithmetic) {
+  for (NdOp Code : {NdOp::INT_ADD, NdOp::INT_SUB, NdOp::INT_MULT, NdOp::INT_AND,
+                    NdOp::INT_OR, NdOp::INT_XOR, NdOp::INT_LEFT,
+                    NdOp::INT_RIGHT, NdOp::INT_ASHR})
+    for (uint16_t Width : {1, 2, 4}) {
+      auto Op = binary(Code, 8, 0x123456789abc, UINT64_MAX);
+      Op.Inputs[1].Size = Width;
+      NdOpEmulator Emulator(BinaryImage{});
+      ASSERT_TRUE(Emulator.step(Op));
+      EXPECT_EQ(lowScalarConstantResult(Op, constant), Emulator.getRegister(0));
+    }
+  auto Op = binary(NdOp::INT_ADD, 8, 1, UINT64_MAX);
+  Op.Inputs[1].Size = 1;
+  EXPECT_EQ(lowScalarConstantResult(Op, constant), 256u);
 }
 
 TEST(LowScalarConstant, BitwiseAbsorbersMatchEveryConcreteByte) {
@@ -290,7 +306,7 @@ TEST(LowScalarConstant, BitwisePartialMasksAndMalformedWidthsStayUnknown) {
         if (Mutation == 2)
           Op.Inputs[0].Size = Width == 8 ? 4 : 8;
         if (Mutation == 3)
-          Op.Inputs[1].Size = Width == 8 ? 4 : 8;
+          Op.Inputs[1].Size = 0;
         if (Mutation == 4)
           Op.Output.Size = 0;
         EXPECT_FALSE(lowScalarConstantResult(Op, constant));

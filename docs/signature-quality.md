@@ -257,7 +257,7 @@ The anchor still requires its canonical zero-addend static-data operand.
 Runtime inverts the delta against frozen exact bindings with checked arithmetic
 and corresponding mapped-region bounds. Relative consumers never become
 bindings. Raw counterclaims with missing or different reference kinds remain
-unresolved. The cache wire version is 8;
+unresolved. The cache wire version is 9;
 older cache entries are rebuilt from source patterns.
 
 Only complete ordinary candidates meeting the existing fixed-byte floor can
@@ -274,6 +274,33 @@ the indexed source-anchor names rather than another image scan. Only requested
 addresses and source anchors are grouped; frozen reference validation indexes
 actually referenced targets and compacts only its new suffix. Previously
 validated candidates are neither copied nor reconsidered.
+
+The separate `!layout` record describes one complete non-COMDAT x64 COFF
+code contribution. Public offsets retain distinct source functions, including
+short getters; aliases belong only to the same source offset. Every byte is
+literal except explicitly declared canonical import and data operands, and all
+occurrences of a source data key must reach the same mapped storage. The data
+keys are local to this observation: they establish no cross-function binding.
+A complete independently settled ordinary member with the existing fixed-byte
+floor and an exact image import supplies the query. Trailing alignment does
+not strengthen that member. The entire contribution needs one immutable code
+owner, every named member must already be a requested executable entry, and
+existing names must not contradict the source. Missing members, changed bytes,
+conflicting layouts, duplicate import slots and unsupported operands remain
+unresolved. Multiple matching layouts retain their separate nominal claims.
+
+These records are indexed by strong member names and excluded from the global
+byte scan. A name-length filter avoids hashing unrelated long spellings. Their
+single final pass reads frozen candidates only; new rows cannot create roots,
+confirm callers, establish data bindings or trigger another layout query.
+Individual candidate extents stop at the next source member. The independent
+identity gate is unchanged. `neverd-sigmaker --code-layout-evidence` records
+complete declarations and explicit refusals from source objects; COMDAT and
+unsupported contributions never become layouts.
+`supplement_code_layouts.py` preserves distinct claims, removes exact existing
+duplicates and requires native verification before replacing an output file.
+It accepts no evaluation image, map or desired-name list. Cache wire version 9
+preserves the layout context and reruns the same native structural validation.
 
 `scripts/signatures/refine_pattern_metadata.py` adds missing import or primary
 vftable references to existing complete bodies. Every existing alias needs raw
@@ -470,8 +497,8 @@ one checksum over 63 bytes, while still rejecting all wrong CRCs.
 
 ## Reproduce measurements
 
-Build Release targets `NeverDSignatureTests`, `neverd-signature-bench` and
-`neverd` using the repository build workflow. Never use Debug timings.
+Build Release targets `NeverDSignatureTests`, `neverd-signature-bench`,
+`neverd-signature-context-bench` and `neverd` using the repository build workflow. Never use Debug timings.
 
 ```sh
 build-release/bin/NeverDSignatureTests --gtest_filter='SignatureMatcher*'
@@ -512,6 +539,24 @@ candidate order independently of their storage layout, and must agree across
 builds. Hashing is outside the timed region. These are fresh index allocations
 in one process, not cold-filesystem or cold-process measurements.
 
+`neverd-signature-context-bench` measures complete application and candidate-name
+settlement with both selected databases resident. It alternates before/after
+order, discards each database's first application, and checks name digests on
+every repetition. Loading/cache work is reported separately; timed application
+includes reference resolution and context passes. For example:
+
+```sh
+build-release/bin/neverd-signature-context-bench program.exe \
+  --before baseline-signatures --after selected-signatures \
+  --entries function-vas.txt --threads 4 --repetitions 51 > context-pairs.json
+```
+
+Use the same tree for both roots as a control. Peak RSS includes both resident
+databases and cannot attribute memory to either variant. Pair fresh CLI
+processes to assess startup and per-variant memory, and state whether page and
+signature caches were flushed. This benchmark does not measure function discovery
+or establish candidate correctness; retain the independent CLI truth check.
+
 Retain each build's executable and JSON. Alternate old/new runs, repeat with
 one worker and production worker counts, report medians and spread, and avoid
 interpreting scheduler noise as a speedup. CPU affinity helps on machines
@@ -548,6 +593,16 @@ coverage of about 62–71%. These are limited compatibility measurements, not
 a broad product score. The CRC optimization preserves those results; it does
 not repair identity ambiguity. Data-reference/type witnesses and held-out
 negative examples are required before admitting more specific names.
+
+Some source identities are erased completely. The UCRT `_time64` and its
+`common_time` template have distinct source declarations with identical complete
+bytes and import references. Two independently linked stripped PE fixtures can
+retain exactly the same complete image bytes while their source linker maps
+name different declarations. More bytes, normalized hashes or a different
+preferred spelling cannot reconstruct that erased name. A source-backed caller
+or independent symbols/exports/debug evidence can add information; without it,
+keep nominal alternatives unresolved. Nonsplittable contribution layouts do not
+supply fixed offsets between separate COMDAT sections.
 
 Other unqualified areas include a common cross-tool held-out corpus, broad
 kernel/mobile/legacy-library truth coverage, and persistent index startup

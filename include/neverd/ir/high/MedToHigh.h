@@ -226,6 +226,11 @@ void chooseIntegerSignedness(HighFunc &Func);
 /// local before it, when evaluating the value earlier cannot fault or have
 /// an effect.  The C writer prints each read of a shared node in full.
 bool nameRepeatedValues(HighFunc &Func);
+/// Share a terminal if arm with the equivalent fallthrough suffix. Temporary
+/// names may differ only when every occurrence stays inside those copies.
+/// A function with exception flow (see \p Med) is left unchanged.
+bool foldDuplicateTerminalContinuations(HighFunc &Func,
+                                        const MedFunc *Med = nullptr);
 /// Marks a System V x86-64 variadic function whose va_start builds a va_list
 /// only to pass it on (HighFunc::VaStart): every access to the va_list, the
 /// register save area and the overflow homes is va_start's own, the va_list's

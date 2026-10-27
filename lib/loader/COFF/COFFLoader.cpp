@@ -218,6 +218,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   Progress.check();
   // --- Sections ---
+  Progress.report("parse", 0, 1, "PE/COFF sections");
   for (const SectionRef &SecRef : Obj.sections()) {
     Progress.check();
     const coff_section *CoffSec = Obj.getCOFFSection(SecRef);
@@ -991,6 +992,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   Progress.check();
   // --- Imports ---
+  Progress.report("parse", 0, 1, "PE/COFF imports");
   coff_loader::parseImports(Obj, Img);
 
   if (Img.Entry &&
@@ -1043,6 +1045,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   Progress.check();
   // --- Base Relocation Table (.reloc) ---
+  Progress.report("parse", 0, 1, "PE/COFF base relocations");
   if (auto Error = coff_loader::parseBaseRelocations(Obj, Img, ImageBase))
     return std::move(Error);
 
@@ -1060,10 +1063,12 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   Progress.check();
   // --- Exceptions (.pdata) ---
+  Progress.report("parse", 0, 1, "PE/COFF unwind records");
   coff_loader::parseExceptions(Obj, Img, ImageBase);
 
   Progress.check();
   // --- TLS callbacks ---
+  Progress.report("parse", 0, 1, "PE/COFF runtime entries");
   coff_loader::parseTLSDirectory(Obj, Img, ImageBase);
 
   Progress.check();
@@ -1089,13 +1094,16 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
                          .filename()),
       Progress);
   coff_loader::recordSymbolTableDataInCode(Img);
+  Progress.report("parse", 0, 1, "PE/COFF code literals");
   coff_loader::recordRelocatedPointerRunsInCode(Img);
   coff_loader::recordConstantCodeSlots(Img);
+  Progress.report("parse", 0, 1, "language runtime");
   // Classified before any table is read.  A PE is the format where schema and
   // language diverge most: Delphi and MSVC share the registration chain, Rust
   // and C++ share the `FuncInfo`, and a MinGW image carries Itanium tables
   // inside a PE.  None of those are separable from the table alone.
   Img.ExceptionMetadata.Runtime = detectLanguageRuntime(Img);
+  Progress.report("parse", 0, 1, "Go exception records");
   // A Go PE has an exception directory covering only the cgo and runtime
   // assembly that Windows itself unwinds; everything Go compiled is described
   // by the pclntab instead.  Reading it first is what names the one routine Go
@@ -1108,6 +1116,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   // the COFF symbol table are both available.
   Progress.check();
   coff_loader::resolveExceptionHandlers(Img);
+  Progress.report("parse", 0, 1, "PE/COFF language exceptions");
   // x86-32 has no exception directory; its tables are reachable only from the
   // prologue that installs the FS:[0] registration record, so recovery needs
   // the discovered function bodies that scan runs over.  Delphi shares that

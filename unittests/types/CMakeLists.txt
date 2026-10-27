@@ -23,3 +23,16 @@ target_include_directories(NeverDTypesTests PRIVATE
 target_compile_definitions(NeverDTypesTests PRIVATE
   NEVERD_TYPES_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
 )
+
+# Keep parser lifetime checks independent of loader/call-model dependencies
+# so a sanitizer build need not instrument the binary-analysis pipeline.
+add_neverd_unittest(NeverDTypeParseTests
+  TypeParseTests.cpp
+
+  LINK_COMPONENTS
+  Types
+)
+
+target_compile_definitions(NeverDTypeParseTests PRIVATE
+  NEVERD_TYPES_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/fixtures"
+)

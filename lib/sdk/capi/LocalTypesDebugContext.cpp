@@ -462,11 +462,12 @@ LocalTypesDebugContext::LocalTypesDebugContext(
     std::map<va_t, std::string> Declarations, const BinaryImage *Image,
     std::vector<types::HeaderLibrary> Headers,
     std::unordered_map<uint64_t, std::string> Recognized, std::string EntryType,
-    std::optional<va_t> ProgramMain)
+    std::optional<va_t> ProgramMain, std::string EntryDeclaration)
     : Inner(Inner), Types(std::move(Types)),
       Declarations(std::move(Declarations)), Image(Image),
       Headers(std::move(Headers)), Recognized(std::move(Recognized)),
-      EntryType(std::move(EntryType)), ProgramMain(ProgramMain) {}
+      EntryType(std::move(EntryType)),
+      EntryDeclaration(std::move(EntryDeclaration)), ProgramMain(ProgramMain) {}
 
 LocalTypesDebugContext::~LocalTypesDebugContext() {
   std::lock_guard<std::mutex> Guard(Mutex);
@@ -809,6 +810,15 @@ LocalTypesDebugContext::resolvePrototype(llvm::StringRef Name) const {
 }
 
 std::optional<FunctionSym> LocalTypesDebugContext::entrySignature() const {
+  if (!EntryDeclaration.empty()) {
+    const auto Read = types::parseFunctionDeclaration(EntryDeclaration, *Types);
+    if (!Read.ok())
+      return std::nullopt;
+    auto Signature = signatureOf(*Types, *Read.Function, Read.Name);
+    if (Signature)
+      Signature->PrototypeDeclaration = EntryDeclaration;
+    return Signature;
+  }
   // A typedef of a pointer to a function, as UEFI's EFI_IMAGE_ENTRY_POINT.
   const types::LocalType *Type = Types->find(EntryType);
   if (!Type || Type->Kind != types::TypeKind::Typedef || !Type->Target ||
@@ -940,7 +950,8 @@ LocalTypesDebugContext::resolveFunction(va_t Addr) const {
         return Function;
   // The image's entry point, as its kind's specification types it: a UEFI
   // application's (ImageHandle, SystemTable).
-  if (!Known && Image && Addr == Image->Entry && !EntryType.empty())
+  if (!Known && Image && Addr == Image->Entry &&
+      (!EntryType.empty() || !EntryDeclaration.empty()))
     Known = entrySignature();
   // The program's main, as its C runtime calls it, under that name where
   // nothing else names it.

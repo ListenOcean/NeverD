@@ -2287,3 +2287,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## Проверки объявлений выбранных функций
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` объединяет адреса с реализациями, возвращающими целое, указатель, число с плавающей точкой или void. `AddressOnlyCallbackConvertsToItsKnownParameterType` исполняет типизированный callback. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` сравнивает отдельный выбор, весь модуль и холодный/прогретый кэш. C из моделей x64/ARM64 PE, ELF и Mach-O исполняется на хосте с O0/O2 и UBSan; это не проверка нативного исполнения на всех платформах. После изменения границы запускать тесты контрактов вызова, проекции указателей, исходного ABI и кэша вызываемых функций.
+
+При изменении этого постусловия памяти следует совместно запускать `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests` и `NeverDSymMemoryKnowledgeTests`. Они проверяют сохранённые значения, условные результаты, новые неизвестные эпохи, цели до вызова и отклонение некорректного ввода.

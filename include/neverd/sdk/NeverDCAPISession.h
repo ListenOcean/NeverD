@@ -256,6 +256,11 @@ NEVERD_API const char *neverd_session_file_path(neverd_session_t Sess);
 /// read.  The loader's own hash costs nothing; otherwise the file is hashed
 /// once per load.  Free with neverd_free_string.
 NEVERD_API const char *neverd_session_input_sha256(neverd_session_t Sess);
+/// Shared SHA-256 of caller-owned immutable bytes, as 64 lowercase hex digits.
+/// No Session or analysis is required. NULL only for invalid nonempty input.
+/// Free the returned string with neverd_free_string().
+NEVERD_API const char *neverd_sha256_hex(const unsigned char *Data,
+                                         size_t Size);
 NEVERD_API const char *neverd_session_arch_name(neverd_session_t Sess);
 NEVERD_API const char *neverd_session_format_name(neverd_session_t Sess);
 NEVERD_API int neverd_session_is_64bit(neverd_session_t Sess);

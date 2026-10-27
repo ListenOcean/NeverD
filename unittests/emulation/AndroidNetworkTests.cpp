@@ -16,6 +16,7 @@
 
 #include <cstring>
 #include <tuple>
+#include <utility>
 namespace neverd::emulation {
 namespace {
 constexpr uint64_t Buffer = 0x20000000;
@@ -132,9 +133,14 @@ TEST_P(AndroidNetwork,
 
 TEST_P(AndroidNetwork, TCPConnectFailuresShareRawNamedDynamicAndVariadicCalls) {
   Options.Android->Libraries["libc.so"] = {"connect"};
-  Options.LinuxNetwork->TCPConnectFailures = LinuxTCPConnectFailures{101, 4};
-  for (uint64_t Mode : {0, 1, 2}) {
+  using Case = std::pair<uint64_t, uint32_t>;
+  for (const auto &[Mode, Count] :
+       {Case{0, 4}, Case{0, 4097}, Case{0, UINT32_MAX}, Case{1, 4},
+        Case{2, 4}}) {
     SCOPED_TRACE(Mode);
+    SCOPED_TRACE(Count);
+    Options.LinuxNetwork->TCPConnectFailures =
+        LinuxTCPConnectFailures{101, Count};
     const auto R = run("network_connect_failures", Mode);
     if (!Mode)
       returned(R);

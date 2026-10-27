@@ -153,6 +153,10 @@ inline constexpr size_t kHighFrameStoreForwardingFrameWalkBudget = 100000;
 // lib/ir/high/pass/HighPrivateFrameCopies.cpp
 inline constexpr size_t kHighPrivateFrameCopiesBudget = 1000000;
 
+// lib/ir/high/structure/HighCommonContinuations.cpp
+/// Bound exact terminal-continuation comparison before retaining both copies.
+inline constexpr size_t kHighCommonContinuationBudget = 100000;
+
 // lib/ir/high/pass/HighSharedExpressions.cpp
 /// A statement prints this many nodes at least before a repeated value is
 /// worth a local, and at least this many times its distinct nodes unless it

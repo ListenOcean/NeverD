@@ -1,11 +1,14 @@
 #pragma once
 
 #include "OperandFormat.h"
+#include "ProjectHistory.h"
 #include "Protocol.h"
 
 #include "neverd/sdk/NeverDCAPITypes.h"
 
 #include <cstdint>
+#include <filesystem>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string>
@@ -38,6 +41,13 @@ public:
 
   /// Names, comments or function boundaries changed.
   void invalidate();
+  void configureCache(std::filesystem::path folder,
+                      std::function<Json()> identity, bool writable,
+                      AtomicWriter writer);
+  bool cachePending() const;
+  void flushCacheOne();
+  void flushCache();
+  Json cacheStats() const;
   void setStackFrames(const Json &rows, const std::string &imageHash);
   /// The neverd_strings_ex_json options strings are found with, as JSON
   /// text; empty for the engine's defaults.
@@ -78,6 +88,9 @@ public:
   /// Names or the user's data items changed: the next query reads them again
   /// without scanning strings or reading imports and exports again.
   void namesChanged();
+  /// Comments changed. Rendering reads them live, but they are part of the
+  /// browse cache identity, so cached documents start a new namespace.
+  void commentsChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
   /// Whether operands read as the ARM family spells them (`[x0, #8]`)
@@ -138,6 +151,9 @@ public:
   std::uint64_t generation() const;
 
 private:
+  Json uncachedPage(const Json &payload);
+  Json uncachedOverview(const Json &payload);
+  const Json &uncachedFunctionRows();
   struct Impl;
   std::unique_ptr<Impl> impl_;
 };

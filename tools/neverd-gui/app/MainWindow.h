@@ -11,6 +11,7 @@
 #include "neverd/support/IntegerLiterals.h"
 
 #include <QByteArray>
+#include <QElapsedTimer>
 #include <QHash>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -442,6 +443,8 @@ private:
   bool layoutInitialized_ = false;
   bool defaultSizesPending_ = false;
   QTimer statusTimer_;
+  QString diskStatusPath_;
+  QElapsedTimer diskStatusAge_;
   QStringList pendingCommands_;
   /// The code view asked for while a jump was still loading.
   std::optional<std::pair<QString, CodeOpen>> pseudocodeAfterJump_;

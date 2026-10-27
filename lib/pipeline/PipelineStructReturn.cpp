@@ -30,6 +30,60 @@
 
 namespace neverd {
 
+// A caller's field reads propose a shape; the callee must supply each field
+// on every return. This deliberately accepts only a complete local write or
+// an untouched argument. A join needing predecessor evidence remains unknown.
+bool returnsStructFields(const MedFunc &Function,
+                         llvm::ArrayRef<MedReturnReg> Shape, Arch Architecture,
+                         BinaryFormat Format) {
+  const auto &TRI = getTargetRegInfo(Architecture);
+  std::vector<bool> Unchanged;
+  for (const auto &Field : Shape)
+    Unchanged.push_back(returnsArgumentUnchanged(Function, Field, TRI, Format));
+  bool SawReturn = false;
+  for (const auto &Block : Function.Blocks) {
+    for (size_t Ret = 0; Ret < Block.Ops.size(); ++Ret) {
+      if (Block.Ops[Ret].Opcode != NdOp::RETURN)
+        continue;
+      SawReturn = true;
+      for (size_t FieldIndex = 0; FieldIndex < Shape.size(); ++FieldIndex) {
+        const MedReturnReg &Field = Shape[FieldIndex];
+        if (Unchanged[FieldIndex])
+          continue;
+        bool Written = false;
+        for (size_t I = Ret; I-- > 0;) {
+          const MedOp &Op = Block.Ops[I];
+          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
+            break;
+          const MedVar &Out = Op.Output;
+          if (Out.Kind != MedVar::Reg || !Out.Size ||
+              Out.RegOff >= Field.RegOff + Field.Size ||
+              Field.RegOff >= Out.RegOff + Out.Size)
+            continue;
+          // The last overlapping write owns these bytes. An older full write
+          // cannot repair a partial or explicitly unknown final value.
+          const bool SelfCopy = Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+                                Op.Inputs[0].Kind == MedVar::Reg &&
+                                Op.Inputs[0].RegOff == Out.RegOff &&
+                                Op.Inputs[0].Size == Out.Size;
+          if (SelfCopy)
+            continue;
+          Written =
+              Out.RegOff == Field.RegOff && Out.Size >= Field.Size &&
+              llvm::none_of(llvm::ArrayRef(Op.Inputs.data(), Op.NumInputs),
+                            [](const MedVar &Input) {
+                              return Input.Kind == MedVar::Unspecified;
+                            });
+          break;
+        }
+        if (!Written)
+          return false;
+      }
+    }
+  }
+  return SawReturn;
+}
+
 // A small struct returned by value across multiple registers (x86-64 SysV
 // eightbytes / AArch64 HFA): the caller-side remodel (modelCallStructReturn,
 // run during low->med) rewrote each such direct call to produce a flat
@@ -439,47 +493,13 @@ void recoverStructReturnFromBody(const BinaryImage &Img, PipelineResult &Result,
       }
     for (va_t Target : ConflictingCallerShapes)
       CallerHFAShapes.erase(Target);
-    // The callee must itself leave every field: each field register has its
-    // own write, after the last call, before every RETURN, or is an argument
-    // register the callee never writes, which returns the argument.
-    auto writesEveryField = [&](const MedFunc &MF,
-                                const std::vector<MedReturnReg> &Shape) {
-      bool SawReturn = false;
-      for (const auto &Blk : MF.Blocks) {
-        for (size_t RetIdx = 0; RetIdx < Blk.Ops.size(); ++RetIdx) {
-          if (Blk.Ops[RetIdx].Opcode != NdOp::RETURN)
-            continue;
-          SawReturn = true;
-          for (const MedReturnReg &Field : Shape) {
-            if (returnsArgumentUnchanged(MF, Field, TRI, Img.abiFormat()))
-              continue;
-            bool Written = false;
-            for (size_t J = RetIdx; J-- > 0 && !Written;) {
-              const MedOp &O = Blk.Ops[J];
-              if (O.Opcode == NdOp::CALL || O.Opcode == NdOp::INDIR_CALL)
-                break;
-              const bool SelfCopy = O.Opcode == NdOp::COPY &&
-                                    O.NumInputs >= 1 &&
-                                    O.Inputs[0].Kind == MedVar::Reg &&
-                                    O.Inputs[0].RegOff == O.Output.RegOff;
-              Written = O.Output.Kind == MedVar::Reg &&
-                        O.Output.RegOff == Field.RegOff &&
-                        O.Output.Size >= Field.Size && !SelfCopy;
-            }
-            if (!Written)
-              return false;
-          }
-        }
-      }
-      return SawReturn;
-    };
 
     for (auto &MF : Result.MedFuncs) {
       if (!MF.MultiReturn.empty())
         continue;
       if (auto Shape = CallerHFAShapes.find(MF.Entry);
           Shape != CallerHFAShapes.end() &&
-          writesEveryField(MF, Shape->second)) {
+          returnsStructFields(MF, Shape->second, Img.Arch, Img.abiFormat())) {
         MF.MultiReturn = Shape->second;
         continue;
       }

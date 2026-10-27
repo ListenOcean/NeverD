@@ -100,8 +100,7 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
       (RequireReadable && (!Section->isReadable() || !Segment->isReadable())) ||
       Image.isCodeAddress(Address) != Code ||
       (Code && (!Section->isExecutable() || !Segment->isExecutable())) ||
-      (Immutable && !Segment->ReadOnlyAfterRelocations &&
-       (Section->isWritable() || Segment->isWritable())) ||
+      (Immutable && !Image.readOnlyAfterRelocations(Address, Extent)) ||
       Section->Size > InvalidVA - Section->VA ||
       Segment->Size > InvalidVA - Segment->VA || Section->VA < Segment->VA ||
       !rangeInBounds(Address - Section->VA, Extent, Section->Size) ||
@@ -258,31 +257,34 @@ std::optional<uint64_t> readImmutableImageScalar(const BinaryImage &Image,
     // Charge inventories even when a mapping/fixup check could return early.
     // This bounds cold queries independently of which record happens to match
     // and includes the ordered indices used by the pointer-candidate check.
-    for (size_t Work : {size_t{1} + Size,
-                        Image.Sections.size(),
-                        Image.Segments.size(),
-                        Image.ARMCodeRegions.size(),
-                        Image.Relocations.size(),
-                        Image.BaseRelocations.size(),
-                        Image.RuntimeCallablePointerSlots.size(),
-                        Image.CodePtrRelocSlots.size(),
-                        Image.MachOAuthenticatedPointers.size(),
-                        Image.DataPtrRelocSlots.size(),
-                        Image.DataPtrRelocTargetOwners.size(),
-                        Image.RelCodeRelocSlots.size(),
-                        Image.RelDataPtrRelocSlots.size(),
-                        Image.MachOResolvedChainedPointerSlots.size(),
-                        Image.ConflictingImportStorageSlots.size(),
-                        Image.ImportPtrSlots.size(),
-                        Image.ImportStorageSlots.size(),
-                        Image.DyldBindSlots.size(),
-                        Image.ObjCSourceReferences.size(),
-                        Image.DataAddressRelocOperands.size(),
-                        Image.CodeAddressRelocOperands.size(),
-                        Image.RelocDataAddrs.size(),
-                        Image.WritableRelocDataAddrs.size(),
-                        Image.RodataAnchorSeg.size(),
-                        Image.CodeRefTargets.size()}) {
+    for (size_t Work :
+         {size_t{1} + Size,
+          Image.Sections.size(),
+          Image.Segments.size(),
+          Image.ELFMetadata ? Image.ELFMetadata->ProgramHeaders.size()
+                            : size_t{0},
+          Image.ARMCodeRegions.size(),
+          Image.Relocations.size(),
+          Image.BaseRelocations.size(),
+          Image.RuntimeCallablePointerSlots.size(),
+          Image.CodePtrRelocSlots.size(),
+          Image.MachOAuthenticatedPointers.size(),
+          Image.DataPtrRelocSlots.size(),
+          Image.DataPtrRelocTargetOwners.size(),
+          Image.RelCodeRelocSlots.size(),
+          Image.RelDataPtrRelocSlots.size(),
+          Image.MachOResolvedChainedPointerSlots.size(),
+          Image.ConflictingImportStorageSlots.size(),
+          Image.ImportPtrSlots.size(),
+          Image.ImportStorageSlots.size(),
+          Image.DyldBindSlots.size(),
+          Image.ObjCSourceReferences.size(),
+          Image.DataAddressRelocOperands.size(),
+          Image.CodeAddressRelocOperands.size(),
+          Image.RelocDataAddrs.size(),
+          Image.WritableRelocDataAddrs.size(),
+          Image.RodataAnchorSeg.size(),
+          Image.CodeRefTargets.size()}) {
       if (Work > Available)
         return std::nullopt;
       Available -= Work;

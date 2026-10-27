@@ -103,6 +103,9 @@ static cl::opt<bool> CollisionEvidence(
              "unreferenced functions; !evidence records cannot be loaded as "
              "signatures and imply --references"),
     cl::init(false));
+static cl::opt<bool> CodeLayoutEvidence(
+    "code-layout-evidence",
+    cl::desc("Emit offline complete non-COMDAT COFF x64 code contributions"));
 static cl::opt<bool> VTableEvidence(
     "vtable-evidence",
     cl::desc(
@@ -225,15 +228,16 @@ int main(int Argc, char *Argv[]) {
 
   if (unsigned(Contextual) + unsigned(CallerContext) +
           unsigned(CollisionEvidence) + unsigned(VTableEvidence) +
-          unsigned(RuntimePointerEvidence) >
+          unsigned(RuntimePointerEvidence) + unsigned(CodeLayoutEvidence) >
       1) {
     WithColor::error()
         << "--contextual, --caller-context, --collision-evidence and "
-           "--vtable-evidence and --runtime-pointer-evidence "
+           "--vtable-evidence, --runtime-pointer-evidence and "
+           "--code-layout-evidence "
            "are separate outputs\n";
     return 1;
   }
-  if ((VTableEvidence || RuntimePointerEvidence) &&
+  if ((VTableEvidence || RuntimePointerEvidence || CodeLayoutEvidence) &&
       (References || DataReferences || Verify)) {
     WithColor::error()
         << "metadata evidence is a separate offline output mode\n";
@@ -315,6 +319,7 @@ int main(int Argc, char *Argv[]) {
   InputStats Stats;
   VTableEvidenceStats Tables;
   RuntimePointerEvidenceStats Pointers;
+  CodeLayoutEvidenceStats Layouts;
   bool EvidenceFailed = false;
   for (const std::string &Path : Inputs)
     if (!forEachObject(Path, Stats, [&](const ObjectFile &Obj) {
@@ -323,7 +328,16 @@ int main(int Argc, char *Argv[]) {
             return;
           }
           ++Stats.Objects;
-          if (RuntimePointerEvidence) {
+          if (CodeLayoutEvidence) {
+            auto Result = generateCodeLayoutEvidence(Obj, OS);
+            if (!Result) {
+              WithColor::error() << toString(Result.takeError()) << "\n";
+              EvidenceFailed = true;
+            } else {
+              Layouts.Complete += Result->Complete;
+              Layouts.Incomplete += Result->Incomplete;
+            }
+          } else if (RuntimePointerEvidence) {
             auto Result =
                 generateRuntimePointerEvidence(Obj, EvidenceSymbols, OS);
             if (!Result) {
@@ -378,7 +392,10 @@ int main(int Argc, char *Argv[]) {
                          << " Mach-O objects were left out: their linker "
                             "optimization hints cannot be read\n";
 
-  if (RuntimePointerEvidence)
+  if (CodeLayoutEvidence)
+    outs() << "Generated " << Layouts.Complete << " complete and "
+           << Layouts.Incomplete << " incomplete code layouts → ";
+  else if (RuntimePointerEvidence)
     outs() << "Generated " << Pointers.Complete << " complete and "
            << Pointers.Incomplete << " incomplete runtime declarations → ";
   else if (VTableEvidence)

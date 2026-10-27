@@ -9,6 +9,10 @@ add_neverd_tool(neverd-signature-bench
   signature-bench.cpp
   LINK_COMPONENTS Sigs)
 
+add_neverd_tool(neverd-signature-context-bench
+  signature-context-bench.cpp
+  LINK_COMPONENTS Sigs)
+
 add_neverd_tool(neverd-med-bench
   med-bench.cpp
   LINK_COMPONENTS Pipeline)

@@ -154,6 +154,96 @@ TEST(TypeParse, ReadsOneFunctionsDeclarationAgainstTheLibrary) {
   EXPECT_NE(problem("int f(int a").find("expected ')'"), std::string::npos);
 }
 
+TEST(TypeParse, ExpandedSpellingsSurviveDirectivesAndTheInput) {
+  TypeLibrary Library(DataModel::ILP32);
+  std::string Source = R"(
+#pragma neverd_header("vendor/expanded_types.h")
+#pragma neverd_default_calling_convention(__stdcall)
+#define WORD unsigned \
+int
+#define RECORD FirstRecordWithAnExpandedName
+#define MEMBER MemberWithAnExpandedName
+#define LINK_NAME "external_expanded" "_routine"
+#pragma pack(push, saved_layout, 1)
+struct RECORD { char Lead; WORD MEMBER; };
+int ExpandedRoutine(struct RECORD *Argument) __asm__(LINK_NAME);
+#undef WORD
+#undef RECORD
+#undef MEMBER
+#undef LINK_NAME
+#define WORD unsigned long long
+#define RECORD SecondRecordWithAnExpandedName
+#define MEMBER ReplacementMemberWithAnExpandedName
+#pragma pack(pop, saved_layout)
+#pragma neverd_header("vendor/replacement_types.h")
+struct RECORD { char Lead; WORD MEMBER; };
+#undef WORD
+#undef RECORD
+#undef MEMBER
+)";
+  const auto Result = parseCTypes(Source, Library);
+  ASSERT_TRUE(Result.ok());
+  // The library owns its names, headers and prototypes after the lexer,
+  // macro table, spelling arena and caller's input have all gone away.
+  Source.assign(Source.size(), '#');
+  EXPECT_EQ(shapeOf(recordOf(Library, "FirstRecordWithAnExpandedName")),
+            "struct{Lead@0 MemberWithAnExpandedName@1}");
+  EXPECT_EQ(shapeOf(recordOf(Library, "SecondRecordWithAnExpandedName")),
+            "struct{Lead@0 ReplacementMemberWithAnExpandedName@8}");
+  EXPECT_EQ(Library.find("FirstRecordWithAnExpandedName")->Header,
+            "vendor/expanded_types.h");
+  EXPECT_EQ(Library.find("SecondRecordWithAnExpandedName")->Header,
+            "vendor/replacement_types.h");
+  EXPECT_TRUE(
+      llvm::is_contained(Result.Types, "FirstRecordWithAnExpandedName"));
+  for (const char *Name : {"ExpandedRoutine", "external_expanded_routine"}) {
+    const auto *Function = Library.findPrototype(Name);
+    ASSERT_NE(Function, nullptr) << Name;
+    ASSERT_EQ(Function->Params.size(), 1u);
+    EXPECT_EQ(Function->Params[0].Name, "Argument");
+    EXPECT_EQ(Function->Convention, CallingConvention::Stdcall);
+  }
+}
+
+TEST(TypeParse, ExpandedDiagnosticsOwnTheirTextAndInvocationPosition) {
+  TypeLibrary Library;
+  std::string Source = "#define UNKNOWN ALongTypeThatWasNeverDeclared\n"
+                       "struct Invalid {\n  UNKNOWN Member;\n};\n"
+                       "#undef UNKNOWN\n";
+  const auto Result = parseCTypes(Source, Library);
+  Source.assign(Source.size(), '#');
+  ASSERT_EQ(Result.Problems.size(), 1u);
+  EXPECT_EQ(Result.Problems[0].Line, 3u);
+  EXPECT_EQ(Result.Problems[0].Column, 3u);
+  EXPECT_EQ(Result.Problems[0].Message,
+            "'ALongTypeThatWasNeverDeclared' names no type");
+  EXPECT_EQ(Library.find("Invalid"), nullptr);
+
+  const auto Quoted =
+      parseCTypes("#define MESSAGE \"expanded\\n\" \"diagnostic\"\n"
+                  "_Static_assert(0, MESSAGE);\n#undef MESSAGE\n",
+                  Library);
+  ASSERT_EQ(Quoted.Problems.size(), 1u);
+  EXPECT_EQ(Quoted.Problems[0].Line, 2u);
+  EXPECT_EQ(Quoted.Problems[0].Message,
+            "a static assertion fails: expanded\ndiagnostic");
+}
+
+TEST(TypeParse, OneDeclarationRetainsExpandedParameterNames) {
+  const TypeLibrary Library;
+  std::string Source =
+      "#define PARAMETER unsigned long long ExpandedParameter\n"
+      "int ExpandedFunction(PARAMETER)";
+  const auto Result = parseFunctionDeclaration(Source, Library);
+  Source.assign(Source.size(), '#');
+  ASSERT_TRUE(Result.ok());
+  EXPECT_EQ(Result.Name, "ExpandedFunction");
+  ASSERT_EQ(Result.Function->Params.size(), 1u);
+  EXPECT_EQ(Result.Function->Params[0].Name, "ExpandedParameter");
+  ASSERT_TRUE(Result.Function->Params[0].Type);
+  EXPECT_EQ(Result.Function->Params[0].Type->TheBuiltin, Builtin::ULongLong);
+}
+
 TEST(TypeParse, BitfieldsShareUnitsUnderItanium) {
   const TypeLibrary Library = parsed(
       "struct B { unsigned a : 4; unsigned short c : 3; unsigned d : 30; };",

@@ -2368,6 +2368,111 @@ TEST(HighSourceExpressions,
     EXPECT_EQ(Source.find(" = arg0;"), std::string::npos) << Source;
   }
 }
+HighFunc guardedEncodedAddress(bool Equal = false) {
+  const auto T = NdType::makeInt(8, false);
+  const auto U32 = NdType::makeInt(4, false);
+  const auto Literal = [](uint64_t V) {
+    return HighExpr::makeConst(V, 8, ConstantAddressProvenance::Scalar);
+  };
+  auto Q = parameter(0, T, Arch::X64);
+  auto Bits = HighExpr::makeBinop(NdOp::INT_XOR, Q, Literal(0x27));
+  Bits->Type = T;
+  auto Address = HighExpr::makeBinop(NdOp::INT_ADD, Bits,
+                                     Literal(UINT64_C(0xffffffff00000000)));
+  Address->Type = T;
+  HighStmt Guard;
+  Guard.Kind = Equal ? StmtKind::IfElse : StmtKind::If;
+  Guard.Cond = HighExpr::makeBinop(Equal ? NdOp::INT_EQUAL : NdOp::INT_NOTEQUAL,
+                                   Q, Literal(UINT64_C(0x100000008) ^ 0x27));
+  const auto Read = returning(HighExpr::makeLoad(Address, U32));
+  if (Equal) {
+    Guard.Body = {returning(HighExpr::makeConst(0, 4))};
+    Guard.ElseBody = {Read};
+  } else {
+    Guard.Body = {Read};
+  }
+  HighFunc F;
+  F.Name = "guarded_address";
+  F.ReturnType = U32;
+  F.Params = {{"arg0", T}};
+  F.Body = {Guard, returning(HighExpr::makeConst(0, 4))};
+  return F;
+}
+
+TEST(HighSourceExpressions, GuardedAddressKeepsTheDecodedBaseAndFieldOffset) {
+  std::string Text;
+  for (bool Equal : {false, true}) {
+    auto F = guardedEncodedAddress(Equal);
+    for (bool Named : {false, true}) {
+      F.Name = std::string(Named ? "after_address" : "before_address") +
+               (Equal ? "_eq" : "_ne");
+      if (Named) {
+        ASSERT_TRUE(nameRepeatedValues(F));
+        ASSERT_EQ(F.Body.front().Kind, StmtKind::Assign);
+        EXPECT_TRUE(F.Body.front().KeepsName);
+        const auto &Guard = F.Body[1];
+        const auto &Arm = Equal ? Guard.ElseBody : Guard.Body;
+        const auto &Address = Arm.front().RetVal->Operands[0];
+        ASSERT_EQ(Address->Kind, ExprKind::BinOp);
+        ASSERT_EQ(Address->Operands.size(), 2u);
+        EXPECT_EQ(Address->Operands[1]->ConstVal, 8u);
+      }
+      llvm::raw_string_ostream Out(Text);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+    }
+  }
+  Text += R"(
+int main(void) {
+  uint32_t words[]={0,UINT32_MAX,0x80000000u,0x12345678u,7,255,1,42};
+  for (unsigned i=0;i<6;++i) {
+    uint64_t q=((uint64_t)(uintptr_t)&words[i]+UINT64_C(0x100000008))^0x27;
+    if (before_address_ne(q)!=words[i+2] || after_address_ne(q)!=words[i+2] ||
+        before_address_eq(q)!=words[i+2] || after_address_eq(q)!=words[i+2])
+      return 1;
+  }
+  uint64_t null_q=UINT64_C(0x100000008)^0x27;
+  return before_address_ne(null_q) || after_address_ne(null_q) ||
+         before_address_eq(null_q) || after_address_eq(null_q);
+}
+)";
+  compileAndRun(Text);
+}
+
+TEST(HighSourceExpressions, GuardedAddressNeedsStableCompleteScalarBits) {
+  const auto T = NdType::makeInt(8, false);
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedEncodedAddress();
+    auto &Guard = F.Body.front();
+    auto &Address = Guard.Body.front().RetVal->Operands[0];
+    if (Variant == 0) {
+      Guard.Body.insert(Guard.Body.begin(), assign(parameter(0, T, Arch::X64),
+                                                   HighExpr::makeConst(7, 8)));
+    } else if (Variant == 1) {
+      Address->Operands[0]->Operands[1]->ConstProvenance =
+          ConstantAddressProvenance::CodeAddress;
+    } else if (Variant == 2) {
+      auto Low = integerView(Address->Operands[0], NdType::makeInt(4, false));
+      auto Extended = HighExpr::makeUnary(NdOp::INT_ZEXT, Low);
+      Extended->Type = T;
+      Address->Operands[0] = Extended;
+    } else if (Variant == 3) {
+      Address->Operands[1] =
+          HighExpr::makeConst(8, 8, ConstantAddressProvenance::Scalar);
+    } else if (Variant == 4) {
+      F.Params.push_back({"arg1", T});
+      Address->Operands[0]->Operands[0] = parameter(1, T, Arch::X64);
+    } else {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Guard.Body.front().Addr = 0x1040;
+      F.Body.insert(F.Body.begin(), Jump);
+    }
+    EXPECT_FALSE(nameRepeatedValues(F));
+  }
+}
 TEST(HighSourceExpressions, CallbackDeclaratorsBorrowIncompleteRecords) {
   const auto Record = NdType::makeNamedRecord("Context", 24);
   const auto Pointer = NdType::makePtr(Record);
@@ -2382,6 +2487,197 @@ TEST(HighSourceExpressions, CallbackDeclaratorsBorrowIncompleteRecords) {
                 declarationToC(Callback, "visit") +
                 ";\nint main(void) { return visit!=0; }\n");
 }
+HighFunc duplicatedContinuation() {
+  const auto A = Arch::X64;
+  const auto T = NdType::makeInt(8, false);
+  const auto P = NdType::makePtr(T);
+  HighFunc F;
+  F.Name = "shared_continuation";
+  F.ReturnType = T;
+  F.Params = {{"arg0", P}, {"arg1", T}};
+  auto Tail = [&](unsigned Id) {
+    auto Word = temporary(Id, T, A);
+    auto Result = temporary(Id + 1, T, A);
+    auto Finish = HighExpr::makeCall("finish", 0x3000, {Word});
+    Finish->Type = T;
+    Finish->CallSiteAddr = Id;
+    HighStmt Guard;
+    Guard.Kind = StmtKind::If;
+    Guard.Cond = Word;
+    Guard.Body = {assign(Result, Finish), returning(Result)};
+    return std::vector<HighStmt>{
+        assign(Word, HighExpr::makeLoad(parameter(0, P, A), T)), Guard,
+        returning(HighExpr::makeConst(0, 8))};
+  };
+  HighStmt Branch;
+  Branch.Kind = StmtKind::If;
+  Branch.Addr = 0x1000;
+  Branch.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(1, T, A),
+                                    HighExpr::makeConst(1, 8));
+  Branch.Body = Tail(20);
+  auto Prepared = temporary(10, T, A);
+  auto Prepare = HighExpr::makeCall("prepare", 0x2000, {parameter(0, P, A)});
+  Prepare->Type = T;
+  Prepare->CallSiteAddr = 0x1004;
+  HighStmt Failed;
+  Failed.Kind = StmtKind::If;
+  Failed.Cond = HighExpr::makeUnary(NdOp::BOOL_NOT, Prepared);
+  Failed.Body = {returning(HighExpr::makeConst(0, 8))};
+  F.Body = {Branch, assign(Prepared, Prepare), Failed};
+  auto Last = Tail(30);
+  F.Body.insert(F.Body.end(), Last.begin(), Last.end());
+  return F;
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailReadsAfterTheOptionalCall) {
+  auto F = duplicatedContinuation();
+  std::string Source;
+  for (bool Folded : {false, true}) {
+    F.Name = Folded ? "after_tail" : "before_tail";
+    if (Folded) {
+      ASSERT_TRUE(foldDuplicateTerminalContinuations(F));
+      ASSERT_EQ(F.Body.size(), 4u);
+      ASSERT_EQ(F.Body.front().Body.size(), 2u);
+      const auto &Prepare = F.Body.front().Body.front().Val;
+      ASSERT_EQ(Prepare->Kind, ExprKind::Call);
+      EXPECT_EQ(Prepare->CallSiteAddr, 0x1004u);
+      EXPECT_FALSE(foldDuplicateTerminalContinuations(F));
+    }
+    CEmitterOptions Options;
+    Options.TheArch = Arch::X64;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  }
+  Source += R"(
+static unsigned prepares, finishes, gate;
+static uint64_t replacement;
+int64_t prepare(uintptr_t address) {
+  ++prepares; *(uint64_t *)address=replacement; return gate;
+}
+int64_t finish(uint64_t word) { ++finishes; return (int64_t)(word+3); }
+int main(void) {
+  uint64_t seeds[]={0,1,UINT64_MAX,UINT64_C(0x100000000)};
+  for (unsigned reason=0;reason<4;++reason)
+    for (gate=0;gate<2;++gate)
+      for (unsigned i=0;i<4;++i)
+        for (unsigned j=0;j<4;++j) {
+          uint64_t word=seeds[i]; replacement=seeds[j];
+          prepares=finishes=0;
+          uint64_t expected=before_tail(&word,reason);
+          unsigned p=prepares, f=finishes;
+          word=seeds[i]; prepares=finishes=0;
+          if (after_tail(&word,reason)!=expected || prepares!=p || finishes!=f)
+            return 1;
+          if (prepares!=(reason==1) || word!=(reason==1?replacement:seeds[i]))
+            return 2;
+        }
+  return 0;
+}
+)";
+  compileAndRun(Source);
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailRequiresExactEffectsAndNames) {
+  for (unsigned Variant = 0; Variant != 8; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = duplicatedContinuation();
+    auto &Arm = F.Body.front().Body;
+    if (Variant == 0)
+      Arm[0].Val->MemoryOrdering = NdMemoryOrdering::Acquire;
+    else if (Variant == 1)
+      Arm[1].Body[0].Val->CallAddr = 0x4000;
+    else if (Variant == 2)
+      Arm[1].Body[0].Val->Operands[0] = HighExpr::makeConst(7, 8);
+    else if (Variant == 3)
+      F.Body.insert(F.Body.begin(),
+                    store(HighExpr::makeConst(0x9000, 8), Arm[0].Dst));
+    else if (Variant == 4) {
+      HighStmt Jump;
+      Jump.Kind = StmtKind::Goto;
+      Jump.GotoTarget = Arm[0].Addr = 0x1040;
+      F.Body.insert(F.Body.begin(), Jump);
+    } else if (Variant == 5)
+      Arm[1].Body[0].Val->Kind = ExprKind::Undef;
+    else if (Variant == 6) {
+      Arm[0].Dst->Var.Kind = MedVar::Reg;
+    } else {
+      HighStmt Try;
+      Try.Kind = StmtKind::SEHTry;
+      Try.Body = std::move(Arm);
+      Arm = {Try};
+    }
+    foldDuplicateTerminalContinuations(F);
+    // A separate common `return 0` may still fold. This differing outer
+    // continuation must retain its original condition and arm.
+    bool Preserved = false;
+    walkStmts(F.Body, [&](const HighStmt &S) {
+      if (S.Addr == 0x1000 && S.Cond)
+        Preserved = S.Cond->Op == NdOp::INT_NOTEQUAL;
+    });
+    EXPECT_TRUE(Preserved);
+  }
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailMatchesRuntimeIndirectTargets) {
+  for (bool DifferentTarget : {false, true}) {
+    auto F = duplicatedContinuation();
+    const auto T = NdType::makeInt(8, false);
+    F.Params.push_back({"arg2", T});
+    const auto A = F.Body.front().Body[1].Body[0].Val;
+    const auto B = F.Body[F.Body.size() - 2].Body[0].Val;
+    for (const auto &Call : {A, B}) {
+      Call->CallTarget = "indirect";
+      Call->IsIndirectCall = true;
+      Call->CallAddr = Call->CallSiteAddr;
+      Call->IndirectTarget = parameter(2, T, Arch::X64);
+    }
+    if (DifferentTarget)
+      B->IndirectTarget = parameter(1, T, Arch::X64);
+    foldDuplicateTerminalContinuations(F);
+    EXPECT_EQ(F.Body.front().Cond->Op,
+              DifferentTarget ? NdOp::INT_NOTEQUAL : NdOp::INT_EQUAL);
+  }
+}
+
+TEST(HighSourceExpressions, CommonTerminalTailKeepsExceptionEntries) {
+  // The unwinder enters a catch continuation, landing pad or dispatcher entry
+  // without a goto. Folding the arm that holds one would delete that entry.
+  constexpr va_t Entry = 0x1040;
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = duplicatedContinuation();
+    F.Body.front().Body.front().Addr = Entry;
+    MedFunc Med;
+    if (Variant == 0) {
+      HighEHClause Catch;
+      Catch.Kind = HighEHClauseKind::CxxCatch;
+      Catch.HandlerVA = 0x5000;
+      Catch.ContinuationVAs = {Entry};
+      HighStmt Try;
+      Try.Kind = StmtKind::CxxTry;
+      Try.EHIsReducible = false;
+      Try.EHClauses = {Catch};
+      Try.EHClauseBodies = {{}};
+      F.Body.insert(F.Body.begin(), Try);
+    } else if (Variant == 1) {
+      F.ExceptionMetadata = ExceptionFunction{};
+      F.ExceptionMetadata->PersonalityVA = 0x9000;
+    } else {
+      MedBlock Pad;
+      Pad.StartAddr = Entry;
+      Pad.ExceptionalPreds.emplace_back();
+      Med.Blocks.push_back(std::move(Pad));
+    }
+    EXPECT_FALSE(foldDuplicateTerminalContinuations(F, &Med));
+    bool Kept = false;
+    walkStmts(F.Body, [&](const HighStmt &S) { Kept |= S.Addr == Entry; });
+    EXPECT_TRUE(Kept);
+  }
+  auto Plain = duplicatedContinuation();
+  MedFunc Med;
+  EXPECT_TRUE(foldDuplicateTerminalContinuations(Plain, &Med));
+}
+
 TEST(HighSourceExpressions, TypedIndirectCallUsesTheCapturedRuntimeTarget) {
   class CalleeTypes : public NullDebugContext {
   public:
@@ -2475,4 +2771,99 @@ TEST(HighSourceExpressions, UnspellableCallbackPrototypeKeepsUntypedCall) {
   EXPECT_EQ(Source.find("(*t20)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(int32_t (*)())"), std::string::npos) << Source;
 }
+TEST(HighSourceExpressions, GuardAndCallShareTheComputedTarget) {
+  MedFunc Med;
+  Med.Entry = 0x1000;
+  Med.Name = "shared_target";
+  Med.CC = CallingConv::Win64;
+  Med.ReturnType = NdType::makeInt(8, false);
+  auto P0 = parameter(0, NdType::makeInt(8, false), Arch::X64)->Var;
+  auto P1 = parameter(1, NdType::makeInt(4, false), Arch::X64)->Var;
+  Med.Params = {P0, P1};
+  const auto Value = [](int Id, unsigned Bytes) {
+    MedVar V;
+    V.Kind = MedVar::Temp;
+    V.Id = Id;
+    V.SSAVer = 1;
+    V.Size = Bytes;
+    V.TheArch = Arch::X64;
+    return V;
+  };
+  const auto Op = [](NdOp Code, MedVar Output,
+                     std::initializer_list<MedVar> Inputs) {
+    MedOp O;
+    O.Opcode = Code;
+    O.Output = Output;
+    for (const auto &V : Inputs)
+      O.addInput(V);
+    return O;
+  };
+  const auto Return = [&](MedVar Result, int Block) {
+    auto RAX = Value(20 + Block, 8);
+    RAX.Kind = MedVar::Reg;
+    RAX.RegOff = x86reg::RAX;
+    return std::vector<MedOp>{Op(NdOp::COPY, RAX, {Result}),
+                              Op(NdOp::RETURN, {}, {RAX})};
+  };
+  MedBlock Entry, Call, Empty;
+  Entry.Id = 0;
+  Entry.StartAddr = 0x1000;
+  Entry.Succs = {2, 1};
+  Entry.Ops = {
+      Op(NdOp::INT_XOR, Value(2, 4), {P1, MedVar::makeConst(0x55, 4)}),
+      Op(NdOp::INT_ZEXT, Value(3, 8), {Value(2, 4)}),
+      Op(NdOp::INT_ADD, Value(4, 8), {P0, Value(3, 8)}),
+      Op(NdOp::INT_EQUAL, Value(5, 1), {Value(4, 8), MedVar::makeConst(0, 8)}),
+      Op(NdOp::COND_BR, {}, {MedVar::makeConst(0x1020, 8), Value(5, 1)})};
+  Call.Id = 1;
+  Call.StartAddr = 0x1010;
+  Call.Preds = {0};
+  Call.Ops = {Op(NdOp::INDIR_CALL, Value(6, 8), {Value(4, 8), Value(4, 8)})};
+  Call.Ops[0].ExactArguments = true;
+  Call.Ops[0].CallSiteId = 1;
+  Call.Ops[0].CalleeRegisterArgs = 1;
+  auto Tail = Return(Value(6, 8), 1);
+  Call.Ops.insert(Call.Ops.end(), Tail.begin(), Tail.end());
+  Empty.Id = 2;
+  Empty.StartAddr = 0x1020;
+  Empty.Preds = {0};
+  Empty.Ops = Return(MedVar::makeConst(0, 8), 2);
+  Med.Blocks = {Entry, Call, Empty};
+  for (auto &B : Med.Blocks) {
+    B.EndAddr = B.StartAddr + B.Ops.size();
+    for (size_t I = 0; I < B.Ops.size(); ++I)
+      B.Ops[I].Addr = B.StartAddr + I;
+  }
+  MedCallInfo Info;
+  Info.BlockId = 1;
+  Info.OpIdx = 0;
+  Info.IsIndirect = true;
+  Info.Args = {Value(4, 8)};
+  Med.CallInfos.push_back(Info);
+  auto F = MedToHighConverter().convert(Med, Arch::X64);
+  std::string Text;
+  llvm::raw_string_ostream Out(Text);
+  CEmitterOptions Options;
+  Options.TheArch = Arch::X64;
+  ASSERT_TRUE(HighCEmitter().emit({F}, Out, Options));
+  const auto Xor = Text.find("0x55");
+  ASSERT_NE(Xor, std::string::npos) << Text;
+  EXPECT_EQ(Text.find("0x55", Xor + 1), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("__builtin_bit_cast"), std::string::npos) << Text;
+  Text += R"(
+static uint64_t actual(uint64_t target) { return target^0x123; }
+int main(void) {
+  uint32_t words[]={0,0x55,UINT32_MAX,UINT32_C(0x80000000)};
+  uint64_t address=(uint64_t)(uintptr_t)&actual;
+  for (unsigned i=0;i<4;++i) {
+    uint64_t offset=(uint64_t)(words[i]^0x55u);
+    if (shared_target(address-offset,words[i])!=(address^0x123)) return 1;
+    if (shared_target(0-offset,words[i])) return 2;
+  }
+  return 0;
+}
+)";
+  compileAndRun(Text);
+}
+
 } // namespace

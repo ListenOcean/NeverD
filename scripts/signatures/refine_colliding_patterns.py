@@ -64,7 +64,7 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
     for path, lines in documents.items():
         for text in lines:
             row = builder.parse_line(text)
-            if row and not (row.require_caller or row.is_vtable or row.is_load_config):
+            if row and not (row.require_caller or row.is_vtable or row.is_load_config or row.is_code_layout):
                 loaded[library_name(path), row.key].append(row)
                 if not row.require_references:
                     known[library_name(path), row.key].append(row)
@@ -134,7 +134,7 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
         library = library_name(path)
         for text in lines:
             row = builder.parse_line(text)
-            if row is None or row.require_caller or row.is_vtable or row.is_load_config:
+            if row is None or row.require_caller or row.is_vtable or row.is_load_config or row.is_code_layout:
                 continue
             if (library, row.key) not in affected and any(
                     not represented(library, other) for other in raw_rivals(row)):
@@ -148,7 +148,7 @@ def refine(existing: Path, evidence: list[Path], output: Path, machine: str) -> 
         library = library_name(path)
         for number, text in enumerate(lines, 1):
             row = builder.parse_line(text)
-            if row is None or row.require_caller or row.is_vtable or row.is_load_config:
+            if row is None or row.require_caller or row.is_vtable or row.is_load_config or row.is_code_layout:
                 kept.append(text)
                 continue
             if (library, row.key) not in affected:

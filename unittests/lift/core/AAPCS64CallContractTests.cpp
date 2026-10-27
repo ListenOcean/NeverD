@@ -176,6 +176,155 @@ std::string body(const std::string &Source, const std::string &Name) {
   return Source.substr(Begin, Close + 2 - Begin);
 }
 
+TEST(AAPCS64CallContract, SelectedCallsKeepBothProvenReturnWords) {
+  constexpr va_t Callee = Text + 0x40;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 8)) / 4);
+  // Return {x + 7, x * 8}. The caller consumes both words before any write.
+  BinaryImage Image = makeImage(
+      {{Text, {PushFrame, SetFrame, Call, 0xCA010000u, PopFrame, Ret}},
+       {Callee, {0xD37DF001u, 0x91001C00u, Ret}}},
+      {{Text, "pair_caller"}, {Callee, "omitted_pair"}}, {});
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF}) {
+    Image.Format = Format;
+    PipelineAnalysisCache Cache;
+    std::string Cold;
+    for (const auto &Entries :
+         {std::set<va_t>{Text}, std::set<va_t>{Text, Callee},
+          std::set<va_t>{Text}}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(Entries.size());
+      llvm::LLVMContext Context;
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = Entries;
+      Options.AnalysisCache = &Cache;
+      const auto Result = Pipeline().run(Image, Context, Options);
+      ASSERT_TRUE(Result.Success) << Result.Error;
+      ASSERT_EQ(Result.HighFuncs.size(), Entries.size());
+      const auto Caller =
+          std::find_if(Result.MedFuncs.begin(), Result.MedFuncs.end(),
+                       [](const MedFunc &F) { return F.Entry == Text; });
+      ASSERT_NE(Caller, Result.MedFuncs.end());
+      bool Pair = false;
+      for (const auto &Block : Caller->Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
+              Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == Callee)
+            Pair = Op.Output.Kind == MedVar::Temp && Op.Output.Size == 16;
+      EXPECT_TRUE(Pair);
+      std::string Source;
+      llvm::raw_string_ostream OS(Source);
+      CEmitterOptions COptions;
+      COptions.TheArch = Image.Arch;
+      COptions.Format = Image.Format;
+      COptions.Image = &Image;
+      ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS, COptions));
+      EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+      if (Entries.size() == 1) {
+        if (Cold.empty())
+          Cold = Source;
+        else
+          EXPECT_EQ(Source, Cold);
+        // Compile the selected source against the independently specified
+        // callee too: a scalar extern declaration would truncate x1 again.
+        Source += R"C(
+unsigned __int128 omitted_pair(uint64_t x) {
+  return (unsigned __int128)(x << 3) << 64 | (uint64_t)(x + 7);
+}
+)C";
+      }
+      source_call_execution_test::compileAndRun(Source + R"C(
+int main(void) {
+  uint64_t values[] = {0, 1, 7, 0xFFFFFFFF, 0x123456789ABCDEF0,
+                       0xFFFFFFFFFFFFFFFF};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    if ((uint64_t)pair_caller(values[i]) !=
+        ((values[i] + 7) ^ (values[i] << 3)))
+      return 1;
+  return 0;
+}
+)C");
+    }
+  }
+}
+
+TEST(AAPCS64CallContract, SelectedLLVMCallsKeepBothProvenReturnWords) {
+  constexpr va_t Callee = Text + 0x40;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 8)) / 4);
+  const BinaryImage Image = makeImage(
+      {{Text, {PushFrame, SetFrame, Call, 0xCA010000u, PopFrame, Ret}},
+       {Callee, {0xD37DF001u, 0x91001C00u, Ret}}},
+      {{Text, "pair_caller"}, {Callee, "omitted_pair"}}, {});
+  PipelineAnalysisCache Cache;
+  for (const auto &Entries :
+       {std::set<va_t>{Text}, std::set<va_t>{Text, Callee},
+        std::set<va_t>{Text}}) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = Entries;
+    Options.AnalysisCache = &Cache;
+    Options.LiftMode = Options.SourceProjection = true;
+    Options.NoOpt = true;
+    const auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    ASSERT_TRUE(Result.LlvmModule);
+    std::string IR;
+    llvm::raw_string_ostream Out(IR);
+    Result.LlvmModule->print(Out, nullptr);
+    bool SawPair = false;
+    for (const auto &Function : *Result.LlvmModule)
+      for (const auto &Block : Function)
+        for (const auto &Instruction : Block)
+          if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
+              Call && Call->getCalledFunction()) {
+            auto Address =
+                rewrite_source::getOriginalVA(*Call->getCalledFunction());
+            ASSERT_TRUE(static_cast<bool>(Address));
+            if (*Address && **Address == Callee) {
+              EXPECT_EQ(Result.LlvmModule->getDataLayout().getTypeAllocSize(
+                            Call->getType()),
+                        16u)
+                  << IR;
+              SawPair = true;
+            }
+          }
+    EXPECT_TRUE(SawPair) << IR;
+  }
+}
+
+TEST(AAPCS64CallContract, OmittedReturnWordsRequireEveryReturnToDefineThem) {
+  constexpr va_t Callee = Text + 0x40;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 8)) / 4);
+  // x1 is defined on only one return path. Reading it at the caller cannot
+  // make the missing value into a second field, cold or after cache warmup.
+  BinaryImage Image = makeImage(
+      {{Text, {PushFrame, SetFrame, Call, 0xCA010000u, PopFrame, Ret}},
+       {Callee, {0xB4000060u, 0xD28000E1u, Ret, Ret}}},
+      {{Text, "partial_pair_caller"}, {Callee, "partial_pair"}}, {});
+  PipelineAnalysisCache Cache;
+  for (const auto &Entries :
+       {std::set<va_t>{Text}, std::set<va_t>{Text, Callee},
+        std::set<va_t>{Text}}) {
+    llvm::LLVMContext Context;
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = Entries;
+    Options.AnalysisCache = &Cache;
+    const auto Result = Pipeline().run(Image, Context, Options);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    for (const auto &Function : Result.MedFuncs)
+      if (Function.Entry == Text)
+        for (const auto &Block : Function.Blocks)
+          for (const auto &Op : Block.Ops)
+            if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                Op.Inputs[0].isConst() && Op.Inputs[0].ConstVal == Callee)
+              EXPECT_NE(Op.Output.Size, 16);
+  }
+}
+
 TEST(AAPCS64CallContract, APLTEntryPassesTheArgumentsOfItsImport) {
   // islower takes one argument, which its PLT entry passes on in x0 without
   // writing it; getuid takes none.

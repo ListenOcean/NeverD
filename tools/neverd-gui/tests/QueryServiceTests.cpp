@@ -804,6 +804,55 @@ private slots:
     QVERIFY(h.sent.isEmpty());
   }
 
+  void visibleNavigationPrecedesInventoryReads() {
+    Harness h;
+    establish(h);
+    h.service.subscribe({"functions", {}}, &h.owner, {});
+    h.service.subscribe({"imports", {}}, &h.owner, {});
+    h.service.subscribe({"overview", {}, Spec::Latest, {}, Spec::Visible},
+                        &h.owner, [&](const auto &) {
+                          h.service.subscribe({"listing",
+                                               {{"address", "0x1000"}},
+                                               Spec::Latest,
+                                               {},
+                                               Spec::Visible},
+                                              &h.owner, {});
+                        });
+    QTRY_COMPARE(h.sent.size(), 1);
+    QCOMPARE(h.sent[0].operation, "overview");
+    h.reply(0);
+    QTRY_COMPARE(h.sent.size(), 2);
+    QCOMPARE(h.sent[1].operation, "listing");
+    h.reply(1);
+    QTRY_COMPARE(h.sent.size(), 3);
+    QCOMPARE(h.sent[2].operation, "functions");
+    h.reply(2);
+    QTRY_COMPARE(h.sent.size(), 4);
+    QCOMPARE(h.sent[3].operation, "imports");
+    h.reply(3);
+    QTRY_VERIFY(!h.service.hasPending());
+  }
+
+  void visibleSubscriberPromotesTheSharedQueuedRead() {
+    Harness h;
+    establish(h);
+    int replies = 0;
+    h.service.subscribe({"functions", {}}, &h.owner, {});
+    h.service.subscribe({"overview", {}}, &h.owner,
+                        [&](const auto &) { ++replies; });
+    h.service.subscribe({"overview", {}, Spec::Latest, {}, Spec::Visible},
+                        &h.owner, [&](const auto &) { ++replies; });
+    QTRY_COMPARE(h.sent.size(), 1);
+    QCOMPARE(h.sent[0].operation, "overview");
+    h.reply(0);
+    QTRY_COMPARE(replies, 2);
+    QTRY_COMPARE(h.sent.size(), 2);
+    QCOMPARE(h.sent[1].operation, "functions");
+    h.reply(1);
+    QTRY_VERIFY(!h.service.hasPending());
+    QCOMPARE(h.sent.size(), 2);
+  }
+
   void commandFenceKeepsLaterReadsBehindTheEdit() {
     Harness h;
     establish(h);
@@ -814,7 +863,9 @@ private slots:
     h.service.enqueueCommand("annotation_set",
                              {{"address", "0x1000"}, {"text", "new"}}, &h.owner,
                              {});
-    h.service.subscribe(text(), &h.owner, [&](const auto &r) {
+    auto visible = text();
+    visible.priority = Spec::Visible;
+    h.service.subscribe(visible, &h.owner, [&](const auto &r) {
       results.append(r["payload"].toObject()["text"].toString());
     });
     QTRY_COMPARE(h.sent.size(), 1);

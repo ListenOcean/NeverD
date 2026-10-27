@@ -42,12 +42,23 @@ size_t scanImportThunksX86(BinaryImage &Img, const Segment &Seg,
   // An i386 PIC PLT entry jumps through its GOT entry by the base the
   // dynamic section names, DT_PLTGOT, which its caller holds in EBX.
   const va_t PltGot = Is64 ? 0 : Img.DynInfo.PltGotAddr;
+  // The memory-jump ModRM byte is much rarer than FF (also common in negative
+  // displacements). PIC i386 accepts two ModRM forms, so it searches FF.
+  const size_t SearchOffset = PltGot ? 0 : 1;
+  const uint8_t SearchByte =
+      PltGot ? x86::kJmpIndirectOp : x86::kJmpIndirectModRM;
   size_t Added = 0;
   for (size_t I = 0; I + x86::kJmpIndirectLen <= N; ++I) {
-    const bool ThroughGOT = PltGot && D[I] == x86::kJmpIndirectOp &&
-                            D[I + 1] == x86::kJmpIndirectGOTModRM;
-    if (!ThroughGOT &&
-        (D[I] != x86::kJmpIndirectOp || D[I + 1] != x86::kJmpIndirectModRM))
+    // Keep the final complete instruction and overlapping candidates.
+    const auto *Match = static_cast<const uint8_t *>(std::memchr(
+        D + I + SearchOffset, SearchByte, N - x86::kJmpIndirectLen + 1 - I));
+    if (!Match)
+      break;
+    I = static_cast<size_t>(Match - D) - SearchOffset;
+    if (D[I] != x86::kJmpIndirectOp)
+      continue;
+    const bool ThroughGOT = PltGot && D[I + 1] == x86::kJmpIndirectGOTModRM;
+    if (!ThroughGOT && D[I + 1] != x86::kJmpIndirectModRM)
       continue;
     va_t InsnVA = Seg.VA + I;
     va_t Target;

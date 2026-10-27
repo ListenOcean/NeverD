@@ -29,6 +29,26 @@ std::optional<uint64_t> lowScalarConstantResult(
   const auto Mask = [](uint16_t Width) {
     return UINT64_MAX >> ((8 - Width) * 8);
   };
+  // AArch64 immediates can retain their encoded scalar width. Coerce only
+  // literal operands here; callback lookups must still see their exact lane.
+  if (Op.NumInputs == 2 && Op.Output.Size > 1 &&
+      (Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB ||
+       Op.Opcode == NdOp::INT_MULT || Op.Opcode == NdOp::INT_AND ||
+       Op.Opcode == NdOp::INT_OR || Op.Opcode == NdOp::INT_XOR ||
+       Op.Opcode == NdOp::INT_LEFT || Op.Opcode == NdOp::INT_RIGHT ||
+       Op.Opcode == NdOp::INT_ASHR)) {
+    LowOp Coerced = Op;
+    bool Changed = false;
+    for (unsigned I = 0; I != 2; ++I)
+      if (Coerced.Inputs[I].isConst() && Coerced.Inputs[I].Size &&
+          Coerced.Inputs[I].Size < Op.Output.Size) {
+        Coerced.Inputs[I].Offset &= Mask(Coerced.Inputs[I].Size);
+        Coerced.Inputs[I].Size = Op.Output.Size;
+        Changed = true;
+      }
+    if (Changed)
+      return lowScalarConstantResult(Coerced, ValueOf);
+  }
   std::optional<uint64_t> Result;
   if (Op.NumInputs == 1 &&
       (Op.Opcode == NdOp::COPY || Op.Opcode == NdOp::INT_ZEXT ||

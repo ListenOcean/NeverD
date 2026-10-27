@@ -171,9 +171,12 @@ StackFrameAnalysis analyzeSourceStackFrame(const LowFunc &F, Arch Architecture,
     for (size_t I = 0; I < B.Ops.size();) {
       const auto PC = B.Ops[I].Addr;
       expire(S, F, Width);
-      if (Record)
+      if (Record) {
         Out.Instructions[PC].Before =
             offset(S, NdVar::reg(TRI.StackPointer, Width), Width);
+        Out.Instructions[PC].FrameBefore =
+            offset(S, NdVar::reg(TRI.FramePointer, Width), Width);
+      }
       do {
         const auto &Op = B.Ops[I];
         if (++Work >

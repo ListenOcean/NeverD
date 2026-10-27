@@ -74,6 +74,7 @@
 #include <QFileInfo>
 #include <QFontDialog>
 #include <QFormLayout>
+#include <QFutureWatcher>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QInputDialog>
@@ -111,6 +112,8 @@
 #include <QTreeWidget>
 #include <QUrl>
 #include <QVBoxLayout>
+#include <QtConcurrent/QtConcurrentRun>
+#include <array>
 #include <kddockwidgets/Config.h>
 #include <kddockwidgets/LayoutSaver.h>
 #include <kddockwidgets/core/DockWidget.h>
@@ -1166,6 +1169,13 @@ void MainWindow::buildStatusBar() {
 //===----------------------------------------------------------------------===//
 
 void MainWindow::connectSession() {
+  // Admitting a set of view reads changes pending state once per subscriber.
+  // Refresh command availability once after that event turn has settled.
+  auto *actionRefresh = new QTimer(this);
+  actionRefresh->setSingleShot(true);
+  actionRefresh->setInterval(0);
+  connect(actionRefresh, &QTimer::timeout, this, &MainWindow::updateActions);
+
   connect(&session_, &Session::opened, this, [this] {
     pseudocodeAfterJump_.reset();
     disassembly_ = primaryDisassembly_;
@@ -1204,8 +1214,8 @@ void MainWindow::connectSession() {
     updateTitle();
     updateActions();
   });
-  connect(&session_, &Session::stateChanged, this, [this] {
-    updateActions();
+  connect(&session_, &Session::stateChanged, this, [this, actionRefresh] {
+    actionRefresh->start();
     updateStatusBar();
   });
   connect(&session_, &Session::backgroundChanged, this,
@@ -2388,7 +2398,15 @@ void MainWindow::addAnalysisSection() {
 void MainWindow::updateActions() {
   const bool loaded = session_.loaded();
   const bool location = loaded && currentAddress().has_value();
-  for (auto *action : actions_.allActions()) {
+  // Compute the final state before touching QActions. Enabling every loaded
+  // action and then disabling unavailable ones emits two change events on
+  // every query notification, even when no command state changed.
+  std::array<bool, static_cast<size_t>(ActionId::Count)> states;
+  const auto enable = [&](ActionId id, bool enabled) {
+    states[static_cast<size_t>(id)] = enabled;
+  };
+  for (size_t index = 0; index < states.size(); ++index) {
+    auto *action = actions_.action(static_cast<ActionId>(index));
     if (action->property("externalCommand").toBool())
       continue;
     const QString name = action->objectName();
@@ -2405,27 +2423,23 @@ void MainWindow::updateActions() {
                         name == QLatin1String("ViewOutput") ||
                         name == QLatin1String("ViewCalculator") ||
                         name == QLatin1String("ViewConnections");
-    action->setEnabled(always || loaded);
+    states[index] = always || loaded;
   }
-  actions_.action(ActionId::ViewFocusMode)
-      ->setEnabled(!focusLayout_.isEmpty() || loaded);
-  actions_.action(ActionId::ViewUnwindInfo)
-      ->setEnabled(location && !focusedCodeView() &&
-                   session_.reportsUnwindFrames());
-  actions_.action(ActionId::EditExportData)
-      ->setEnabled(loaded && !focusedCodeView() &&
-                   (hexActive_ ? hex_->byteSelection().has_value()
-                               : !disassembly_->graphMode() && location));
-  actions_.action(ActionId::JumpBack)
-      ->setEnabled(loaded && disassembly_->canGoBack());
-  actions_.action(ActionId::JumpForward)
-      ->setEnabled(loaded && disassembly_->canGoForward());
-  actions_.action(ActionId::EditUndo)->setEnabled(loaded && session_.canUndo());
-  actions_.action(ActionId::EditRedo)->setEnabled(loaded && session_.canRedo());
+  enable(ActionId::ViewFocusMode, !focusLayout_.isEmpty() || loaded);
+  enable(ActionId::ViewUnwindInfo,
+         location && !focusedCodeView() && session_.reportsUnwindFrames());
+  enable(ActionId::EditExportData,
+         loaded && !focusedCodeView() &&
+             (hexActive_ ? hex_->byteSelection().has_value()
+                         : !disassembly_->graphMode() && location));
+  enable(ActionId::JumpBack, loaded && disassembly_->canGoBack());
+  enable(ActionId::JumpForward, loaded && disassembly_->canGoForward());
+  enable(ActionId::EditUndo, loaded && session_.canUndo());
+  enable(ActionId::EditRedo, loaded && session_.canRedo());
   // Edits other than comments, and the debug files chosen, are kept as they
   // are made; a database the user opened is written back by Save.
-  actions_.action(ActionId::FileSave)->setEnabled(loaded && session_.dirty());
-  actions_.action(ActionId::FilePackDatabase)->setEnabled(loaded);
+  enable(ActionId::FileSave, loaded && session_.dirty());
+  enable(ActionId::FilePackDatabase, loaded);
   // A PE has a PDB, an ELF or Mach-O image DWARF, and any image a MAP but
   // the EVM and SBF programs, which describe themselves.
   const QString format = session_.format();
@@ -2434,54 +2448,45 @@ void MainWindow::updateActions() {
       session_.architecture().compare(QLatin1String("sbf"),
                                       Qt::CaseInsensitive) == 0;
   const bool loadsDebugFile = loaded && !session_.opening();
-  actions_.action(ActionId::FileLoadPdb)
-      ->setEnabled(loadsDebugFile && format == QLatin1String("PE") &&
-                   session_.loadsPdbFiles());
-  actions_.action(ActionId::FileLoadDwarf)
-      ->setEnabled(loadsDebugFile && !selfDescribed &&
-                   (format == QLatin1String("ELF") ||
-                    format == QLatin1String("Mach-O")) &&
-                   session_.loadsDwarfFiles());
-  actions_.action(ActionId::FileLoadMap)
-      ->setEnabled(loadsDebugFile && !selfDescribed &&
-                   session_.loadsMapFiles());
-  actions_.action(ActionId::FileLoadHeader)
-      ->setEnabled(loaded && !session_.readOnly() &&
-                   session_.declaresLocalTypes());
+  enable(ActionId::FileLoadPdb, loadsDebugFile &&
+                                    format == QLatin1String("PE") &&
+                                    session_.loadsPdbFiles());
+  enable(ActionId::FileLoadDwarf, loadsDebugFile && !selfDescribed &&
+                                      (format == QLatin1String("ELF") ||
+                                       format == QLatin1String("Mach-O")) &&
+                                      session_.loadsDwarfFiles());
+  enable(ActionId::FileLoadMap,
+         loadsDebugFile && !selfDescribed && session_.loadsMapFiles());
+  enable(ActionId::FileLoadHeader,
+         loaded && !session_.readOnly() && session_.declaresLocalTypes());
   const bool patching =
       loaded && !session_.readOnly() && session_.keepsBytePatches();
-#define NEVERD_PATCH_ITEM(Id, Key, Kind)                                       \
-  actions_.action(ActionId::Id)->setEnabled(patching);
+#define NEVERD_PATCH_ITEM(Id, Key, Kind) enable(ActionId::Id, patching);
 #include "PatchMenu.def"
-  actions_.action(ActionId::EditPatchMenu)->setEnabled(patching && location);
-  actions_.action(ActionId::EditPatchedBytes)
-      ->setEnabled(loaded && session_.keepsBytePatches());
-  actions_.action(ActionId::EditPatchRewriteFunction)
-      ->setEnabled(patching && session_.keepsSourcePatches() &&
-                   !session_.hasBytePatches() && currentFunction().has_value());
-  actions_.action(ActionId::FileProducePatchedBinary)
-      ->setEnabled(loaded && session_.hasBytePatches());
-  actions_.action(ActionId::EditRename)
-      ->setEnabled(location && !session_.readOnly());
-  actions_.action(ActionId::EditAddAnalysisSection)
-      ->setEnabled(
-          loaded && !session_.readOnly() &&
-          session_.metadata().value("analysis_sections_supported").toBool());
+  enable(ActionId::EditPatchMenu, patching && location);
+  enable(ActionId::EditPatchedBytes, loaded && session_.keepsBytePatches());
+  enable(ActionId::EditPatchRewriteFunction,
+         patching && session_.keepsSourcePatches() &&
+             !session_.hasBytePatches() && currentFunction().has_value());
+  enable(ActionId::FileProducePatchedBinary,
+         loaded && session_.hasBytePatches());
+  enable(ActionId::EditRename, location && !session_.readOnly());
+  enable(ActionId::EditAddAnalysisSection,
+         loaded && !session_.readOnly() &&
+             session_.metadata().value("analysis_sections_supported").toBool());
   // A function starts where none starts yet; the one the cursor is in can
   // stop being one.
   const bool functionEdits =
       location && !session_.readOnly() && session_.keepsFunctionEdits();
   const auto function = functionEdits ? currentFunction() : std::nullopt;
-  actions_.action(ActionId::EditCreateFunction)
-      ->setEnabled(functionEdits && function != currentAddress());
+  enable(ActionId::EditCreateFunction,
+         functionEdits && function != currentAddress());
   // A code window's commands take the function it shows.
   const auto shown = functionEdits ? commandFunction() : std::nullopt;
-  actions_.action(ActionId::EditDeleteFunction)
-      ->setEnabled(functionEdits && shown.has_value());
+  enable(ActionId::EditDeleteFunction, functionEdits && shown.has_value());
   const bool functionAttributes =
       functionEdits && session_.statesFunctionAttributes();
-  actions_.action(ActionId::EditFunction)
-      ->setEnabled(functionAttributes && shown.has_value());
+  enable(ActionId::EditFunction, functionAttributes && shown.has_value());
   functions_->enableCommand(ChooserCommand::Edit, functionAttributes);
   if (focusFunctions_)
     focusFunctions_->enableCommand(ChooserCommand::Edit, functionAttributes);
@@ -2489,9 +2494,8 @@ void MainWindow::updateActions() {
       location && !session_.readOnly() && session_.keepsDataItems();
   for (const auto id : {ActionId::EditDefineCode, ActionId::EditDefineData,
                         ActionId::EditDefineString, ActionId::EditUndefine})
-    actions_.action(id)->setEnabled(dataItems);
-  actions_.action(ActionId::EditDefineCode)
-      ->setEnabled(dataItems && !focusedCodeView());
+    enable(id, dataItems);
+  enable(ActionId::EditDefineCode, dataItems && !focusedCodeView());
   const bool operandFormats =
       location && !session_.readOnly() && session_.keepsOperandFormats();
   CodeView *code = focusedCodeView();
@@ -2503,33 +2507,32 @@ void MainWindow::updateActions() {
   for (const auto id : {ActionId::EditOperandNumber, ActionId::EditOperandHex,
                         ActionId::EditOperandDecimal,
                         ActionId::EditOperandBinary, ActionId::EditOperandChar})
-    actions_.action(id)->setEnabled(code ? codeNumbers : operandFormats);
+    enable(id, code ? codeNumbers : operandFormats);
   for (const auto id :
        {ActionId::EditOperandOffset, ActionId::EditOperandNegate,
         ActionId::EditOperandInvert})
-    actions_.action(id)->setEnabled(operandFormats && !code);
+    enable(id, operandFormats && !code);
   // A structure offset is the disassembly's; a pseudocode window's
   // parameters take a type instead.
-  actions_.action(ActionId::EditOperandStruct)
-      ->setEnabled(operandFormats && session_.showsStructOffsets() && !code);
+  enable(ActionId::EditOperandStruct,
+         operandFormats && session_.showsStructOffsets() && !code);
   for (const auto id : {ActionId::EditMakeArray, ActionId::EditMakeAlignment})
-    actions_.action(id)->setEnabled(location && !code && !session_.readOnly() &&
-                                    session_.keepsDataItems());
-  actions_.action(ActionId::EditOperandEnum)
-      ->setEnabled(operandFormats && !code && session_.showsStructOffsets());
+    enable(id, location && !code && !session_.readOnly() &&
+                   session_.keepsDataItems());
+  enable(ActionId::EditOperandEnum,
+         operandFormats && !code && session_.showsStructOffsets());
   const bool declarations =
       location && !session_.readOnly() && session_.typesFunctions();
-  actions_.action(ActionId::EditSetType)
-      ->setEnabled(declarations && (code ? code->text()->function().has_value()
-                                         : currentFunction().has_value()));
+  enable(ActionId::EditSetType,
+         declarations && (code ? code->text()->function().has_value()
+                               : currentFunction().has_value()));
   // The stack variables are a code window's own function's; an instruction's
   // SP and operand are the disassembly's.
-  actions_.action(ActionId::EditStackFrame)
-      ->setEnabled(location && !session_.readOnly() &&
-                   commandFunction().has_value());
+  enable(ActionId::EditStackFrame,
+         location && !session_.readOnly() && commandFunction().has_value());
   for (const auto id : {ActionId::EditStackPointer, ActionId::EditStackOperand})
-    actions_.action(id)->setEnabled(location && !session_.readOnly() &&
-                                    currentFunction().has_value());
+    enable(id,
+           location && !session_.readOnly() && currentFunction().has_value());
   const bool variableView =
       code && loaded && !session_.readOnly() && code->text()->function() &&
       (code->representation() == "source" || code->representation() == "c" ||
@@ -2542,27 +2545,25 @@ void MainWindow::updateActions() {
   for (const auto id :
        {ActionId::EditSplitVariable, ActionId::EditMapVariable,
         ActionId::EditUnmapVariable, ActionId::EditUnsplitVariable})
-    actions_.action(id)->setEnabled(variableView && variable);
-  actions_.action(ActionId::EditResetVariables)->setEnabled(variableView);
-  actions_.action(ActionId::EditCallType)
-      ->setEnabled(variableView && !code->text()->loading());
-  actions_.action(ActionId::EditResetCallTypes)
-      ->setEnabled(variableView && !code->text()->loading());
-  actions_.action(ActionId::EditConvertToStruct)
-      ->setEnabled(declarations && session_.convertsParameters() && code &&
-                   code->text()->function().has_value());
-  actions_.action(ActionId::EditRepeatableComment)
-      ->setEnabled(location && !session_.readOnly());
-  actions_.action(ActionId::OptionsAnalyze)
-      ->setEnabled(loaded && !session_.metadata().value("analyzed").toBool());
-  actions_.action(ActionId::EditCopyLink)
-      ->setEnabled(loaded && linkHere().has_value());
+    enable(id, variableView && variable);
+  enable(ActionId::EditResetVariables, variableView);
+  enable(ActionId::EditCallType, variableView && !code->text()->loading());
+  enable(ActionId::EditResetCallTypes,
+         variableView && !code->text()->loading());
+  enable(ActionId::EditConvertToStruct,
+         declarations && session_.convertsParameters() && code &&
+             code->text()->function().has_value());
+  enable(ActionId::EditRepeatableComment, location && !session_.readOnly());
+  enable(ActionId::OptionsAnalyze,
+         loaded && !session_.metadata().value("analyzed").toBool());
+  enable(ActionId::EditCopyLink, loaded && linkHere().has_value());
   const bool callPaths = loaded && session_.findsCallPaths();
-  actions_.action(ActionId::ViewPathfinder)->setEnabled(callPaths);
+  enable(ActionId::ViewPathfinder, callPaths);
   for (const auto id :
        {ActionId::PathfinderNewPath, ActionId::PathfinderAddWaypoint})
-    actions_.action(id)->setEnabled(callPaths &&
-                                    pathfinderTarget().has_value());
+    enable(id, callPaths && pathfinderTarget().has_value());
+  for (size_t index = 0; index < states.size(); ++index)
+    actions_.action(static_cast<ActionId>(index))->setEnabled(states[index]);
 }
 
 void MainWindow::updateTitle() {
@@ -2603,9 +2604,26 @@ void MainWindow::updateStatusBar() {
   const QString path = session_.loaded()
                            ? QFileInfo(session_.filePath()).absolutePath()
                            : QDir::homePath();
-  const QStorageInfo storage(path);
-  diskLabel_->setText(
-      tr("Disk: %1 GB").arg(storage.bytesAvailable() / (1024LL * 1024 * 1024)));
+  // Query notifications also refresh this bar. Filesystem capacity belongs to
+  // the periodic refresh, not every queued query and reply on the UI thread.
+  if (diskStatusPath_ != path || !diskStatusAge_.isValid() ||
+      diskStatusAge_.hasExpired(StatusRefreshMs)) {
+    diskStatusPath_ = path;
+    diskStatusAge_.start();
+    // Volume enumeration can wait on a drive. Only its result belongs on the
+    // UI thread; opening a file must not wait for the capacity label.
+    auto *watcher = new QFutureWatcher<qint64>(this);
+    connect(watcher, &QFutureWatcher<qint64>::finished, this,
+            [this, watcher, path] {
+              if (diskStatusPath_ == path)
+                diskLabel_->setText(
+                    tr("Disk: %1 GB")
+                        .arg(watcher->result() / (1024LL * 1024 * 1024)));
+              watcher->deleteLater();
+            });
+    watcher->setFuture(QtConcurrent::run(
+        [path] { return QStorageInfo(path).bytesAvailable(); }));
+  }
   fileLabel_->setText(
       session_.loaded()
           ? QStringLiteral("%1 · %2%3%4")

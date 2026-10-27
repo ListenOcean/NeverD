@@ -6,6 +6,8 @@
 
 #include "neverd/sigs/SignatureMatcher.h"
 
+#include "CodeLayoutContext.h"
+
 #include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -370,7 +372,7 @@ public:
         });
     std::erase_if(Order, [&](size_t I) {
       return Modules[I].RequireCaller || Modules[I].IsVTable ||
-             Modules[I].IsLoadConfig;
+             Modules[I].IsLoadConfig || Modules[I].IsCodeLayout;
     });
     Spare.resize(Order.size());
     CandidateOrder.resize(Order.size());
@@ -739,6 +741,8 @@ void SignatureMatcher::HashIndex::build(
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
+  CodeLayoutStorage.reset();
+  CodeLayoutNameLengths.reset();
   VTableStorage.reset();
   LoadConfigStorage.reset();
   DataContext = false;
@@ -750,9 +754,30 @@ void SignatureMatcher::HashIndex::build(llvm::ArrayRef<StoredModule> Modules) {
   IndexBuilder(*this, Modules, *Storage).build();
   CandidateStorage = std::move(Storage);
   CallerStorage.reset();
+  CodeLayoutStorage.reset();
+  CodeLayoutNameLengths.reset();
   VTableStorage.reset();
   LoadConfigStorage.reset();
   DataAnchorStorage.reset();
+  auto Layouts = std::make_shared<std::vector<CallerEntry>>();
+  auto Lengths = std::make_shared<std::vector<size_t>>();
+  for (size_t I = 0; I < Modules.size(); ++I)
+    if (Modules[I].IsCodeLayout)
+      for (size_t N : codeLayoutAnchors(Modules[I])) {
+        const auto Name = Modules[I].publicNames()[N].Name;
+        Layouts->push_back({I, N, std::hash<std::string_view>{}(Name)});
+        Lengths->push_back(Name.size());
+      }
+  llvm::stable_sort(*Layouts, [&](const CallerEntry &A, const CallerEntry &B) {
+    return std::pair(A.NameHash,
+                     Modules[A.Module].publicNames()[A.PublicName].Name) <
+           std::pair(B.NameHash,
+                     Modules[B.Module].publicNames()[B.PublicName].Name);
+  });
+  llvm::sort(*Lengths);
+  Lengths->erase(std::unique(Lengths->begin(), Lengths->end()), Lengths->end());
+  CodeLayoutStorage = std::move(Layouts);
+  CodeLayoutNameLengths = std::move(Lengths);
   std::shared_ptr<std::vector<size_t>> Tables;
   for (size_t I = 0; I < Modules.size(); ++I)
     if (Modules[I].IsVTable) {
@@ -831,6 +856,30 @@ SignatureMatcher::HashIndex::callerModules(llvm::ArrayRef<StoredModule> Modules,
     ++End;
   return llvm::ArrayRef(*CallerStorage)
       .slice(Begin - CallerStorage->begin(), End - Begin);
+}
+
+llvm::ArrayRef<SignatureMatcher::HashIndex::CallerEntry>
+SignatureMatcher::HashIndex::codeLayoutModules(
+    llvm::ArrayRef<StoredModule> Modules, std::string_view Name) const {
+  if (!hasCodeLayouts() ||
+      !std::binary_search(CodeLayoutNameLengths->begin(),
+                          CodeLayoutNameLengths->end(), Name.size()))
+    return {};
+  const size_t Hash = std::hash<std::string_view>{}(Name);
+  auto Begin = llvm::lower_bound(
+      *CodeLayoutStorage, std::pair(Hash, Name),
+      [&](const CallerEntry &Entry, const auto &Wanted) {
+        return std::pair(
+                   Entry.NameHash,
+                   Modules[Entry.Module].publicNames()[Entry.PublicName].Name) <
+               Wanted;
+      });
+  auto End = Begin;
+  while (End != CodeLayoutStorage->end() && End->NameHash == Hash &&
+         Modules[End->Module].publicNames()[End->PublicName].Name == Name)
+    ++End;
+  return llvm::ArrayRef(*CodeLayoutStorage)
+      .slice(Begin - CodeLayoutStorage->begin(), End - Begin);
 }
 
 uint16_t SignatureMatcher::HashIndex::keyOf(const PatternModule &Mod) const {

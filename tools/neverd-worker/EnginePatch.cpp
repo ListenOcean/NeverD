@@ -264,13 +264,16 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
     if (P.value("ranges_only", false)) {
       if (F.ranges) {
         auto Ranges = backendJson(F.ranges(session_));
+        const auto Total = Ranges.size();
         return {
-            {"items", Ranges}, {"total", Ranges.size()}, {"complete", true}};
+            {"items", std::move(Ranges)}, {"total", Total}, {"complete", true}};
       }
       Json Ranges = Json::array();
       for (const auto &Row : bytePatchRows())
         Ranges.push_back({{"address", Row.at("va")}, {"size", Row.at("size")}});
-      return {{"items", Ranges}, {"total", Ranges.size()}, {"complete", true}};
+      const auto Total = Ranges.size();
+      return {
+          {"items", std::move(Ranges)}, {"total", Total}, {"complete", true}};
     }
     const auto Offset =
         sizeField(P, "offset", 0, ::neverd::limits::patch::kMaxPatchRows);

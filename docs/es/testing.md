@@ -2320,3 +2320,5 @@ Las pruebas de entradas de importación HFA compilan prototipos C estrictos y ej
 ## Pruebas de declaraciones seleccionadas
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combina direcciones con proveedores de entero, puntero, flotante y void. `AddressOnlyCallbackConvertsToItsKnownParameterType` ejecuta un callback tipado. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compara selecciones separadas, la unidad completa y cachés frías/calientes. El C generado desde modelos x64/ARM64 PE, ELF y Mach-O se ejecuta en el host con O0/O2 y UBSan; no certifica ejecución nativa en todas las plataformas. Ejecutar las pruebas de contratos de llamada, proyección de punteros, ABI de fuente y caché de funciones llamadas.
+
+Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests` y `NeverDSymMemoryKnowledgeTests`. Cubren valores conservados, resultados condicionales, nuevas épocas desconocidas, destinos previos a la llamada y rechazo de entradas inválidas.

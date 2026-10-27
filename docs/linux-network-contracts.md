@@ -53,8 +53,8 @@ bytes). Ports and addresses use network byte order; the family uses the guest's
 little-endian ABI. A peer must match the next supplied attempt. `connect_errno`
 can supply EINTR, ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EHOSTUNREACH or EACCES instead of
 success. A failed connection cannot carry stream data, and its socket must be
-closed before retry. There are at most 4,096 combined TCP/UDP/failure attempts and 1 MiB of payload
-bytes combined.
+closed before retry. There are at most 4,096 stored TCP/UDP entries and 1 MiB of
+payload bytes combined. Counted failures use separate finite counters.
 
 `socket`, `connect`, `sendto` and `recvfrom` share one implementation across raw
 x64/AArch64 Linux syscalls, Android named wrappers and `syscall`. Bionic `send`
@@ -311,10 +311,12 @@ or readiness and never contacts the host network. Missing or exhausted input,
 wrong peers while exact attempts remain, nonblocking completion and failed
 socket reuse stop explicitly. Descriptor aliases share the failed description.
 
-The failure count shares the 4,096-attempt budget with exact TCP and UDP entries.
-Payload and event budgets remain independently enforced. JSON and typed input
-use the shared limits owner; decimal strings follow the existing integer wire
-contract. Allowed errors match explicit TCP attempts: EINTR, ECONNREFUSED,
-ETIMEDOUT, ENETUNREACH, EHOSTUNREACH and EACCES. The guest must close a failed
-socket before retrying, including after EINTR; this bounded contract does not
+The failure count accepts 1 through `UINT32_MAX`, independently of the 4,096
+stored TCP/UDP entries. It retains one counter and creates no per-attempt
+inventory. The exhausted count is checked before incrementing, including at
+`UINT32_MAX`. Execution instruction, event and time budgets still bound each
+run. JSON and typed input use the shared validator; decimal strings follow the
+existing integer wire contract. Allowed errors match explicit TCP attempts:
+EINTR, ECONNREFUSED, ETIMEDOUT, ENETUNREACH, EHOSTUNREACH and EACCES. The guest must
+close a failed socket before retrying, including after EINTR; this bounded contract does not
 model an asynchronous handshake.

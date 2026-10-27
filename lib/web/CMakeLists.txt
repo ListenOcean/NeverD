@@ -198,6 +198,7 @@ if(NEVERD_ENABLE_WEB_JAVASCRIPT)
   include("${CMAKE_SOURCE_DIR}/cmake/NeverDJavaScriptParser.cmake")
   neverd_add_javascript_parser()
   target_sources(NeverDWeb PRIVATE SourceParser.cpp ParserBudget.cpp
+    BunProject.cpp BunProjectSource.cpp BunProjectRequire.cpp BunSemanticIndex.cpp
     desktop/bridge/Source.cpp
     features/configuration/Analysis.cpp
     features/configuration/Files.cpp

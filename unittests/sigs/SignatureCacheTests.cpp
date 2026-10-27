@@ -126,6 +126,7 @@ void expectSameModules(llvm::ArrayRef<StoredModule> Expected,
     EXPECT_EQ(E.RequireReferences, A.RequireReferences) << "module " << I;
     EXPECT_EQ(E.IsVTable, A.IsVTable) << "module " << I;
     EXPECT_EQ(E.IsLoadConfig, A.IsLoadConfig) << "module " << I;
+    EXPECT_EQ(E.IsCodeLayout, A.IsCodeLayout) << "module " << I;
     EXPECT_EQ(E.RequireCaller, A.RequireCaller) << "module " << I;
     const size_t Count = E.LeadingCount + E.TailCount;
     for (size_t B = 0; B < Count; ++B) {
@@ -569,6 +570,33 @@ TEST_F(SignatureCacheTest,
       Mod.CRC16 = 1;
       break;
     }
+    Cache.store(Source, *Identity, Broken.Modules);
+    EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
+  }
+}
+
+TEST_F(SignatureCacheTest, CodeLayoutCacheRetainsItsStructuralContract) {
+  write(Source, "488B05........C34883EC28FF15........4885C0488905........"
+                "0F95C04883C428C3488B05........C3 00 0000 002C !layout "
+                ":0000 left :0008 root :0024 right &0003 data "
+                "^000E __imp_Allocate &0018 data &0027 data\n");
+  auto Parsed = parse();
+  auto Cache = cache();
+  auto Identity = SignatureCache::identify(Source);
+  ASSERT_TRUE(Identity);
+  Cache.store(Source, *Identity, Parsed.Modules);
+  auto Loaded = Cache.load(Source, *Identity);
+  ASSERT_TRUE(Loaded);
+  ASSERT_EQ(Loaded->Modules.size(), 1u);
+  EXPECT_TRUE(Loaded->Modules.front().IsCodeLayout);
+  for (unsigned Case = 0; Case < 3; ++Case) {
+    auto Broken = parse();
+    if (Case == 0)
+      Broken.Modules.front().TotalLen++;
+    if (Case == 1)
+      Broken.Modules.front().ReferenceCount--;
+    if (Case == 2)
+      Broken.Modules.front().CRCLen = 1;
     Cache.store(Source, *Identity, Broken.Modules);
     EXPECT_FALSE(Cache.load(Source, *Identity)) << Case;
   }

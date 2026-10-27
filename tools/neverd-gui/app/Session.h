@@ -366,7 +366,9 @@ public:
   /// given, otherwise logged.  Cancellation and session changes are silent.
   QueryService::SubscriptionId read(const QString &operation,
                                     const QJsonObject &payload, QObject *owner,
-                                    Reply done, Failure failed = {});
+                                    Reply done, Failure failed = {},
+                                    QueryService::QuerySpec::Priority priority =
+                                        QueryService::QuerySpec::Normal);
 
   void produceBinary(const QString &operation, const QJsonObject &payload,
                      QObject *owner, Reply done, Failure failed = {});

@@ -19,6 +19,9 @@ public:
     QJsonObject payload;
     enum RevisionPolicy { Latest, Exact } policy = Latest;
     QString expectedRevision;
+    // Visible content precedes ordinary reads within the same command fence.
+    // This affects scheduling only, never read identity or command order.
+    enum Priority { Normal, Visible } priority = Normal;
   };
   struct Limits {
     qsizetype maxJobs = 48;

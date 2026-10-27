@@ -410,8 +410,15 @@ TEST_P(LinuxNetwork, TCPConnectFailuresPreserveAdmissionAndBoundedOwnership) {
 
 TEST_P(LinuxNetwork, TCPConnectFailuresReachConfiguredBoundThenStop) {
   Options.LinuxNetwork->Connections.clear();
-  Options.LinuxNetwork->TCPConnectFailures = LinuxTCPConnectFailures{101, 4096};
-  for (unsigned I = 0; I != 4096; ++I) {
+  // A counted failure retains no connection inventory. Exercise more failures
+  // than the stored TCP/UDP entry limit while repeatedly reusing one FD.
+  constexpr uint32_t Count = 4097;
+  Options.LinuxNetwork->TCPConnectFailures =
+      LinuxTCPConnectFailures{101, Count};
+  ASSERT_EQ(llvm::toString(
+                linux_model::validateNetworkOptions(*Options.LinuxNetwork)),
+            "");
+  for (unsigned I = 0; I != Count; ++I) {
     SCOPED_TRACE(I);
     const auto FD = open();
     ASSERT_EQ(call(ServiceKind::Connect, FD, Base, 16), uint64_t(-101));
@@ -440,7 +447,9 @@ TEST(LinuxNetworkJSON,
     Check("{\"errno\":" + std::to_string(Error) +
               ",\"count\":" + std::to_string(4096) + "}",
           true);
-  Check("{\"errno\":101,\"count\":" + std::to_string(4096 + 1) + "}", false);
+  Check(R"({"errno":101,"count":4097})", true);
+  Check(R"({"errno":101,"count":4294967295})", true);
+  Check(R"({"errno":101,"count":"4294967295"})", true);
   // A long offline worker must be able to pass the former 256-attempt bound.
   Check(R"({"errno":101,"count":257})", true);
   for (const char *Fields : {"null",
@@ -484,20 +493,29 @@ TEST(LinuxNetworkJSON,
                  {101, UINT32_MAX}}) {
     N.TCPConnectFailures = F;
     auto E = linux_model::validateNetworkOptions(N);
-    EXPECT_EQ(bool(E), F.Error != 101 || F.Count != 1);
+    EXPECT_EQ(bool(E), F.Error != 101 || F.Count == 0);
     llvm::consumeError(std::move(E));
   }
+  // The stored entry limit remains shared by TCP and UDP, independently of
+  // the finite failure counter.
+  N.TCPConnectFailures = LinuxTCPConnectFailures{101, UINT32_MAX};
+  N.Connections.push_back(S);
+  EXPECT_EQ(llvm::toString(linux_model::validateNetworkOptions(N)), "");
+  N.DatagramConnections.push_back(D);
+  auto TooMany = linux_model::validateNetworkOptions(N);
+  EXPECT_TRUE(bool(TooMany));
+  llvm::consumeError(std::move(TooMany));
   const std::string Peer =
       R"({"peer_hex":"020023297f0000010000000000000000","connect_errno":111})";
-  // A small explicit list keeps this aggregate-count test below the
+  // A small explicit list keeps this count-independence test below the
   // independently enforced process-options JSON metadata budget.
   const std::string Entries = Peer;
-  for (unsigned Count : {4096 - 1, 4096}) {
+  for (uint32_t Count : {4095u, 4096u, 4097u, UINT32_MAX}) {
     auto P = processOptionsFromJSON(
         "{\"linux_network\":{\"connections\":[" + Entries +
         "],\"tcp_connect_failures\":{\"errno\":101,\"count\":" +
         std::to_string(Count) + "}}}");
-    EXPECT_EQ(bool(P), Count == 4096 - 1);
+    EXPECT_TRUE(bool(P));
     if (!P)
       llvm::consumeError(P.takeError());
   }

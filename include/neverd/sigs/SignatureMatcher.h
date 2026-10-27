@@ -138,6 +138,12 @@ public:
       return LoadConfigStorage ? llvm::ArrayRef(*LoadConfigStorage)
                                : llvm::ArrayRef<size_t>();
     }
+    bool hasCodeLayouts() const {
+      return CodeLayoutStorage && !CodeLayoutStorage->empty();
+    }
+    llvm::ArrayRef<CallerEntry>
+    codeLayoutModules(llvm::ArrayRef<StoredModule> Modules,
+                      std::string_view Name) const;
     bool hasDataContext() const { return DataContext; }
     llvm::ArrayRef<size_t> dataAnchorModules() const {
       return DataAnchorStorage ? llvm::ArrayRef(*DataAnchorStorage)
@@ -148,6 +154,8 @@ public:
                   std::string_view Name) const;
 
   private:
+    std::shared_ptr<const std::vector<CallerEntry>> CodeLayoutStorage;
+    std::shared_ptr<const std::vector<size_t>> CodeLayoutNameLengths;
     std::shared_ptr<const std::vector<size_t>> VTableStorage;
     std::shared_ptr<const std::vector<size_t>> LoadConfigStorage;
     bool DataContext = false;

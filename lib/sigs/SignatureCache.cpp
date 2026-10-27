@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/SignatureCache.h"
 
+#include "CodeLayoutContext.h"
 #include "LocalDataReference.h"
 #include "RuntimePointerContext.h"
 #include "VTableContext.h"
@@ -74,7 +75,8 @@ enum class ContextRequirement : uint8_t {
   References,
   Caller,
   VTable,
-  LoadConfig
+  LoadConfig,
+  CodeLayout
 };
 
 struct ModuleRecord {
@@ -235,7 +237,7 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     if (R.BlobOffset > BlobBytes ||
         Count + statedBytes(Count) > BlobBytes - R.BlobOffset ||
         R.FirstName > NameCount || Names > NameCount - R.FirstName ||
-        R.Context > uint8_t(ContextRequirement::LoadConfig) ||
+        R.Context > uint8_t(ContextRequirement::CodeLayout) ||
         (R.Context == uint8_t(ContextRequirement::References) &&
          R.ReferenceCount == 0) ||
         (R.Context == uint8_t(ContextRequirement::Caller) &&
@@ -298,7 +300,8 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
     M.RequireCaller = R.Context == uint8_t(ContextRequirement::Caller);
     M.IsVTable = R.Context == uint8_t(ContextRequirement::VTable);
     M.IsLoadConfig = R.Context == uint8_t(ContextRequirement::LoadConfig);
-    if (M.IsVTable || M.IsLoadConfig) {
+    M.IsCodeLayout = R.Context == uint8_t(ContextRequirement::CodeLayout);
+    if (M.IsVTable || M.IsLoadConfig || M.IsCodeLayout) {
       // Module and name pieces may be decoded in either order. Validate a
       // temporary view of immutable wire names, never another piece's output.
       llvm::SmallVector<StoredName, 8> TableNames;
@@ -315,8 +318,9 @@ bool SignatureCache::PendingEntry::makeModules(size_t Run) {
       }
       StoredModule Table = M;
       Table.Names = TableNames.data();
-      if (M.IsVTable ? !isValidVTableContext(Table)
-                     : !isValidRuntimePointerContext(Table))
+      if (M.IsVTable       ? !isValidVTableContext(Table)
+          : M.IsCodeLayout ? !isValidCodeLayoutContext(Table)
+                           : !isValidRuntimePointerContext(Table))
         return false;
     }
     if (R.Context != uint8_t(ContextRequirement::None) &&
@@ -490,6 +494,7 @@ void SignatureCache::store(const std::filesystem::path &Source,
                             : M.RequireCaller   ? ContextRequirement::Caller
                             : M.IsVTable        ? ContextRequirement::VTable
                             : M.IsLoadConfig    ? ContextRequirement::LoadConfig
+                            : M.IsCodeLayout    ? ContextRequirement::CodeLayout
                                                 : ContextRequirement::None)});
     if (Count != 0) {
       std::memcpy(Written.data() + L->Blob + Blob, M.Bytes, Count);

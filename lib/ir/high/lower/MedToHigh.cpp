@@ -940,6 +940,13 @@ ExprPtr MedToHighConverter::forceInlineCallTarget(const ExprPtr &E) {
     return E;
   if (E->Kind == ExprKind::Var && E->Var.Id >= 0 && !E->Var.isConst()) {
     auto Key = varKey(E->Var);
+    // Keep a computed target shared with a guard or an argument. Resolution
+    // already inspected its definition; expanding it here would evaluate
+    // the same arithmetic again and defeat ordinary multi-use inlining.
+    if (!MemoryReadOutputs.count(Key))
+      if (auto Uses = UseCount.find(Key);
+          Uses != UseCount.end() && Uses->second > 1)
+        return E;
     if (!PhiOutputVars.count(Key) && (!MemoryReadOutputs.count(Key) ||
                                       memoryReadReachesCallTarget(E->Var))) {
       auto It = DefExpr.find(Key);
@@ -1690,6 +1697,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   duplicateSmallReturnTails(Func.Body, /*PrintedSize=*/true,
                             dispatcherEntries());
   foldTempsInReturnTails(Func.Body);
+  foldDuplicateTerminalContinuations(Func, CurMed);
   mergeJumpsIntoNextIfArms(Func);
   // Names merge last: every earlier pass may still move statements as if
   // each local had the definitions it had in SSA.

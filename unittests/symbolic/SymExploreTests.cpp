@@ -1251,6 +1251,30 @@ TEST(SymExplore, ExplicitCallRegisterResultResolvesTheSuccessor) {
   EXPECT_TRUE(Exploration.Complete);
 }
 
+TEST(SymExplore, ExplicitCallMemoryPostconditionResolvesTheSuccessor) {
+  SymContext Ctx;
+  FunctionBuilder B;
+  B.block({op(NdOp::COPY, NdVar::ram(0x7000, 8),
+              {NdVar::cst(kBase + kBlockSize, 8)}),
+           op(NdOp::CALL, NdVar{}, {NdVar::cst(0x401500, 8)}),
+           op(NdOp::COPY, NdVar::reg(kRax, 8), {NdVar::ram(0x7000, 8)}),
+           op(NdOp::INDIR_BR, NdVar{}, {NdVar::reg(kRax, 8)})},
+          {1});
+  B.block({op(NdOp::RETURN, NdVar{}, {})}, {});
+  ExploreOptions Opts;
+  Opts.CallEffects = [](SymContext &, SymState &State, const LowOp &,
+                        const SymCallOccurrence &) {
+    SymCallEffect Effect;
+    Effect.MemoryAfter = State.memoryKnowledge();
+    return std::optional<SymCallEffect>(std::move(Effect));
+  };
+  const auto Exploration = explorePathsDetailed(Ctx, B.function(), Opts);
+  ASSERT_EQ(Exploration.Paths.size(), 1u);
+  EXPECT_EQ(Exploration.Paths.front().Outcome, PathOutcome::Returned);
+  EXPECT_EQ(Exploration.Paths.front().Blocks, (std::vector<int>{0, 1}));
+  EXPECT_TRUE(Exploration.Complete);
+}
+
 TEST(SymExplore, OddInterworkingTargetFindsItsCanonicalThumbBlock) {
   SymContext Ctx;
   FunctionBuilder B;

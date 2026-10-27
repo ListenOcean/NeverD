@@ -2335,3 +2335,5 @@ Die HFA-Importslot-Tests kompilieren strenge C-Prototypen und führen vollständ
 ## Prüfung ausgewählter Deklarationen
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` kombiniert Adressen mit Ganzzahl-, Zeiger-, Gleitkomma- und void-Implementierungen. `AddressOnlyCallbackConvertsToItsKnownParameterType` führt einen typisierten Callback aus. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` vergleicht getrennte Auswahl, Gesamteinheit sowie kalten/warmen Cache. Generiertes C der x64/ARM64-Modelle für PE, ELF und Mach-O läuft auf dem Host mit O0/O2 und UBSan. Dies belegt keine native Ausführung auf allen Zielen. Bei Änderungen die Tests für Aufrufverträge, Zeigerprojektion, Quell-ABI und Aufrufziel-Cache ausführen.
+
+Bei Änderungen dieser Speicher-Nachbedingung gemeinsam `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests` und `NeverDSymMemoryKnowledgeTests` ausführen. Sie prüfen erhaltene Werte, bedingte Ergebnisse, neue unbekannte Epochen, vorherige Aufrufziele und die Ablehnung ungültiger Eingaben.

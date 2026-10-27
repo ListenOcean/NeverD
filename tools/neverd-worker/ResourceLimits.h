@@ -24,6 +24,8 @@
 #include <cstdint>
 
 namespace neverd::limits::worker {
+/// Intermediate updates to one load step; boundaries are always sent.
+inline constexpr int kLoadProgressIntervalMs = 50;
 inline constexpr std::size_t kPatchHexBytes =
     ::neverd::limits::patch::kMaxApplyBytes * 2;
 inline constexpr std::size_t kPatchStateBytes =
@@ -88,6 +90,13 @@ inline constexpr std::size_t kListingMaxOpcodeBytes = 12;
 inline constexpr std::size_t kListingMaxDecodeChunk = 2048;
 inline constexpr std::size_t kListingFirstUnsizedChunk = 64;
 inline constexpr std::size_t kListingDecodeCacheFunctions = 512;
+/// Disposable, per-project browsing cache. Writes happen in idle time.
+inline constexpr std::size_t kBrowseCacheMaxEntryBytes = 32 * 1024 * 1024;
+inline constexpr std::size_t kBrowseCacheMaxBytes = 128 * 1024 * 1024;
+inline constexpr std::size_t kBrowseCacheMaxPendingEntries = 16;
+/// A temporary browse cache entry at least this old was left by a writer that
+/// stopped before publishing it. One atomic entry write ends well before this.
+inline constexpr std::int64_t kBrowseCacheStaleTemporarySeconds = 10 * 60;
 /// Nearby entries considered for an otherwise unowned navigation address.
 /// Only a recovered instruction, never proximity, establishes ownership.
 inline constexpr std::size_t kListingOwnerSearchFunctions = 16;
@@ -99,6 +108,10 @@ inline constexpr std::uint64_t kListingMaxAlignment = 0x1000;
 // Classic listings name padding by the alignment of its end, up to this or the
 // smallest power of two longer than the padding.
 inline constexpr std::uint64_t kListingClassicAlignmentLimit = 0x20;
+/// Bound one repeat-run scan and keep its address-relative page identity
+/// stable.
+inline constexpr std::uint64_t kListingMaxRepeatBytes = 0x1000;
+inline constexpr std::uint64_t kListingMinRepeatBytes = 4;
 inline constexpr std::size_t kListingMaxOverviewBuckets = 16384;
 inline constexpr int kListingOverviewSamples = 4;
 inline constexpr int kListingStringScanMinimum =

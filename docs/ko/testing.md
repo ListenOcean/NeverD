@@ -2209,3 +2209,5 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 ## 선택한 함수 선언 검사
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes`는 주소 출력을 정수, 포인터, 부동소수점, void 구현과 결합한다. `AddressOnlyCallbackConvertsToItsKnownParameterType`는 형식이 지정된 콜백을 실행한다. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules`는 개별 선택과 전체 단위 및 콜드·웜 캐시를 비교한다. x64/ARM64 PE, ELF, Mach-O 모델이 생성한 C를 호스트에서 O0/O2와 UBSan으로 실행한다. 모든 대상의 네이티브 실행을 검증한 것은 아니다. 경계 변경 후 호출 계약, 포인터 투영, 소스 ABI 및 피호출 함수 캐시 검사를 실행한다.
+
+메모리 사후 조건을 변경할 때는 보존 값, 조건부 결과, 새로운 미지 상태, 호출 전 대상 및 잘못된 입력 거부를 확인하는 `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests`를 함께 실행합니다.

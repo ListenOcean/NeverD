@@ -49,6 +49,8 @@ struct StackFrameAccess {
 struct StackFrameInstruction {
   std::optional<int64_t> Before, After;
   bool Correctable = false;
+  /// Frame pointer's entry-SP coordinate before this instruction, if proven.
+  std::optional<int64_t> FrameBefore;
 };
 struct StackFrameAnalysis {
   std::map<va_t, StackFrameInstruction> Instructions;

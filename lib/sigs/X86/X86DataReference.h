@@ -30,8 +30,9 @@ struct X64DataReference {
 };
 
 /// MOV/LEA r,[RIP+d32], MOV [RIP+d32],r, CMP [RIP+d32],imm
-/// MOV [RIP+d32],imm and FF 15/25 indirect calls/jumps through data.
-/// No address/segment overrides, extra REX bits or partial displacements.
+/// MOV [RIP+d32],imm, AND [RIP+d32],imm and FF 15/25 indirect calls/jumps
+/// through data. No address/segment overrides, extra REX bits or partial
+/// displacements.
 inline std::optional<X64DataReference>
 x64DataReferenceField(llvm::ArrayRef<uint8_t> Code, size_t Offset) {
   if (Offset < 2 || Offset > Code.size() || Code.size() - Offset < 4)
@@ -59,7 +60,7 @@ x64DataReferenceField(llvm::ArrayRef<uint8_t> Code, size_t Offset) {
     Width = 8; // Near indirect calls/jumps read a full pointer in long mode.
   } else if (Op == 0x8b || Op == 0x89) {
     // Canonical register load/store, with the width selected above.
-  } else if ((Op == 0x83 || Op == 0x81) && ModRM == 0x3d) {
+  } else if ((Op == 0x83 || Op == 0x81) && (ModRM == 0x3d || ModRM == 0x25)) {
     Bias = Op == 0x83 ? 1 : 4;
   } else if (Op == 0xc7 && ModRM == 0x05) {
     Bias = 4;

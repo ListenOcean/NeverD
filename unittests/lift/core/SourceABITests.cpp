@@ -2102,6 +2102,65 @@ TEST(SourceABI, AArch64CallerFieldReadsDistinguishAnHFAFromAVectorReturn) {
     }
 }
 
+TEST(SourceABI, StructReturnFieldsNeedTheirLastRealWritesOnEveryReturn) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  auto Reg = [&](unsigned Index, int Version, uint16_t Size = 8) {
+    MedVar Value;
+    Value.Kind = MedVar::Reg;
+    Value.TheArch = Arch::AArch64;
+    Value.RegOff = TRI.IntReturnRegs[Index];
+    Value.Id = Index;
+    Value.SSAVer = Version;
+    Value.Size = Size;
+    return Value;
+  };
+  const std::vector<MedReturnReg> Fields = {{TRI.IntReturnRegs[0], 8, false},
+                                            {TRI.IntReturnRegs[1], 8, false}};
+  for (unsigned Mode = 0; Mode != 6; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Function;
+    Function.Entry = 0x1000;
+    Function.Blocks.resize(1);
+    auto &Block = Function.Blocks.front();
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    for (unsigned Index = 0; Index != 2; ++Index) {
+      MedOp Write;
+      Write.Opcode = NdOp::COPY;
+      Write.Output = Reg(Index, 1);
+      Write.addInput(MedVar::makeConst(7 + Index, 8));
+      Block.Ops.push_back(Write);
+    }
+    if (Mode == 3) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Output = Reg(0, 2);
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      Block.Ops.push_back(Call);
+    }
+    if (Mode >= 1 && Mode <= 4) {
+      MedOp Last;
+      Last.Opcode = NdOp::COPY;
+      Last.Output = Reg(1, 2, Mode == 1 ? 4 : 8);
+      Last.addInput(Mode == 2   ? MedVar::makeUnspecified(8, Arch::AArch64)
+                    : Mode == 1 ? MedVar::makeConst(9, 4)
+                                : Reg(1, 1));
+      Block.Ops.push_back(Last);
+    }
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(Return);
+    if (Mode == 5) {
+      Function.Blocks.emplace_back();
+      Function.Blocks.back().Id = 1;
+      Function.Blocks.back().Ops.push_back(Return);
+    }
+    EXPECT_EQ(
+        returnsStructFields(Function, Fields, Arch::AArch64, BinaryFormat::ELF),
+        Mode == 0 || Mode == 4);
+  }
+}
+
 TEST(SourceABI, AArch64BodyReturnUsesPreDCELaterRegisterReads) {
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
   ASSERT_GE(TRI.IntReturnRegs.size(), 2U);

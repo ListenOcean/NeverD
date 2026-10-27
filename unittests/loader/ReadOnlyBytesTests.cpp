@@ -36,6 +36,27 @@ BinaryImage codeImage() {
   return Image;
 }
 
+TEST(ImmutableImageScalar, ELFRelroSectionKeepsScalarsButNotRelocatedPointers) {
+  auto Image = codeImage();
+  Image.Format = BinaryFormat::ELF;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.BaseRelocations.clear();
+  Image.Segments.front().Flags =
+      SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Sections.front().Flags = Image.Segments.front().Flags;
+  Image.Sections.front().Name = ".data.rel.ro";
+  EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1), 0xb8u);
+  Image.BaseRelocations.push_back({ReadVA - 3, 10});
+  EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+  Image.BaseRelocations.clear();
+  Image.Sections.front().Name = ".data";
+  EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+  Image.Sections.front().Name = ".data.rel.ro";
+  Image.Sections.push_back(Image.Sections.front());
+  EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+}
+
 TEST(ImmutablePE32Code, IndexedAndOrdinaryReadersKeepEveryFixupBoundary) {
   for (unsigned Mutation = 0; Mutation != 29; ++Mutation) {
     SCOPED_TRACE(Mutation);

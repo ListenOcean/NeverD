@@ -20,6 +20,7 @@
 #include "AffineFrameState.h"
 #include "JumpTableResolverDetail.h"
 #include "ResolverDefinitionCache.h"
+#include "ResolverFiniteState.h"
 #include "ResolverLaneView.h"
 #include "ResolverMemoryDefinitionCache.h"
 #include "ResolverPendingWalks.h"
@@ -5406,6 +5407,7 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   // Pointer-named opaque values and merges have allocation-dependent lengths,
   // hence allocation-dependent evidence charges. Do not cache those batches.
   bool UsedPointerSymbol = false;
+  bool UsedImageContents = false;
   // Graph construction is only the first half of one evidence query.  Keep
   // charging the same candidate-local account while reconstructing frame,
   // memory and value state, and while matching/symbolizing the resulting DAG.
@@ -9888,6 +9890,31 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
       ++ResolverMemoGeneration;
     }
     MemoScalarConstantFoldMode = Query.FoldScalarConstantOps;
+    if (Query.Relation == JumpTableValueRelation::ReadonlyUnsignedEnvelope) {
+      // These facts also depend on immutable image contents. The ordinary
+      // batch cache authenticates graph facts only, so retain no such result.
+      UsedImageContents = true;
+      if (!consumeProofPointLookup()) {
+        markIncomplete(QueryIndex);
+        continue;
+      }
+      const auto Point = Graph.findPoint({Query.UseAddr, Query.UseSeq});
+      if (!Point || (UseGroupContext && GuardedGroupProofContext))
+        continue;
+      bool StateComplete = true;
+      const auto Mask = detail::readonlyScalarEnvelope(
+          Graph, *CurrentImg, Query.Candidate, *Point, Query.UnsignedUpperBound,
+          resolverConditionEdges, consumeEvidence, GraphWorkBudget,
+          StateComplete);
+      if (Mask && StateComplete) {
+        Results[QueryIndex] = true;
+        if (QueryUnsignedFeasibleMasks)
+          (*QueryUnsignedFeasibleMasks)[QueryIndex] = *Mask;
+      }
+      if (!StateComplete)
+        markIncomplete(QueryIndex);
+      continue;
+    }
     const bool JoinedFiniteSet =
         Query.Relation == JumpTableValueRelation::JoinedUnsignedFeasibleSet;
     const bool FiniteSet =
@@ -10512,7 +10539,8 @@ std::vector<bool> CFGBuilder::tableValuesMatchAtUses(
   const bool RepeatableRefusal =
       HasRepeatableRefusal && !NonRepeatableAnalysisIncomplete;
   if ((Complete || RepeatableRefusal) && !EvidenceBudgetExhausted &&
-      !SymbolBudgetExhausted && !UsedPointerSymbol && ReusedGraph)
+      !SymbolBudgetExhausted && !UsedPointerSymbol && !UsedImageContents &&
+      ReusedGraph)
     ReusedGraph->rememberValueBatch(
         *this, Queries, MaxResolverDepth, InitialMatchBudget, Complete, Results,
         QueryAnalysisComplete, QueryUnsignedFeasibleMasks,

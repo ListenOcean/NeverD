@@ -807,11 +807,27 @@ StepResult SymExec::stepControl(const LowOp &Op,
     // Capture the call destination before caller-saved registers are clobbered.
     // SymExplore consumes it when instruction-boundary metadata proves that the
     // call does not return.
-    Target = Op.NumInputs >= 1 ? read(Op.Inputs[0]) : SymRef();
+    if (CallEffect && CallEffect->MemoryAfter) {
+      // Read the target from the pre-call state, including memory operands.
+      // Admission is transactional: even an untouched target input must not
+      // materialize in the original state if the memory contract is invalid.
+      SymState Draft(State);
+      SymExec Reader(Ctx, Draft);
+      SymRef Destination =
+          Op.NumInputs >= 1 ? Reader.operandValue(Op.Inputs[0]) : SymRef();
+      if (!Draft.restoreMemoryKnowledge(*CallEffect->MemoryAfter))
+        throw std::invalid_argument(
+            "call summary contains invalid memory knowledge");
+      State = std::move(Draft);
+      Target = Destination;
+    } else {
+      Target = Op.NumInputs >= 1 ? read(Op.Inputs[0]) : SymRef();
+    }
     State.clearX64MemoryAddressSpaceBases();
     if (CallEffect) {
       State.clobberRegistersExcept(CallPreserved);
-      if (CallEffect->Memory == SymCallMemoryEffect::Havoc)
+      if (!CallEffect->MemoryAfter &&
+          CallEffect->Memory == SymCallMemoryEffect::Havoc)
         State.clobberMemory();
       for (const SymCallMemoryWrite &Write : CallEffect->Writes) {
         if (!Write.Address.isValid() || !Write.Value.isValid()) {

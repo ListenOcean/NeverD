@@ -186,6 +186,10 @@ struct Session {
   /// to a function, where the image's kind says which
   /// (NEVERD_HEADER_PE_ENTRY_TYPE): empty for none.
   std::string LocalTypeEntryType;
+  /// Platform entry contract when no shipped typedef names it.
+  std::string LocalTypeEntryDeclaration;
+  /// Platform entry text without importing or parsing a type library.
+  std::string platformEntryDeclaration() const;
   /// Drops the program's types, read anew when next asked for; the user's
   /// declarations stay, to be read again over them.
   void dropLocalTypes() {
@@ -197,6 +201,7 @@ struct Session {
     DeclarationProblems.clear();
     LocalTypeHeaders.clear();
     LocalTypeEntryType.clear();
+    LocalTypeEntryDeclaration.clear();
     dropLocalTypesDebug();
   }
 

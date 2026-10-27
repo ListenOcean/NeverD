@@ -44,6 +44,56 @@ NEVERD_API neverd_va_t neverd_func_entry(neverd_session_t Sess, int Idx);
 NEVERD_API int neverd_func_size(neverd_session_t Sess, int Idx);
 NEVERD_API const char *neverd_func_name(neverd_session_t Sess, int Idx);
 
+/// Lightweight function presentation without decompilation: {entry,
+/// suggested_name?,prototype?,thunk,thunk_target?}. A thunk forwards through
+/// a direct unconditional branch with no parameter or stack transformation.
+/// User/stated names take precedence over suggestions. NULL on failure.
+NEVERD_API const char *neverd_function_presentation_json(neverd_session_t Sess,
+                                                         neverd_va_t Entry);
+
+/// Format-owned data records in ascending address order, from FirstAddress:
+/// {items:[{address,size,type,fields:[{offset,size,name,role,target}]}],
+/// next_address:hex|null}. Currently publishes checked x64 PE RUNTIME_FUNCTION
+/// rows, including chain records. Boundary references do not establish entries.
+/// MaxItems is clamped to the data-slot query limit. No analysis is started.
+NEVERD_API const char *neverd_metadata_items_json(neverd_session_t Sess,
+                                                  neverd_va_t FirstAddress,
+                                                  int MaxItems);
+
+/// Borrowed native view of the same checked metadata facts. All pointers,
+/// including strings, are valid only for the duration of the visitor call.
+typedef struct neverd_metadata_field_v1 {
+  size_t struct_size;
+  unsigned long long offset;
+  unsigned long long size;
+  neverd_va_t target;
+  const char *name;
+  const char *role;
+} neverd_metadata_field_v1;
+
+typedef struct neverd_metadata_item_v1 {
+  size_t struct_size;
+  neverd_va_t address;
+  unsigned long long size;
+  const char *type;
+  const neverd_metadata_field_v1 *fields;
+  size_t field_count;
+} neverd_metadata_item_v1;
+
+/// Return nonzero to continue or zero to stop after this item. The visitor
+/// must not throw, block or reenter this session. It may copy borrowed facts.
+typedef int (*neverd_metadata_visitor_fn)(void *user_data,
+                                          const neverd_metadata_item_v1 *item);
+
+/// Visit at most MaxItems records in address order without JSON conversion.
+/// Returns the number visited, or -1 with neverd_last_error on failure.
+/// NextAddress receives the first unvisited record, or zero at the end,
+/// including when the visitor stops early. No target code or analysis runs.
+NEVERD_API int
+neverd_visit_metadata_items(neverd_session_t Sess, neverd_va_t FirstAddress,
+                            int MaxItems, neverd_metadata_visitor_fn Visitor,
+                            void *UserData, neverd_va_t *NextAddress);
+
 // ===--------------------------------------------------------------------===//
 // Function lookup helpers
 // ===--------------------------------------------------------------------===//

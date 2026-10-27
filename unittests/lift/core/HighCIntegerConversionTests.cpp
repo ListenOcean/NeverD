@@ -502,6 +502,35 @@ int main(void) { return probe(0) == 0x7FFF80001234567Dull ? 0 : 1; }
 )");
 }
 
+TEST(HighCIntegerConversion, UndeclaredPairCallsKeepTheirCompleteReturnType) {
+  const TypeRef U64 = integer(8, false), U128 = integer(16, false);
+  auto Pair = typed(HighExpr::makeCall("pair", 0x2000, {input()}), U128);
+  auto Scalar = typed(HighExpr::makeCall("scalar", 0x2010, {input()}), U64);
+  const HighFunc F =
+      function("probe", U64,
+               {assign(local(1, U128), Pair), assign(local(2, U128), Scalar),
+                result(op(NdOp::INT_XOR,
+                          op(NdOp::SUBBYTES, local(1, U128), constant(8), U64),
+                          lowPart(local(2, U128), U64), U64))});
+  const std::string Source = emit(F);
+  EXPECT_NE(Source.find("extern unsigned __int128 pair();"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("extern int64_t scalar();"), std::string::npos)
+      << Source;
+  compileAndRun(Source + R"C(
+unsigned __int128 pair(uint64_t x) {
+  return (unsigned __int128)(x + 17) << 64 | (x ^ 0x1234);
+}
+int64_t scalar(uint64_t x) { return x ^ 7; }
+int main(void) {
+  uint64_t xs[] = {0, 1, 0x123456789ABCDEF0, UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(xs) / sizeof(xs[0]); ++i)
+    if (probe(xs[i]) != ((xs[i] + 17) ^ (xs[i] ^ 7))) return 1;
+  return 0;
+}
+)C");
+}
+
 TEST(HighCIntegerConversion, BitCountsCountInTheOperandsWidth) {
   // The machine counts a 32-bit register's leading zeros in 32 bits, and a
   // zero's as 32; C's builtins count in unsigned int or unsigned long long

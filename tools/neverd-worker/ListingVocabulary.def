@@ -410,6 +410,7 @@ NEVERD_SWITCH_TEXT(ImageRelativeKeyword, "rva ")
 #define NEVERD_FRAME_NAME_PREFIX(Id, Prefix)
 #endif
 NEVERD_FRAME_NAME_PREFIX(LocalPrefix, "var_")
+NEVERD_FRAME_NAME_PREFIX(SavedPrefix, "var_s")
 NEVERD_FRAME_NAME_PREFIX(ArgumentPrefix, "arg_")
 #undef NEVERD_FRAME_NAME_PREFIX
 

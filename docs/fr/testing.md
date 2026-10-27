@@ -2334,3 +2334,5 @@ Les tests des entrées d’importation HFA compilent des prototypes C stricts et
 ## Vérification des déclarations sélectionnées
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` combine les adresses avec des fournisseurs retournant entier, pointeur, flottant ou void. `AddressOnlyCallbackConvertsToItsKnownParameterType` exécute un callback typé. `SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` compare les sélections séparées, l’unité complète et les caches froid/chaud. Le C produit depuis les modèles x64/ARM64 PE, ELF et Mach-O est exécuté sur l’hôte à O0/O2 avec UBSan ; cela ne qualifie pas l’exécution native de toutes les cibles. Relancer les tests des contrats d’appel, projections de pointeurs, ABI source et cache des appelés.
+
+Pour modifier cette postcondition mémoire, exécuter ensemble `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests` et `NeverDSymMemoryKnowledgeTests`. Ils vérifient les valeurs conservées, les résultats conditionnels, les nouveaux états inconnus, les cibles antérieures à l’appel et le refus des entrées invalides.

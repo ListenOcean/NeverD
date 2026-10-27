@@ -95,7 +95,8 @@ public:
       std::vector<types::HeaderLibrary> Headers = {},
       std::unordered_map<uint64_t, std::string> Recognized = {},
       std::string EntryType = {},
-      std::optional<va_t> ProgramMain = std::nullopt);
+      std::optional<va_t> ProgramMain = std::nullopt,
+      std::string EntryDeclaration = {});
   /// Takes back the members and enumerators it gave the debug information's
   /// types, and gives back those they held, so that the context made after
   /// a change to the library gives them anew.
@@ -255,6 +256,7 @@ private:
   std::unordered_map<uint64_t, std::string> Recognized;
   /// The type of the image's entry point, a pointer to a function.
   std::string EntryType;
+  std::string EntryDeclaration;
   /// The function type EntryType points to, as a signature.
   std::optional<FunctionSym> entrySignature() const;
   std::optional<va_t> ProgramMain;

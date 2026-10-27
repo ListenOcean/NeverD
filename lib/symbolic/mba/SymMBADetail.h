@@ -676,6 +676,11 @@ SymRef foldProductValuations(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
 SymRef foldProductParity(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
                          size_t &Storage);
 
+/// Recognize a three-node reading whose free inputs rule out every cheaper
+/// same-width expression. Shared by deep and post-arithmetic region checks.
+bool isMinimalBinaryLeafExpression(const SymContext &Ctx, SymRef E,
+                                   const MBAOptions &Opts);
+
 /// Solve independent summand groups before measuring \p E as one region.
 /// This is the mask-free half of the region solver; \c solveMasked reduces to
 /// it once it has split a masked expression into mask-free columns, so keeping

@@ -255,36 +255,22 @@ public:
 
   void run(HighFunc &Func) {
     FunctionEntry = Func.Entry;
-    auto HasLanguageEH = [](const auto &Metadata) {
-      return Metadata && (Metadata->hasLanguageTable() ||
-                          Metadata->Personality != ExceptionPersonality::None ||
-                          Metadata->PersonalityVA || Metadata->HandlerDataVA);
-    };
-    if (HasLanguageEH(Func.ExceptionMetadata) ||
-        (Med && HasLanguageEH(Med->ExceptionMetadata)))
+    if (hasExceptionFlow(Func, Med))
       return;
-    bool HasEH = false;
     walkStmts(Func.Body, [&](const HighStmt &S) {
       if (S.Addr && S.Addr != InvalidVA)
         ++Owners[S.Addr];
       if (S.Kind == StmtKind::Goto && S.GotoTarget && S.GotoTarget != InvalidVA)
         Targets.insert(S.GotoTarget);
-      HasEH |= S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
-               S.Kind == StmtKind::ItaniumTry || !S.EHClauseBodies.empty() ||
-               !S.EHClauses.empty();
     });
     if (Med)
       for (const auto &Block : Med->Blocks) {
-        HasEH |=
-            !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty();
         const va_t Start =
             Block.StartAddr ? Block.StartAddr
                             : (Block.Ops.empty() ? 0 : Block.Ops.front().Addr);
         if (Start && Start != InvalidVA)
           NativeEntries.insert(Start);
       }
-    if (HasEH)
-      return;
 
     // A dead entry assignment may leave an empty label immediately before a
     // return. Only a root-level, exact, unique label and a scalar value can be
@@ -312,6 +298,28 @@ static std::set<va_t> statementStarts(const std::vector<HighStmt> &Body) {
       Starts.insert(S.Addr);
   });
   return Starts;
+}
+
+bool hasExceptionFlow(const HighFunc &Func, const MedFunc *Med) {
+  const auto LanguageEH = [](const auto &Metadata) {
+    return Metadata && (Metadata->hasLanguageTable() ||
+                        Metadata->Personality != ExceptionPersonality::None ||
+                        Metadata->PersonalityVA || Metadata->HandlerDataVA);
+  };
+  if (LanguageEH(Func.ExceptionMetadata) ||
+      (Med && LanguageEH(Med->ExceptionMetadata)))
+    return true;
+  bool Found = false;
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    Found |= S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
+             S.Kind == StmtKind::ItaniumTry || !S.EHClauseBodies.empty() ||
+             !S.EHClauses.empty();
+  });
+  if (Med)
+    for (const auto &Block : Med->Blocks)
+      Found |=
+          !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty();
+  return Found;
 }
 
 void foldStructuredContinuations(HighFunc &Func, const MedFunc *Med) {
@@ -1601,7 +1609,7 @@ static bool isEqNeTree(const HighExpr *E) {
   return isEqNeTree(E->Operands[0].get()) && isEqNeTree(E->Operands[1].get());
 }
 
-static ExprPtr invertHighCond(ExprPtr C) {
+ExprPtr invertHighCond(ExprPtr C) {
   if (!C)
     return C;
   const HighExpr *P = peelCond(C.get());

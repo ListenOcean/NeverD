@@ -259,6 +259,167 @@ llvm::APInt randomWord(std::mt19937_64 &Rng, uint32_t Width) {
   return llvm::APInt(Width, Words);
 }
 
+// Both complete plans and additive residuals use the same original variable
+// union and deterministic assignments. A canceled term can still be the only
+// use of a variable whose random words precede a surviving input's words.
+template <typename NativeCheck, typename WideCheck>
+bool agreeOnAssignments(const SymContext &Ctx,
+                        llvm::SmallVectorImpl<uint32_t> &Vars, unsigned Samples,
+                        bool Native, NativeCheck &&CheckNative,
+                        WideCheck &&CheckWide) {
+  std::sort(Vars.begin(), Vars.end());
+  Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
+  // A contiguous window of sorted unique input IDs needs only its origin to
+  // locate assignments. Sparse contexts retain the compact lookup and never
+  // allocate scratch for unrelated or unused variables.
+  const uint32_t First = Vars.empty() ? 0 : Vars.front();
+  const bool Dense = Vars.empty() || Vars.back() - First == Vars.size() - 1;
+  llvm::SmallDenseMap<uint32_t, unsigned, 16> Positions;
+  if (!Dense)
+    for (unsigned I = 0; I < Vars.size(); ++I)
+      Positions[Vars[I]] = I;
+  auto Position = [&](uint32_t Id) {
+    if (Dense)
+      return Id - First;
+    auto It = Positions.find(Id);
+    assert(It != Positions.end() && "plan requested an unlisted variable");
+    return It->second;
+  };
+
+  if (Native) {
+    llvm::SmallVector<uint64_t, 8> Masks;
+    for (uint32_t Id : Vars) {
+      const uint32_t Width = Ctx.varInfo(Id).Width;
+      assert(Width <= 64 && "word plan contains a wide variable");
+      Masks.push_back(~uint64_t(0) >> (64 - Width));
+    }
+    llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
+    auto CheckSamples = [&](auto &&Lookup) {
+      std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
+      for (unsigned S = 0; S < Samples; ++S) {
+        // The first three points and one generator word per narrow input match
+        // the arbitrary-width path. Only referenced inputs advance the stream.
+        for (size_t I = 0; I < Assignment.size(); ++I)
+          Assignment[I] = S == 0   ? 0
+                          : S == 1 ? Masks[I]
+                          : S == 2 ? 1
+                                   : Rng() & Masks[I];
+        if (!CheckNative(Lookup))
+          return false;
+      }
+      return true;
+    };
+    // Select the lookup once, outside both evaluation loops. Dense samples
+    // need neither the position table nor a per-variable layout branch.
+    if (Dense)
+      return CheckSamples([&](uint32_t Id) { return Assignment[Id - First]; });
+    return CheckSamples([&](uint32_t Id) { return Assignment[Position(Id)]; });
+  }
+
+  llvm::SmallVector<llvm::APInt, 8> Assignment;
+  Assignment.reserve(Vars.size());
+  for (uint32_t Id : Vars)
+    Assignment.emplace_back(Ctx.varInfo(Id).Width, 0);
+  auto Lookup = [&](uint32_t Id) -> const llvm::APInt * {
+    return &Assignment[Position(Id)];
+  };
+
+  std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
+  for (unsigned S = 0; S < Samples; ++S) {
+    for (size_t I = 0; I < Assignment.size(); ++I) {
+      uint32_t W = Assignment[I].getBitWidth();
+      // The first few rounds pin every input to a corner of the space, where a
+      // mistake in the corner arithmetic itself would show; the rest are
+      // ordinary values, where a mistake in the algebra would.
+      switch (S) {
+      case 0:
+        Assignment[I] = llvm::APInt(W, 0);
+        break;
+      case 1:
+        Assignment[I] = llvm::APInt::getAllOnes(W);
+        break;
+      case 2:
+        Assignment[I] = llvm::APInt(W, 1);
+        break;
+      default:
+        Assignment[I] = randomWord(Rng, W);
+        break;
+      }
+    }
+    if (!CheckWide(Lookup))
+      return false;
+  }
+  return true;
+}
+
+// Cancel only identical complete addends, with their multiplicities, in the
+// same modular ring. The remaining sums have exactly the same difference at
+// every assignment; no sampling is used to establish the cancellation itself.
+std::optional<bool> agreeAfterCancelingAddends(const SymContext &Ctx, SymRef A,
+                                               SymRef B, unsigned Samples) {
+  if (Ctx.op(A) != SymOp::Add || Ctx.op(B) != SymOp::Add ||
+      Ctx.width(A) != Ctx.width(B))
+    return std::nullopt;
+  llvm::SmallVector<SymRef, 8> Left(Ctx.operands(A)), Right(Ctx.operands(B));
+  // Canonical additions order scaled terms by their base, not their full node.
+  llvm::sort(Left);
+  llvm::sort(Right);
+  llvm::SmallVector<SymRef, 8> Common, LeftRest, RightRest;
+  size_t I = 0, J = 0;
+  while (I < Left.size() && J < Right.size()) {
+    if (Left[I] == Right[J]) {
+      Common.push_back(Left[I++]);
+      ++J;
+    } else if (Left[I] < Right[J]) {
+      LeftRest.push_back(Left[I++]);
+    } else {
+      RightRest.push_back(Right[J++]);
+    }
+  }
+  if (Common.empty())
+    return std::nullopt;
+  LeftRest.append(Left.begin() + I, Left.end());
+  RightRest.append(Right.begin() + J, Right.end());
+
+  llvm::SmallVector<uint32_t, 16> Vars;
+  for (SymRef R : Common)
+    Ctx.collectVars(R, Vars);
+  bool Native = Ctx.width(A) <= 64 && llvm::all_of(Vars, [&](uint32_t Id) {
+                  return Ctx.varInfo(Id).Width <= 64;
+                });
+  std::vector<SymEvalPlan> LeftPlans, RightPlans;
+  auto Compile = [&](llvm::ArrayRef<SymRef> Rest,
+                     std::vector<SymEvalPlan> &Plans) {
+    Plans.reserve(Rest.size());
+    for (SymRef R : Rest) {
+      SymEvalPlan &Plan = Plans.emplace_back(Ctx, R);
+      Native &= Plan.fitsU64();
+      Vars.append(Plan.vars().begin(), Plan.vars().end());
+    }
+  };
+  Compile(LeftRest, LeftPlans);
+  Compile(RightRest, RightPlans);
+  const uint32_t Width = Ctx.width(A);
+  return agreeOnAssignments(
+      Ctx, Vars, Samples, Native,
+      [&](auto &&Lookup) {
+        uint64_t Difference = 0;
+        for (SymEvalPlan &Plan : LeftPlans)
+          Difference += Plan.evalU64With(Lookup);
+        for (SymEvalPlan &Plan : RightPlans)
+          Difference -= Plan.evalU64With(Lookup);
+        return (Difference & (~uint64_t(0) >> (64 - Width))) == 0;
+      },
+      [&](auto &&Lookup) {
+        llvm::APInt Difference(Width, 0);
+        for (SymEvalPlan &Plan : LeftPlans)
+          Difference += Plan.evalWith(Lookup);
+        for (SymEvalPlan &Plan : RightPlans)
+          Difference -= Plan.evalWith(Lookup);
+        return Difference.isZero();
+      });
+}
+
 /// The largest t with 2^t entries or fewer.
 unsigned atomsFittingEntries(size_t Entries) {
   unsigned Atoms = 0;
@@ -407,94 +568,20 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
                     unsigned Samples) {
   if (!Samples)
     return true;
+  if (auto Agrees = agreeAfterCancelingAddends(Ctx, A, B, Samples))
+    return *Agrees;
   SymEvalPlan PlanA(Ctx, A);
   SymEvalPlan PlanB(Ctx, B);
-
   llvm::SmallVector<uint32_t, 16> Vars(PlanA.vars());
   Vars.append(PlanB.vars().begin(), PlanB.vars().end());
-  std::sort(Vars.begin(), Vars.end());
-  Vars.erase(std::unique(Vars.begin(), Vars.end()), Vars.end());
-  // A contiguous window of sorted unique input IDs needs only its origin to
-  // locate assignments. Sparse contexts retain the compact lookup and never
-  // allocate scratch for unrelated or unused variables.
-  const uint32_t First = Vars.empty() ? 0 : Vars.front();
-  const bool Dense = Vars.empty() || Vars.back() - First == Vars.size() - 1;
-  llvm::SmallDenseMap<uint32_t, unsigned, 16> Positions;
-  if (!Dense)
-    for (unsigned I = 0; I < Vars.size(); ++I)
-      Positions[Vars[I]] = I;
-  auto Position = [&](uint32_t Id) {
-    if (Dense)
-      return Id - First;
-    auto It = Positions.find(Id);
-    assert(It != Positions.end() && "plan requested an unlisted variable");
-    return It->second;
-  };
-
-  if (PlanA.fitsU64() && PlanB.fitsU64()) {
-    llvm::SmallVector<uint64_t, 8> Masks;
-    for (uint32_t Id : Vars) {
-      const uint32_t Width = Ctx.varInfo(Id).Width;
-      assert(Width <= 64 && "word plan contains a wide variable");
-      Masks.push_back(~uint64_t(0) >> (64 - Width));
-    }
-    llvm::SmallVector<uint64_t, 8> Assignment(Masks.size());
-    auto CheckSamples = [&](auto &&Lookup) {
-      std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
-      for (unsigned S = 0; S < Samples; ++S) {
-        // The first three points and one generator word per narrow input match
-        // the arbitrary-width path. Only referenced inputs advance the stream.
-        for (size_t I = 0; I < Assignment.size(); ++I)
-          Assignment[I] = S == 0   ? 0
-                          : S == 1 ? Masks[I]
-                          : S == 2 ? 1
-                                   : Rng() & Masks[I];
-        if (PlanA.evalU64With(Lookup) != PlanB.evalU64With(Lookup))
-          return false;
-      }
-      return true;
-    };
-    // Select the lookup once, outside both evaluation loops. Dense samples
-    // need neither the position table nor a per-variable layout branch.
-    if (Dense)
-      return CheckSamples([&](uint32_t Id) { return Assignment[Id - First]; });
-    return CheckSamples([&](uint32_t Id) { return Assignment[Position(Id)]; });
-  }
-
-  llvm::SmallVector<llvm::APInt, 8> Assignment;
-  Assignment.reserve(Vars.size());
-  for (uint32_t Id : Vars)
-    Assignment.emplace_back(Ctx.varInfo(Id).Width, 0);
-  auto Lookup = [&](uint32_t Id) -> const llvm::APInt * {
-    return &Assignment[Position(Id)];
-  };
-
-  std::mt19937_64 Rng(0x9E3779B97F4A7C15ull);
-  for (unsigned S = 0; S < Samples; ++S) {
-    for (size_t I = 0; I < Assignment.size(); ++I) {
-      uint32_t W = Assignment[I].getBitWidth();
-      // The first few rounds pin every input to a corner of the space, where a
-      // mistake in the corner arithmetic itself would show; the rest are
-      // ordinary values, where a mistake in the algebra would.
-      switch (S) {
-      case 0:
-        Assignment[I] = llvm::APInt(W, 0);
-        break;
-      case 1:
-        Assignment[I] = llvm::APInt::getAllOnes(W);
-        break;
-      case 2:
-        Assignment[I] = llvm::APInt(W, 1);
-        break;
-      default:
-        Assignment[I] = randomWord(Rng, W);
-        break;
-      }
-    }
-    if (PlanA.evalWith(Lookup) != PlanB.evalWith(Lookup))
-      return false;
-  }
-  return true;
+  return agreeOnAssignments(
+      Ctx, Vars, Samples, PlanA.fitsU64() && PlanB.fitsU64(),
+      [&](auto &&Lookup) {
+        return PlanA.evalU64With(Lookup) == PlanB.evalU64With(Lookup);
+      },
+      [&](auto &&Lookup) {
+        return PlanA.evalWith(Lookup) == PlanB.evalWith(Lookup);
+      });
 }
 
 size_t termBudget(const SymContext &Ctx, SymRef E, const MBAOptions &Opts) {

@@ -14,6 +14,7 @@
 #include "neverd/support/ISAEncoding.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/ARMWinEH.h"
 #include "llvm/Support/Debug.h"
@@ -263,27 +264,27 @@ void parseX64Exceptions(const COFFObjectFile &Obj, BinaryImage &Img,
         continue;
     }
     const auto Predecoded = RestrictedDecoded.find(I);
-    ExceptionFunction EF = Predecoded != RestrictedDecoded.end()
-                               ? std::move(Predecoded->second)
-                               : decodeX64ExceptionFunction(
-                                     Img, ImageBase, RecordRVA, RF.BeginAddress,
-                                     RF.EndAddress, RF.UnwindInformation);
+    // Construct directly in the reserved directory. Moving a complete record
+    // also visits the many optional language tables absent from most entries.
+    ExceptionFunction &Stored = Img.ExceptionMetadata.Functions.emplace_back();
+    if (Predecoded != RestrictedDecoded.end())
+      Stored = std::move(Predecoded->second);
+    else
+      unwind_detail::decodeX64ExceptionFunctionInto(
+          Img, ImageBase, RecordRVA, RF.BeginAddress, RF.EndAddress,
+          RF.UnwindInformation, Stored);
     Img.ExceptionMetadata.ParseStatus = mergeExceptionParseStatus(
-        Img.ExceptionMetadata.ParseStatus, EF.ParseStatus);
-    const bool HasRange = EF.CodeRange.isValid();
-    const bool IsChained = EF.Kind == RuntimeFunctionKind::Chained;
-    Img.ExceptionMetadata.Functions.push_back(std::move(EF));
-    const ExceptionFunction &Stored = Img.ExceptionMetadata.Functions.back();
+        Img.ExceptionMetadata.ParseStatus, Stored.ParseStatus);
+    const bool HasRange = Stored.CodeRange.isValid();
+    const bool IsChained = Stored.Kind == RuntimeFunctionKind::Chained;
     if (!HasRange)
       continue;
     Addr = Stored.CodeRange.Begin;
     End = Stored.CodeRange.End;
-    if (HasRange) {
-      if (Restrict)
-        notePdataNeighbors(Img, ImageBase, Addr, End);
-      else
-        Img.KnownCodeRanges.emplace_back(Addr, End);
-    }
+    // Full loads recorded this directory range before decoding the unwind
+    // info, including records whose unwind bytes are malformed.
+    if (Restrict)
+      notePdataNeighbors(Img, ImageBase, Addr, End);
 
     if (IsChained)
       continue;
@@ -737,33 +738,41 @@ void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
   for (ExceptionFunction &Function : Info.Functions)
     Function.FragmentRanges.clear();
 
-  // Index by start VA so a 100k-entry .pdata does not scan every record for
-  // every chained entry.  Vectors keep directory order so the first match is
-  // the same record the previous nested loop selected.
-  std::unordered_map<va_t, std::vector<size_t>> ByBegin;
+  // Directory entries usually arrive in address order. A contiguous index
+  // avoids a node and a separate vector allocation for every start address.
+  // Preserve directory order among duplicate starts, including unsorted input.
+  std::vector<std::pair<va_t, size_t>> ByBegin;
   ByBegin.reserve(Info.Functions.size());
   for (size_t J = 0; J < Info.Functions.size(); ++J) {
     const ExceptionAddressRange &Range = Info.Functions[J].CodeRange;
     if (Range.isValid())
-      ByBegin[Range.Begin].push_back(J);
+      ByBegin.emplace_back(Range.Begin, J);
   }
+  const auto ByAddress = [](const auto &A, const auto &B) {
+    return A.first < B.first;
+  };
+  if (!std::is_sorted(ByBegin.begin(), ByBegin.end(), ByAddress))
+    std::stable_sort(ByBegin.begin(), ByBegin.end(), ByAddress);
 
   for (size_t I = 0; I < Info.Functions.size(); ++I) {
     ExceptionFunction &F = Info.Functions[I];
     if (F.Kind != RuntimeFunctionKind::Chained || !F.ChainedPrimaryRange)
       continue;
-    const auto Found = ByBegin.find(F.ChainedPrimaryRange->Begin);
-    if (Found != ByBegin.end()) {
-      for (size_t J : Found->second) {
-        if (I == J)
-          continue;
-        const ExceptionFunction &Candidate = Info.Functions[J];
-        if (Candidate.CodeRange.End == F.ChainedPrimaryRange->End &&
-            (F.ChainedUnwindInfoRVA == 0 ||
-             Candidate.UnwindInfoRVA == F.ChainedUnwindInfoRVA)) {
-          F.PrimaryFunctionIndex = J;
-          break;
-        }
+    const va_t ParentBegin = F.ChainedPrimaryRange->Begin;
+    const auto Found = std::lower_bound(
+        ByBegin.begin(), ByBegin.end(), ParentBegin,
+        [](const auto &Entry, va_t Begin) { return Entry.first < Begin; });
+    for (auto It = Found; It != ByBegin.end() && It->first == ParentBegin;
+         ++It) {
+      const size_t J = It->second;
+      if (I == J)
+        continue;
+      const ExceptionFunction &Candidate = Info.Functions[J];
+      if (Candidate.CodeRange.End == F.ChainedPrimaryRange->End &&
+          (F.ChainedUnwindInfoRVA == 0 ||
+           Candidate.UnwindInfoRVA == F.ChainedUnwindInfoRVA)) {
+        F.PrimaryFunctionIndex = J;
+        break;
       }
     }
     if (!F.PrimaryFunctionIndex) {
@@ -779,7 +788,7 @@ void unwind_detail::resolveX64UnwindChains(ExceptionInfo &Info) {
     ExceptionFunction &Root = Info.Functions[I];
     if (Root.Kind != RuntimeFunctionKind::Chained || !Root.PrimaryFunctionIndex)
       continue;
-    std::set<size_t> Visited;
+    llvm::SmallDenseSet<size_t, 8> Visited;
     size_t Current = I;
     bool ReachedTerminal = false;
     size_t Terminal = I;

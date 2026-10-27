@@ -2184,3 +2184,5 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 ## 选定函数声明检查
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 将地址输出分别与整数、指针、浮点和 void 返回的实现拼接；`AddressOnlyCallbackConvertsToItsKnownParameterType` 执行带类型的回调。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 拼接分别选择的调用者和读取指针的被调函数，对比整单元及冷、热缓存输出。x64/ARM64 的 PE、ELF、Mach-O 输入模型生成的 C 在主机上以 O0/O2 和 UBSan 编译执行。这不代表所有目标平台的原生执行已验证。修改此边界后运行调用契约、指针投影、源码 ABI 和被调函数缓存相关测试。
+
+调用后内存测试覆盖保留值、条件结果、未知状态更新、调用前目标与无效输入拒绝。修改此边界时，一并运行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 和 `NeverDSymMemoryKnowledgeTests`。

@@ -31,6 +31,11 @@ ExceptionFunction decodeX64ExceptionFunction(const BinaryImage &Img,
                                              uint32_t BeginRVA, uint32_t EndRVA,
                                              uint32_t UnwindInfoRVA);
 
+/// Checked AMD64 runtime-function data records, including embedded chain rows,
+/// in record-address order. EndRVA remains an exclusive boundary, not an entry.
+std::vector<BinaryImage::COFFPDataRecord>
+x64RuntimeFunctionRecords(const BinaryImage &Img);
+
 /// Resolve and decode language personalities after imports, symbols, and
 /// executable import veneers have been discovered.  Unknown personalities are
 /// retained without guessing their handler-data schema.  When

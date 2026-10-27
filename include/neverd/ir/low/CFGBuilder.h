@@ -1539,6 +1539,12 @@ private:
     /// does not replace ordinary mask/group domain ownership or treat a
     /// logical predicate union as a control-flow join.
     JoinedUnsignedFeasibleSet,
+    /// Bound all reaching scalar states, including loops and immutable table
+    /// reads. The result mask is a conservative finite envelope, not a claim
+    /// that every member is feasible. Unknown inputs stay unknown; exhausting
+    /// the fixed point grants no domain. Provisional group edges cannot seed
+    /// it.
+    ReadonlyUnsignedEnvelope,
     /// Prove an unsigned upper bound using unsigned and compound path
     /// predicates. This grants neither a finite mask nor predecessor-join
     /// ownership. The caller separately authenticates memory and addresses.

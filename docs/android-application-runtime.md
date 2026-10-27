@@ -625,7 +625,7 @@ system-suspend transition. Keep hypothetical boot epochs explicitly labeled as
 synthetic scenario inputs, separate from device observations. Supplying a clock
 does not establish service-cache contents or Binder state.
 
-The optional `application_snapshot.service_manager` object has four members:
+The optional `application_snapshot.service_manager` object has these members:
 
 - `binder_proxies`: an array of `{ "key": 7, "warn_on_blocking": true }` records.
   Keys are unique positive uint32 values identifying Java proxy objects only.
@@ -639,9 +639,15 @@ The optional `application_snapshot.service_manager` object has four members:
   null for known uninitialized state, or omitted for unknown state.
 - `context_object`: the independently supplied BinderInternal context-object
   result, as a declared Binder key, null, or omitted for unknown state.
+- `lookup_results`: explicit stable successful semantic replies for cache
+  misses. Each record requires `operation` (`"get"` or `"check"`), `manager`
+  (the declared Binder key behind the manager proxy), `name` (String or null)
+  and `binder` (a declared Binder key or explicit null). Duplicate
+  operation/manager/name tuples are rejected; unlisted queries remain unknown.
 
-Limits are 256 cache entries, 256 proxy identities and 4096 UTF-8 bytes per
-service name. Typed inputs and JSON share validation. Referencing the same proxy
+Limits are 256 cache entries, 256 proxy identities, 256 lookup replies and 4096
+UTF-8 bytes per service name. Typed inputs and JSON share validation.
+Referencing the same proxy
 key retains the same Java object across cached services and manager references.
 
 Cached lookups and `initServiceCache` operate on the shared mutable HashMap.
@@ -657,9 +663,15 @@ same retained object. Guest mutations of `sCache` affect subsequent lookups.
 For synthetic scenarios, declare the complete assumed cache and its referenced
 Java proxy keys explicitly. A hypothetical cached proxy establishes neither a
 device service observation nor a native Binder peer or callable remote service.
-Cache misses require explicit manager/context state and stop before unmodeled
-Binder transactions; local Binder objects, native object translation and RPC
-responses remain outside this subset. With `observe_java_state`, the optional
+Cache misses require explicit manager/context state and a matching lookup
+reply. A reply with `binder: null` establishes absence for that query; a
+non-null result reuses the retained proxy and applies `Binder.allowBlocking`.
+Replies do not populate the cache, simulate latency or execute native
+Parcel/Binder transport. `getService` also updates StatLogger duration arrays
+and accumulated counters using shared boot/monotonic clocks, Linux process UID
+and API 28 core/app thresholds. `checkService` omits those statistics updates.
+Local Binder objects, native object translation, remote exceptions and EventLog
+output remain outside this subset. With `observe_java_state`, the optional
 `java_state.framework.service_manager` report retains cache completeness,
 entry identities, manager/logger identities and proxy warning state. Report
 heap identities use hexadecimal strings; input proxy keys remain numeric keys.

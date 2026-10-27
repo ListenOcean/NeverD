@@ -194,9 +194,12 @@ variables, unwind frame markers, `proc`/`endp`, `loc_` and `locret_` labels,
 data items, alignment and cross-reference comments, and the classic instruction
 spellings (`jz`, `retn`, `[rbp+var_30]`, sizes only where no operand implies
 them), with `segment:address` prefixes and optional opcode bytes (**Options →
-General**). Stack variables are named through the frame pointer and, in 64-bit
-code, through the stack pointer wherever every path agrees on its distance
-from the frame (`[rsp+48h+var_30]`); each is as wide as its widest access.
+General**). The x64 listing uses the shared LowIR stack analysis for each
+instruction's entry-SP and frame-pointer coordinates, including noncanonical
+prologues and recovered chunks. It names slots through either proven base
+(`var_s10`, `[rsp+48h+var_30]`); overwritten or conflicting frame aliases stay
+unformatted. Each slot is as wide as its widest observed access. Older engines
+and 32-bit code retain the existing bounded listing interpretation.
 A named object is as large as its symbol says (`stderr dq ?`), and data the
 code reads or writes is laid out as wide as those accesses, under the name its
 operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
@@ -204,7 +207,15 @@ differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a 
 maps to the linear address space. The arrow gutter draws branches, and clicking
 an identifier highlights every occurrence. Names the engine leaves generic take
 their classic forms in the listing, function list, jumps and source views:
-import thunks after their import and the entry point `start`. The engine names
+import thunks after their import and the entry point `start` (`DllEntryPoint`
+for a PE DLL). Pure direct forwarders carry a thunk attribute; a DLL entry's
+generic destination receives a related name, while stated and user names win.
+Available platform, header and user prototypes appear above the function
+without requiring decompilation. Checked x64 PE runtime-function records are
+shown as structures with navigable RVA fields and typed offset references;
+exclusive range ends remain boundaries. Repeated bytes in code gaps fold as
+`db N dup(value)` up to object, metadata, reference and user-item boundaries.
+Their grouping changes no bytes or unwind ranges. The engine names
 the function the entry passes the C runtime's start routine `main`, and its
 pseudocode defines it as the runtime calls it, `int main(int argc, char **argv,
 char **envp)`; a rename of the function still wins over that name.

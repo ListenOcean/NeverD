@@ -563,6 +563,7 @@ void SignatureDB::apply(const BinaryImage &Img,
   applyVTableContext(Img, FuncEntries);
   applyDataContext(Img, FuncEntries, DataHits, DeferredCallers);
   applyRuntimePointerContext(Img, FuncEntries);
+  applyCodeLayoutContext(Img, FuncEntries);
   admitStatedNames(Img);
 }
 

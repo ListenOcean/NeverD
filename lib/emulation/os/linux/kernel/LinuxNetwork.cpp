@@ -95,8 +95,8 @@ llvm::Error validateNetworkOptions(const LinuxNetworkOptions &Options) {
   if (const auto &F = Options.TCPConnectFailures) {
     if (!F->Count || !F->Error || !connectError(F->Error))
       return failure("invalid offline TCP connection failure contract");
-    if (F->Count > kMaxNetworkConnections - Streams - Datagrams)
-      return failure("offline network has too many connection attempts");
+    // Counted failures retain only a uint32_t cursor, not connection entries.
+    // The explicit count and the execution budget bound their consumption.
   }
   uint64_t Bytes = 0;
   for (const auto &C : Options.Connections) {

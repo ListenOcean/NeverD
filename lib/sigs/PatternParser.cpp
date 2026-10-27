@@ -6,6 +6,7 @@
 
 #include "neverd/sigs/PatternParser.h"
 
+#include "CodeLayoutContext.h"
 #include "LocalDataReference.h"
 #include "RuntimePointerContext.h"
 #include "VTableContext.h"
@@ -206,6 +207,7 @@ struct DraftModule {
   bool RequireCaller = false;
   bool IsVTable = false;
   bool IsLoadConfig = false;
+  bool IsCodeLayout = false;
 };
 
 /// Where the modules of a chunk are written: each module's bytes, then its
@@ -425,7 +427,8 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
     if (Tokens[I] == CollisionEvidenceOnly)
       return patternError("collision evidence is not a matchable signature");
     if (Tokens[I] == RequiredReferences || Tokens[I] == RequiredCaller ||
-        Tokens[I] == VTableContext || Tokens[I] == LoadConfigContext) {
+        Tokens[I] == VTableContext || Tokens[I] == LoadConfigContext ||
+        Tokens[I] == CodeLayoutContext) {
       if (I != OpeningFields)
         return patternError(
             "context requirement must immediately follow total length");
@@ -433,6 +436,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
       Mod.RequireCaller = Tokens[I] == RequiredCaller;
       Mod.IsVTable = Tokens[I] == VTableContext;
       Mod.IsLoadConfig = Tokens[I] == LoadConfigContext;
+      Mod.IsCodeLayout = Tokens[I] == CodeLayoutContext;
       continue;
     }
     if (Tokens[I].starts_with(ReferencePrefix) ||
@@ -454,7 +458,7 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
                             Tokens[I]);
 
       if (IsData && !Mod.RequireReferences && !Mod.RequireCaller &&
-          !Mod.IsLoadConfig)
+          !Mod.IsLoadConfig && !Mod.IsCodeLayout)
         return patternError("data references require a contextual record");
       if (IsLocal && (Mod.IsLoadConfig || !localDataAnchor(Tokens[I + 1])))
         return patternError("invalid source-local data anchor");
@@ -543,6 +547,10 @@ llvm::Expected<DraftModule> parsePatternLine(llvm::StringRef Line,
                               storedModule(Mod, Writer.Bytes, Writer.Names)))
     return patternError(
         "!loadcfg requires source-owned pointer/default pairs at known fields");
+  if (Mod.IsCodeLayout &&
+      !isValidCodeLayoutContext(storedModule(Mod, Writer.Bytes, Writer.Names)))
+    return patternError("!layout requires complete literal source members, "
+                        "canonical imports and shared data operands");
   return Mod;
 }
 
@@ -579,6 +587,7 @@ StoredModule storedModule(const DraftModule &Draft, const uint8_t *Bytes,
   Module.RequireCaller = Draft.RequireCaller;
   Module.IsVTable = Draft.IsVTable;
   Module.IsLoadConfig = Draft.IsLoadConfig;
+  Module.IsCodeLayout = Draft.IsCodeLayout;
   return Module;
 }
 
@@ -601,6 +610,7 @@ PatternModule PatternParser::toPatternModule(const StoredModule &Module) {
   Result.RequireCaller = Module.RequireCaller;
   Result.IsVTable = Module.IsVTable;
   Result.IsLoadConfig = Module.IsLoadConfig;
+  Result.IsCodeLayout = Module.IsCodeLayout;
   Result.TotalLen = Module.TotalLen;
   for (const StoredName &Name : Module.publicNames())
     Result.PublicNames.push_back({Name.Offset, std::string(Name.Name)});

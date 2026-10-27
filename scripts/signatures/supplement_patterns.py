@@ -128,7 +128,7 @@ def select(candidates: dict[str, builder.FoldResult],
         if len(parts) < 5 or parts[0].startswith(("#", ";")):
             return None
         rest = parts[4].split(maxsplit=1)
-        if rest[0] in ("!vtable", "!loadcfg"):
+        if rest[0] in ("!vtable", "!loadcfg", "!layout"):
             return None
         if rest[0] == "!evidence":
             if not allow_evidence or len(rest) != 2:

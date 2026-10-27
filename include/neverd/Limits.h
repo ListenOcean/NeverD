@@ -209,6 +209,10 @@ constexpr uint32_t kMaxJumpTableMaskFixedPointEvidenceWork = 167772160;
 /// PAGE) needs about 320 million units; its proof runs in well under a second,
 /// the units being conservative container-work prepayments.
 constexpr uint32_t kMaxJumpTableCandidateEvidenceWork = 536870912;
+/// Bound exact scalar-state exploration independently of the caller budget.
+/// Covers finite lookup loops without allowing an unbounded induction to
+/// consume the complete multi-candidate account.
+constexpr uint32_t kMaxJumpTableScalarStateWork = 16777216;
 static_assert(kMaxJumpTableCandidateEvidenceWork >=
               kMaxJumpTableMaskFixedPointEvidenceWork);
 

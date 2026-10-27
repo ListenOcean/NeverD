@@ -1,5 +1,6 @@
 #include "Engine.h"
 
+#include "BrowseCache.h"
 #include "CodeEdits.h"
 #include "ComparisonService.h"
 #include "Contributions.h"
@@ -446,16 +447,18 @@ void canonicalizeAddresses(Json &value) {
       const auto &key = it.key();
       if (key == "addresses" && it->is_array()) {
         for (auto &address : *it)
-          if (address.is_string())
-            address = hexAddress(parseAddress(address.get<std::string>()));
+          if (address.is_string()) {
+            auto &text = address.get_ref<std::string &>();
+            text = hexAddress(parseAddress(text));
+          }
       } else if ((key == "addr" || key == "va" || key == "address" ||
                   key == "start" || key == "end" || key == "entry" ||
                   key == "iat_addr" || key == "from" || key == "to" ||
                   unwind_query::isAddressField(key)) &&
                  it->is_string()) {
-        const auto &text = it->get_ref<const std::string &>();
+        auto &text = it->get_ref<std::string &>();
         if (text.starts_with("0x") || text.starts_with("0X"))
-          *it = hexAddress(parseAddress(text));
+          text = hexAddress(parseAddress(text));
       } else
         canonicalizeAddresses(*it);
     }
@@ -764,7 +767,10 @@ Engine::Engine()
   if (!session_)
     throw Error("engine_unavailable", "Cannot create NeverD session");
 }
-Engine::~Engine() { neverd_session_destroy(session_); }
+Engine::~Engine() {
+  listing_.reset();
+  neverd_session_destroy(session_);
+}
 std::string Engine::version() { return ownedString(neverd_version_number()); }
 bool Engine::reportsUnwindFrames() {
   return unwind_query::function() != nullptr;
@@ -914,6 +920,10 @@ Json Engine::functionGraph(std::uint64_t address) {
 void Engine::commentsChanged() {
   forgetNamedViews();
   graphs_.clear();
+  // Cached pages contain comments; a page rendered now must not be stored or
+  // found under the identity read before this edit.
+  if (listing_)
+    listing_->commentsChanged();
   textKey_.clear();
   textCache_.clear();
   textLines_.clear();
@@ -1595,6 +1605,11 @@ Listing &Engine::newListing() {
       std::any_of(codeEdits_.begin(), codeEdits_.end(),
                   [](const Json &row) { return row.contains("stack_frame"); });
   listing_->setStackFrames(codeEdits_, frames ? inputHash() : std::string());
+  const auto project = projectJson();
+  if (browseCacheEnabled_ && project.is_object() && project.contains("folder"))
+    listing_->configureCache(
+        utf8Path(project.at("folder").get<std::string>()),
+        [this] { return browseCacheIdentity(); }, !readOnly_, atomicWrite);
   if (analyzed_)
     listing_->loadSwitches();
   return *listing_;
@@ -1607,14 +1622,20 @@ Listing &Engine::listing() {
   return *listing_;
 }
 bool Engine::hasIdleWork() const {
-  if (!backgroundAnalysis_ || !listing_ || !neverd_session_is_loaded(session_))
+  if (!listing_ || !neverd_session_is_loaded(session_))
     return false;
-  return listing_->hasIdleWork() || warmState_ == WarmState::Pending ||
-         warmState_ == WarmState::Running;
+  return listing_->cachePending() ||
+         (backgroundAnalysis_ &&
+          (listing_->hasIdleWork() || warmState_ == WarmState::Pending ||
+           warmState_ == WarmState::Running));
 }
 bool Engine::idleStep() {
   if (!hasIdleWork())
     return false;
+  if (listing_->cachePending()) {
+    listing_->flushCacheOne();
+    return true;
+  }
   // The listing and its reference index come first; preparing functions
   // only shortens later decompiles.
   if (listing_->hasIdleWork())
@@ -1803,6 +1824,7 @@ Json Engine::metadata() const {
                nullptr},
           {"analysis_state", analyzed_ ? "complete" : "not_analyzed"},
           {"read_only", readOnly_},
+          {"browse_cache", listing_ ? listing_->cacheStats() : Json()},
           {"dirty", dirty_},
           // How the file was read: for a binary file, its processor,
           // placement and platform, and whether detection chose the platform.
@@ -2020,6 +2042,47 @@ Json Engine::analysisSnapshot() {
           {"string_options", stringOptions_.empty()
                                  ? Json::object()
                                  : Json::parse(stringOptions_)}};
+}
+
+Json Engine::browseCacheIdentity() {
+  auto identity = analysisSnapshot();
+  // Execution/presentation choices do not change the loaded analysis input.
+  // A writer's completed facts are also usable by a read-only consumer.
+  identity["open"] = loadOptions() ? backendJson(loadOptions().json(session_))
+                                   : Json::object();
+  // Whole-program analysis changes function rows and frames without always
+  // changing the function count those documents are checked against. Every
+  // change of this flag invalidates the listing, which reads it again.
+  identity["analyzed"] = analyzed_;
+  Json shared = Json::object();
+  const auto project = projectJson();
+  const auto folder = utf8Path(project.at("folder").get<std::string>());
+  for (const auto &file : project_files::Files) {
+    if (!file.Shared || file.Id == project_files::File::Manifest ||
+        file.Id == project_files::File::Bookmarks)
+      continue;
+    const auto path = folder / std::string(file.Path);
+    if (!fs::exists(path))
+      continue;
+    std::ifstream input(path, std::ios::binary);
+    std::string bytes(static_cast<std::size_t>(fs::file_size(path)), '\0');
+    if (!input.read(bytes.data(), static_cast<std::streamsize>(bytes.size())))
+      throw Error("cache_unavailable", "Cannot read project cache identity");
+    shared[std::string(file.Path)] = BrowseCache::digest(bytes);
+  }
+  identity["shared"] = std::move(shared);
+  if (headersFunction()) {
+    const auto debug = backendJson(headersFunction()(session_))
+                           .value("debug_info", Json::object());
+    identity["debug"] = debug;
+    for (const auto &file : debug.value("files", Json::array())) {
+      const auto path = file.is_string() ? file.get<std::string>()
+                                         : file.value("path", std::string());
+      if (!path.empty())
+        identity["debug_stamps"][path] = signatureStamp(utf8Path(path));
+    }
+  }
+  return identity;
 }
 
 Json Engine::restoreAnalysis(const Json &snapshot) {
@@ -2544,8 +2607,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     const auto path = fs::canonical(utf8Path(pathText), ec);
     if (ec || !fs::is_regular_file(path, ec))
       throw Error("load_failed", "Input is not an accessible regular file");
-    for (const char *flag :
-         {"read_only", "debug_info", "analysis", "warm", "step_discovery"})
+    for (const char *flag : {"read_only", "debug_info", "analysis", "warm",
+                             "step_discovery", "browse_cache"})
       if (p.contains(flag) && !p[flag].is_boolean())
         throw Error("invalid_request", std::string(flag) + " must be boolean");
     if (p.contains("pdb") && !p.at("pdb").is_object())
@@ -2729,6 +2792,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     if (!reuseLock)
       lock_ = std::move(nextLock);
     readOnly_ = readOnly;
+    browseCacheEnabled_ = p.value("browse_cache", true);
     openOptions_ = p;
     for (const char *input : {"pdb", "dwarf", "map", "symbols"})
       openOptions_.erase(input);

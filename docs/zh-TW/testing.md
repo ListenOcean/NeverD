@@ -2165,3 +2165,5 @@ HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告�
 ## 選定函式宣告檢查
 
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 將位址輸出與整數、指標、浮點及 void 提供者拼接。`AddressOnlyCallbackConvertsToItsKnownParameterType` 執行具型別的回呼。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 比較分別選定及整單元輸出，以及冷、熱快取；x64/ARM64 PE、ELF、Mach-O 模型產生的 C 在主機上以 O0/O2 和 UBSan 編譯執行，不代表各平台的原生執行驗證。修改此邊界後執行呼叫契約、指標投影、原始碼 ABI 和被呼叫函式快取測試。
+
+呼叫後記憶體測試涵蓋保留值、條件結果、未知狀態更新、呼叫前目標與無效輸入拒絕。修改此邊界時，請一併執行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 與 `NeverDSymMemoryKnowledgeTests`。

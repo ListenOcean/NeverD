@@ -50,6 +50,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <iterator>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -4349,12 +4350,20 @@ TEST_F(ProcessPublic, AndroidConnectionFailuresMatchSDKAndCLI) {
     Path = (std::filesystem::path(NEVERD_ANDROID_FIXTURE_DIR) /
             (std::string(Variant) + ".so"))
                .string();
-    for (unsigned Mode : {0u, 1u, 2u}) {
+    using Case = std::pair<unsigned, uint32_t>;
+    for (const auto &[Mode, Count] :
+         {Case{0, 4}, Case{0, 4097}, Case{0, UINT32_MAX}, Case{1, 4},
+          Case{2, 4}}) {
       SCOPED_TRACE(Variant);
       SCOPED_TRACE(Mode);
+      SCOPED_TRACE(Count);
       auto Request = llvm::cantFail(llvm::json::parse(
           R"({"backend":"unicorn","linux_files":{"files":[]},"linux_network":{"connections":[{"peer_hex":"020023297f0000010000000000000000"}],"tcp_connect_failures":{"errno":101,"count":4}},"android":{"entry_symbol":"network_connect_failures","initialize":false,"read_memory":[{"address":"0x20000000","size":4096}],"libraries":{"libc.so":["connect"]}}})"));
       auto &Android = *Request.getAsObject()->getObject(field::Android);
+      auto &Failures = *Request.getAsObject()
+                            ->getObject(field::LinuxNetwork)
+                            ->getObject(field::TCPConnectFailures);
+      Failures[field::NetworkFailureCount] = uint64_t(Count);
       Android[field::Arguments] = llvm::json::Array{"0x20000000", Mode};
       std::vector<uint8_t> Expected(4096, 0xa5);
       Android[field::Memory] = llvm::json::Array{

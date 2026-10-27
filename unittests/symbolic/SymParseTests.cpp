@@ -92,6 +92,55 @@ TEST(SymParse, SubtractionIsAdditionOfANegatedTerm) {
   EXPECT_EQ(parse(Ctx, "a + (a << 1)"), parse(Ctx, "3 * a"));
 }
 
+TEST(SymParse, LongProductsAvoidRetainingEveryPrefix) {
+  for (unsigned Width : {8u, 16u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    std::string Text;
+    constexpr unsigned Count = 256;
+    for (unsigned I = 0; I < Count; ++I) {
+      if (I)
+        Text += '*';
+      Text += "(x+" + std::to_string(2 * I + 1) + ")";
+    }
+    SymRef Product = parse(Ctx, Text, Width);
+    ASSERT_EQ(Ctx.op(Product), SymOp::Mul);
+    ASSERT_EQ(Ctx.numOperands(Product), Count);
+    // One variable, one literal and sum per factor, and only the initial and
+    // final products. Retaining all prefixes also retains quadratic operands.
+    EXPECT_LE(Ctx.numNodes(), 2 * Count + 4);
+    for (uint64_t I = 0; I < 32; ++I) {
+      llvm::APInt X(Width, I);
+      if (I & 1)
+        X = ~X;
+      llvm::APInt Want(Width, 1);
+      for (unsigned K = 0; K < Count; ++K)
+        Want *= X + llvm::APInt(Width, 2 * K + 1);
+      EXPECT_EQ(Ctx.eval(Product, {X}), Want);
+    }
+  }
+}
+
+TEST(SymParse, ProductChainsKeepWidthBoundariesAndEarlierFolds) {
+  SymContext Ctx;
+  SymRef X = Ctx.mkVar("x", 8), Y = Ctx.mkVar("y", 8);
+  SymRef Z = Ctx.mkVar("z", 8), W = Ctx.mkVar("w", 16);
+  SymRef U = Ctx.mkVar("u", 8);
+  SymRef Actual = parse(Ctx, "x#8*y#8*z#8*w#16*u#8");
+  SymRef Expected =
+      Ctx.mkMul({Ctx.mkZExt(Ctx.mkMul({X, Y, Z}), 16), W, Ctx.mkZExt(U, 16)});
+  EXPECT_EQ(Actual, Expected);
+  const std::pair<const char *, const char *> Cases[] = {
+      {"a*b*c/d*e", "((a*b*c)/d)*e"},   {"a*b*c%d*e", "((a*b*c)%d)*e"},
+      {"(a>>3)*8*b*c", "(a&-8)*b*c"},   {"8*(a>>3)*b*c", "(a&-8)*b*c"},
+      {"(a>>3)*2*4*b*c", "(a&-8)*b*c"}, {"a*b*0*(c>>3)*8", "0"},
+      {"a*b*c+d*e", "(a*b*c)+(d*e)"}};
+  for (auto [Input, Want] : Cases)
+    EXPECT_EQ(parse(Ctx, Input), parse(Ctx, Want)) << Input;
+  for (const char *Text : {"a*b*c*", "a*b*c**d"})
+    EXPECT_FALSE(parseSymExpr(Ctx, Text, W32).ok()) << Text;
+}
+
 //===----------------------------------------------------------------------===//
 // Leaves
 //===----------------------------------------------------------------------===//

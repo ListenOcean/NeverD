@@ -11,6 +11,8 @@ add_neverd_component_library(NeverDSigs
   SignatureDataContext.cpp
   SignatureVTableContext.cpp
   SignatureRuntimePointerContext.cpp
+  SignatureCodeLayoutContext.cpp
+  CodeLayoutEvidence.cpp
   SignatureMatcher.cpp
   X86/X86ReferenceBoundary.cpp
 
