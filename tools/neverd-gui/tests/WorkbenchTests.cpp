@@ -12150,6 +12150,22 @@ private slots:
     QVERIFY(!undo->isEnabled());
   }
 
+  void queryNotificationsLeaveExternalCommandsAlone() {
+    Workbench bench;
+    // An external command owns its availability. Open has no rule of its
+    // own, so the refresh that enables Exit must leave it as it was set.
+    auto *open = bench.action(ActionId::FileOpen);
+    auto *exit = bench.action(ActionId::FileExit);
+    open->setProperty("externalCommand", true);
+    open->setEnabled(false);
+    exit->setEnabled(false);
+    QSignalSpy changes(open, &QAction::enabledChanged);
+    emit bench.session.stateChanged();
+    QTRY_VERIFY(exit->isEnabled());
+    QCOMPARE(changes.count(), 0);
+    QVERIFY(!open->isEnabled());
+  }
+
   void initialNavigationOverviewDoesNotWaitForRefreshDebounce() {
     QTemporaryDir directory;
     Session session(QString::fromLocal8Bit(TEST_WORKER));

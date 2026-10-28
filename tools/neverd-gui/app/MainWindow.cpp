@@ -2517,8 +2517,9 @@ void MainWindow::updateActions() {
   const bool location = loaded && currentAddress().has_value();
   // Compute the final state before touching QActions. Enabling every loaded
   // action and then disabling unavailable ones emits two change events on
-  // every query notification, even when no command state changed.
-  std::array<bool, static_cast<size_t>(ActionId::Count)> states;
+  // every query notification, even when no command state changed. An
+  // external command keeps its own state unless a rule below names it.
+  std::array<std::optional<bool>, static_cast<size_t>(ActionId::Count)> states;
   const auto enable = [&](ActionId id, bool enabled) {
     states[static_cast<size_t>(id)] = enabled;
   };
@@ -2680,7 +2681,8 @@ void MainWindow::updateActions() {
        {ActionId::PathfinderNewPath, ActionId::PathfinderAddWaypoint})
     enable(id, callPaths && pathfinderTarget().has_value());
   for (size_t index = 0; index < states.size(); ++index)
-    actions_.action(static_cast<ActionId>(index))->setEnabled(states[index]);
+    if (states[index])
+      actions_.action(static_cast<ActionId>(index))->setEnabled(*states[index]);
 }
 
 void MainWindow::updateTitle() {
