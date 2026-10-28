@@ -40,6 +40,8 @@ struct ListingViewTestAccess {
     view.cursorLine_ = 0;
     view.cursorColumn_ = column;
   }
+  /// The word the highlight marks.
+  static QString highlight(const ListingView &view) { return view.highlight_; }
   static QImage arrows(ListingView &view) {
     QImage image(view.arrowsWidth_, view.viewport()->height(),
                  QImage::Format_ARGB32_Premultiplied);

@@ -4575,9 +4575,13 @@ They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
 `WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
 a listing row's address and segment name and copies exactly that word. Clicks
-on the arrow gutter, the colon, the gap before the body and the body itself
-leave the current line as the copy, and a drag inside the address keeps the
-characters it covers. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+on the arrow gutter, the colon and the gap before the body leave the current
+line as the copy, and a drag inside the address keeps the characters it
+covers. `WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing,
+graph and pseudocode views. Without a selection, Ctrl+C and Edit Copy take the
+clicked word. They take the word an arrow key reaches, a right-clicked word,
+and the line on blank space, and a selection still wins. Keys move the
+listing's highlight with the copied word. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
@@ -15612,7 +15616,16 @@ byte views, other versions and other variables of the register, call records,
 published summary operands, unsettled calls, a bounded callee's arguments and
 the positions past them, preserved registers, register-pair results, joins,
 removed loads, exceptional edges, complete and partial overwrites, and the
-proof's budget. `SourceStackSpills`
+proof's budget. Under an incomplete EH3/EH4 registration proof, a reload of
+the pushed record's SavedESP word places the CALL after it, while a second
+saved value, a narrow or atomic write of the word, a mismatched handler or
+seeded level, a saved non-stack value or a missing source refuses; a runtime
+filter's CALL at or below its stack root is separated from the parent frame,
+unlike one above the root or one without a checked root.
+`RegistrationCallStackPop.ProvenCalleeCleanupOutlivesAnIncompleteProof` in
+`NeverDWindowsRegistrationRealignedTests` checks that a direct callee's proven
+cleanup adjusts only the block's own calls, not caller-cleanup, unknown or
+import-slot calls. `SourceStackSpills`
 variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
 return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes

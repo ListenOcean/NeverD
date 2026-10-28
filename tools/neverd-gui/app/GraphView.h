@@ -51,6 +51,9 @@ public:
   std::optional<Address> operandTarget() const;
   QString currentToken() const;
   QString currentRowText() const;
+  /// What Copy takes: as in IDA, the word under the cursor, which the
+  /// highlight marks; else the current row.
+  QString copyText() const;
   bool loaded() const { return !nodes_.isEmpty(); }
   /// A layout is on its way and nothing is drawn yet.
   bool waiting() const { return waiting_ && nodes_.isEmpty(); }

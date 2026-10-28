@@ -2083,6 +2083,24 @@ QString CodeText::selectedText() const {
   return text.join(QLatin1Char('\n'));
 }
 
+QString CodeText::cursorWord() const {
+  if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
+           .isEmpty())
+    return {};
+  if (const auto name = sourceNameAt(cursorLine_, cursorColumn_))
+    return name->first;
+  return tokenAt(cursorLine_, cursorColumn_);
+}
+
+QString CodeText::copyText() const {
+  if (anchor_ && *anchor_ != std::pair{cursorLine_, cursorColumn_})
+    return selectedText();
+  if (const QString word = cursorWord(); !word.isEmpty())
+    return word;
+  return selectedText();
+}
+
 QString CodeText::allText() const {
   QString text = source_;
   if (text.endsWith(QLatin1Char('\n')))
@@ -2210,42 +2228,45 @@ bool CodeText::selectSearchRange(int begin, int length) {
 
 void CodeText::keyPressEvent(QKeyEvent *event) {
   const bool shift = event->modifiers() & Qt::ShiftModifier;
+  // The highlight follows the cursor, as IDA's does, so Copy takes the word
+  // it marks.
+  const auto move = [&](int line, int column) {
+    moveCursor(line, column, shift);
+    highlight_ = cursorWord();
+  };
   switch (event->key()) {
   case Qt::Key_Up:
-    moveCursor(cursorLine_ - 1, cursorColumn_, shift);
+    move(cursorLine_ - 1, cursorColumn_);
     return;
   case Qt::Key_Down:
-    moveCursor(cursorLine_ + 1, cursorColumn_, shift);
+    move(cursorLine_ + 1, cursorColumn_);
     return;
   case Qt::Key_PageUp:
-    moveCursor(cursorLine_ - visibleLines() + 1, cursorColumn_, shift);
+    move(cursorLine_ - visibleLines() + 1, cursorColumn_);
     return;
   case Qt::Key_PageDown:
-    moveCursor(cursorLine_ + visibleLines() - 1, cursorColumn_, shift);
+    move(cursorLine_ + visibleLines() - 1, cursorColumn_);
     return;
   case Qt::Key_Left:
-    moveCursor(cursorLine_, cursorColumn_ - 1, shift);
+    move(cursorLine_, cursorColumn_ - 1);
     return;
   case Qt::Key_Right:
-    moveCursor(cursorLine_, cursorColumn_ + 1, shift);
+    move(cursorLine_, cursorColumn_ + 1);
     return;
   case Qt::Key_Home:
-    moveCursor((event->modifiers() & Qt::ControlModifier) ? 0 : cursorLine_, 0,
-               shift);
+    move((event->modifiers() & Qt::ControlModifier) ? 0 : cursorLine_, 0);
     return;
   case Qt::Key_End:
     if ((event->modifiers() & Qt::ControlModifier) && !lines_.isEmpty())
-      moveCursor(int(lines_.size()) - 1, int(lines_.back().styled.text.size()),
-                 shift);
+      move(int(lines_.size()) - 1, int(lines_.back().styled.text.size()));
     else if (cursorLine_ < lines_.size())
-      moveCursor(cursorLine_, int(lines_[cursorLine_].styled.text.size()),
-                 shift);
+      move(cursorLine_, int(lines_[cursorLine_].styled.text.size()));
     return;
   default:
     break;
   }
   if (event->matches(QKeySequence::Copy)) {
-    QApplication::clipboard()->setText(selectedText());
+    QApplication::clipboard()->setText(copyText());
     return;
   }
   if (event->matches(QKeySequence::SelectAll)) {
@@ -2350,11 +2371,11 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
       return;
   }
   moveCursor(line, column, event->modifiers() & Qt::ShiftModifier);
+  // Either button marks the word Copy then takes, the menu's too.
+  highlight_ = cursorWord();
   if (event->button() == Qt::LeftButton) {
     selecting_ = true;
     dragPoint_ = event->position().toPoint();
-    const auto name = sourceNameAt(line, column);
-    highlight_ = name ? name->first : tokenAt(line, column);
   }
   updateMouseCursor(event->position().toPoint());
   viewport()->update();

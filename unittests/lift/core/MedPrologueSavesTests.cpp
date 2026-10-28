@@ -1197,6 +1197,198 @@ TEST(SourceCallReturnReads, RestoredRegistrationStacksNeedFreshSourceFacts) {
   }
 }
 
+/// Convert an x64-shaped fixture to PE32 widths, keeping narrower stores.
+void useX86Widths(MedFunc &Func) {
+  for (auto &Block : Func.Blocks)
+    for (auto &Op : Block.Ops) {
+      Op.Output.TheArch = Arch::X86;
+      if (Op.Output.Size)
+        Op.Output.Size = 4;
+      for (unsigned K = 0; K < Op.NumInputs; ++K) {
+        Op.Inputs[K].TheArch = Arch::X86;
+        if (Op.Inputs[K].Size == 8)
+          Op.Inputs[K].Size = 4;
+      }
+    }
+}
+
+/// The source of an EH3/EH4 parent whose registration-state proof is
+/// incomplete.
+LowFunc incompleteRegistration(va_t Entry, ExceptionEncoding Encoding,
+                               int32_t SeededLevel) {
+  LowFunc Source;
+  Source.Entry = Entry;
+  Source.ExceptionMetadata.emplace();
+  auto &EH = *Source.ExceptionMetadata;
+  EH.CodeRange = {Entry, 0x1200};
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Encoding = Encoding;
+  EH.Registration.emplace();
+  EH.Registration->HandlerVA = 0x2800;
+  EH.Registration->ScopeTableVA = 0x3000;
+  EH.Registration->SeededTryLevel = SeededLevel;
+  Source.RegistrationStates.emplace();
+  return Source;
+}
+
+/// An EH4 prologue pushes the record (seeded level, scope table, handler)
+/// with its node at entry-20, saves the stack in SavedESP at entry-28, and
+/// reloads it before a CALL. A local at entry-36 is read after the CALL.
+MedFunc savedStackReload(unsigned Change) {
+  auto Func = observedCallSlot();
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops[2].Inputs[1].ConstVal = 4;
+  const auto Call = Ops[4], Load = Ops[5], Return = Ops[6];
+  Ops.resize(4);
+  auto At = [&](int64_t Offset, int Temp) {
+    Ops.push_back(op(NdOp::INT_ADD, temp(Temp),
+                     {sp(1), MedVar::makeConst(uint64_t(Offset), 8)}));
+  };
+  const auto Push = [&](int64_t Offset, int Temp, uint64_t Value) {
+    At(Offset, Temp);
+    Ops.push_back(
+        op(NdOp::STORE, none(), {temp(Temp), MedVar::makeConst(Value, 8)}));
+  };
+  Push(24, 30, Change == 6 || Change == 9 ? 0xffffffffu : 0xfffffffeu);
+  Push(20, 31, 0x3000);
+  Push(16, 32, Change == 5 ? 0x2804 : 0x2800);
+  Ops.push_back(op(NdOp::INT_SUB, temp(23), {sp(1), MedVar::makeConst(16, 8)}));
+  At(4, 24);
+  Ops.push_back(
+      op(NdOp::STORE, none(),
+         {temp(24), Change == 7 ? MedVar::makeConst(0x500, 8) : temp(23)}));
+  if (Change == 3) {
+    Ops.push_back(
+        op(NdOp::INT_SUB, temp(26), {sp(1), MedVar::makeConst(20, 8)}));
+    Ops.push_back(op(NdOp::STORE, none(), {temp(24), temp(26)}));
+  }
+  if (Change == 4)
+    Ops.push_back(op(NdOp::STORE, none(), {temp(24), MedVar::makeConst(0, 2)}));
+  if (Change == 8)
+    Ops.push_back(op(NdOp::ATOMIC_XCHG, temp(27), {temp(24), temp(23)}));
+  Ops.push_back(op(NdOp::LOAD, temp(25), {temp(24)}));
+  Ops.push_back(op(NdOp::COPY, sp(2), {temp(25)}));
+  Ops.insert(Ops.end(), {Call, Load, Return});
+  for (size_t I = 0; I < Ops.size(); ++I) {
+    Ops[I].Addr = Ops[I].Opcode == NdOp::CALL ? 0x1008 : 0x1100 + I;
+    Ops[I].OriginSeq = 0;
+  }
+  useX86Widths(Func);
+  return Func;
+}
+
+TEST(SourceCallReturnReads, RegistrationProtocolPlacesSavedStackReloads) {
+  for (unsigned Change = 0; Change != 10; ++Change) {
+    SCOPED_TRACE(Change);
+    const auto Func = savedStackReload(Change);
+    auto Image = callSlotImage();
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::COFF;
+    auto Source = incompleteRegistration(
+        Func.Entry,
+        Change == 9 ? ExceptionEncoding::X86ScopeTableEH3
+                    : ExceptionEncoding::X86ScopeTableEH4,
+        Change == 9 ? -1 : -2);
+    if (Change == 2)
+      Source.RegistrationStates->Complete =
+          Source.RegistrationStates->RegistrationLifetimeComplete = true;
+    // Without a complete state proof, the reload holds the saved entry-48
+    // only by the frame protocol: one exact stack value saved in the word
+    // below the node of the pushed record. Then the CALL's slot ends at
+    // entry-48, below the local.
+    std::string Error;
+    const bool Proved = validateSourceCallReturnReads(
+        Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+        Change == 1 ? nullptr : &Source);
+    EXPECT_EQ(Proved, Change == 0 || Change == 9) << Error;
+    if (!Proved)
+      EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos)
+          << Error;
+  }
+}
+
+/// A filter entered by the runtime: ESP and EBP are its stack and frame
+/// roots. It pushes two words, CALLs, then reads the parent's words at
+/// entry-12 and entry+4 through EBP. A slot taken for an entry-relative push
+/// (entry-12, or entry+4 above the root) would cover one of them.
+MedFunc runtimeCallback(unsigned Change) {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "callback_slot";
+  Func.FrameSize = 40;
+  const auto Frame = [](int Version) { return reg(4, reg::RBP, Version); };
+  MedBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = Func.Entry;
+  Entry.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(32, 8)}),
+               op(NdOp::COPY, temp(50), {MedVar::makeConst(7, 8)}),
+               op(NdOp::RETURN, none(), {})};
+  Entry.Ops[0].Addr = 0x1000;
+  Entry.Ops[1].Addr = 0x1001;
+  Entry.Ops[2].Addr = 0x1010;
+  Entry.Ops[3].Addr = 0x1011;
+  MedBlock Filter;
+  Filter.Id = 1;
+  Filter.StartAddr = 0x1040;
+  Filter.Ops = {
+      op(NdOp::COPY, sp(7), {sp(0)}),
+      op(NdOp::COPY, Frame(3), {Frame(0)}),
+      op(Change == 2 ? NdOp::INT_ADD : NdOp::INT_SUB, sp(8),
+         {sp(7), MedVar::makeConst(8, 8)}),
+      op(NdOp::CALL, temp(51), {MedVar::makeConst(0x2000, 8)}),
+      op(NdOp::INT_SUB, temp(40), {Frame(3), MedVar::makeConst(8, 8)}),
+      op(NdOp::LOAD, temp(41), {temp(40)}),
+      op(NdOp::INT_ADD, temp(42), {Frame(3), MedVar::makeConst(8, 8)}),
+      op(NdOp::LOAD, temp(43), {temp(42)}),
+      op(NdOp::INT_ADD, temp(44), {temp(41), temp(43)}),
+      op(NdOp::RETURN, none(), {temp(44)})};
+  const va_t Addresses[] = {0x1040, 0x1040, 0x1044, 0x1048, 0x104d,
+                            0x1050, 0x1053, 0x1056, 0x1059, 0x105c};
+  for (size_t I = 0; I < Filter.Ops.size(); ++I)
+    Filter.Ops[I].Addr = Addresses[I];
+  Filter.Ops[0].RegistrationRoot =
+      MedOp::RegistrationRootKind::CallbackStackPointer;
+  Filter.Ops[1].RegistrationRoot =
+      MedOp::RegistrationRootKind::EstablishedFramePointer;
+  for (auto *Root : {&Filter.Ops[0], &Filter.Ops[1]})
+    Root->OriginSeq = Change == 1 && Root == &Filter.Ops[0] ? 0 : -1;
+  Entry.ExceptionalSuccs.emplace_back(Filter.Id, Filter.StartAddr,
+                                      ExceptionalEdgeKind::SEHFilter, 0, -1,
+                                      0x1010);
+  Filter.ExceptionalPreds = Entry.ExceptionalSuccs;
+  Filter.ExceptionalPreds[0].BlockId = Entry.Id;
+  Func.Blocks.push_back(std::move(Entry));
+  Func.Blocks.push_back(std::move(Filter));
+  useX86Widths(Func);
+  return Func;
+}
+
+TEST(SourceCallReturnReads, RuntimeCallbackStacksStayBelowTheParentFrame) {
+  for (unsigned Change = 0; Change != 4; ++Change) {
+    SCOPED_TRACE(Change);
+    const auto Func = runtimeCallback(Change);
+    auto Image = callSlotImage();
+    Image.Arch = Arch::X86;
+    Image.Format = BinaryFormat::COFF;
+    Image.Segments[0].Size = 128;
+    Image.Segments[0].Data.resize(128, 0x90);
+    Image.Segments[0].Data[0x48] = 0xe8;
+    const auto Source = incompleteRegistration(
+        Func.Entry, ExceptionEncoding::X86ScopeTableEH4, -2);
+    // The runtime runs the filter on its dispatcher stack, below the parent
+    // frame, so a CALL at or below the filter's stack root cannot write the
+    // parent's words. A CALL above that root, or a stack without the checked
+    // root, has no such separation.
+    std::string Error;
+    EXPECT_EQ(validateSourceCallReturnReads(
+                  Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+                  Change == 3 ? nullptr : &Source),
+              Change == 0)
+        << Error;
+  }
+}
+
 TEST(SourceCallReturnReads, AStoreOnAnotherPathDoesNotHideACall) {
   auto Func = observedCallSlot();
   auto &Entry = Func.Blocks[0];
