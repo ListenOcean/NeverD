@@ -1715,8 +1715,25 @@ public:
     /// The bytes are a C library header's object (ImageObject::Header),
     /// reached through its address: the unit defines none of its own.
     bool Header = false;
+    /// The bytes are the image's own PE headers, the linker's `__ImageBase`
+    /// (addImageBaseBacking): the unit declares them and defines none.
+    bool External = false;
   };
   std::vector<ImageBacking> ImageBackings;
+  /// The walk found the unit printing an address in the image's own PE
+  /// headers (BinaryImage::imageBaseOffset), and the identifier it declares
+  /// `__ImageBase` by, empty while it reaches none.
+  bool ReachesImageBase = false;
+  std::string ImageBaseIdentifier;
+  /// Note that the unit prints \p Addr through `__ImageBase`.
+  void noteImageBaseAddress(va_t Addr);
+  /// Whether \p E is an address in the image's headers by its provenance.
+  bool isImageBaseConstant(const HighExpr &E) const;
+  /// Add the `__ImageBase` backing once the walk has found the unit
+  /// reaching it, among the image's own backings.
+  void addImageBaseBacking();
+  /// Declare `__ImageBase` for a unit that reaches it.
+  void writeImageBaseDeclaration();
   /// The symbol the object a backing is named after has in its comment, as
   /// the backing's `neverd.image` line names it; empty for a name the
   /// emitter made.

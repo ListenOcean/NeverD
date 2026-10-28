@@ -495,6 +495,7 @@ add_neverd_unittest(NeverDLiftTests
   format/ImmutableChainedValueTests.cpp
   format/COFFRelocatableAbsoluteRelocationTests.cpp
   format/NativePointerRelocationBoundaryTests.cpp
+  format/PEImageBaseTests.cpp
   format/PointerRelocationBatchTests.cpp
   core/MedCallingConvTests.cpp
   core/MedCallingConvX86StackTests.cpp
@@ -2481,6 +2482,32 @@ target_include_directories(NeverDNativePointerRelocationBoundaryTests PRIVATE
 
 add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
+# Pins `__ImageBase` for a PE image's own headers across the loader, both C
+# routes, LLVM IR and patching without relinking the aggregate lift suite.
+add_neverd_unittest(NeverDPEImageBaseTests
+  format/PEImageBaseTests.cpp
+
+  LINK_COMPONENTS
+  Support
+  Loader
+  CodeGen
+)
+
+target_compile_definitions(NeverDPEImageBaseTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+
+target_include_directories(NeverDPEImageBaseTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+add_dependencies(NeverDPEImageBaseTests neverd)
+
 add_neverd_unittest(NeverDDataSymbolBindingTests
   format/DataSymbolBindingTests.cpp
 
@@ -2972,6 +2999,7 @@ if(TARGET neverd_shared)
     sdk/MetadataJSONTests.cpp
     sdk/SwiftNominalContextCAPITests.cpp
     sdk/ELFARM32ModeCAPITests.cpp
+    sdk/PEImageBaseCAPITests.cpp
   )
   target_compile_definitions(NeverDMetadataJSONTests PRIVATE
     NEVERD_BINARY="$<TARGET_FILE:neverd>"

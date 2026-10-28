@@ -90,13 +90,22 @@ struct PointerRelocationAddressClass {
 
 /// Classify \p Addr for recording a relocation: whether it is mapped,
 /// readable, writable after relocation and code, and the section (or, in no
-/// section, the segment) that owns it.
+/// section, the segment; in no segment, the image's own headers) that owns
+/// it.
 inline PointerRelocationAddressClass
 classifyPointerRelocationAddress(const BinaryImage &Img, va_t Addr) {
   PointerRelocationAddressClass C;
   const Segment *Seg = Img.getSegmentFor(Addr);
-  if (!Seg)
+  if (!Seg) {
+    // The image's own headers are its read-only data whether or not the
+    // loader maps them (BinaryImage::imageBaseOffset).
+    if (Img.imageBaseOffset(Addr)) {
+      C.Mapped = C.Readable = C.HasOwnerRange = true;
+      C.OwnerBegin = Img.Base;
+      C.OwnerEnd = Img.Base + Img.PEHeaderBytes;
+    }
     return C;
+  }
   C.Mapped = true;
   if (const Section *Sec = Img.getSectionFor(Addr)) {
     C.Readable = Sec->isReadable();

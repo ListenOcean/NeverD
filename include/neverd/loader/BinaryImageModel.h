@@ -683,6 +683,11 @@ struct BinaryImage {
   /// produced the objects the linker combined.  Empty for other formats and
   /// for images a non-Microsoft linker produced.
   std::optional<RichHeader> COFFRichHeader;
+  /// The header bytes a linked PE image's loader maps at Base: SizeOfHeaders,
+  /// up to the first section that maps over them, whether or not this image
+  /// maps them as `<PE headers>`.  Zero for every other image, and for one
+  /// without a nonzero 64 KiB-aligned base (imageBaseOffset).
+  uint32_t PEHeaderBytes = 0;
   /// Checked, normalized table-based unwind and language exception metadata.
   /// Empty for formats/targets without a supported exception directory.
   ExceptionInfo ExceptionMetadata;
@@ -917,13 +922,25 @@ struct BinaryImage {
     return !segmentHasReadableSectionMetadata(*Seg) && !Seg->isExecutable();
   }
 
+  /// The offset of \p Addr into the image's own PE headers
+  /// ([Base, Base + PEHeaderBytes)), mapped or not.  The linker's
+  /// `__ImageBase` names these bytes: an emitter spells such an address from
+  /// it and never copies or folds a header byte, since the headers describe
+  /// the image that runs.  A base of zero would make every small number a
+  /// header address, so such an image records no headers.
+  std::optional<uint64_t> imageBaseOffset(va_t Addr) const {
+    if (!PEHeaderBytes || Addr < Base || Addr - Base >= PEHeaderBytes)
+      return std::nullopt;
+    return Addr - Base;
+  }
+
   /// Loader/layout-only upper bound for constants whose numeric value may
   /// change when the image is rebuilt.  This deliberately ignores use-site
   /// heuristics: callers may conservatively retain arithmetic or CFG edges,
   /// but must never freeze a relation between two independently emitted
   /// symbols.  Keeping this fact on BinaryImage gives every format and every
   /// semantic stage one owner for mapped, anchored, relocation-proven, and
-  /// one-past-end address candidates.
+  /// one-past-end address candidates, and for the image's own headers.
   bool isPotentiallyRelocatableAddress(va_t Addr) const {
     const bool LoaderProven = RelocDataAddrs.count(Addr) != 0 ||
                               WritableRelocDataAddrs.count(Addr) != 0 ||
@@ -938,6 +955,10 @@ struct BinaryImage {
     // all ordinary zero arithmetic in that object.
     if (Addr == 0)
       return false;
+
+    // The headers move with the image whether or not the loader maps them.
+    if (imageBaseOffset(Addr))
+      return true;
 
     if (const Segment *Seg = getSegmentFor(Addr))
       return Seg->isReadable();
@@ -1056,7 +1077,9 @@ struct BinaryImage {
                   ? TargetVA < End && hasExecutableCodeOwnerAt(TargetVA, Index)
                   : TargetVA <= End);
     }
-    return false;
+    // Unmapped headers own their addresses as `<PE headers>` does.
+    return PEHeaderBytes && OwnerVA == Base && TargetVA >= Base &&
+           TargetVA - Base <= PEHeaderBytes;
   }
 
   /// The owner of an address the image computes from its own fixed layout,

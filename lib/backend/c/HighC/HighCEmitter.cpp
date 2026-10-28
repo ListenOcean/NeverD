@@ -2609,6 +2609,8 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  ReachesImageBase = false;
+  ImageBaseIdentifier.clear();
   OriginalMemoryBases.clear();
   OriginalMemoryObjects.clear();
   DataSymbolBindings = Opts.Image ? collectDataSymbolBindings(*Opts.Image)
@@ -3388,6 +3390,10 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if (const HighExpr *Inner = unwrapIntegerView(Address);
         Inner && Inner->Kind == ExprKind::Const)
       AccessAddresses.insert(Inner);
+    // An access the image's headers hold prints through `__ImageBase`.
+    if (Address)
+      if (const auto VA = constAddress(*Address))
+        noteImageBaseAddress(*VA);
   };
   // An atomic access needs its address as aligned in C as in the image.
   auto NoteAtomic = [&](const HighExpr &Address, const TypeRef &Access) {
@@ -3462,6 +3468,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
+    if (isImageBaseConstant(E))
+      ReachesImageBase = true;
     // An address anchored before its owner's section reaches the section's
     // first object, which the code indexes from there; what lies at the
     // address itself is no object the code uses.
@@ -3869,9 +3877,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           continue;
         const va_t Target = PointerBytes == 8 ? readLE<uint64_t>(Bytes)
                                               : readLE<uint32_t>(Bytes);
+        // A slot holding a header address holds `__ImageBase`'s.
+        const bool HeaderTarget = !Opts.Image->CodePtrRelocSlots.count(*Slot) &&
+                                  Opts.Image->imageBaseOffset(Target);
         if (Opts.Image->CodePtrRelocSlots.count(*Slot)) {
           noteFunctionAddress(Target, Funcs);
           noteFunctionAddress(Target & ~va_t{1}, Funcs);
+        } else if (HeaderTarget) {
+          ReachesImageBase = true;
         } else if (sizedObjectAt(Target)) {
           NoteWhole(Target, nullptr, false);
         }
@@ -3880,7 +3893,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
             Opts.Image->CodePtrRelocSlots.count(*Slot)
                 ? FunctionAddressNames.count(Target) ||
                       FunctionAddressNames.count(Target & ~va_t{1})
-                : sizedObjectAt(Target) || ImageObjects.count(Target) ||
+                : HeaderTarget || sizedObjectAt(Target) ||
+                      ImageObjects.count(Target) ||
                       stringLiteral(Target).has_value();
       }
     }
@@ -4053,6 +4067,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
   FinishGroup();
+  addImageBaseBacking();
 }
 
 void HighCWriter::noteFunctionAddress(va_t Addr,
@@ -4099,6 +4114,7 @@ bool HighCWriter::imageFunctionOwnsLinkIdentifier(llvm::StringRef Name) {
 }
 
 void HighCWriter::writeImageObjects() {
+  writeImageBaseDeclaration();
   for (const auto &[Base, Object] : OriginalMemoryObjects) {
     (void)Base;
     const auto &[Storage, Name] = Object;
@@ -4136,7 +4152,7 @@ void HighCWriter::writeImageObjects() {
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
-    if (!Backing.Words.empty() || Backing.Header)
+    if (!Backing.Words.empty() || Backing.Header || Backing.External)
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"

@@ -116,10 +116,11 @@ static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
     return false;
 
   // Collect read-only, non-executable segments that carry data, sorted by VA.
+  // Mapped headers are `__ImageBase`, never part of a copied run.
   std::vector<const Segment *> Ro;
   for (const auto &S : Img->Segments)
     if (S.isReadable() && !S.isWritable() && !S.isExecutable() &&
-        !S.Data.empty())
+        !S.Data.empty() && !Img->imageBaseOffset(S.VA))
       Ro.push_back(&S);
   std::sort(Ro.begin(), Ro.end(),
             [](const Segment *A, const Segment *B) { return A->VA < B->VA; });
@@ -309,9 +310,10 @@ llvm::Constant *MedLLVMEmitter::tryResolveDirectDataBytes(uint64_t Addr,
   // Shards must choose the same storage for a segment even if a different
   // shard takes its address. Keep their existing whole-run contract; local
   // mirrors below can instead rebind all earlier uses when demand expands.
+  // A header byte is never copied: the headers are `__ImageBase`.
   if (!Img || !Size || MergeableGlobals ||
       (OriginalImageStorageForSource && !Img->IsRelocatable) ||
-      (Addr == 0 && OwnerVA == InvalidVA))
+      (Addr == 0 && OwnerVA == InvalidVA) || Img->imageBaseOffset(Addr))
     return nullptr;
   ensureImportStorageSnapshot();
   const Segment *Seg = Img->getSegmentFor(Addr);
@@ -570,7 +572,7 @@ void MedLLVMEmitter::readOnlyAfterRelocRun(const Segment *Seg,
     return;
   std::vector<const Segment *> RO;
   for (const auto &S : Img->Segments)
-    if (isReadOnlyAfterReloc(&S))
+    if (isReadOnlyAfterReloc(&S) && !Img->imageBaseOffset(S.VA))
       RO.push_back(&S);
   std::sort(RO.begin(), RO.end(),
             [](const Segment *A, const Segment *B) { return A->VA < B->VA; });
@@ -626,7 +628,8 @@ MedLLVMEmitter::completePointerMirrorRun(uint64_t VA) const {
 }
 
 bool MedLLVMEmitter::addrInCodePtrMirrorRun(uint64_t VA) const {
-  if (!Img)
+  // The headers' ImageBase slot is no mirror: the headers are `__ImageBase`.
+  if (!Img || Img->imageBaseOffset(VA))
     return false;
   const Segment *Seg = Img->getSegmentFor(VA);
   // Keep this ownership predicate in lockstep with

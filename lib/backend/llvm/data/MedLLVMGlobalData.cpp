@@ -156,6 +156,10 @@ bool MedLLVMEmitter::canResolveGlobalDataConstant(uint64_t Addr) const {
   if (Addr == 0)
     return false;
 
+  // The image's own headers are the linker's `__ImageBase`, never bytes.
+  if (Img->imageBaseOffset(Addr))
+    return true;
+
   // An anchored folded base has an explicit owner.  If that owner cannot be
   // embedded, resolving the same numeric value through a different segment
   // would silently change the relocation's meaning.
@@ -276,6 +280,11 @@ llvm::Constant *MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr,
   if (!Img || OwnerVA == InvalidVA)
     return tryResolveGlobalData(Addr, DataSizeHint);
 
+  // An address the image's headers own, mapped or not, is the linker's
+  // `__ImageBase`.
+  if (OwnerVA == Img->Base && Img->PEHeaderBytes)
+    return tryResolveImageHeaderData(Addr, OwnerVA);
+
   const Segment *OwnerSeg = Img->getSegmentFor(OwnerVA);
   if (!OwnerSeg || !OwnerSeg->isReadable())
     return nullptr;
@@ -346,6 +355,10 @@ llvm::Constant *MedLLVMEmitter::tryResolveOwnedGlobalData(uint64_t Addr,
 
 llvm::Constant *MedLLVMEmitter::tryResolveGlobalData(uint64_t Addr,
                                                      uint16_t DataSizeHint) {
+  // The headers are the linker's `__ImageBase`, also in the original image
+  // storage, which only spans them when the loader maps them.
+  if (Img && Img->imageBaseOffset(Addr))
+    return tryResolveImageHeaderData(Addr);
   if (Addr != 0)
     if (auto [Storage, Base] = originalImageStorage(Addr); Storage)
       return llvm::ConstantExpr::getGetElementPtr(
