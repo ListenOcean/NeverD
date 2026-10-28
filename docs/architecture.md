@@ -7318,7 +7318,10 @@ the descent decodes that instruction whole and falls into the guess, while
 real padding stops it at the int3. Off the 16-byte grid the scan takes only
 the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
 byte 0x55 followed by any move opcode starts no function inside an
-instruction.
+instruction. Code no function reaches is not rechecked this way, so the
+padding scan itself takes no byte 0x40-0x4F after an int3 in a 32-bit image
+(`isPrologueAt`): those are REX prefixes only in 64-bit code, and IA-32 decodes
+them as INC/DEC, as in the operand of `mov [0x4048cc], eax`.
 
 A whole unit (`neverd_decompile_all`, in every language, or the unit of a
 selection `neverd_decompile_functions` writes) begins with a

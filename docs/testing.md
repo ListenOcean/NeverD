@@ -3932,6 +3932,9 @@ metadata, stack/nonvolatile writes, conditional control flow, no-return calls,
 missing home space, local/interior/continuation targets, non-executable ranges,
 truncation, relocatable input and targets with no callable exit. These run in
 `NeverDImageAnalysisBoundaryTests` and the aggregate lift suite.
+`FunctionDiscoveryAlignment.RexBytesBeginFunctionsOnlyIn64BitCode` checks that
+the padding scan starts an x64 function at a REX byte after an int3, but no
+IA-32 function at the same INC/DEC byte.
 
 `FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
 64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
