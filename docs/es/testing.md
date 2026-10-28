@@ -2276,6 +2276,8 @@ Ejecute `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) y `NeverDCSourcePr
 
 Los argumentos de puntero validados usan las mismas anotaciones de texto de la imagen aunque LLVM transporte la dirección como entero. Los casos cubren x86/x64/ARM64 con COFF, ELF y Mach-O, incluidas declaraciones rechazadas, valores numéricos iguales, direcciones dinámicas, memoria modificable y comentarios desactivados o escapados. El argumento conserva la dirección original; mostrar los bytes iniciales no demuestra inmutabilidad.
 
+El análisis del tipo de retorno sigue las copias de las direcciones de importación y de los destinos cargados mediante la misma prueba acotada de ranura que la recuperación de la ABI de llamada. Las pruebas cubren x86/x64/ARM32/ARM64 con COFF, ELF y Mach-O, además de colisiones numéricas, direcciones dinámicas, ciclos, anulaciones de segmento y declaraciones no void.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Responsabilidad de los parches interactivos
 

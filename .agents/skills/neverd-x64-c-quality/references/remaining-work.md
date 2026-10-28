@@ -374,6 +374,12 @@ LLVM carries their address as an integer. The original address and mutable
 storage remain intact; scalar collisions and rejected source declarations
 cannot acquire pointer text. Public tests cover x86/x64/ARM64 and all three
 native formats.
+Return contracts now reuse the call ABI owner's bounded import-slot proof.
+Copies of an import address or loaded callable no longer hide a declared void
+result; ARM64 tail wrappers therefore retain the real source declaration in
+both C routes without an invented integer result or unknown-return guard.
+Numeric callable values, dynamic addresses, cycles and segment-relative loads
+remain separate from import slots across all four native architectures.
 Exact scalar branches now reconnect discontiguous and backward code while
 preserving independently known tail calls. Their numeric and symbolic proofs
 carry values across unique decoded direct predecessors and share authenticated

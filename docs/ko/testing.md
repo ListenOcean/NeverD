@@ -2165,6 +2165,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 검증된 포인터 호출 인수는 LLVM이 주소를 정수로 보관해도 같은 이미지 문자열 주석을 사용합니다. x86/x64/ARM64의 COFF, ELF, Mach-O에서 거부된 선언, 같은 숫자를 가진 정수, 동적 주소, 쓰기 가능한 저장소, 주석 비활성화와 이스케이프를 검사합니다. 인수는 원래 주소를 유지하며 초기 바이트 표시는 불변성을 증명하지 않습니다.
 
+반환 형식 분석은 호출 ABI 복원과 같은 유한한 임포트 슬롯 증명을 사용하여 임포트 주소와 로드한 대상의 복사를 추적합니다. x86/x64/ARM32/ARM64의 COFF, ELF, Mach-O에서 숫자 충돌, 동적 주소, 순환, 세그먼트 재정의, void가 아닌 선언을 검사합니다.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 대화형 패치의 책임
 

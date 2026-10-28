@@ -2121,6 +2121,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 已驗證的指標呼叫參數即使由 LLVM 整數承載位址，也使用相同的映像文字註解。案例涵蓋 x86/x64/ARM64 的 COFF、ELF 和 Mach-O，包括遭拒的宣告、相同數值的整數、動態位址、可寫儲存及停用或跳脫的註解。參數仍保留原位址；顯示初始位元組不代表儲存不可變。
 
+回傳型別分析與呼叫 ABI 還原共用有界匯入槽證明，追蹤匯入位址和已載入目標的複製。測試涵蓋 x86/x64/ARM32/ARM64 的 COFF、ELF 和 Mach-O，以及數值碰撞、動態位址、循環、區段覆寫與非 void 宣告。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 互動式修補的職責
 

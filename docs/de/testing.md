@@ -2291,6 +2291,8 @@ Führen Sie `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) und `NeverDCSo
 
 Geprüfte Zeigerargumente verwenden dieselben Bildtextkommentare, auch wenn LLVM die Adresse als Ganzzahl führt. Die Fälle decken x86/x64/ARM64 mit COFF, ELF und Mach-O ab, einschließlich abgelehnter Deklarationen, gleicher Zahlenwerte, dynamischer Adressen, beschreibbarer Speicherbereiche sowie deaktivierter oder maskierter Kommentare. Die ursprüngliche Adresse bleibt das Argument; angezeigte Anfangsbytes beweisen keine Unveränderlichkeit.
 
+Die Rückgabetypanalyse verfolgt kopierte Importadressen und geladene Aufrufziele mit demselben begrenzten Slotnachweis wie die Aufruf-ABI-Rekonstruktion. Die Tests decken x86/x64/ARM32/ARM64 mit COFF, ELF und Mach-O sowie Zahlenkollisionen, dynamische Adressen, Zyklen, Segmentüberschreibungen und Nicht-void-Deklarationen ab.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Zuständigkeit für interaktive Patches
 

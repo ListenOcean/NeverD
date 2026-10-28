@@ -2140,6 +2140,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 已验证的指针调用参数即使由 LLVM 整数承载地址，也使用相同的镜像文字注释。用例覆盖 x86/x64/ARM64 的 COFF、ELF 和 Mach-O，包括被拒绝的声明、相同数值的整数、动态地址、可写存储以及关闭或转义的注释。参数仍保留原地址；显示初始字节不代表存储不可变。
 
+返回类型分析与调用 ABI 恢复共用有界导入槽证明，跟踪导入地址和已加载目标的复制。测试覆盖 x86/x64/ARM32/ARM64 的 COFF、ELF 和 Mach-O，以及数值碰撞、动态地址、循环、段覆盖和非 void 声明。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 交互式补丁的职责
 

@@ -2175,6 +2175,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 検証済みのポインター引数は、LLVM がアドレスを整数で保持する場合も同じイメージ文字列注釈を使います。x86/x64/ARM64 の COFF、ELF、Mach-O で、拒否された宣言、同じ数値の整数、動的アドレス、書き込み可能な記憶領域、注釈の無効化とエスケープを検証します。引数は元のアドレスを保持し、初期バイトの表示は不変性の証明にはなりません。
 
+戻り値の型解析は、呼び出し ABI の復元と同じ有界のインポートスロット証明を使い、インポートアドレスと読み込まれた呼び出し先のコピーを追跡します。x86/x64/ARM32/ARM64 の COFF、ELF、Mach-O で、数値の一致、動的アドレス、循環、セグメント指定、非 void 宣言を検証します。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 対話的パッチの責務
 

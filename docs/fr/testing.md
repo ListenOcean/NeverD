@@ -2290,6 +2290,8 @@ Exécutez `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) et `NeverDCSourc
 
 Les arguments pointeurs validés utilisent les mêmes annotations de texte de l’image, même si LLVM porte l’adresse dans un entier. Les cas couvrent x86/x64/ARM64 avec COFF, ELF et Mach-O : déclarations rejetées, valeurs numériques identiques, adresses dynamiques, mémoire modifiable et commentaires désactivés ou échappés. L’argument conserve son adresse d’origine ; l’affichage des octets initiaux ne prouve pas leur immutabilité.
 
+L’analyse du type de retour suit les copies des adresses d’importation et des cibles chargées avec la même preuve bornée de case que la récupération de l’ABI d’appel. Les tests couvrent x86/x64/ARM32/ARM64 avec COFF, ELF et Mach-O, ainsi que les collisions numériques, adresses dynamiques, cycles, substitutions de segment et déclarations non void.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Responsabilité des correctifs interactifs
 

@@ -2271,6 +2271,8 @@ Eseguire `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) e `NeverDCSourceP
 
 Gli argomenti puntatore verificati usano le stesse annotazioni del testo dell’immagine anche quando LLVM conserva l’indirizzo in un intero. I casi coprono x86/x64/ARM64 con COFF, ELF e Mach-O, incluse dichiarazioni rifiutate, valori numerici uguali, indirizzi dinamici, memoria modificabile e commenti disabilitati o con escape. L’argomento mantiene l’indirizzo originale; mostrare i byte iniziali non ne prova l’immutabilità.
 
+L’analisi del tipo restituito segue le copie degli indirizzi di importazione e delle destinazioni caricate usando la stessa prova limitata degli slot del recupero dell’ABI di chiamata. I test coprono x86/x64/ARM32/ARM64 con COFF, ELF e Mach-O, oltre a collisioni numeriche, indirizzi dinamici, cicli, override di segmento e dichiarazioni non void.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Responsabilità delle patch interattive
 
