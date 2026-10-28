@@ -621,6 +621,37 @@ and `maximum_translation_bytes` (null for manual frames). Abstract frame
 coordinates never authorize an immutable-image load, including when a
 translation bound is available.
 
+Schema 9 scopes tagged frame coordinates to their owning function summary.
+A known singleton entry r10 can anchor the input register values and typed
+memory cells at offset zero. Literal VM bits, formal-origin register numbers
+and captured heap identities do not move. The callee's returned frame values
+and cells are rebound before the caller consumes them; unrepresentable input
+translations stay in their original coordinates, and unrepresentable returned
+frame facts are forgotten. Instantiated expression witnesses use the caller's
+coordinates after its frame push. Reports name these namespaces and count
+`canonicalized_frame_inputs`, including cache lookups, rather than treating
+each normalization as a distinct context or recovered target.
+
+Typed stores and complete copies use the same range owner for these relative
+coordinates. A representable word below the numeric stack region can still
+describe a valid translated frame cell. A literal address requires the ordinary
+scratch range, while a bounded frame coordinate must have a possible complete
+scratch window. Wrapped words and immutable-image reads through frame tags
+remain refused. Normalization retains the existing alias bounds and memory
+snapshot keys; it does not project away unread caller memory.
+
+An exact cached specialization can also contain a recursive call cut by its
+earlier caller. When that non-self callee is no longer active, an opaque
+completed specialization can be reconsidered under the existing scalar-return,
+memory-transfer and target-preservation checks. Active callers and root
+summaries remain protected. Successful work is remembered per entry/cut callee
+and counted in `unblocked_recursion_retries`; it uses the existing four variants
+and resource budgets. A cluster of equal retained literal image bindings can
+likewise admit a new image binding when some other variants have unknown
+inputs. This selects work only; unknown inputs supply no pointer inequality or
+target proof, and replacement still preserves the old caller transfer and
+target evidence.
+
 Unsigned branch comparisons can establish bounds on values carried affinely
 to a function's return. A nullable return retains the null alternative.
 Nonliteral address returns receive a report-local captured identity; its bounds
