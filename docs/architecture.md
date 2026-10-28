@@ -3167,7 +3167,10 @@ writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
 the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
 (`resolvePrototype`) do: an import, a symbol, or an export the image's own
-code calls (`NoReturnTargetIndex`). Its cached and demand-loaded lookups share
+code calls (`NoReturnTargetIndex`). A name a program may also give a routine
+of its own decides only together with the module that exports it
+(`isNoReturnImport`, `WindowsNoReturnImports.inc`): the Universal CRT's
+`terminate` never returns. Its cached and demand-loaded lookups share
 the image's executable-veneer admission, exact IAT precedence and first
 non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
 resolve through the same veneer owner. Function discovery reads no header, so

@@ -5835,6 +5835,9 @@ screen sends a callee to the proof only when each of its returns follows such
 a call, so one that calls the function on an error path costs no proof. A
 tail jump into a function that is stated, named or proved never to return
 ends its path, and a statement that the target returns decides over both.
+`InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
+imported from the Universal CRT ends its caller's block, and that the same name
+imported from another module does not.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
