@@ -311,7 +311,22 @@
       "Initial broad selection included an obsolete HFA spill refusal assertion; it was replaced by exact Darwin member offsets.",
       "The former monolithic narrow-input test timed out both on this candidate and a nearby preserved dev binary. This is not a same-base performance comparison. All 192 fixtures now run in 24 independent cases with the original 120-second deadline.",
       "Initial public SDK compilation exposed named record casts/member names, padding-definedness and temporary/type-name collisions; only the repaired passing SDK report is qualification."
-    ]
+    ],
+    "publication_integration": {
+      "revision": "551e510a7cd86aa885857d4b7dedbaed492018fa",
+      "dev_revision": "f7d924bd0fc802cdf74099c3463ea2d37bafa05d",
+      "passed": true,
+      "cpp_tests": 7,
+      "public_sdk_ctest_cases": 1,
+      "exports": 2541,
+      "changed_exports": [],
+      "sdk_source_routes_unchanged": 20,
+      "scope": "Later dev changes only touch Android runtime, UMINV admission and related docs/fixtures. The full 608-case run remains bound to the earlier integration revision.",
+      "report_sha256": {
+        "calls-publication.json": "4c22e9181fe2c70ec49bf4c2d7655ab56a44c95ca28136abeef88fd51dfbe586",
+        "sdk-api-publication.xml": "177d5556b16976dc4ac0a3f8223440aa4f906b38617799da8100dae4475ad8bb"
+      }
+    }
   },
   "model": {
     "model_only": true,
@@ -1644,6 +1659,7 @@
   },
   "remaining": [
     "Arbitrary small/mixed/packed/array/over-aligned records and indirect by-value or result storage/effect contracts.",
+    "128-bit and record/HFA variadic prototypes, beyond the existing scalar variadic profile.",
     "Automatic complete prototype recovery and authenticated special-language/whole-image ABI.",
     "Authenticated whole-image storage, binding and relocation, and native Darwin signed exception unwinding.",
     "Native Apple CPA2 execution and exact invalid-PAC fault PC/ESR equivalence, including the known C O0 diagnostic differences."
