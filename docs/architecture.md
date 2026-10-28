@@ -421,7 +421,16 @@ the CFG and retains each block's complete ordered unwind chain. Independent
 handlers and a handler nested within a finally keep their own clauses. Normal
 edges assign PHIs before leaving the generated compounds; a block's finally
 executes the recovered cleanup only on unwind. Closed lexical ranges retain
-their compact rendering.
+their compact rendering. C also runs a `__finally` when its try falls through,
+where the source already holds the normal copy, so a compact finally runs the
+cleanup under `if (AbnormalTermination())`. C counts a return or a jump out of
+the try as abnormal too: a closed finally range that can leave before its end
+marker takes the block form, and a lexical one that still could is refused. A
+try that wraps every block for lack of range markers sets its normal-exit flag
+before each return and at its end. The native lowering numbers a range's
+markers, their boundary provenance and the blocks it appends for returns in
+block layout order, never pointer order, so the C it prints is the same from
+run to run.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 
@@ -7182,6 +7191,32 @@ count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
 the module does not emit stays variadic. A declaration made from one call's
 arguments would cut another call's.
 
+An AAPCS64 register save area also spills q0-q7, which carry only the floating
+and vector arguments a caller passes. Where the function's va_arg reads none of
+them, MedIR drops those spills (`unreadAAPCS64VectorSpills`,
+`MedVariadicAArch64.cpp`), so neither C route writes the registers' unknown
+entry values. The evidence is the area itself, q(first) through q7 saved at
+entry to consecutive 16-byte slots, and one va_list whose va_start points
+`__vr_top` just past it, `__stack` into the incoming arguments and `__gr_top`
+past the integer half, and sets both offsets. No load may read the area,
+`__vr_top` or `__vr_offs`, which only va_arg of a floating or vector argument
+and a copied or passed-on va_list read; and a frame address may reach memory
+only as the pointer va_start stores in each of those three fields, and no call
+or return in an argument register. Loads through the pointers va_arg reads from
+`__stack` and `__gr_top` are taken to stay in their areas, as the va_list
+convention keeps them. A function whose va_arg reads a double keeps the spills,
+whose unknown values still fail where it stores them. Windows ARM64 passes
+floating varargs in integer registers and Apple's arm64 every vararg on the
+stack; neither saves a vector register for va_arg.
+
+A call to a variadic routine of the image passes zero for each save-area
+register its caller does not set, as va_arg reads no more arguments than a
+caller passes. This is a limitation, which System V x86-64 calls share: a
+register the caller passes on untouched counts as not set, so a caller that
+passes its own argument on that way, as
+`long g(long a, long b) { return logv("x", b); }` does, passes zero where the
+program passes `b`, and its C takes no such parameter.
+
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
 the call at a call that may change the register (`callClobbersRegister`, the
@@ -7388,7 +7423,9 @@ at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
 unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
-written as they would be. So is one whose source requirements, checked before
+written as they would be. An LLVM C unit leaves out a definition whose C
+throws the same way (`c-emission-failed; unsupported LLVM C cmpxchg shape` for
+an AArch64 CASP pair). So is one whose source requirements, checked before
 any rendering, fail (`c-emission-failed; immediate original memory requires a
 runtime GPR value or a complete occurrence-bound image span`): no rendering
 reads it, and its callers call it as a function outside the unit. Asked for

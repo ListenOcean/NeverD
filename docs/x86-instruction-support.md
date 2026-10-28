@@ -2423,13 +2423,18 @@ The production LLVM release pin and submodule remain unchanged.
 ## Owned FEMMS completion
 
 The shared x87 selector contract now admits `0F 0E`. Its concrete transition
-clears all tags and all payload provenance, preserving the defined control,
-status and saved environment. Waiting exceptions and unknown incoming state
+clears TOP, all tags and all payload provenance, preserving the other control
+and status bits and saved environment. Logical FXSAVE slots rotate to retain
+physical register identity. Waiting exceptions and unknown incoming state
 refuse before mutation. MMX writes establish only the written physical slot;
 all eight must be known before exporting a complete raw snapshot. Native
 LLVM, HighC and LLVMC keep FEMMS within the existing context step. Restore and
 step constraints now name MM0–MM7 as well as ST0–ST7: LLVM does not model them
 as overlapping physical registers.
+
+The counts in the following historical records predate the
+[TOP-reset correction](#portable-owned-fnop-and-mmx-resets); they did not
+establish that transition.
 
 `NeverDX87MMXStateTests` checks all eight TOP values, three tag patterns,
 both strictness modes and both reset instructions, plus refusal, feature
@@ -2743,15 +2748,20 @@ The [qualification ledger](evidence/x86-x87-resets-2026-10-28.json) binds all
 results to their tested commits and artifacts. Each SDK passes 36 generated
 reset artifacts with 2,700 state observations and 576 original-instruction
 comparisons; the prior arithmetic fixture separately passes 36 artifacts with
-6,096 observations and 5,760 original comparisons. Native SDK integration
-passes 1,147 tests, with 49 native-AArch64-only tests explicitly skipped.
+6,096 observations and 5,760 original comparisons. Publication commit
+`710180d84eb925e6ee07fe6721774781055a0f20` passes 1,227 pinned-SDK and 1,225 full-SDK tests with no failures. Each skips 49 native
+AArch64 tests on the x64 host and one Windows-only single-step observer.
+The full SDK configuration excludes two Unicorn reference tests.
 The pinned suite's sole aggregate 3DNow timeout is repaired by giving each
 instruction/form its own ordinary CTest deadline: all 103 cases pass and keep
 all 960 objects. The existing QEMU guest consumes those exports and passes
 368,640 state and 4,080 fault comparisons, while its 1,440 pending-#MF and
 240 stack-#SS differentials remain unqualified.
 
-These additions do not inherit the historical ARM64 qualification. Physical
-FEMMS, privileged #NM behavior and complete architectural equivalence remain
-unqualified. LLVM release, production SDK pinning and the LLVM gitlink remain
-unchanged while the global instruction gaps are open.
+Native ARM64 [run 40680179646](https://github.com/NeverSight/NeverD/actions/runs/40680179646)
+executes all 36 new reset artifacts and 2,700 observations at the same publication
+commit. Its 225 distinct seeded state transitions match both local x64 SDKs.
+This is new generated-code evidence; reset-specific translation sessions,
+physical FEMMS, privileged #NM behavior and complete architectural equivalence
+remain unqualified. LLVM release, production SDK pinning and the LLVM gitlink
+remain unchanged while the global instruction gaps are open.

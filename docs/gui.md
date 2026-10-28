@@ -88,9 +88,15 @@ scroll; keyboard navigation also brings offscreen commands into view.
 
 Double-clicking a function name in a code view follows it in that same window,
 keeping its C or LLVM C representation even when the window is locked. Back and
-forward navigation also stays in the active code window, and within a function
-takes its cursor to the row of the place it returns to. Imports and global
-objects continue to open at their addresses in the disassembly or hex view.
+forward navigation also stays in the active code window and returns it to where
+it left, as Hex-Rays' Esc does: Back from the function puts the cursor on the
+name that was double-clicked, with the view scrolled as it was, and Forward
+returns to the place the function was left; within a function the cursor goes
+to the row of the place it returns to. As in IDA, each jump adds one stop to
+the history, and the stop follows the cursor: clicks and keys after a jump, in
+the code or the disassembly, add none, so Back returns to where the jump began
+and Forward to where the user left. Imports and global objects continue to open
+at their addresses in the disassembly or hex view.
 Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
 label and the disassembly to the block it labels, as IDA's labels do; Back
 returns to the goto. Pseudocode and C name a label after its block's address,

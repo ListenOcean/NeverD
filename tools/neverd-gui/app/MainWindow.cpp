@@ -1701,6 +1701,9 @@ void MainWindow::navigateCodeFunction(CodeView *view, Address address,
                                       std::optional<Address> from) {
   // The shared history and background listing follow without changing the
   // originating code window or its representation, including a pinned view.
+  // Back returns the code to the place it leaves, at the stop it leaves.
+  if (const auto origin = from ? from : disassembly_->currentAddress())
+    view->text()->keepPlace(*origin);
   disassembly_->navigate(address, true, from);
   if (view->text()->function() != function)
     view->showFunction(function);
@@ -1807,6 +1810,9 @@ void MainWindow::navigateHistory(bool forward) {
   if (forward ? !disassembly_->canGoForward() : !disassembly_->canGoBack())
     return;
   if (auto *view = focusedCodeView()) {
+    // Coming back to this stop returns the code to where it is now.
+    if (const auto address = disassembly_->currentAddress())
+      view->text()->keepPlace(*address);
     const auto epoch = session_.epoch();
     connect(
         disassembly_->listing(), &ListingView::jumpSettled, view,
@@ -1814,13 +1820,22 @@ void MainWindow::navigateHistory(bool forward) {
           if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
               !view->isVisible())
             return;
+          // The listing has landed; a graph may still be laying it out.
           const auto function = disassembly_->listing()->currentFunction();
-          if (function && view->text()->function() != function)
+          const auto address = disassembly_->listing()->currentAddress();
+          if (function && view->text()->function() != function) {
             view->showFunction(*function);
+            // The code goes back to the cursor and view it left there, as
+            // Hex-Rays' Esc does; a stop it never made opens the function.
+            if (address)
+              view->text()->returnToPlace(*address);
+          }
           // Within the function the code goes back to the row it left, such
-          // as the goto whose label it went to.
-          else if (const auto address = disassembly_->currentAddress())
+          // as the goto whose label it went to, and to its place there.
+          else if (address) {
             view->text()->revealAddress(*address);
+            view->text()->returnToPlace(*address);
+          }
           view->text()->setFocus();
         },
         Qt::SingleShotConnection);

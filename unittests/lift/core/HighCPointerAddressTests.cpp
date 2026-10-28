@@ -42477,6 +42477,7 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadGsWrappedSehLlvmcNestsHandlerBodies) {
             "*);\n"
             "void *GetExceptionInformation(void);\n"
             "unsigned long GetExceptionCode(void);\n"
+            "int AbnormalTermination(void);\n"
          << Source;
     }
     llvm::SmallVector<llvm::StringRef, 16> Args{

@@ -14,11 +14,13 @@ is limited to the named profiles below; complete architectural and formal
 equivalence remain unknown.
 
 Portable FNOP/EMMS/FEMMS admission was added after those baseline records.
-The earlier X0–X4 results do not certify these additions on native ARM64 or
-establish physical FEMMS execution. Their generated-state and native x64
-reference checks are recorded in the [reset qualification
-ledger](evidence/x86-x87-resets-2026-10-28.json), separately from the historical
-cross-host qualification.
+The [reset qualification ledger](evidence/x86-x87-resets-2026-10-28.json)
+records their later checks at `710180d84eb925e6ee07fe6721774781055a0f20`: both
+local x64 SDKs and native ARM64 execute 36 generated artifacts and 2,700 state
+observations per profile. All 225 distinct seeded state transitions agree.
+Native x64 supplies 576 original FNOP/EMMS comparisons per SDK. These results
+are separate from the historical X0–X4 records; they do not establish physical
+FEMMS execution or reset-specific native translation-session qualification.
 
 ## Profiles and limits
 
@@ -88,8 +90,8 @@ adds 5,760 original-instruction comparisons. Cross-host comparison uses complete
 file manifests and matches portable observations separately from native-only
 reference fields.
 
-The translation gate requires all thirteen tests on native Linux AArch64 without
-skips. Its exhaustive fixture retained 192 TOP/PC/RC/O0/O2 observations and
+The original translation gate required thirteen tests on native Linux AArch64
+without skips. Its exhaustive fixture retained 192 TOP/PC/RC/O0/O2 observations and
 1,152 actual AArch64 ELF objects given to JITLink, full logical state after each
 block and agreement with production sessions. All thirteen tests executed
 successfully without skips. Separate tests cover ten-byte memory faults,
@@ -97,6 +99,15 @@ self-modification, forged/stale invocation bindings, prefix retention, mixed
 unsupported programs, branches/backedges and checkpoint/resume. Passing these
 checks qualifies
 this bounded profile; object compilation on x64 alone does not supply this result.
+
+The current gate additionally requires reset-object admission and three native
+FNOP/EMMS/FEMMS session tests, bringing the required test count to seventeen.
+The reset fixture enumerates 225 instruction/state cases at O0/O2, retaining
+450 observations and 882 direct JITLink input objects. It independently checks
+full logical state, untouched extensions/memory, the completed MOV prefix on
+refusal, and production-session agreement. Its eighteen refusals cover unknown
+environment, pending exceptions and invalid control words. These are required
+checks; the historical thirteen-test records do not certify the additions.
 
 Three fixed arithmetic seeds (`0x871677`, `0x871678`, `0x871679`) produce 57,888
 observations per host. Native x64 and ARM64 results match the native x64 original
@@ -160,6 +171,13 @@ builds the pinned repository LLVM revision from source because the pinned
 prebuilt package set has no ARM archive. Each record retains the actual compiler
 version and hashes, rather than assuming that a major-version label identifies
 one compiler binary.
+
+The generated recorder accepts `--profile resets` for the separate
+FNOP/EMMS/FEMMS corpus. It authenticates every seeded 528-byte input, expected
+state transition, refusal and success-only return, and retains the same compiler,
+runtime and file manifests as the arithmetic corpus. Cross-host comparison
+requires both profiles at one source commit. Native reference fields remain
+x64-only; their absence on ARM64 never counts as a physical FEMMS result.
 
 CI artifacts retain success and failure evidence for thirty days. Download and
 preserve them before expiry when long-term binary replay is required. A small

@@ -173,6 +173,23 @@ entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
 fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
 require a homed incoming pointer plus a reload or an advanced-pointer read;
 Darwin's register-only walk remains independently recognizable without a home.
+`MedVariadic.AAPCS64DropsTheVectorSaveAreaNoReadObserves` drops q0-q7's spills
+only where the area is whole and one va_list's va_start initializes
+`__vr_top`, `__vr_offs` and the rest, whatever the format. It keeps them where
+a load reads either field or the area, a frame address reaches a call, a
+return, a vector register, an intrinsic, other memory or a va_list pointer
+other than the one va_start stores there, a load's frame address has no fixed
+offset or an edge is exceptional, and where Apple's arm64 recognizer, which
+reads no save area, applies.
+
+`AArch64_VariadicSaveArea` compiles AAPCS64 variadic routines. One whose
+va_arg reads ints only leaves its vector half unread: MedIR keeps no q0-q7
+spill, and both C routes are free of unknown values, its LLVM C running like
+the kernel (`AArch64_HighCExecution.AVariadicCalleeReadsItsStackArgumentsInPlace`
+runs its HighC). Ones reading doubles, or longs between doubles, keep all
+eight spills, and the HighC still fails explicitly where it stores them. The
+Windows ARM64 and Apple arm64 builds save no vector register and take no
+floating parameter.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
@@ -214,6 +231,19 @@ a finally. Both O0/O2 Windows object builds retain the nested clauses; host
 execution checks the normal paths and cleanup count. Run the complete
 `COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
 loops. Host normal-path checks do not qualify native Windows exception dispatch.
+`LLVMCFinallyWrapContainsCleanupBody` and
+`LLVMCFinallyContinuationFollowsCleanup` keep a finally's cleanup off its
+normal exit; `LLVMCFinallyReturnInsideTheTrySkipsTheCleanup` and
+`LLVMCFinallyRangeLaidOutPastItsEndUsesTheExitFlag` move a range that returns
+or leaves its layout to the block form, and
+`LLVMCFinallyJumpPastItsEndMarkerIsRefused` refuses a jump no form can render.
+`COFFExceptionIR.NativeSEHRangeMarkersFollowTheBlockLayout` (in
+`NeverDLiftTests`) frees blocks in a shuffled order before it lowers a guarded
+range with four returns, so the block pointers stop following the layout; the
+end markers must still be numbered and appended in layout order. After a
+change to marker placement, compare two runs of one library per function:
+LLVM C that differs only in `L_seh_try_*` numbers comes from a pointer-ordered
+walk.
 
 # Testing NeverD
 
@@ -4939,6 +4969,12 @@ first page, and right-clicks inside the selection to keep it for Copy;
 `gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
 cursor, the disassembly, Back, and that the label's row maps to its block
 rather than to the statement the engine's rows give it;
+`pseudocodeFunctionLinksStayInTheirWindow` double-clicks a call in C and LLVM
+C, moves in the callee as a click does, and checks that one Back returns the
+code to the call's line and column with the view scrolled as it was, and that
+Forward returns to where the callee was left; `historyStopsFollowTheCursor`
+moves between jumps and checks that Back skips those moves and Forward returns
+to them;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks

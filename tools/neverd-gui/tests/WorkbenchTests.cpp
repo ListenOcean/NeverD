@@ -8035,12 +8035,19 @@ private slots:
     // The call is row 1 in C, row 3 after LLVM C's folded prelude.
     const QFontMetricsF metrics(Theme::instance().codeFont());
     const int row = representation == QLatin1String("source") ? 1 : 3;
+    // LLVM C's text is long enough to scroll: show the call at the top, where
+    // Back must show it again.
+    code->verticalScrollBar()->setValue(row);
+    const int top = code->verticalScrollBar()->value();
+    QCOMPARE(top, representation == QLatin1String("source") ? 0 : row);
     const QPoint point(
         qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
         qRound((row - code->verticalScrollBar()->value() + 0.5) *
                std::ceil(metrics.lineSpacing())));
     QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
     QCOMPARE(code->currentToken(), link);
+    const int line = code->cursorLine(), column = code->cursorColumn();
+    QVERIFY(column > 0);
     QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
     QCOMPARE(activation.size(), 1);
     if (representation == QLatin1String("llvmc"))
@@ -8054,6 +8061,11 @@ private slots:
     QTRY_VERIFY(code->hasFocus());
     QTRY_COMPARE(disassembly->currentFunction(),
                  std::optional<Address>(callee));
+    // A move in the callee, as a click on one of its rows makes, follows in
+    // the disassembly without a stop of its own: one Back leaves the callee.
+    disassembly->navigate(callee + 2, false);
+    QTRY_COMPARE(disassembly->currentAddress(),
+                 std::optional<Address>(callee + 2));
     QVERIFY(bench.action(ActionId::JumpBack)->isEnabled());
     bench.action(ActionId::JumpBack)->trigger();
     QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(caller),
@@ -8062,6 +8074,12 @@ private slots:
     QVERIFY(code->isVisible());
     QTRY_VERIFY(code->hasFocus());
     QCOMPARE(view->representation(), representation);
+    // The code is back where it left: the cursor on the call, in view as it
+    // was, as Hex-Rays' Esc returns.
+    QCOMPARE(code->cursorLine(), line);
+    QCOMPARE(code->cursorColumn(), column);
+    QCOMPARE(code->currentToken(), link);
+    QCOMPARE(code->verticalScrollBar()->value(), top);
     QVERIFY(bench.action(ActionId::JumpForward)->isEnabled());
     bench.action(ActionId::JumpForward)->trigger();
     QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
@@ -8069,6 +8087,9 @@ private slots:
     QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
     QVERIFY(code->isVisible());
     QTRY_VERIFY(code->hasFocus());
+    // Forward returns to where the callee was left.
+    QTRY_COMPARE(disassembly->currentAddress(),
+                 std::optional<Address>(callee + 2));
   }
 
   void functionsActivationKeepsCodeWindow_data() {
@@ -11819,6 +11840,52 @@ private slots:
              std::optional<Address>(Base + expectedRva));
     assembly->goBack();
     QTRY_COMPARE(assembly->currentItem(), std::optional<Address>(origin));
+  }
+
+  void historyStopsFollowTheCursor() {
+    // IDA's history keeps a stop per jump that follows the cursor: a move
+    // since the jump, such as a click in the code it opened, adds no stop,
+    // so Back returns to where each jump began and Forward to where the user
+    // left.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    const auto at = [&](Address address) {
+      QTRY_VERIFY_WITH_TIMEOUT(!disassembly->listing()->jumpPending(),
+                               OpenTimeoutMs);
+      QTRY_COMPARE(disassembly->currentAddress(),
+                   std::optional<Address>(address));
+    };
+    const Address start = Base + 0x50, called = Base + 0x140,
+                  read = called + 2, reread = called + 4, next = Base + 0x180;
+    disassembly->navigate(start);
+    at(start);
+    disassembly->navigate(called);
+    at(called);
+    disassembly->navigate(read, false);
+    at(read);
+    disassembly->navigate(next);
+    at(next);
+    disassembly->goBack();
+    at(read);
+    disassembly->goBack();
+    at(start);
+    disassembly->goForward();
+    at(read);
+    disassembly->goForward();
+    at(next);
+    disassembly->goBack();
+    at(read);
+    disassembly->navigate(reread, false);
+    at(reread);
+    disassembly->goBack();
+    at(start);
+    disassembly->goForward();
+    at(reread);
   }
 
   void laterLinksSupersedeAQueuedGraphView() {
