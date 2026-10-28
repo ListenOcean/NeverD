@@ -3167,7 +3167,10 @@ writers read it, so that a caller returning what a `void` routine left in
 RAX returns nothing too. A routine never returns where its name says so, as
 the tables (`isNoReturnFunction`) or a `_Noreturn` prototype
 (`resolvePrototype`) do: an import, a symbol, or an export the image's own
-code calls (`NoReturnTargetIndex`). Its cached and demand-loaded lookups share
+code calls (`NoReturnTargetIndex`). A name a program may also give a routine
+of its own decides only together with the module that exports it
+(`isNoReturnImport`, `WindowsNoReturnImports.inc`): the Universal CRT's
+`terminate` never returns. Its cached and demand-loaded lookups share
 the image's executable-veneer admission, exact IAT precedence and first
 non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
 resolve through the same veneer owner. Function discovery reads no header, so
@@ -4766,6 +4769,15 @@ proof is shared by structured clauses and fallback annotations before any
 native filter code moves. Side-effecting filters retain their original body.
 The COFF C renderer emits lexical SEH/C++ protection only for reducible nodes;
 fallback views preserve native dispatch annotations and original statements.
+Table SEH scopes sharing one range print as nested single-clause `__try`
+statements, the first innermost, the order the runtime tries them in. Only the
+outermost arm takes its handler block: an inner handler lies outside the range,
+so outside the outer tries as well, and stays where it is.
+A catch funclet is outside the try block it handles, although MSVC maps the
+funclet's continuation tail back to a state of that try. The funclet gets no
+region of it, and the fallback view of a function under an IP-to-state map
+lists only the try blocks holding its own states and the cleanups those states
+run.
 The fixed LLVM C++ prologue has its own COFF decoder. It authenticates the
 saved-register prefix, allocation, all node fields and six-byte FS publication.
 `RegistrationChainInfo` owns translation from runtime EBP to the source frame;
@@ -7318,7 +7330,10 @@ the descent decodes that instruction whole and falls into the guess, while
 real padding stops it at the int3. Off the 16-byte grid the scan takes only
 the frame setup itself, `push ebp; mov ebp, esp` (55 8B EC or 55 89 E5): a
 byte 0x55 followed by any move opcode starts no function inside an
-instruction.
+instruction. Code no function reaches is not rechecked this way, so the
+padding scan itself takes no byte 0x40-0x4F after an int3 in a 32-bit image
+(`isPrologueAt`): those are REX prefixes only in 64-bit code, and IA-32 decodes
+them as INC/DEC, as in the operand of `mov [0x4048cc], eax`.
 
 A whole unit (`neverd_decompile_all`, in every language, or the unit of a
 selection `neverd_decompile_functions` writes) begins with a
@@ -12619,7 +12634,7 @@ DarwinFiles keeps Pselect timespec/mask import and signal-state refusal in Darwi
 
 `proveLowSEHEstablisherFrame` owns the decoded Windows x64 parent-frame proof shared by LowIR and SSA. It checks normalized unwind actions, complete instruction/CFG provenance and every reaching protected prefix under a bounded query. SSA additionally checks converted ABI effects. A certified handler entry supplies only its fixed SP coordinate; it restores no saved memory facts. Ordinary catch-return analysis keeps its original entry domain, while a separate local-unwind address inventory visits declared activation roots without carrying register values across exceptional edges. Runtime identity, exact continuation uses and whole-module exclusivity remain independent publication requirements.
 
-Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP.
+Each whole-function frame query validates its immutable CFG once and indexes protected blocks by handler. Budgets charge visited work. SEH finally callbacks retain a separate invocation stack, so an overlapping finally entry cannot establish an except body's parent SP. An SEH scope guards the instructions that start inside its range. clang-cl ends a range one byte past its last call's return address, so the instruction there is checked; an epilogue later in that block, which no scope guards, is not checked.
 
 `med/X86/SEHFrame` rechecks converted SP effects and projects protected sources
 by their native operation addresses. CFG compaction and entry splitting change

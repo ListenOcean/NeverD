@@ -139,6 +139,16 @@ and encoding index instead of process-specific diagnostic object bytes.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
+`COFFExceptionIR.HighCSEHScopesSharingARangeNestInTableOrder` checks both
+orders of a finally and an except scope over one range: nested single-clause
+tries, the outermost arm holding its handler, and an inner handler left after
+both tries.
+
+`COFFExceptionIR.HighCCatchFuncletIsOutsideItsOwnTry` checks that a catch
+funclet whose tail maps back to its own try gets no region of it, nor of a
+parent try its states never reach, while another handler's try still protects
+it.
+
 `NeverDCOFFExceptionIRTests` executes split protected-range loops with every
 test exception mask at O0/O2, checks unprotected operations remain outside the
 range, and rejects conflicting or nested scope states. The portable harness
@@ -178,7 +188,10 @@ return-slot writes are disjoint from observed bytes. Overlapping reads, missing
 fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
 remains unavailable. The same fixture checks that copy propagation and DCE
 retain the ordinary entry register marker needed to omit an unobserved RBP
-save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+save from both source projections.
+`MedSEHEstablisherFrame.EpilogueAfterTheGuardedRangeIsUnchecked` checks a
+clang-cl range that ends one byte past a call's return address, with a range
+covering the epilogue as its negative control. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
 checks that a range seed cannot become an exact executable value or survive
 query removal, detached definitions or conflicting bounds.
 `MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
@@ -3932,6 +3945,9 @@ metadata, stack/nonvolatile writes, conditional control flow, no-return calls,
 missing home space, local/interior/continuation targets, non-executable ranges,
 truncation, relocatable input and targets with no callable exit. These run in
 `NeverDImageAnalysisBoundaryTests` and the aggregate lift suite.
+`FunctionDiscoveryAlignment.RexBytesBeginFunctionsOnlyIn64BitCode` checks that
+the padding scan starts an x64 function at a REX byte after an int3, but no
+IA-32 function at the same INC/DEC byte.
 
 `FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
 64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
@@ -5832,6 +5848,9 @@ screen sends a callee to the proof only when each of its returns follows such
 a call, so one that calls the function on an error path costs no proof. A
 tail jump into a function that is stated, named or proved never to return
 ends its path, and a statement that the target returns decides over both.
+`InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
+imported from the Universal CRT ends its caller's block, and that the same name
+imported from another module does not.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
