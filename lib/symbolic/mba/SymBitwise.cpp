@@ -313,9 +313,16 @@ struct Implicant {
 /// The minterms an implicant covers.
 TruthTable coverage(Implicant P, unsigned NumVars) {
   TruthTable Covered = TruthTable::zero(NumVars);
-  for (size_t K = 0, E = Covered.entries(); K < E; ++K)
-    if ((static_cast<uint32_t>(K) & P.Care) == P.Value)
-      Covered.set(K);
+  const auto Free = static_cast<uint32_t>(Covered.entries() - 1) & ~P.Care;
+  // Only the uncared inputs vary. Visit the exact covered subcube instead
+  // of scanning every assignment and rejecting the constrained ones.
+  uint32_t Subset = Free;
+  for (;;) {
+    Covered.set(P.Value | Subset);
+    if (!Subset)
+      break;
+    Subset = (Subset - 1) & Free;
+  }
   return Covered;
 }
 
@@ -347,7 +354,7 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
     // Deduplication keeps both complete 32-bit fields in one integer key.
     llvm::SmallVector<char, 16> Merged(Current.size(), 0);
     llvm::SmallVector<Implicant, 16> Next;
-    llvm::DenseSet<uint64_t> Seen;
+    llvm::SmallDenseSet<uint64_t, 64> Seen;
     auto grow = [&](size_t I, size_t J, uint32_t Diff) {
       Merged[I] = Merged[J] = 1;
       Implicant Grown{Current[I].Value & ~Diff, Current[I].Care & ~Diff};
@@ -363,7 +370,7 @@ std::vector<Implicant> primeImplicants(const TruthTable &Table,
       auto key = [](uint32_t Value, uint32_t Care) {
         return (uint64_t(Care) << 32) | Value;
       };
-      llvm::DenseMap<uint64_t, size_t> Positions;
+      llvm::SmallDenseMap<uint64_t, size_t, 64> Positions;
       Positions.reserve(Current.size());
       for (size_t I = 0; I < Current.size(); ++I)
         Positions.try_emplace(key(Current[I].Value, Current[I].Care), I);

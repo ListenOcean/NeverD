@@ -32483,7 +32483,9 @@ TEST(HighCPointerAddresses, NestedIfKeepsPredicateCallsFromEmptyThenElse) {
   EXPECT_NE(Source.find("arg2 == 1"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
+TEST(HighCPointerAddresses, NestedIfKeepsOtherKindCallsBeforeFieldGuard) {
+  // The body's IsKind calls read other arguments than the guard's call, so
+  // they are other executions and stay.
   HighFunc Func;
   Func.Name = "leftover_kind";
   Func.Entry = 0x140001000;
@@ -32569,7 +32571,7 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 3u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfKeepsSideEffectCallBeforeFieldGuard) {
@@ -32633,10 +32635,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
     V.TheArch = Arch::X64;
     return V;
   };
+  // The body's IsKind assignment copies the guard's call instruction.
   HighStmt Kind;
   Kind.Kind = StmtKind::Assign;
   Kind.Dst = HighExpr::makeVar(Temp(71));
   Kind.Val = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  Kind.Val->CallSiteAddr = 0x140001010;
   HighStmt Field;
   Field.Kind = StmtKind::Assign;
   Field.Dst = HighExpr::makeVar(Temp(76, 35));
@@ -32669,12 +32673,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
   Empty.Val = HighExpr::makeCall(
       "IsEmpty", 0x140002200,
       {parameter(1), HighExpr::makeVar(Temp(71)), HighExpr::makeVar(Temp(73))});
+  ExprPtr GuardKind = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  GuardKind->CallSiteAddr = Kind.Val->CallSiteAddr;
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(
-      NdOp::INT_NOTEQUAL,
-      HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)}),
-      HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(GuardKind),
+                                   HighExpr::makeConst(0, 4));
   Guard.Body = {Kind, Field, Inner, Undef, Empty};
   Func.Body = {Guard};
   structureIfElse(Func, 8);
@@ -32732,6 +32736,166 @@ bool everyReadTempIsAssigned(const HighFunc &Func) {
   });
   return std::includes(Assigned.begin(), Assigned.end(), Read.begin(),
                        Read.end());
+}
+
+TEST(HighCPointerAddresses, RepeatedOuterTestRunsComposedCallOnce) {
+  // `if (a) { t = probe(b); if (a && t) work(a); }`: the inner test repeats
+  // the outer one, and what remains of it takes the composed probe call.
+  // The prefix call is that execution, with or without a call site, so it
+  // runs once. A later reader of t keeps the inner test uncomposed.
+  for (int Variant = 0; Variant < 3; ++Variant) {
+    HighFunc Func;
+    Func.Name = "repeated_outer_test";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    const MedVar Probed = temporary(40, 0, 4);
+    ExprPtr Probe = HighExpr::makeCall("probe", 0x140002300, {parameter(1)});
+    if (Variant == 1)
+      Probe->CallSiteAddr = 0x140001010;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Cond = HighExpr::makeBinop(
+        NdOp::BOOL_AND,
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                            HighExpr::makeConst(0, 8)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Probed),
+                            HighExpr::makeConst(0, 4)));
+    Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                     HighExpr::makeConst(0, 8));
+    Outer.Body = {assignTo(Probed, std::move(Probe)), Inner};
+    Func.Body = {Outer};
+    if (Variant == 2)
+      Func.Body.push_back(
+          callStmt("use", 0x140002400, {HighExpr::makeVar(Probed)}));
+    structureIfElse(Func, 8);
+    EXPECT_TRUE(everyReadTempIsAssigned(Func)) << Variant;
+    const std::string Source = emitFunctions({Func});
+    const auto BodyAt = Source.find("void repeated_outer_test");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t ProbeCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("probe(", Pos)) != std::string::npos; Pos += 6)
+      ++ProbeCount;
+    EXPECT_EQ(ProbeCount, 1u) << Variant << "\n" << Source;
+    EXPECT_NE(Source.find("work(", BodyAt), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCPointerAddresses, RepeatedOuterTestKeepsCallBeforeLaterEffect) {
+  // `if (a) { t = probe(b); note(); if (a && t) work(a); }`: dropping the
+  // repeated outer test must not move probe past note, with or without a
+  // call site.
+  for (int Sited = 0; Sited < 2; ++Sited) {
+    HighFunc Func;
+    Func.Name = "repeated_test_effect";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    const MedVar Probed = temporary(40, 0, 4);
+    ExprPtr Probe = HighExpr::makeCall("probe", 0x140002300, {parameter(1)});
+    if (Sited)
+      Probe->CallSiteAddr = 0x140001010;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Cond = HighExpr::makeBinop(
+        NdOp::BOOL_AND,
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                            HighExpr::makeConst(0, 8)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Probed),
+                            HighExpr::makeConst(0, 4)));
+    Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                     HighExpr::makeConst(0, 8));
+    Outer.Body = {assignTo(Probed, std::move(Probe)),
+                  callStmt("note", 0x140002400, {}), Inner};
+    Func.Body = {Outer};
+    structureIfElse(Func, 8);
+    const std::string Source = emitFunctions({Func});
+    const auto BodyAt = Source.find("void repeated_test_effect");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t ProbeCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("probe(", Pos)) != std::string::npos; Pos += 6)
+      ++ProbeCount;
+    EXPECT_EQ(ProbeCount, 1u) << Sited << "\n" << Source;
+    EXPECT_LT(Source.find("probe(", BodyAt), Source.find("note(", BodyAt))
+        << Sited << "\n"
+        << Source;
+    EXPECT_NE(Source.find("work(", BodyAt), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCPointerAddresses, NestedIfMergeKeepsPrefixCallsWhereTheyRan) {
+  // Each prefix call runs whenever the outer test holds, before the inner
+  // test. Merging the two tests must not make it wait on the inner one:
+  //   0: `t = other(b); if (c) work(a);`
+  //   1: `t = fcall(b); u = hcall(); if (a && t) work(a);`
+  //   2: `t = fcall(b); if (a && c && t) work(a);`
+  for (int Shape = 0; Shape < 3; ++Shape)
+    for (int Sited = 0; Sited < 2; ++Sited) {
+      SCOPED_TRACE(testing::Message()
+                   << "Shape " << Shape << " Sited " << Sited);
+      HighFunc Func;
+      Func.Name = "prefix_calls";
+      Func.Entry = 0x140001000;
+      Func.ReturnType = NdType::makeVoid();
+      auto NonZero = [](ExprPtr E, unsigned Size) {
+        return HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(E),
+                                   HighExpr::makeConst(0, Size));
+      };
+      const MedVar T = temporary(40, 0, 4), U = temporary(41, 0, 4);
+      const char *Name = Shape == 0 ? "other" : "fcall";
+      ExprPtr First = HighExpr::makeCall(Name, 0x140002300, {parameter(1)});
+      if (Sited)
+        First->CallSiteAddr = 0x140001010;
+      HighStmt Inner;
+      Inner.Kind = StmtKind::If;
+      if (Shape == 0)
+        Inner.Cond = NonZero(parameter(2), 8);
+      else if (Shape == 1)
+        Inner.Cond =
+            HighExpr::makeBinop(NdOp::BOOL_AND, NonZero(parameter(0), 8),
+                                NonZero(HighExpr::makeVar(T), 4));
+      else
+        Inner.Cond = HighExpr::makeBinop(
+            NdOp::BOOL_AND,
+            HighExpr::makeBinop(NdOp::BOOL_AND, NonZero(parameter(0), 8),
+                                NonZero(parameter(2), 8)),
+            NonZero(HighExpr::makeVar(T), 4));
+      Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+      HighStmt Outer;
+      Outer.Kind = StmtKind::If;
+      Outer.Cond = NonZero(parameter(0), 8);
+      Outer.Body = {assignTo(T, std::move(First))};
+      if (Shape == 1)
+        Outer.Body.push_back(
+            assignTo(U, HighExpr::makeCall("hcall", 0x140002400, {})));
+      Outer.Body.push_back(Inner);
+      Func.Body = {Outer};
+      structureIfElse(Func, 8);
+      const std::string Source = emitFunctions({Func});
+      const auto BodyAt = Source.find("void prefix_calls");
+      ASSERT_NE(BodyAt, std::string::npos) << Source;
+      const auto OuterTest = Source.find("if (", BodyAt);
+      const auto InnerTest = Source.find("if (", OuterTest + 1);
+      ASSERT_NE(InnerTest, std::string::npos) << Source;
+      for (const char *Call : {Shape == 0 ? "other(" : "fcall(",
+                               Shape == 1 ? "hcall(" : nullptr}) {
+        if (!Call)
+          continue;
+        const auto At = Source.find(Call, BodyAt);
+        EXPECT_GT(At, OuterTest) << Source;
+        EXPECT_LT(At, InnerTest) << Source;
+        EXPECT_EQ(Source.find(Call, At + 1), std::string::npos) << Source;
+      }
+      if (Shape == 1)
+        EXPECT_LT(Source.find("fcall(", BodyAt), Source.find("hcall(", BodyAt))
+            << Source;
+    }
 }
 
 TEST(HighCPointerAddresses, TrailingLoadReadAsLaterCallArgumentStays) {
@@ -36031,7 +36195,7 @@ TEST(HighCPointerAddresses, GsHandlerDataBit2AlignBranchIsPrinted) {
   EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
+TEST(HighCPointerAddresses, CallResultUsedByTestEaxReachesReturn) {
   // `call helper / test eax, eax / je` must keep the call result. Dropping
   // the dest turns the compare into an uninitialized temp (cxx_eh_probe
   // 0x140001570).
@@ -36090,9 +36254,18 @@ TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_NE(Source.find("= ret_one("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("\n    ret_one();"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  // Both exits return RAX, so folding the branch to a direct returned call is
+  // valid. Check the machine result and diagnose an uninitialized temporary
+  // rather than requiring a particular assignment or conditional spelling.
+  const std::string Program = Source + R"c(
+int64_t ret_one(void) { return 1; }
+int main(void) {
+  return uses_call_result() == 1 ? 0 : 1;
+}
+)c";
+  for (const char *Optimization : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Program, {Optimization, "-Werror=uninitialized"});
 }
 
 TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {

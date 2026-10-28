@@ -395,6 +395,10 @@ struct RegistrationStateAnalysis {
   std::vector<RegistrationChainAccess> ChainAccesses;
   std::optional<RegistrationCxxPrologueEffect> CxxPrologue;
   std::vector<RegistrationFrameValue> FrameValues;
+  /// The proven return cleanup of the callees this function calls. A
+  /// callee's stack adjustment does not depend on the reaching registration
+  /// state, so these remain when that proof is incomplete.
+  std::vector<RegistrationCalleeStackContract> CalleeStacks;
   bool IncomingFrameAccessesComplete = true;
   std::vector<RegistrationIncomingFrameAccess> IncomingFrameAccesses;
   /// Per-occurrence stack and initialized-object projections, rechecked from

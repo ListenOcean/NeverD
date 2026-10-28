@@ -1657,6 +1657,7 @@ void CodeText::paintEvent(QPaintEvent *) {
   const auto cursor = std::pair{cursorLine_, cursorColumn_};
   const auto selectionFirst = anchor_ ? std::min(*anchor_, cursor) : cursor;
   const auto selectionLast = anchor_ ? std::max(*anchor_, cursor) : cursor;
+  const TokenDots dots = tokenDots();
   for (int i = first; i <= last; ++i) {
     const int y = (i - first) * lineHeight_;
     const QRect row(0, y, area.width(), lineHeight_);
@@ -1676,7 +1677,7 @@ void CodeText::paintEvent(QPaintEvent *) {
       const bool searching = !SearchHighlight.Text.isEmpty();
       const auto matches =
           searching ? SearchHighlight.matches(lines_[i].styled.text)
-                    : tokenOccurrences(lines_[i].styled.text, highlight_);
+                    : tokenOccurrences(lines_[i].styled.text, highlight_, dots);
       const int length =
           searching ? SearchHighlight.Text.size() : highlight_.size();
       for (const int at : matches) {
@@ -1837,7 +1838,7 @@ void CodeText::revealAddress(Address address) {
 QString CodeText::currentToken() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
     return {};
-  return lines_[cursorLine_].styled.tokenAt(cursorColumn_);
+  return lines_[cursorLine_].styled.tokenAt(cursorColumn_, tokenDots());
 }
 
 std::optional<QJsonObject> CodeText::renameTarget() const {
@@ -2083,6 +2084,27 @@ QString CodeText::selectedText() const {
   return text.join(QLatin1Char('\n'));
 }
 
+QString CodeText::cursorWord() const {
+  if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
+           .isEmpty())
+    return {};
+  if (const auto name = sourceNameAt(cursorLine_, cursorColumn_))
+    return name->first;
+  return tokenAt(cursorLine_, cursorColumn_);
+}
+
+QString CodeText::copyText() const {
+  if (anchor_ && *anchor_ != std::pair{cursorLine_, cursorColumn_})
+    return selectedText();
+  // A folded summary copies the code it stands for.
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
+           .isEmpty())
+    return selectedText();
+  return cursorWord();
+}
+
 QString CodeText::allText() const {
   QString text = source_;
   if (text.endsWith(QLatin1Char('\n')))
@@ -2210,42 +2232,47 @@ bool CodeText::selectSearchRange(int begin, int length) {
 
 void CodeText::keyPressEvent(QKeyEvent *event) {
   const bool shift = event->modifiers() & Qt::ShiftModifier;
+  // The highlight follows the cursor, as IDA's does, so Copy takes the word
+  // it marks.
+  const auto move = [&](int line, int column) {
+    moveCursor(line, column, shift);
+    highlight_ = cursorWord();
+  };
   switch (event->key()) {
   case Qt::Key_Up:
-    moveCursor(cursorLine_ - 1, cursorColumn_, shift);
+    move(cursorLine_ - 1, cursorColumn_);
     return;
   case Qt::Key_Down:
-    moveCursor(cursorLine_ + 1, cursorColumn_, shift);
+    move(cursorLine_ + 1, cursorColumn_);
     return;
   case Qt::Key_PageUp:
-    moveCursor(cursorLine_ - visibleLines() + 1, cursorColumn_, shift);
+    move(cursorLine_ - visibleLines() + 1, cursorColumn_);
     return;
   case Qt::Key_PageDown:
-    moveCursor(cursorLine_ + visibleLines() - 1, cursorColumn_, shift);
+    move(cursorLine_ + visibleLines() - 1, cursorColumn_);
     return;
   case Qt::Key_Left:
-    moveCursor(cursorLine_, cursorColumn_ - 1, shift);
+    move(cursorLine_, cursorColumn_ - 1);
     return;
   case Qt::Key_Right:
-    moveCursor(cursorLine_, cursorColumn_ + 1, shift);
+    move(cursorLine_, cursorColumn_ + 1);
     return;
   case Qt::Key_Home:
-    moveCursor((event->modifiers() & Qt::ControlModifier) ? 0 : cursorLine_, 0,
-               shift);
+    move((event->modifiers() & Qt::ControlModifier) ? 0 : cursorLine_, 0);
     return;
   case Qt::Key_End:
     if ((event->modifiers() & Qt::ControlModifier) && !lines_.isEmpty())
-      moveCursor(int(lines_.size()) - 1, int(lines_.back().styled.text.size()),
-                 shift);
+      move(int(lines_.size()) - 1, int(lines_.back().styled.text.size()));
     else if (cursorLine_ < lines_.size())
-      moveCursor(cursorLine_, int(lines_[cursorLine_].styled.text.size()),
-                 shift);
+      move(cursorLine_, int(lines_[cursorLine_].styled.text.size()));
     return;
   default:
     break;
   }
   if (event->matches(QKeySequence::Copy)) {
-    QApplication::clipboard()->setText(selectedText());
+    // Blank space leaves the clipboard as it was, as in IDA.
+    if (const QString text = copyText(); !text.isEmpty())
+      QApplication::clipboard()->setText(text);
     return;
   }
   if (event->matches(QKeySequence::SelectAll)) {
@@ -2350,11 +2377,11 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
       return;
   }
   moveCursor(line, column, event->modifiers() & Qt::ShiftModifier);
+  // Either button marks the word Copy then takes, the menu's too.
+  highlight_ = cursorWord();
   if (event->button() == Qt::LeftButton) {
     selecting_ = true;
     dragPoint_ = event->position().toPoint();
-    const auto name = sourceNameAt(line, column);
-    highlight_ = name ? name->first : tokenAt(line, column);
   }
   updateMouseCursor(event->position().toPoint());
   viewport()->update();
@@ -2469,9 +2496,15 @@ QString CodeText::tokenAt(int line, int column) const {
   if (line < 0 || line >= lines_.size())
     return {};
   if (dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
-    return lines_[line].styled.tokenAt(column);
+    return lines_[line].styled.tokenAt(column, tokenDots());
   const auto token = llvmTokenAt(lines_[line].styled.text, column);
   return token ? token->text : QString();
+}
+
+TokenDots CodeText::tokenDots() const {
+  return sourceDialect(dialectOf(representation_, pageLanguage_))
+             ? TokenDots::Split
+             : TokenDots::Join;
 }
 
 std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {

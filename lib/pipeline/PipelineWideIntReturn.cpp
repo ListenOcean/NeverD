@@ -12,6 +12,7 @@
 
 #include "PipelineRegisterCalls.h"
 #include "PipelineReturnModelingDetail.h"
+#include "PipelineSourceStackAccesses.h"
 #include "PipelineWideIntReturnDetail.h"
 
 #include "neverd/Common.h"
@@ -538,6 +539,9 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
           StackProbeSlots.insert(SlotVA);
       }
 
+      const auto CallReturns = StackProjection == MedStackProjection::Source
+                                   ? sourceCallReturnRanges(Img, Result)
+                                   : MedCallReturnRanges{};
       for (size_t I = 0; I < Result.MedFuncs.size(); ++I) {
         bool CallsI64 = false;
         for (const auto &Blk : Result.MedFuncs[I].Blocks) {
@@ -598,8 +602,8 @@ void modelWideIntReturns(const BinaryImage &Img, PipelineResult &Result,
         // Reconversion replaces the operation sequence. Repeat the same stack
         // proofs as the initial conversion before either source emitter reads
         // it.
-        prepareMedStackAccesses(NewMF, Result.LowFuncs[I], Img,
-                                StackProjection);
+        prepareMedStackAccesses(NewMF, Result.LowFuncs[I], Img, StackProjection,
+                                &CallReturns);
         if (StackProjection == MedStackProjection::Source)
           expandSourceRegisterCalls(NewMF, Img, Result.CallRegisterLeaves);
         Result.MedFuncs[I] = std::move(NewMF);

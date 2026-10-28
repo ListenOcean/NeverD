@@ -107,6 +107,13 @@ struct NativeLogRecord {
   std::vector<uint8_t> Payload;
 };
 
+/// One ordered, exact LOG_ID_EVENTS write and its supplied liblog int result.
+/// Payload includes the little-endian int32 tag. No logd state is inferred.
+struct NativeEventLogWrite {
+  std::vector<uint8_t> Payload;
+  int32_t Result = 0;
+};
+
 /// One explicit successful LP64 dladdr observation. Address matches exactly;
 /// image membership and symbol selection are supplied, never inferred.
 struct NativeDladdrObservation {
@@ -146,6 +153,10 @@ struct AndroidNativeOptions {
   /// IDs 0..5, at most 4096 entries and 1 MiB including v4 headers. This does
   /// not infer permissions, logd sockets, live producers or persistent logs.
   std::optional<std::vector<NativeLogRecord>> LogRecords;
+  /// Finite write-result transcript, independent of the visible read snapshot.
+  /// Missing, exhausted or mismatching writes stop before consuming an entry.
+  /// At most 4096 entries / 1 MiB, each with 4..4068 exact payload bytes.
+  std::optional<std::vector<NativeEventLogWrite>> EventLogWrites;
   std::vector<NativeMemoryRegion> Memory;
   std::vector<NativeMemoryRead> ReadMemory;
   /// Constructors normally execute before the call, sharing its budget.

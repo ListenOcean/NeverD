@@ -11,8 +11,15 @@
 #include <functional>
 #include <memory>
 #include <optional>
+#include <utility>
 
 namespace neverd::gui {
+
+/// How a dot sits in a word: a listing's and IR's names keep theirs
+/// (`.text`, `main.cold`, `RSP.3`), while pseudocode splits a member access
+/// or qualified name (`frame.var_8`, `fmt.Println`) and keeps a decimal
+/// number (`1.5`) whole.
+enum class TokenDots { Join, Split };
 
 /// A run of styled text: character range, role code and the location a name
 /// denotes (for navigation).
@@ -48,7 +55,7 @@ struct StyledLine {
   /// Span covering \p position, if any.
   const StyledSpan *spanAt(int position) const;
   /// Identifier-like token around \p position.
-  QString tokenAt(int position) const;
+  QString tokenAt(int position, TokenDots dots = TokenDots::Join) const;
 
   using ColorOf = std::function<QColor(int role)>;
   QTextLayout &layout(const QFont &font, quint64 stamp,
@@ -60,7 +67,12 @@ private:
 };
 
 /// Whole-word occurrences of \p token in \p text.
-QVector<int> tokenOccurrences(const QString &text, const QString &token);
+QVector<int> tokenOccurrences(const QString &text, const QString &token,
+                              TokenDots dots = TokenDots::Join);
+/// Bounds [first, second) of the identifier-like token around \p position in
+/// \p text; an empty range where no token touches it.
+std::pair<int, int> tokenRange(const QString &text, int position,
+                               TokenDots dots = TokenDots::Join);
 bool isTokenCharacter(QChar c);
 
 } // namespace neverd::gui

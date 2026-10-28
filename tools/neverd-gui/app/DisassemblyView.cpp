@@ -247,6 +247,10 @@ QString DisassemblyView::selectedText() const {
   return graphMode() ? graph_->currentRowText() : listing_->selectedText();
 }
 
+QString DisassemblyView::copyText() const {
+  return graphMode() ? graph_->copyText() : listing_->copyText();
+}
+
 void DisassemblyView::addressSpaceChanged() {
   listing_->viewport()->update();
   updateStatus();

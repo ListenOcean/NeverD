@@ -31,16 +31,6 @@
 
 namespace neverd::symbolic::detail {
 
-struct ResidueMemo {
-  struct Attempt {
-    SymRef Result;
-    size_t AvailableStorage;
-    bool Multiple;
-  };
-  std::map<std::pair<uint32_t, bool>, Attempt> Attempts;
-  std::vector<std::pair<uint32_t, uint32_t>> Generated;
-};
-
 namespace {
 
 using Atom = std::vector<uint32_t>;
@@ -52,6 +42,25 @@ struct Factor {
   unsigned Zeros = 0;
   bool FixedValuation = false;
 };
+
+} // namespace
+
+struct ResidueMemo {
+  struct Attempt {
+    SymRef Result;
+    size_t AvailableStorage;
+    bool Multiple;
+  };
+  struct ParityPrefix {
+    SymRef Root;
+    std::vector<Factor> Factors;
+  };
+  std::map<std::pair<uint32_t, bool>, Attempt> Attempts;
+  std::vector<std::pair<uint32_t, uint32_t>> Generated;
+  std::optional<ParityPrefix> PreparedParity;
+};
+
+namespace {
 
 // Retry a storage-limited attempt when more storage becomes available. Other
 // completed attempts are reusable across callers' scratch allowances. A
@@ -197,7 +206,8 @@ bool proveAtResiduePrecisions(size_t Count, unsigned MaxBits, unsigned Needed,
 // the exact trailing zeros of even factors at a few complete assignments.
 // Correlated subexpressions always see the same actual input values.
 bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
-                              Resources &Res, unsigned Needed) {
+                              Resources &Res, unsigned Needed,
+                              llvm::ArrayRef<Factor> Prefixes = {}) {
   std::map<uint32_t, std::optional<bool>> Values;
   size_t Work = 0;
   uint64_t VariableValue = 1;
@@ -276,12 +286,45 @@ bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
       Values.emplace(R.index(), Result);
     return Result;
   };
+  // Completed coefficient maps already describe the original factors at
+  // their proved precision. Evaluate just their parity at the same concrete
+  // input assignment, rather than walking the discarded high expressions.
+  // An opaque atom still needs its actual value; independent atom choices
+  // would not be a witness for correlated factors.
+  auto Parity = [&](size_t I) -> std::optional<bool> {
+    if (Prefixes.empty())
+      return Read(Read, Factors[I], 0);
+    if (Work >= limits::kMaxResidueWitnessWork || !Res.charge(1))
+      return std::nullopt;
+    ++Work;
+    const auto &F = Prefixes[I];
+    bool Value = F.Offset[0];
+    for (const auto &[Atom, Coeff] : F.Terms) {
+      if (Work >= limits::kMaxResidueWitnessWork || !Res.charge(1))
+        return std::nullopt;
+      ++Work;
+      if (!Coeff[0])
+        continue;
+      bool Term = true;
+      for (auto Id : Atom) {
+        const auto Bit = Read(Read, SymRef(Id), 0);
+        if (!Bit)
+          return std::nullopt;
+        if (!*Bit) {
+          Term = false;
+          break;
+        }
+      }
+      Value ^= Term;
+    }
+    return Value;
+  };
   for (bool Input : {true, false}) {
     VariableValue = Input;
     Values.clear();
     bool AllOdd = true;
-    for (auto F : Factors) {
-      auto V = Read(Read, F, 0);
+    for (size_t I = 0; I < Factors.size(); ++I) {
+      auto V = Parity(I);
       if (!V || !*V || Res.Failed) {
         AllOdd = false;
         break;
@@ -325,14 +368,14 @@ bool hasNonzeroProductWitness(SymContext &Ctx, llvm::ArrayRef<SymRef> Factors,
     Values.clear();
     unsigned TotalZeros = 0;
     bool Complete = true;
-    for (auto F : Factors) {
-      auto V = Read(Read, F, 0);
+    for (size_t I = 0; I < Factors.size(); ++I) {
+      auto V = Parity(I);
       if (!V || Res.Failed) {
         Complete = false;
         break;
       }
       if (!*V) {
-        auto Zeros = ZerosAt(F);
+        auto Zeros = ZerosAt(Factors[I]);
         if (!Zeros || *Zeros >= Needed - TotalZeros) {
           Complete = false;
           break;
@@ -1976,12 +2019,15 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
   // the useful congruence. This estimate only orders attempts: every rewrite
   // still requires complete coefficient maps and an exact residue bound.
   PrefixConstants Prefixes{Ctx, Res, {}};
-  auto Prove = [&](unsigned Bits, unsigned Needed) {
+  bool WitnessChecked = false;
+  bool Nonzero = false;
+  auto Prove = [&](unsigned Bits) {
     if (!Bits || !Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
       return false;
     std::vector<Factor> Factors;
     Factors.reserve(Operands.size());
     unsigned Available = Bits;
+    unsigned Remaining = Needed;
     for (auto R : Operands) {
       if (!Res.scalar(1))
         return false;
@@ -2018,24 +2064,46 @@ static SymRef foldProjectedProductResiduesImpl(SymContext &Ctx, SymRef Root,
             !SetValuation())
           return false;
       }
-      if (F.Zeros >= Needed)
+      if (F.Zeros >= Remaining)
         return true;
-      Needed -= F.Zeros;
+      Remaining -= F.Zeros;
       // A zero prefix guarantees only Bits zeros, not a zero full-width factor.
       if (!F.FixedValuation)
         Available = std::min(Available, F.Offset.getBitWidth() - F.Zeros);
       Factors.push_back(std::move(F));
     }
-    return proveAffineResidues(Factors, Available, Needed, Res);
+    if (!WitnessChecked && !Res.Failed &&
+        Needed <= limits::kMaxAffineResidueTableBits) {
+      WitnessChecked = true;
+      Nonzero = hasNonzeroProductWitness(Ctx, Operands, Res, Needed, Factors);
+    }
+    if (Nonzero && Bits == 1 && Remaining == Needed &&
+        Budget.MemoOwner == &Ctx && Budget.MemoCapacity) {
+      // These complete parity maps are the next residual reader's first
+      // precision. No factor was widened or stripped of fixed zeros. Move
+      // their already charged storage across that boundary, retaining only
+      // one pending product in this request's context-owned memo.
+      const size_t Bytes =
+          Budget.Residues ? 0 : sizeof(ResidueMemo) + 2 * sizeof(void *);
+      if (Bytes <= Storage && Budget.canConsume(1)) {
+        Budget.consume();
+        Storage -= Bytes;
+        if (!Budget.Residues)
+          Budget.Residues = std::make_shared<ResidueMemo>();
+        Budget.Residues->PreparedParity =
+            ResidueMemo::ParityPrefix{Root, std::move(Factors)};
+      }
+    }
+    if (Nonzero || Res.Failed)
+      return false;
+    return proveAffineResidues(Factors, Available, Remaining, Res);
   };
   // Failed precision attempts share the same cumulative resource account;
   // the cache only contains completed queries keyed by their exact width.
-  bool WitnessChecked = false;
-  bool Nonzero = false;
   if (proveAtResiduePrecisions(
           Operands.size(), MaxBits, Needed, Res,
           [&](unsigned Bits) {
-            if (Prove(Bits, Needed))
+            if (Prove(Bits))
               return true;
             if (!WitnessChecked && !Res.Failed &&
                 Needed <= limits::kMaxAffineResidueTableBits) {
@@ -2106,20 +2174,29 @@ static SymRef foldResidualProductResiduesImpl(SymContext &Ctx, SymRef Root,
                            ? Ctx.constValue(Inputs.front())
                            : llvm::APInt(Width, 1);
     for (unsigned Bits = 1; Bits <= Needed && !Res.Failed; ++Bits) {
-      if (!Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
-        break;
       std::vector<Factor> Factors;
-      Factors.reserve(Operands.size());
       bool Complete = true;
-      for (auto R : Operands) {
-        Factor F{{}, llvm::APInt(Bits, 0)};
-        size_t Edges = 0;
-        if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
-                        &Prefixes)) {
-          Complete = false;
+      if (Bits == 1 && Budget.MemoOwner == &Ctx && Budget.Residues &&
+          Budget.Residues->PreparedParity &&
+          Budget.Residues->PreparedParity->Root == Root) {
+        if (!Res.charge(1))
           break;
+        Factors = std::move(Budget.Residues->PreparedParity->Factors);
+        Budget.Residues->PreparedParity.reset();
+      } else {
+        if (!Res.charge(Operands.size(), Operands.size() * sizeof(Factor)))
+          break;
+        Factors.reserve(Operands.size());
+        for (auto R : Operands) {
+          Factor F{{}, llvm::APInt(Bits, 0)};
+          size_t Edges = 0;
+          if (!readFactor(Ctx, R, llvm::APInt(Bits, 1), F, Res, Edges, 0,
+                          &Prefixes)) {
+            Complete = false;
+            break;
+          }
+          Factors.push_back(std::move(F));
         }
-        Factors.push_back(std::move(F));
       }
       if (!Complete)
         break;

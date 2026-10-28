@@ -26,14 +26,15 @@ struct Fixture {
   SymRef Input;
   unsigned Width, HighBits, Degree;
   bool Neighbor;
+  bool Complement;
 
   llvm::APInt oracle(const std::array<llvm::APInt, 4> &V) const {
     auto Product = llvm::APInt(Width, 3).shl(Width - 6);
     const auto LeftMask = ~llvm::APInt(Width, 1);
     const auto RightMask = ~llvm::APInt::getLowBitsSet(Width, HighBits - 1);
     for (unsigned I = 0; I < Degree; ++I) {
-      const auto Base =
-          (V[0] ^ llvm::APInt(Width, 1)) + 2 * I + unsigned(Neighbor && I == 0);
+      const auto Base = (Complement ? ~V[0] : V[0] ^ llvm::APInt(Width, 1)) +
+                        2 * I + unsigned(Neighbor && I == 0);
       const auto High = ((V[1] + I) & LeftMask) * ((V[2] + 2 * I) & RightMask);
       Product *= Base ^ High;
     }
@@ -42,7 +43,8 @@ struct Fixture {
 };
 
 Fixture fixture(SymContext &Ctx, unsigned Width, unsigned HighBits,
-                bool Neighbor = false, unsigned Degree = 96) {
+                bool Neighbor = false, unsigned Degree = 96,
+                bool Complement = false) {
   const auto X = Ctx.mkVar("x", Width), Y = Ctx.mkVar("y", Width);
   const auto Z = Ctx.mkVar("z", Width), W = Ctx.mkVar("w", Width);
   auto C = [&](uint64_t V) { return Ctx.mkConst(Width, V); };
@@ -51,9 +53,10 @@ Fixture fixture(SymContext &Ctx, unsigned Width, unsigned HighBits,
       Ctx.mkConst(~llvm::APInt::getLowBitsSet(Width, HighBits - 1));
   llvm::SmallVector<SymRef, 128> Factors{
       Ctx.mkConst(llvm::APInt(Width, 3).shl(Width - 6))};
-  for (unsigned I = 0; I < Degree; ++I) {
-    const auto Base =
-        Ctx.mkAdd(Ctx.mkXor(X, C(1)), C(2 * I + unsigned(Neighbor && I == 0)));
+  for (unsigned Step = 0; Step < Degree; ++Step) {
+    const auto I = Complement ? Degree - 1 - Step : Step;
+    const auto Base = Ctx.mkAdd(Complement ? Ctx.mkNot(X) : Ctx.mkXor(X, C(1)),
+                                C(2 * I + unsigned(Neighbor && I == 0)));
     const auto High = Ctx.mkMul(Ctx.mkAnd(Ctx.mkAdd(Y, C(I)), LeftMask),
                                 Ctx.mkAnd(Ctx.mkAdd(Z, C(2 * I)), RightMask));
     Factors.push_back(Ctx.mkXor(Base, High));
@@ -61,7 +64,44 @@ Fixture fixture(SymContext &Ctx, unsigned Width, unsigned HighBits,
   const auto Input = Ctx.mkAdd({Ctx.mkMul(Factors), Ctx.mkXor(X, Y),
                                 Ctx.mkMul(C(2), Ctx.mkAnd(X, Y)),
                                 Ctx.mkOr(Z, W), Ctx.mkAnd(Z, W)});
-  return {Input, Width, HighBits, Degree, Neighbor};
+  return {Input, Width, HighBits, Degree, Neighbor, Complement};
+}
+
+TEST(SymMBAWitness, CompletedPrefixesRetainBudgetForLargeNonzeroProducts) {
+  std::mt19937_64 Random(0x5052454649585749);
+  for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned High : {2u, 3u})
+      for (bool Complement : {false, true})
+        for (bool Neighbor : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Width << ':' << High << ':'
+                                            << Complement << ':' << Neighbor);
+          SymContext Ctx;
+          const auto F = fixture(Ctx, Width, High, Neighbor, 256, Complement);
+          MBAOptions Options;
+          Options.MaxWork = 65536;
+          Options.VerifySamples = 0;
+          const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+          if (Width <= 64 && !Neighbor) {
+            ASSERT_LT(Result.Work, Options.MaxWork);
+            EXPECT_LE(Result.SizeAfter, 20u);
+          }
+          EXPECT_LE(Result.Work, Options.MaxWork);
+          EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+          EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+          SymEvalPlan Reduced(Ctx, Result.Expr);
+          for (unsigned Trial = 0; Trial < 128; ++Trial) {
+            std::array<llvm::APInt, 4> Values;
+            for (auto &V : Values) {
+              V = llvm::APInt(Width, 0);
+              for (unsigned Bit = 0; Bit < Width; Bit += 64)
+                V |= llvm::APInt(Width, Random()).shl(Bit);
+              if (Trial < 3)
+                V = Trial == 2 ? llvm::APInt::getAllOnes(Width)
+                               : llvm::APInt(Width, Trial);
+            }
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+        }
 }
 
 TEST(SymMBAWitness, ComplementedProductsFinishWithinTheExistingAllowance) {

@@ -39,8 +39,9 @@ public:
   /// selected: by dragging, shift-clicking or Shift and the arrow keys.
   std::optional<std::pair<Address, Address>> selection() const;
   std::optional<std::pair<Address, Address>> byteSelection() const;
-  /// Copy the selected bytes, or the current item's, as hex text
-  /// (`48 89 5C 24 08`) once every one of them has loaded.
+  /// Copy the row address a click selected, else the selected bytes, or the
+  /// current item's, as hex text (`48 89 5C 24 08`) once every one of them
+  /// has loaded.
   void copySelection();
   void setExportAction(QAction *action);
   void editByte();
@@ -105,6 +106,8 @@ private:
   void loadEncodings();
   /// The byte drawn at \p position, if any.
   std::optional<Address> addressAt(const QPointF &position) const;
+  /// The row whose address \p position is on, if it is on its digits.
+  std::optional<Address> rowAddressAt(const QPointF &position) const;
   /// Move the current byte, extending the selection from where it started.
   void moveCurrent(Address address, bool extend);
   /// Put the pending copy on the clipboard once all its bytes are loaded.
@@ -124,6 +127,8 @@ private:
   int currentSize_ = 1;
   /// Where the selection started; it ends at the current byte.
   std::optional<Address> anchor_;
+  /// The row whose address a click selected; Ctrl+C copies it.
+  std::optional<Address> addressRow_;
   /// The bytes a copy waits for, first and last.
   std::optional<std::pair<Address, Address>> pendingCopy_;
   QString textEncoding_;

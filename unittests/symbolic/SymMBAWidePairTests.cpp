@@ -406,6 +406,130 @@ PartialFixture partialFixture(SymContext &Ctx, unsigned Width, unsigned Degree,
           Observed,           High,  Complement};
 }
 
+TEST(SymMBAWidePairs, NarrowNonlinearResiduesKeepTheirCrossTerms) {
+  std::mt19937_64 Random(0x4e4152524f575052);
+  for (unsigned Width : {8u, 32u, 64u, 65u, 128u, 257u})
+    for (unsigned Degree : {23u, 30u})
+      for (unsigned Complement : {0u, 1u, 2u})
+        for (bool Neighbor : {false, true}) {
+          SCOPED_TRACE(::testing::Message() << Width << ':' << Degree << ':'
+                                            << Complement << ':' << Neighbor);
+          SymContext Ctx;
+          const auto F =
+              partialFixture(Ctx, Width, Degree, Neighbor, 6, 3, Complement);
+          detail::WorkBudget Budget(65536);
+          size_t Storage = 1 << 24;
+          const auto Result =
+              detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+          if (Width <= 64 && !Neighbor) {
+            ASSERT_NE(Result, F.Input);
+            EXPECT_LT(Budget.used(), 32768u);
+            EXPECT_LE(2 * detail::readingCost(Ctx, Result),
+                      detail::readingCost(Ctx, F.Input));
+          }
+          EXPECT_LE(Budget.used(), 65536u);
+          SymEvalPlan Reduced(Ctx, Result);
+          for (unsigned Trial = 0; Trial < 128; ++Trial) {
+            std::array<llvm::APInt, 3> Values;
+            for (auto &V : Values) {
+              V = llvm::APInt(Width, 0);
+              for (unsigned Bit = 0; Bit < Width; Bit += 64)
+                V |= llvm::APInt(Width, Random()).shl(Bit);
+              if (Trial < 3)
+                V = Trial == 2 ? llvm::APInt::getAllOnes(Width)
+                               : llvm::APInt(Width, Trial);
+            }
+            ASSERT_EQ(Reduced.eval(Values), F.oracle(Values));
+          }
+        }
+}
+
+TEST(SymMBAWidePairs, ExhaustsNarrowProductSignaturesAndCorrections) {
+  SymContext Ctx;
+  const auto F = partialFixture(Ctx, 8, 23, false, 6, 3, 1);
+  detail::WorkBudget Budget(65536);
+  size_t Storage = 1 << 24;
+  const auto Result =
+      detail::foldResidueDecisions(Ctx, F.Input, Budget, Storage);
+  ASSERT_NE(Result, F.Input);
+  SymEvalPlan Reduced(Ctx, Result);
+  for (uint64_t X = 0; X < 64; ++X)
+    for (uint64_t Y = 0; Y < 64; ++Y)
+      for (uint64_t Z = 0; Z < 64; ++Z) {
+        uint64_t Expected = 12;
+        for (unsigned I = 0; I < 23; ++I)
+          Expected *= ((X ^ 1) + 2 * I) ^
+                      (((Y + I) & ~uint64_t(1)) * ((Z + 2 * I) & ~uint64_t(3)));
+        ASSERT_EQ(Reduced.evalU64({X, Y, Z}), Expected & 255)
+            << X << ':' << Y << ':' << Z;
+      }
+}
+
+TEST(SymMBAWidePairs, PreparedParityPrefixesKeepTheirProductAndContext) {
+  auto Run = [](unsigned Width, bool Prepare) {
+    SymContext Ctx;
+    const auto F = partialFixture(Ctx, Width, 96, false, 6, 3, 1);
+    detail::WorkBudget Budget(1 << 20);
+    Budget.MemoOwner = &Ctx;
+    Budget.MemoCapacity = 16;
+    size_t Storage = 1 << 24;
+    if (Prepare)
+      EXPECT_EQ(
+          detail::foldProjectedProductResidues(Ctx, F.Input, Budget, Storage),
+          F.Input);
+    const auto Before = Budget.used();
+    const auto Result =
+        detail::foldResidualProductResidues(Ctx, F.Input, Budget, Storage);
+    const auto Work = Budget.used() - Before;
+    EXPECT_NE(Result, F.Input);
+    SymEvalPlan Plan(Ctx, Result);
+    for (unsigned I = 0; I < 128; ++I) {
+      const std::array V{llvm::APInt(Width, I), llvm::APInt(Width, 3 * I),
+                         llvm::APInt(Width, 7 * I)};
+      EXPECT_EQ(Plan.eval(V), F.oracle(V));
+    }
+    return std::pair{Work, detail::readingCost(Ctx, Result)};
+  };
+  for (unsigned Width : {8u, 64u, 257u}) {
+    SCOPED_TRACE(Width);
+    const auto Cold = Run(Width, false), Prepared = Run(Width, true);
+    EXPECT_LT(Prepared.first, Cold.first);
+    EXPECT_LE(Prepared.second, Cold.second);
+  }
+  for (unsigned Kind = 0; Kind < 4; ++Kind) {
+    SCOPED_TRACE(Kind);
+    SymContext Ctx, Other;
+    const auto F = partialFixture(Ctx, 64, 96, false, 6, 3, 1);
+    detail::WorkBudget Budget(1 << 20);
+    Budget.MemoOwner = &Ctx;
+    Budget.MemoCapacity = 16;
+    size_t Storage = 1 << 24;
+    EXPECT_EQ(
+        detail::foldProjectedProductResidues(Ctx, F.Input, Budget, Storage),
+        F.Input);
+    auto &Target = Kind == 1 ? Other : Ctx;
+    const auto G = Kind < 2 ? partialFixture(Target, Kind == 1 ? 32 : 64, 96,
+                                             Kind == 0, 6, 3, 1)
+                            : F;
+    if (Kind == 1)
+      ASSERT_EQ(G.Input.index(), F.Input.index());
+    if (Kind == 2)
+      Storage = 0;
+    if (Kind == 3)
+      EXPECT_TRUE(Budget.consume(Budget.available()));
+    const auto Result =
+        detail::foldResidualProductResidues(Target, G.Input, Budget, Storage);
+    if (Kind >= 2)
+      EXPECT_EQ(Result, G.Input);
+    SymEvalPlan Plan(Target, Result);
+    for (unsigned I = 0; I < 128; ++I) {
+      const std::array V{llvm::APInt(G.Width, I), llvm::APInt(G.Width, 3 * I),
+                         llvm::APInt(G.Width, 7 * I)};
+      EXPECT_EQ(Plan.eval(V), G.oracle(V));
+    }
+  }
+}
+
 TEST(SymMBAWidePairs, UnfinishedProductsPreserveIndependentLinearTails) {
   std::mt19937_64 Random(0x4c494e4541525441);
   for (unsigned Width : {8u, 16u, 32u, 64u, 65u, 257u})

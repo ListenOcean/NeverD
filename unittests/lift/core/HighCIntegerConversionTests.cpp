@@ -419,6 +419,15 @@ TEST(HighCIntegerConversion, UnprototypedImmediatesKeepTheirCompleteWord) {
       UINT64_MAX);
   Cases.emplace_back(cast(typed(constant(UINT32_MAX, 4), U32), U64),
                      UINT32_MAX);
+  // An extension can change the high half of a literal printed positive or
+  // negative; a negative 64-bit word other than -1 needs its carrier too.
+  Cases.emplace_back(extend(NdOp::INT_SEXT,
+                            typed(constant(UINT32_C(0x80000000), 4), I32), I64),
+                     UINT64_C(0xffffffff80000000));
+  Cases.emplace_back(extend(NdOp::INT_ZEXT,
+                            typed(constant(UINT32_C(0x80000000), 4), I32), U64),
+                     UINT64_C(0x80000000));
+  Cases.emplace_back(typed(constant(UINT64_MAX - 1), I64), UINT64_MAX - 1);
   std::string Source, Checks;
   for (unsigned I = 0; I < Cases.size(); ++I) {
     const std::string Name = "untyped_word_" + std::to_string(I);

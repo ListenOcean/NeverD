@@ -6875,9 +6875,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
-    llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
+    llvm::raw_ostream *Saved = OS.redirect(&BodyOS);
     writeStmts(Func.Body, 1);
-    Out.redirect(Saved);
+    OS.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
   if (!DeferredDecls.empty() || !MemoryTemporaries.empty() ||

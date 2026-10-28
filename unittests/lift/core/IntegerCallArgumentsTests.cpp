@@ -30,12 +30,15 @@ TEST(FixedIntegerCallArguments, RetainsTargetStackOffsetsAndValueWidths) {
     int64_t HalfOffset;
     int64_t PointerOffset;
   };
-  for (const auto &Target :
-       {Target{Arch::X64, BinaryFormat::COFF, 4, 40, 48, 56},
-        Target{Arch::X64, BinaryFormat::ELF, 6, 8, 16, 24},
-        Target{Arch::X64, BinaryFormat::MachO, 6, 8, 16, 24},
-        Target{Arch::AArch64, BinaryFormat::COFF, 8, 0, 8, 16},
-        Target{Arch::AArch64, BinaryFormat::ELF, 8, 0, 8, 16}}) {
+  for (const auto &Target : {
+           Target{Arch::X64, BinaryFormat::COFF, 4, 40, 48, 56},
+           Target{Arch::X64, BinaryFormat::ELF, 6, 8, 16, 24},
+           Target{Arch::X64, BinaryFormat::MachO, 6, 8, 16, 24},
+           Target{Arch::AArch64, BinaryFormat::COFF, 8, 0, 8, 16},
+           Target{Arch::AArch64, BinaryFormat::ELF, 8, 0, 8, 16},
+#define INTEGER_CALL_TARGET(A, F, R, B, H, P) Target{A, F, R, B, H, P},
+#include "IntegerCallArgumentsFixtures.def"
+       }) {
     SCOPED_TRACE(static_cast<unsigned>(Target.Architecture));
     SCOPED_TRACE(static_cast<unsigned>(Target.Format));
     std::vector<TypeRef> Parameters(Target.Registers, NdType::makeInt(8));
@@ -98,11 +101,6 @@ TEST(FixedIntegerCallArguments, RequiresCompleteOrdinaryDeclarations) {
   Function.ReturnType = NdType::makeInt(16);
   EXPECT_FALSE(Supported());
   Function.ReturnType = NdType::makeInt(4);
-  // The shared placement authority does not yet describe Apple's packed
-  // overflow stack values. Never substitute AAPCS64 eight-byte slots.
-  Function.Params.assign(9, {"value", NdType::makeInt(1)});
-  EXPECT_FALSE(libc::fixedIntegerCallArguments(Function, Arch::AArch64,
-                                               BinaryFormat::MachO));
   for (Arch Architecture : {Arch::X86, Arch::ARM})
     EXPECT_FALSE(libc::fixedIntegerCallArguments(Function, Architecture,
                                                  BinaryFormat::COFF));

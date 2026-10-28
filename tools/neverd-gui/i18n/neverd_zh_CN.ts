@@ -120,8 +120,8 @@
         <translation>复制(&amp;C)</translation>
     </message>
     <message>
-        <source>Copy the selection or current line</source>
-        <translation>复制所选内容或当前行</translation>
+        <source>Copy the selection or the highlighted word</source>
+        <translation>复制所选内容或高亮的单词</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>
