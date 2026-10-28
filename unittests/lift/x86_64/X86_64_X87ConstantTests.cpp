@@ -222,7 +222,10 @@ TEST(X87ConstantContract, OwnedAssemblyRetainsExactSelectorTypesAndClobbers) {
     auto *Call = B.CreateCall(Asm, Args);
     Call->setMetadata(X87ConstantAsmMetadata, llvm::MDNode::get(C, {}));
     EXPECT_EQ(classifyX87ConstantAsm(*Call), Selector);
-    auto *Bad = llvm::InlineAsm::get(Ty, Text, "r", true);
+    // Keep LLVM's operand count valid so this reaches our clobber check even
+    // when the linked LLVM was built with assertions enabled.
+    auto *Bad =
+        llvm::InlineAsm::get(Ty, Text, Selector < 7 ? "r,r" : "r", true);
     Call->setCalledOperand(Bad);
     EXPECT_DEATH_IF_SUPPORTED(classifyX87ConstantAsm(*Call),
                               "invalid owned x87");
