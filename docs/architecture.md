@@ -12650,9 +12650,11 @@ Synchronous catches sample their retained throwing calls, so nonvolatile values
 come from the actual call rather than a neighbouring reindexed block. Missing
 source effects or throwing calls fail the conversion explicitly.
 
-An x64 SEH handler root gives each nonvolatile register the one SSA version it
-has on entry to every protected block when no protected operation writes it,
-and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
+A Windows x64, ARM or AArch64 SEH handler root gives each nonvolatile register
+the one SSA version it has on entry to every protected block when no protected
+operation writes it, and an unknown value otherwise (`MedSSA`). ARM and AArch64
+have no decoded-frame proof, so their handler roots take the SP of the
+protected range the same way. A termination handler's `__except`
 arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
 into the printed function's frame only in a clause body of a function without
 an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch

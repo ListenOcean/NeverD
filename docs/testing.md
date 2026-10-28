@@ -14333,6 +14333,10 @@ with `fninit`, whose x87 context handle the CFG builder begins at each root.
 `TheHandlerBeginsTheX87ContextBeforeUsingIt` and
 `OnlyTheX87ContextHandleIsAdmitted` refuse a handler that reads the handle
 before beginning it and a handle copied into an ordinary register.
+`MedSEHHandlerEntry.AArch64HandlerResumesWithTheProtectedRegisters` checks
+that an AArch64 `__except` body reads x19 as the protected range left it,
+through the frame its prologue set. A range that writes x19 leaves x19
+unknown.
 `MedSEHHandlerEntry.AHandlerResumingAtANopEndsTheArmThere` ends an `__except`
 arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
