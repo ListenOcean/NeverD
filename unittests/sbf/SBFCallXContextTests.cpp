@@ -5548,6 +5548,7 @@ TEST(SBFCallXContexts, CapturedReturnsSurviveObjectFieldsAndCompleteCopies) {
     Text.push_back(encode(Opcode::ST_DW_REG, 6, 2, 8));
     Text.push_back(encode(Opcode::ST_DW_REG, 10, Mode == 6 ? 2 : 6, -24));
     std::vector<size_t> WarmCopies;
+    std::optional<size_t> ReinitializeTarget;
     if (Mode == 4 || Mode == 6 || Mode >= 7)
       for (unsigned I = 0; I < kCallXContextSpecializationsPerEntry; ++I) {
         Text.push_back(encode(Opcode::MOV64_REG, 1, 10));
@@ -5560,6 +5561,14 @@ TEST(SBFCallXContexts, CapturedReturnsSurviveObjectFieldsAndCompleteCopies) {
         WarmCopies.push_back(Text.size());
         Text.push_back({});
       }
+    if (Mode >= 7) {
+      // Keep the real copy's input known even when a warm call had unknown
+      // effects. In particular, the unknown-selector control must reach the
+      // path-instantiation boundary with a captured source field.
+      ReinitializeTarget = Literal(2, 0);
+      Text.push_back(encode(Opcode::ST_DW_REG, 6, 2, 8));
+      Text.push_back(encode(Opcode::ST_DW_REG, 10, 6, -24));
+    }
     Text.push_back(encode(Opcode::MOV64_REG, 1, 10));
     Text.push_back(encode(Opcode::ADD64_IMM, 1, 0, 0, -16));
     Text.push_back(encode(Opcode::MOV64_REG, 2, 10));
@@ -5717,6 +5726,9 @@ TEST(SBFCallXContexts, CapturedReturnsSurviveObjectFieldsAndCompleteCopies) {
     const auto TargetAddress = test::loadImm64(2, kBytecodeStart + Target * 8);
     std::copy(TargetAddress.begin(), TargetAddress.end(),
               Text.begin() + TargetLiteral);
+    if (ReinitializeTarget)
+      std::copy(TargetAddress.begin(), TargetAddress.end(),
+                Text.begin() + *ReinitializeTarget);
     auto Program = analyze(test::makeImage(Text, {}));
     ASSERT_TRUE(static_cast<bool>(Program))
         << llvm::toString(Program.takeError());
@@ -5737,6 +5749,11 @@ TEST(SBFCallXContexts, CapturedReturnsSurviveObjectFieldsAndCompleteCopies) {
                Edge.InstantiatedMemoryPathStores == 2 &&
                Edge.InstantiatedMemoryPathInstructions > 1 &&
                !Edge.InstantiatedCopySlot;
+      }));
+    if (Mode == 8 || Mode == 10)
+      EXPECT_FALSE(llvm::any_of(Report->SummaryEdges, [&](const auto &Edge) {
+        return Edge.CallerSlot == CopyCall &&
+               Edge.InstantiatedMemoryPathStores != 0;
       }));
     if (Mode >= 7) {
       EXPECT_LE(llvm::count_if(Report->Summaries,
