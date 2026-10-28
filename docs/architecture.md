@@ -383,6 +383,29 @@ each direct callee's proven return cleanup
 (`RegistrationStateAnalysis::CalleeStacks`), which does not depend on the
 reaching state, so a single-function view pops a `ret imm` callee's arguments
 as a whole-image run does.
+`integerReturnRange` uses the same scalar range evaluator to summarize the
+complete primary integer return register of bounded ordinary x86/x64 leaves.
+It checks original LowIR coverage and return occurrences, then unions every
+MedIR return; a narrow load can bound a result without knowing the loaded bytes.
+Calls, intrinsics, independent/exceptional entries, incompatible source
+contracts and incomplete bodies provide no fact. Truncation and sign extension
+retain machine-width wrapping; a possible negative displacement cannot prove
+that an allocation only lowers the stack pointer, including on 32-bit targets.
+Call-derived facts also require both complete stack-offset endpoints to fit
+the native width; an upper bound alone cannot hide offset wraparound.
+The implicit CALL push must fit that coordinate too. An observing load whose
+extent crosses the native boundary refuses projection; it cannot disappear
+from the observation set. A store with such an extent proves no overwrite.
+Source conversion first uses its local stack proofs. A missing proof defers
+that caller until the parallel conversion joins; only then does the pipeline
+build the immutable callee range table and recheck pending callers. A CALL
+return-slot load the first pass would defer to the settled-MedIR check also
+waits there when some CALL's stack position had no local range, because those
+callee ranges may still prove it. Successful local proofs require no callee
+summary. Incoming-stack and register-pair
+reconversions rebuild the same phase-local facts. The checks still precede
+source save suppression and register-call expansion. No result is cached across
+image or body mutations, and no source return type supplies a machine proof.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.

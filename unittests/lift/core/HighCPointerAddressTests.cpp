@@ -36126,7 +36126,7 @@ TEST(HighCPointerAddresses, GsHandlerDataBit2AlignBranchIsPrinted) {
   EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
+TEST(HighCPointerAddresses, CallResultUsedByTestEaxReachesReturn) {
   // `call helper / test eax, eax / je` must keep the call result. Dropping
   // the dest turns the compare into an uninitialized temp (cxx_eh_probe
   // 0x140001570).
@@ -36185,9 +36185,18 @@ TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_NE(Source.find("= ret_one("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("\n    ret_one();"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  // Both exits return RAX, so folding the branch to a direct returned call is
+  // valid. Check the machine result and diagnose an uninitialized temporary
+  // rather than requiring a particular assignment or conditional spelling.
+  const std::string Program = Source + R"c(
+int64_t ret_one(void) { return 1; }
+int main(void) {
+  return uses_call_result() == 1 ? 0 : 1;
+}
+)c";
+  for (const char *Optimization : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Program, {Optimization, "-Werror=uninitialized"});
 }
 
 TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
