@@ -478,3 +478,86 @@ prevent carrying allocation/field facts through 32926 to 1960/1963. Finite
 instrumented inputs observe slot **1971**, address `0x100003EB8`; this does not
 prove all inputs. Sanitizers, other host platforms, real bank/CPI replay and
 byte-identical source reconstruction were not requalified in this round.
+
+## 2026-10-28 P3 loaded branch and return qualification
+
+At four specialized caller contexts, a getter selecting two loaded fields
+previously lost its complete expression at the join. A generic fallback also
+composed a return expression into generic callers without evaluating it for
+a concrete caller. Complete loaded-expression unions now survive register,
+return and full-width stored-field joins. The caller evaluates a live generic
+return using its pre-call memory before applying callee writes. Every member's
+write guard is retained; unknown members and fifth alternatives remain unknown.
+
+The qualified code is `3abf679e6f5854bd77674321c03e0f701ee37ba1`, compared
+with the complete `0fb3e597f288101f74d3166b4e4f5ec9627206a6` frame-context
+round above. Its `fc8ce09b5` publication changed only documentation. The new
+frozen worker SHA-256 is
+`0ea2c4d9ad8c381deb38a41b8a63b5f5ffd2d771554942411c394a4167b0829f`;
+the complete report SHA-256 is
+`92f4d17c114aeecce96a6c6dae70e228aba1d0d891928493316c2934d28b94bc`.
+
+Both complete rounds use the same 72 asset hashes, loader/cluster profiles,
+compiler versions/flags, dependency revisions, jobs and budgets: 60 seconds per
+request, 8 GiB sampled process-group RSS, 512 MiB output, two concurrent assets;
+8,388,608 context visits, 64 MiB retained estimate, 524,288 output elements,
+four specializations per entry and four complete alternatives. The new round
+contains every request and both native compilations, with no isolated retry
+substitution.
+
+| Stage | Before | After |
+|---|---:|---:|
+| Load | 72/72 | 72/72 |
+| Runtime image | 72/72 | 72/72 |
+| Decode | 72/72 | 72/72 |
+| Control flow | 72/72 | 72/72 |
+| Requisite verification | 72/72 | 72/72 |
+| CFG / MedIR | 72/72 | 72/72 |
+| HighIR processing | 72/72 | 72/72 |
+| Solana metadata | 72/72 | 72/72 |
+| LLVM export | 72/72 | 72/72 |
+| C export | 72/72 | 72/72 |
+| Rust export | 72/72 | 72/72 |
+| CALLX-context query | 72/72 | 72/72 |
+| C native object | 72/72 | 72/72 |
+| Rust native object | 72/72 | 72/72 |
+| Required SBF tests | 467/467 | 468/468 |
+
+There were no crashes, timeouts, compiler failures or skipped required tests.
+The final test run required the official SBPF oracle, Agave conformance and
+protocol-ceiling scale. The new regression exercises nine modes and 138 raw
+CALLX observations, including two wrapper layers, generic fallback, aliasing
+writes before/after the captured load, unknown sources and five alternatives.
+This is synthetic execution, not corpus transaction replay.
+
+| Conditional recovery metric | Before | After |
+|---|---:|---:|
+| Singleton sites | 194 | 194 |
+| Finite-set sites | 31 | 31 |
+| Either conditional address proof | 225 | 225 |
+| Sites with no conditional address proof | 7,349 | 7,349 |
+| Output field expression records | 1,733 | 1,849 |
+| Generic return expression instantiations | 0 | 2 |
+| Serialized expression witness forms | 2,279 | 2,290 |
+| Context instruction visits | 169,908,145 | 170,102,731 |
+| Function summaries | 120,986 | 120,986 |
+
+No address, caller-slot or caller-entry target relation changed. All old
+serialized expression witnesses remain. Both actual return instantiations occur
+in Obsidian. The additional field records and 11 witness forms do not constitute
+new target-site coverage. All 216 LLVM/C/Rust exports are byte-identical to the
+baseline; C and Rust each cover 5,899,345 raw slots exactly once, with all 72
+partitions agreeing. Whole-program structuring remains 0/72; every one of the
+7,574 raw CALLX sites retains dynamic fallback. The two global-budget-limited
+samples remain meteora-dbc and meteora-dlmm.
+
+Lifinity-v1 slot 1963 remains unproven in 16 contexts: ten lack a full-width
+scratch fact and six lack an entry register. The successful allocation/copy at
+32470 still loses its complete origin at the 32493 join before output+96 at
+32926. Helper 182's saved tag/payload encounter unknown effects through
+60926 -> 59757 -> 3034 -> 3157. Allocator helper 3070's success/error output
+fields still lack their cross-field relation, and unknown writes cannot be
+assumed disjoint. Earlier finite offline runs reaching slot 1960/1963 observed
+target slot 1971; they do not close these static contexts. Real bank/CPI replay,
+arbitrary-input semantic equivalence and byte-identical source reconstruction
+remain outside the validated result.
