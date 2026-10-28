@@ -17,6 +17,20 @@ body reads beyond a user prototype remain observable.
 
 Explicit state C and its exact byte/state manifest are now available through `neverd decompile --x64-continuation` and `neverd_x64_continuation_source_v1`. The bounded driver stops for environment-owned calls and exits; this does not establish an ordinary kernel function ABI. See [the invocation contract](../../../../docs/x64-continuation-source.md).
 
+Manifest schema 2 names entry-region selection facts `lowir_*` and records
+`ordinary_source_validation: "not-run"`. Selection defers MedIR; an accepted
+LowIR region may still fail ordinary call/return or ABI validation. Do not use
+its disposition to claim that ordinary source recovery succeeded.
+
+The explicit state route now admits audited legacy XMM XOR, register MOVD/MOVQ,
+byte-lane shifts, 64-bit products, scalar exchanges and locked updates. Complete
+state/memory execution checks cover both C routes, arbitrary arithmetic flags,
+preserved upper vector lanes and negative bit-string indices. LOCK BTS/BTR/BTC
+retain one ordered transaction and its old-bit result instead of an unlocked
+load/store pair. Unknown encodings and environments retain explicit boundaries.
+LLVM C absolute guest stores use an integer address carrier so host object-size
+inference does not invent a zero-sized object at a high-half machine address.
+
 Explicit x64 kernel continuation source carries GPRs, flags, vector bytes,
 segment bases, the physical stack and native-boundary requests. Its V4 layout
 adds CR2 with all other banks preserved. Explicit opt-ins bind segment-base
