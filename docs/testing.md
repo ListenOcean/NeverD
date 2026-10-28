@@ -178,7 +178,10 @@ return-slot writes are disjoint from observed bytes. Overlapping reads, missing
 fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
 remains unavailable. The same fixture checks that copy propagation and DCE
 retain the ordinary entry register marker needed to omit an unobserved RBP
-save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+save from both source projections.
+`MedSEHEstablisherFrame.EpilogueAfterTheGuardedRangeIsUnchecked` checks a
+clang-cl range that ends one byte past a call's return address, with a range
+covering the epilogue as its negative control. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
 checks that a range seed cannot become an exact executable value or survive
 query removal, detached definitions or conflicting bounds.
 `MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
