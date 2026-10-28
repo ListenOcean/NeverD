@@ -50,8 +50,14 @@ TEST(ImmutableImageScalar, ELFRelroSectionKeepsScalarsButNotRelocatedPointers) {
   Image.BaseRelocations.push_back({ReadVA - 3, 10});
   EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
   Image.BaseRelocations.clear();
-  Image.Sections.front().Name = ".data";
-  EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+  Image.Sections.front().Name = ".data.rel.ro.local";
+  EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1), 0xb8u);
+  for (const char *Name : {".data", ".data.rel.rotten", ".data.rel.ro_mutable",
+                           ".data.rel.ro2"}) {
+    SCOPED_TRACE(Name);
+    Image.Sections.front().Name = Name;
+    EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
+  }
   Image.Sections.front().Name = ".data.rel.ro";
   Image.Sections.push_back(Image.Sections.front());
   EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
