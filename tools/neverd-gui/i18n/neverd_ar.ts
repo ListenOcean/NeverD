@@ -344,6 +344,50 @@
         <translation>الانتقال إلى التكرار التالي للمعرّف المميَّز</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>قفل أو إلغاء القفل(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>إبقاء الكلمة المميزة مميزة بأول لون متاح، أو إلغاء قفلها</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>اللون 1(&amp;1)</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>اللون 2(&amp;2)</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>اللون 3(&amp;3)</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>اللون 4(&amp;4)</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>اللون 5(&amp;5)</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>اللون 6(&amp;6)</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>اللون 7(&amp;7)</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>اللون 8(&amp;8)</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>قفل الكلمة المميزة بهذا اللون، أو إلغاء قفل اللون</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>البحث في العرض(&amp;F)...</translation>
     </message>
@@ -1610,6 +1654,10 @@
     <message>
         <source>&amp;Search</source>
         <translation>بحث(&amp;S)</translation>
+    </message>
+    <message>
+        <source>&amp;Lock highlight</source>
+        <translation>قفل التمييز(&amp;L)</translation>
     </message>
     <message>
         <source>&amp;View</source>

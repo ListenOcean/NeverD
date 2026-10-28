@@ -3,6 +3,7 @@
 #include "../Config.h"
 #include "Session.h"
 #include "Theme.h"
+#include "WorkerCodes.h"
 
 #include <QHash>
 #include <QJsonArray>
@@ -50,6 +51,8 @@ GraphView::GraphView(Session &session, QWidget *parent)
       showFunction(*function_, pendingCursor_);
     update();
   });
+  connect(&session_.highlightLocks(), &HighlightLocks::changed, this,
+          qOverload<>(&QWidget::update));
   connect(&session_, &Session::revisionChanged, this, [this] {
     if (function_ && (!session_.queries().localNamesOnly() || waiting_))
       showFunction(*function_, pendingCursor_);
@@ -472,14 +475,25 @@ void GraphView::paintNode(QPainter &painter, int index, bool text) const {
       auto &layout = row.styled.layout(font, styleStamp_, colorOf);
       const qreal x =
           box.left() + ::neverd::limits::gui_config::kGraphViewNodePadding;
-      if (!highlight_.isEmpty() && layout.lineCount()) {
+      if (layout.lineCount()) {
         const QTextLine line = layout.lineAt(0);
-        for (const int at : tokenOccurrences(row.styled.text, highlight_)) {
-          const qreal x0 = line.cursorToX(at);
-          const qreal x1 = line.cursorToX(at + int(highlight_.size()));
-          painter.fillRect(QRectF(x + x0, y, x1 - x0, lineHeight_),
-                           theme.color(ColorRole::ListingHighlight));
-        }
+        // Locked words keep their colors under the cursor's highlight.
+        const auto mark = [&](const QString &word, ColorRole role) {
+          for (const auto &[first, last] :
+               highlightRanges(row.styled, word,
+                               static_cast<int>(ListingRole::Register))) {
+            const qreal x0 = line.cursorToX(first);
+            const qreal x1 = line.cursorToX(last);
+            painter.fillRect(QRectF(x + x0, y, x1 - x0, lineHeight_),
+                             theme.color(role));
+          }
+        };
+        const auto &locks = session_.highlightLocks();
+        for (int slot = 0; slot < HighlightLocks::Colors; ++slot)
+          if (const QString word = locks.word(slot); !word.isEmpty())
+            mark(word, highlightLockRole(slot));
+        if (!highlight_.isEmpty())
+          mark(highlight_, ColorRole::ListingHighlight);
       }
       layout.draw(&painter, QPointF(x, y));
     }

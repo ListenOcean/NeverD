@@ -118,6 +118,10 @@ inline constexpr qreal kGraphViewArrowHalfWidth = 4.5;
 // tools/neverd-gui/app/HexView.cpp
 inline constexpr int kHexViewMargin = 6;
 
+// tools/neverd-gui/app/HighlightLocks.cpp
+/// The colors IDA's Lock highlight offers, one word each.
+inline constexpr int kHighlightLockColors = 8;
+
 // tools/neverd-gui/app/WheelInput.cpp
 inline constexpr int kTextViewWheelLinesPerNotch = 3;
 

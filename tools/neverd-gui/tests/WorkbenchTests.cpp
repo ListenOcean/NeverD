@@ -4786,6 +4786,100 @@ private slots:
       QCOMPARE(copyAt(QStringLiteral("Device->"), 1), QStringLiteral("Device"));
   }
 
+  void lockedHighlightsStayAcrossMovesAndViews() {
+    // IDA's Lock highlight keeps words colored as the cursor moves on:
+    // Ctrl+Alt+1..8 lock or free a color and Ctrl+Alt+0 takes the first free
+    // one, from the disassembly or a code window.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "fixture.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(Base + 0x50);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x50));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    auto *listing = assembly->listing();
+    QTRY_VERIFY(listing->cursorLine());
+    listing->setFocus();
+    QTRY_VERIFY(listing->hasFocus());
+    const auto &locks = bench.session.highlightLocks();
+    const auto key = [](QWidget *view, Qt::Key digit) {
+      QTest::keyClick(view, digit, Qt::ControlModifier | Qt::AltModifier);
+    };
+    // The cursor on `rbx` of function_5's `push rbx`.
+    for (int i = 0; i < 40 && !listing->cursorLine()->styled.text.contains(
+                                  QStringLiteral("rbx"));
+         ++i)
+      QTest::keyClick(listing, Qt::Key_Down);
+    const QString row = listing->cursorLine()->styled.text;
+    const int at = int(row.indexOf(QStringLiteral("rbx")));
+    QVERIFY2(at >= 0, qPrintable(row));
+    QTest::keyClick(listing, Qt::Key_Home);
+    for (int i = 0; i <= at; ++i)
+      QTest::keyClick(listing, Qt::Key_Right);
+    QCOMPARE(listing->currentToken(), QStringLiteral("rbx"));
+    key(listing, Qt::Key_1);
+    QCOMPARE(locks.word(0), QStringLiteral("rbx"));
+    // The word keeps its color with the cursor gone from it.
+    const QRect onWord = listing->cursorViewportRect();
+    QTest::keyClick(listing, Qt::Key_Home);
+    const QImage shown = listing->viewport()->grab().toImage();
+    const qreal ratio = shown.devicePixelRatio();
+    QCOMPARE(shown.pixelColor(int(onWord.x() * ratio),
+                              int((onWord.y() + 1) * ratio)),
+             Theme::instance().color(ColorRole::HighlightLock1));
+    QTest::keyClick(listing, Qt::Key_Down);
+    QCOMPARE(locks.word(0), QStringLiteral("rbx"));
+    key(listing, Qt::Key_1);
+    QVERIFY(locks.word(0).isEmpty());
+    QTest::keyClick(listing, Qt::Key_Up);
+    QTest::keyClick(listing, Qt::Key_Home);
+    for (int i = 0; i <= at; ++i)
+      QTest::keyClick(listing, Qt::Key_Right);
+    QCOMPARE(listing->currentToken(), QStringLiteral("rbx"));
+    key(listing, Qt::Key_0);
+    QCOMPARE(locks.word(0), QStringLiteral("rbx"));
+
+    // A code window locks the word under its own cursor.
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *code = bench.codeView(QStringLiteral("source"))->text();
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete(), OpenTimeoutMs);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    code->setCursorLine(0);
+    const int word = int(code->selectedText().indexOf(QStringLiteral("code")));
+    QVERIFY2(word >= 0, qPrintable(code->selectedText()));
+    QTest::keyClick(code, Qt::Key_Home);
+    for (int i = 0; i <= word; ++i)
+      QTest::keyClick(code, Qt::Key_Right);
+    QCOMPARE(code->cursorWord(), QStringLiteral("code"));
+    key(code, Qt::Key_2);
+    QCOMPARE(locks.word(1), QStringLiteral("code"));
+    QCOMPARE(locks.word(0), QStringLiteral("rbx"));
+
+    // Search > Lock highlight lists the commands, each color with its swatch.
+    auto *menu = bench.window->findChild<QMenu *>(
+        QStringLiteral("menuLockHighlight"));
+    QVERIFY(menu);
+    QStringList commands;
+    for (auto *action : menu->actions())
+      if (!action->isSeparator()) {
+        commands.append(action->shortcut().toString(QKeySequence::PortableText));
+        QVERIFY(!action->icon().isNull());
+      }
+    QCOMPARE(commands, (QStringList{"Ctrl+Alt+0", "Ctrl+Alt+1", "Ctrl+Alt+2",
+                                    "Ctrl+Alt+3", "Ctrl+Alt+4", "Ctrl+Alt+5",
+                                    "Ctrl+Alt+6", "Ctrl+Alt+7", "Ctrl+Alt+8"}));
+
+    // Closing the file frees every color.
+    bench.session.closeFile();
+    QTRY_VERIFY_WITH_TIMEOUT(!bench.session.loaded(), OpenTimeoutMs);
+    QVERIFY(locks.word(0).isEmpty());
+    QVERIFY(locks.word(1).isEmpty());
+  }
+
   void tabFromCodeUsesSelectedInstruction_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("native");

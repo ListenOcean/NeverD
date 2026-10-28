@@ -205,7 +205,13 @@ code reads or writes is laid out as wide as those accesses, under the name its
 operands and the pseudocode use (`qword_A410 dq ?`, or `unk_` where the widths
 differ); other unwritten bytes run as `db N dup(?)` up to the next item. Only a window of lines around the viewport is held; the scroll bar
 maps to the linear address space. The arrow gutter draws branches, and clicking
-an identifier highlights every occurrence. Names the engine leaves generic take
+an identifier highlights every occurrence; a register brings the registers that
+share it along, `eax` and `al` with `rax` or `w0` with `x0`, as in IDA.
+**Search → Lock highlight** keeps up to eight words highlighted, each in its
+own color, in every disassembly and code window while the cursor's highlight
+moves on: Ctrl+Alt+1 through Ctrl+Alt+8 lock the word under the cursor in that
+color or free the color again, and Ctrl+Alt+0 locks it in the first free color
+or unlocks it. Closing the file frees every color. Names the engine leaves generic take
 their classic forms in the listing, function list, jumps and source views:
 import thunks after their import and the entry point `start` (`DllEntryPoint`
 for a PE DLL). Pure direct forwarders carry a thunk attribute; a DLL entry's
@@ -706,6 +712,7 @@ Knowledge Exchange assets, and it registers only the `neverd://` scheme.
 | Ctrl+P / Ctrl+L / Ctrl+S / Ctrl+E | Choose a function / name / segment / entry point |
 | Alt+T, Ctrl+T / Alt+B, Ctrl+B | Search text / bytes, and repeat |
 | Alt+Up / Alt+Down | Previous / next occurrence of the highlighted identifier |
+| Ctrl+Alt+1 … Ctrl+Alt+8 / Ctrl+Alt+0 | Lock or free a highlight color / lock or unlock in the first free color |
 | Ctrl+Shift+Up / Ctrl+Shift+Down | Previous / next function |
 | Shift+F3, Shift+F4, Shift+F7, Shift+F12 | Functions, Names, Segments, Strings |
 | Shift+F11 | Type libraries |

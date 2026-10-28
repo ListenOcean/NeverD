@@ -344,6 +344,50 @@
         <translation>Aller à l&apos;occurrence suivante de l&apos;identifiant en surbrillance</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>Verrouiller ou &amp;déverrouiller</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>Garder le mot surligné en surbrillance dans la première couleur libre, ou le déverrouiller</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>Couleur &amp;1</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>Couleur &amp;2</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>Couleur &amp;3</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>Couleur &amp;4</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>Couleur &amp;5</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>Couleur &amp;6</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>Couleur &amp;7</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>Couleur &amp;8</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>Verrouiller le mot surligné dans cette couleur, ou libérer la couleur</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>&amp;Rechercher dans la vue...</translation>
     </message>
@@ -1610,6 +1654,10 @@
     <message>
         <source>&amp;Search</source>
         <translation>&amp;Recherche</translation>
+    </message>
+    <message>
+        <source>&amp;Lock highlight</source>
+        <translation>&amp;Verrouiller la surbrillance</translation>
     </message>
     <message>
         <source>&amp;View</source>

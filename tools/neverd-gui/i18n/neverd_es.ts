@@ -344,6 +344,50 @@
         <translation>Ir a la aparición siguiente del identificador resaltado</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>Bloquear o &amp;desbloquear</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>Mantener resaltada la palabra resaltada con el primer color libre, o desbloquearla</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>Color &amp;1</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>Color &amp;2</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>Color &amp;3</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>Color &amp;4</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>Color &amp;5</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>Color &amp;6</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>Color &amp;7</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>Color &amp;8</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>Bloquear la palabra resaltada con este color, o liberar el color</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>Buscar en la &amp;vista...</translation>
     </message>
@@ -1610,6 +1654,10 @@
     <message>
         <source>&amp;Search</source>
         <translation>&amp;Buscar</translation>
+    </message>
+    <message>
+        <source>&amp;Lock highlight</source>
+        <translation>B&amp;loquear resaltado</translation>
     </message>
     <message>
         <source>&amp;View</source>

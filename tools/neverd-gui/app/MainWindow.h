@@ -301,6 +301,8 @@ private:
   void searchBinary(const QString &kind, bool again);
   void queryRegister(const QString &kind);
   void searchHighlight(bool forward);
+  /// Lock highlight: color \p slot, or the first free color.
+  void lockHighlight(std::optional<int> slot);
   void stepFunction(bool forward);
   void showCalculator();
   void showAbout();

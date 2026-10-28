@@ -344,6 +344,50 @@
         <translation>Move to the next occurrence of the highlighted identifier</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>Lock or &amp;unlock</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>Keep the highlighted word highlighted in the first free color, or unlock it</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>Color &amp;1</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>Color &amp;2</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>Color &amp;3</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>Color &amp;4</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>Color &amp;5</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>Color &amp;6</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>Color &amp;7</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>Color &amp;8</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>Lock the highlighted word in this color, or unlock the color</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>&amp;Find in view...</translation>
     </message>
@@ -1610,6 +1654,10 @@
     <message>
         <source>&amp;Search</source>
         <translation>&amp;Search</translation>
+    </message>
+    <message>
+        <source>&amp;Lock highlight</source>
+        <translation>&amp;Lock highlight</translation>
     </message>
     <message>
         <source>&amp;View</source>

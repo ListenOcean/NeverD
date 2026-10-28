@@ -4629,7 +4629,14 @@ listing's highlight with the copied word.
 `Device->Links.Flink` in C pseudocode and of `main.main` in Go pseudocode, and
 `WorkbenchUnitTests::pseudocodeWordsSplitMemberAccessesAtTheirDot` checks the
 word bounds and whole-word highlights behind it, dotted names kept whole
-outside pseudocode. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+outside pseudocode.
+`WorkbenchTests::lockedHighlightsStayAcrossMovesAndViews` locks `rbx` in the
+listing with Ctrl+Alt+1, checks the color stays painted after the cursor leaves
+it, frees and relocks it with Ctrl+Alt+1 and Ctrl+Alt+0, locks a pseudocode
+word, lists the Lock highlight menu with its swatches and frees every color on
+close. `WorkbenchUnitTests::highlightLocksToggleAsIdaDoes`,
+`registerFamiliesShareTheirParts` and `highlightsCoverRegistersSharingTheWord`
+check the toggles, register families and register-span ranges behind it. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
