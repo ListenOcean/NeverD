@@ -480,6 +480,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
   HeaderCallRecords.clear();
+  DefinitionPointers.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   collectImageDataUses(Mod);
@@ -2089,6 +2090,10 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   const std::string Undefined = "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
   if (calleeReturnsNothing(Call))
     return Undefined;
+  if (const auto *Callee = Call.getCalledFunction();
+      Callee && Type->isIntegerTy() && !needsCallSiteCType(Call) &&
+      definitionPointerTypes(*Callee).Result.Type)
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)(" + Expr + "))";
   const LibraryCallee Library = libraryCallee(Call);
   if (!Library)
     return Expr;

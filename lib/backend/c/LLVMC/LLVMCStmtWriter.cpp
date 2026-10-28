@@ -82,17 +82,17 @@
 
 namespace neverd {
 
-namespace {
-bool needsCallSiteCType(const llvm::CallBase &Call) {
+bool LLVMCWriter::needsCallSiteCType(const llvm::CallBase &Call) {
   const auto *Declared = llvm::dyn_cast<llvm::Function>(
       Call.getCalledOperand()->stripPointerCasts());
   return Declared && (Declared->getFunctionType() != Call.getFunctionType() ||
                       Declared->getCallingConv() != Call.getCallingConv());
 }
 
+namespace {
 std::string retainCallSiteCType(const llvm::CallBase &Call,
                                 llvm::StringRef Type, std::string Cast) {
-  if (!needsCallSiteCType(Call))
+  if (!LLVMCWriter::needsCallSiteCType(Call))
     return Cast;
   // Clang can lower a directly cast function designator using its original
   // declaration's non-variadic ABI, dropping Windows x64's floating GPR copy.
@@ -2038,7 +2038,8 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       // Memory may change before a use: read the slot here.
       if (!slotReadAtUses(*LI)) {
         emitIndent(Indent);
-        OS << Name << " = " << Member->Text << ";\n";
+        OS << Name << " = " << memberAsAccessed(*LI, Member->Text, Member->Type)
+           << ";\n";
         return;
       }
       ValueTexts[&Inst] = Member->Text;
@@ -5987,6 +5988,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
               "(" + Argument + ")";
       continue;
+    }
+    if (const auto *Callee = Call.getCalledFunction();
+        Callee && !needsCallSiteCType(Call)) {
+      const auto &Parameters = definitionPointerTypes(*Callee).Parameters;
+      if (ArgIdx < Parameters.size() && Parameters[ArgIdx].Type) {
+        Expr += "(" + Parameters[ArgIdx].declaration() + ")(uintptr_t)(" +
+                Argument + ")";
+        continue;
+      }
     }
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =

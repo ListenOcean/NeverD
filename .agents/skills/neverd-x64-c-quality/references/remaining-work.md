@@ -42,8 +42,17 @@ This does not infer a runtime initializer or missing VM memory state.
 
 Affine register-call targets share the reaching-value proof before entry-read
 summaries and SSA. This preserves untouched forwarding inputs through selected
-function and whole-module source projection. Cross-block register targets and
-full MinGW source type bridges remain separate tracked qualification gaps.
+function and whole-module source projection. A bounded, unique direct-
+predecessor chain extends this to cross-block targets; alternate entries,
+merges, cycles, exception paths and malformed boundaries stop inheritance.
+This still cannot manufacture hidden caller state.
+
+LLVM C definitions and calls now share their pointer-type projection, including
+object pointers, callbacks and typedefs. Materialized member loads use the same
+carrier conversion as inlined reads. CRT header reuse keeps layout assertions,
+so different MSVCRT/UCRT definitions cannot silently substitute one another.
+Public source execution and the complete MinGW toy own qualification; native
+Windows kernel and ARM64 execution remain separate evidence requirements.
 
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains

@@ -158,7 +158,7 @@ BinaryImage forwardingImage(Arch Architecture, BinaryFormat Format, bool Edge) {
   return Image;
 }
 
-TEST(IndirectCallValueSource, ExactTargetKeepsForwardedInputBeforeSSA) {
+void checkForwardedInput(bool Edge) {
   for (auto Architecture : {Arch::X64, Arch::AArch64})
     for (auto Format :
          {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
@@ -168,7 +168,7 @@ TEST(IndirectCallValueSource, ExactTargetKeepsForwardedInputBeforeSSA) {
             SCOPED_TRACE(::testing::Message()
                          << unsigned(Architecture) << ':' << unsigned(Format)
                          << ':' << Selected << ':' << LLVM << ':' << NoOpt);
-            auto Image = forwardingImage(Architecture, Format, false);
+            auto Image = forwardingImage(Architecture, Format, Edge);
             llvm::LLVMContext Context;
             PipelineOptions Options;
             Options.EmitDumpOutput = false;
@@ -237,5 +237,12 @@ int main(void) {
                   Source, {Optimization, "-fsanitize=undefined",
                            "-fno-sanitize-recover=all"});
           }
+}
+TEST(IndirectCallValueSource, ExactTargetKeepsForwardedInputBeforeSSA) {
+  checkForwardedInput(false);
+}
+
+TEST(IndirectCallValueSource, DirectEdgeKeepsForwardedInputBeforeSSA) {
+  checkForwardedInput(true);
 }
 } // namespace

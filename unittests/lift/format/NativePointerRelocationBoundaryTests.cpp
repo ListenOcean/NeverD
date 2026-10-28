@@ -17,6 +17,8 @@
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
+#include "neverd/types/TypeParse.h"
+#include "neverd/types/TypeRender.h"
 
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
@@ -2377,6 +2379,55 @@ int main(int argc, char **argv) {
            {"--target=x86_64-w64-mingw32", "-fms-extensions", "-fsyntax-only",
             "-w", tmpFile("decompiled.c").string()});
   EXPECT_TRUE(Syntax.ok()) << Syntax.err;
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       CRTHeaderRecordReuseChecksTheActualRuntimeLayout) {
+  if (!hasCrossTargetClang() ||
+      !exec("x86_64-w64-mingw32-gcc", {"--version"}).ok())
+    GTEST_SKIP() << "needs Clang and the MinGW headers";
+  for (unsigned Variant = 0; Variant != 3; ++Variant) {
+    SCOPED_TRACE(Variant);
+    const bool UCRT = Variant == 1;
+    types::TypeLibrary Library(types::DataModel::LLP64);
+    std::string Declaration =
+        UCRT ? "struct _iobuf { void *_Placeholder; };"
+             : "struct _iobuf { char *_ptr; int _cnt; char *_base; "
+               "int _flag, _file, _charbuf, _bufsiz; char *_tmpfname; };";
+    if (Variant == 2)
+      Declaration.replace(Declaration.find("char *_ptr"),
+                          std::string("char *_ptr").size(),
+                          "unsigned long long _ptr");
+    ASSERT_TRUE(types::parseCTypes(Declaration, Library).ok());
+    types::RenderOptions Options;
+    Options.Asserts = true;
+    Options.Spelling = types::BuiltinSpelling::Portable;
+    const auto Rendered =
+        types::renderEmbeddedC(Library, {Library.find("_iobuf")}, Options);
+    const auto Source = tmpFile(UCRT ? "ucrt_record.c" : "msvcrt_record.c");
+    {
+      std::ofstream Out(Source);
+      ASSERT_TRUE(Out);
+      Out << "#include <stdio.h>\n"
+          << Rendered.Text << "\nstruct _iobuf object;\n";
+    }
+    for (const bool HeaderUCRT : {false, true}) {
+      SCOPED_TRACE(HeaderUCRT);
+      const auto Syntax =
+          exec(NEVERD_TEST_CLANG,
+               {"--target=x86_64-w64-mingw32", "-fsyntax-only",
+                HeaderUCRT ? "-D_UCRT" : "-U_UCRT", Source.string()});
+      if (HeaderUCRT == UCRT && Variant != 2)
+        EXPECT_TRUE(Syntax.ok()) << Syntax.err;
+      else {
+        EXPECT_FALSE(Syntax.ok());
+        EXPECT_EQ(Syntax.err.find("redefinition"), std::string::npos)
+            << Syntax.err;
+        EXPECT_NE(Syntax.err.find("static assertion failed"), std::string::npos)
+            << Syntax.err;
+      }
+    }
+  }
 }
 
 TEST_F(NativePointerRelocationBoundary,

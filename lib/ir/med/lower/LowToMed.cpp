@@ -35,6 +35,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/ir/low/X86/X86FourSourceShape.h"
@@ -1102,6 +1103,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   }
   size_t LowBlockIndex = 0;
   size_t CallTargetWork = limits::ir::kSourceFrameAnalysisRemaining;
+  std::optional<std::map<SourceCallOccurrenceKey, va_t>> ScalarCallTargets;
 
   const auto CachedImports =
       Image && Image->Arch == TheArch && Image->abiFormat() == Fmt &&
@@ -1150,6 +1152,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         CachedTarget = CallTargets.resolve(MB, ndVarToMedVar(Call.Inputs[0]),
                                            &CallTargetWork);
         const auto OriginalSite = sourceCallOccurrenceKey(Call);
+        if (!CachedTarget && OriginalSite && !Image->IsRelocatable) {
+          if (!ScalarCallTargets)
+            ScalarCallTargets = constantRegisterCallTargets(Low);
+          if (const auto Target = ScalarCallTargets->find(*OriginalSite);
+              Target != ScalarCallTargets->end())
+            CachedTarget = MedCallTarget{Target->second, false};
+        }
         const bool AnalystSite = OriginalSite && SourceCallSiteHints &&
                                  SourceCallSiteHints->count(*OriginalSite);
         if (CachedTarget && !CachedTarget->ThroughSlot && !AnalystSite &&

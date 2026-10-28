@@ -1850,3 +1850,5 @@ MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計
 `BinaryImage::readOnlyAfterRelocations` 統一決定載入後的不可變性。唯讀映射、載入器明確保證的保護，或已連結 ELF 中完整涵蓋的 PT_GNU_RELRO 範圍才構成證據。`.data.rel.ro`、`__DATA_CONST` 等名稱及更細的區段旗標不能把可寫映射變成常數；`-z norelro` 和缺少 SG_READ_ONLY 的情況保持可寫。重定位分類、純量摺疊和 LLVM 資料產生共用此判斷。
 
 `MedCallTarget` 在呼叫暫存器摘要與 SSA 之前證明有限位寬的常數位址運算，保留未經改寫的轉送參數。證據只能來自查詢之前的定義；程式碼位址值與存放函式指標的記憶體槽保持不同語意。
+
+`LowScalarConstant` 僅在完整、單入口函式內沿唯一直接前驅鏈恢復暫存器呼叫目標，並在摘要及 SSA 前套用；局部證明優先，複製與求值共用預算。匯合、循環、例外邊及非法指令邊界阻止繼承，AL 查詢仍限於目前區塊。LLVM C 的宣告與呼叫共用依參數位置綁定的指標型別投影，成員讀取也統一轉換；CRT 標頭重用保留配置檢查。

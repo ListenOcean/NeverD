@@ -1930,3 +1930,5 @@ MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计
 `BinaryImage::readOnlyAfterRelocations` 统一决定装载后的不可变性。只读映射、装载器明确保证的保护，或已链接 ELF 中完整覆盖的 PT_GNU_RELRO 范围才构成证据。`.data.rel.ro`、`__DATA_CONST` 等名称及更细的节标志不能把可写映射变成常量；`-z norelro` 和缺失 SG_READ_ONLY 的情况保持可写。重定位分类、标量折叠和 LLVM 数据生成共用该判断。
 
 `MedCallTarget` 在调用寄存器摘要和 SSA 之前证明有限位宽的常量地址运算，保留未经改写的转发参数。证据只能来自查询之前的定义；代码地址值和存放函数指针的内存槽保持不同语义。
+
+`LowScalarConstant` 只在完整、单入口函数内沿唯一直接前驱链恢复寄存器调用目标，并在摘要和 SSA 前应用；局部证明优先，复制和求值共用预算。汇合、循环、异常边和非法指令边界阻止继承，AL 查询仍限于当前块。LLVM C 的函数声明与调用共用按参数位置绑定的指针类型投影，成员读取也统一转换；CRT 头文件复用始终保留布局检查。

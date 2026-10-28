@@ -62,6 +62,11 @@ add_neverd_unittest(NeverDConstantBranchTests
   LINK_COMPONENTS IRLow Lift
 )
 
+add_neverd_unittest(NeverDLowScalarConstantTests
+  core/LowScalarConstantTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
 add_neverd_unittest(NeverDConstantBranchSourceTests
   core/ConstantBranchSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC
@@ -1778,6 +1783,7 @@ target_link_libraries(NeverDLiftTests PRIVATE
   NeverDPipeline
   NeverDSupport
   NeverDDebugInfo
+  NeverDTypes
 )
 
 add_neverd_unittest(NeverDWindowsEHMetadataEncoderTests
@@ -2241,6 +2247,18 @@ add_neverd_unittest(NeverDLLVMCFrameMemoryTests
   LINK_COMPONENTS BackendC
 )
 
+add_neverd_unittest(NeverDLLVMCSourcePointerTests
+  core/LLVMCSourcePointerTests.cpp
+  LINK_COMPONENTS BackendC
+)
+target_include_directories(NeverDLLVMCSourcePointerTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+)
+if(NEVERD_TEST_CLANG_EXECUTABLE)
+  target_compile_definitions(NeverDLLVMCSourcePointerTests PRIVATE
+    NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}")
+endif()
+
 target_include_directories(NeverDLLVMCFrameMemoryTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include
   ${LLVM_INCLUDE_DIRS}
@@ -2432,6 +2450,7 @@ add_neverd_unittest(NeverDNativePointerRelocationBoundaryTests
   Support
   BackendC
   BackendLLVM
+  Types
 )
 
 target_compile_definitions(NeverDNativePointerRelocationBoundaryTests PRIVATE

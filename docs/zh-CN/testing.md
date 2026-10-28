@@ -2204,3 +2204,5 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计算所得的间接调用目标保留 SSA 值身份，不能因位模式变成常量而被当作指针存储地址；直接调用和普通参数继续折叠。`NeverDImageAnalysisBoundaryTests` 检查 x86/x64/ARM32/ARM64 的转换，`NeverDIndirectCallValueSourceTests` 在三种原生格式下执行 x64/ARM64 两条 C 路线；原镜像视图只检查语法和没有凭空增加的内存读取，不能脱离镜像提供者执行。
 
 `NeverDReadOnlyProtectionSourceTests` 对 PE、ELF、Mach-O 中的 x64/ARM64 输入指令生成 HighC 和 LLVM C，并用主机 Clang 在 O0/O2 加 UBSan 下执行全局变量读写。覆盖两种流水线优化模式及容易误导判断的常量节名称。`NeverDReadOnlyBytesTests` 检查映射权限、完整 RELRO 范围和非法范围；原生指针边界套件将同一 ELF 样例分别链接为 relro 与 norelro。重建 C 的主机执行不等于原生 ARM64 或 Windows 内核执行验证。
+
+`NeverDLowScalarConstantTests` 和 `NeverDIndirectCallValueSourceTests` 覆盖跨块调用及拒绝边界，并执行两条 C 路线。`NeverDLLVMCSourcePointerTests` 在 O0/O2 加 UBSan 下检查对象指针、回调、别名和选中函数的外部声明。原生指针套件编译公开 MinGW 样例，拒绝 MSVCRT/UCRT 布局不符；这些不等于原生内核或 ARM64 执行验证。
