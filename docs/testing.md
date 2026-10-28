@@ -5939,6 +5939,12 @@ ends its path, and a statement that the target returns decides over both.
 `InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
 imported from the Universal CRT ends its caller's block, and that the same name
 imported from another module does not.
+`InternalNoReturn.LeafWithoutAnUnwindEntryIsScreenedByItsStraightLineFlow`
+and `AArch64FastFailStubWithoutUnwindDataEndsItsBlock` check that a leaf callee
+of an x64 or ARM64 PE image, which needs no unwind entry, such as a
+`__fastfail` stub, still reaches the proof when straight-line flow from its
+entry ends at a trap that never resumes; a branch first, `brk #0xf000`, or an
+x86 image keeps the caller's fall-through.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
