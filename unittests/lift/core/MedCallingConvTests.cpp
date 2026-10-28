@@ -631,6 +631,47 @@ TEST(MedABIPass, ScalarFPResultPromotionPreservesExistingDefinitions) {
   }
 }
 
+TEST(MedCallingConvStackParams, SharedStackPointerPhisAreTracedOnce) {
+  // Thirty diamonds each join two copies of SP, as SEH handler roots join the
+  // protected range's SP with the normal path. Every value's offset is
+  // computed once; a walk along every path would take 2^30 steps. The trace
+  // reaches the entry SP at depth 61, within its limit.
+  constexpr auto Architecture = Arch::X64;
+  const auto &TRI = getTargetRegInfo(Architecture);
+  const auto Layout = TRI.integerArgumentLayout(BinaryFormat::ELF);
+  MedFunc F;
+  F.Blocks.resize(1);
+  auto &B = F.Blocks[0];
+  MedVar Current = reg(1, 0, 8, TRI.StackPointer, Architecture);
+  addLiveIn(B, Current);
+  int Version = 0;
+  for (int Diamond = 0; Diamond < 30; ++Diamond) {
+    const MedVar Left = reg(1, ++Version, 8, TRI.StackPointer, Architecture);
+    const MedVar Right = reg(1, ++Version, 8, TRI.StackPointer, Architecture);
+    B.Ops.push_back(unary(NdOp::COPY, Left, Current));
+    B.Ops.push_back(unary(NdOp::COPY, Right, Current));
+    PhiNode Join;
+    Join.Output = reg(1, ++Version, 8, TRI.StackPointer, Architecture);
+    Join.Args = {{0, Left}, {0, Right}};
+    B.Phis.push_back(Join);
+    Current = Join.Output;
+  }
+  const auto Address = temp(2, 0, 8, Architecture);
+  B.Ops.push_back(binary(NdOp::INT_ADD, Address, Current,
+                         MedVar::makeConst(Layout.EntryStackBase, 8)));
+  B.Ops.push_back(unary(NdOp::LOAD, temp(3, 0, 8, Architecture), Address));
+  med_calling_conv_detail::detectStackParams(F, Architecture,
+                                             BinaryFormat::ELF);
+  // The load is the first stack argument, after every register one.
+  ASSERT_EQ(F.Params.size(), Layout.Registers.size() + 1);
+  bool Read = false;
+  for (const MedOp &Op : B.Ops)
+    for (uint8_t I = 0; I < Op.NumInputs; ++I)
+      Read |= Op.Inputs[I].Kind == MedVar::Param &&
+              Op.Inputs[I].Id == int(Layout.Registers.size());
+  EXPECT_TRUE(Read);
+}
+
 TEST(MedCallingConvFPStack, InstructionOwnedReadsRecoverTheIncomingBytes) {
   for (auto Architecture : {Arch::X86, Arch::X64})
     for (auto Format :
