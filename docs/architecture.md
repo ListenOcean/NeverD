@@ -1085,9 +1085,11 @@ value before publishing results or writes.
 Four-vector operations require eight LowIR inputs and five private intrinsic
 results. The shared representation limits live in `OperationLimits.def`;
 construction rejects excess inputs. Existing six-slot undefined-operation
-identities retain their v1 bytes when extension slots are default. Extended
-operands or stored extension bits select a separate v2 digest domain, including
-all eight slots. This does not extend the public native vector calling ABI.
+identities and raw-environment graph and evidence digests retain their v1 bytes
+when extension slots are default; `lowOperationFitsV1InputSlots` decides this
+for each digest. Extended operands or stored extension bits select a separate
+v2 digest domain, including all eight slots. This does not extend the public
+native vector calling ABI.
 For x1 SP-based structure memory, analysis retains the original SP and nominal
 footprint. Image source conversion and execution reject the unsupported stack
 environment. Fixed-image bases using register post-index remain outside the
