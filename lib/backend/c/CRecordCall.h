@@ -37,12 +37,23 @@ namespace neverd::c_detail {
 inline std::string sourceRecordValue(const TypeRef &Record,
                                      llvm::StringRef From, llvm::StringRef To,
                                      llvm::StringRef Expression) {
+  const auto Temporary = [&](llvm::StringRef Stem) {
+    std::string Name = Stem.str();
+    while (From.contains(Name) || To.contains(Name) ||
+           Expression.contains(Name))
+      Name += '_';
+    return Name;
+  };
+  const auto Destination = Temporary(kSourceRecordDestination);
+  const auto Source = Temporary(kSourceRecordSource);
   std::string Copies;
   for (const auto &Member : sourceAggregateMembers(Record))
     Copies += llvm::formatv(kSourceRecordFieldCopy, Member.ByteOffset,
-                            Member.Type->Size)
+                            Member.Type->Size, Destination, Source)
                   .str();
-  return llvm::formatv(kSourceRecordValue, To, From, Expression, Copies).str();
+  return llvm::formatv(kSourceRecordValue, To, From, Expression, Copies,
+                       Destination, Source)
+      .str();
 }
 
 inline std::string recordCallType(const TypeRef &Type,
