@@ -680,12 +680,40 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
       OS << " __attribute__((weak))";
     OS << ";\n";
   }
+  // A unit that names the definitions it leaves out leaves out each one whose
+  // C throws an error it can name, as HighC's does: setupFunction starts the
+  // next definition from its own state. A recorded rendering, a source map
+  // and source names follow one pass's text, so those still fail.
+  const bool Refusing = Opts.RefusedDefinitions && !OnlyFunction &&
+                        !SourceRecorder && !Opts.SourceMap && !Opts.SourceNames;
+  if (Opts.RefusedDefinitions)
+    Opts.RefusedDefinitions->clear();
   auto WriteFunctions = [&] {
     for (auto &Fn : Mod) {
       if (Fn.isDeclaration())
         continue;
       if (OnlyFunction && &Fn != OnlyFunction)
         continue;
+      if (Refusing) {
+        std::string Text;
+        llvm::raw_string_ostream TextOS(Text);
+        try {
+          RestoreOutput Restore{OS, &OS.stream()};
+          OS.retarget(&TextOS);
+          writeFunction(Fn);
+        } catch (const std::exception &Error) {
+          std::optional<uint64_t> Entry;
+          if (auto VA = rewrite_source::getOriginalVA(Fn))
+            Entry = *VA;
+          else
+            llvm::consumeError(VA.takeError());
+          Opts.RefusedDefinitions->push_back(
+              {Entry.value_or(0), Fn.getName().str(), Error.what()});
+          continue;
+        }
+        OS << Text << "\n";
+        continue;
+      }
       auto Event = SourceRecorder ? SourceRecorder->function(Fn) : std::nullopt;
       if (SourceRecorder)
         OS << SourceRecorder->definition(Fn);

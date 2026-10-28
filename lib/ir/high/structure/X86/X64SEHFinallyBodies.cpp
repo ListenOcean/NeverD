@@ -4,9 +4,8 @@
 //
 //===----------------------------------------------------------------------===//
 
-#include "neverd/ir/high/X64SEHFinallyBodies.h"
-
 #include "../../pass/HighFrameAddress.h"
+#include "../SEHFinallyBodiesDetail.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -23,211 +22,8 @@
 #include <vector>
 
 namespace neverd {
+namespace seh_finally {
 namespace {
-
-/// A deep copy of \p E with fresh nodes, so mutations do not reach the
-/// original funclet body (which other parents may also attach).
-ExprPtr cloneExpr(const ExprPtr &E) {
-  if (!E)
-    return nullptr;
-  auto Copy = std::make_shared<HighExpr>(*E);
-  for (ExprPtr &Operand : Copy->Operands)
-    Operand = cloneExpr(Operand);
-  Copy->IndirectTarget = cloneExpr(Copy->IndirectTarget);
-  return Copy;
-}
-
-std::vector<HighStmt> cloneStmts(const std::vector<HighStmt> &Stmts);
-
-HighStmt cloneStmt(const HighStmt &S) {
-  HighStmt Copy = S;
-  Copy.Dst = cloneExpr(S.Dst);
-  Copy.Val = cloneExpr(S.Val);
-  Copy.Cond = cloneExpr(S.Cond);
-  Copy.RetVal = cloneExpr(S.RetVal);
-  Copy.StoreAddr = cloneExpr(S.StoreAddr);
-  Copy.StoreVal = cloneExpr(S.StoreVal);
-  Copy.CallExpr = cloneExpr(S.CallExpr);
-  Copy.SwitchExpr = cloneExpr(S.SwitchExpr);
-  Copy.Body = cloneStmts(S.Body);
-  Copy.ElseBody = cloneStmts(S.ElseBody);
-  Copy.DefaultBody = cloneStmts(S.DefaultBody);
-  for (SwitchCase &C : Copy.Cases)
-    C.Body = cloneStmts(C.Body);
-  for (HighEHClause &Clause : Copy.EHClauses)
-    Clause.FilterValue = cloneExpr(Clause.FilterValue);
-  for (auto &ClauseBody : Copy.EHClauseBodies)
-    ClauseBody = cloneStmts(ClauseBody);
-  return Copy;
-}
-
-std::vector<HighStmt> cloneStmts(const std::vector<HighStmt> &Stmts) {
-  std::vector<HighStmt> Result;
-  Result.reserve(Stmts.size());
-  for (const HighStmt &S : Stmts)
-    Result.push_back(cloneStmt(S));
-  return Result;
-}
-
-/// Rewrite every expression of \p Stmts through \p Fn, children first, so a
-/// substitution of a leaf is itself rewritten by its new parent's visit.
-void mapExprs(std::vector<HighStmt> &Stmts,
-              const std::function<ExprPtr(ExprPtr)> &Fn) {
-  std::function<ExprPtr(ExprPtr)> Visit = [&](ExprPtr E) -> ExprPtr {
-    if (!E)
-      return nullptr;
-    for (ExprPtr &Operand : E->Operands)
-      Operand = Visit(Operand);
-    E->IndirectTarget = Visit(E->IndirectTarget);
-    return Fn(std::move(E));
-  };
-  walkStmts(Stmts, [&](HighStmt &S) {
-    forEachExpr(S, [&](ExprPtr &E) { E = Visit(E); });
-    for (HighEHClause &Clause : S.EHClauses)
-      Clause.FilterValue = Visit(Clause.FilterValue);
-  });
-}
-
-/// A pure integer value re-evaluated to one constant, when every leaf is a
-/// constant.  Covers the two's-complement idiom a compiler emits for
-/// `AbnormalTermination()` (`(0 - (int)(flag != 0)) + k`), so the clause with
-/// the flag folded false can be matched against the inline normal-path copy.
-std::optional<uint64_t> foldToConstant(const HighExpr &E, unsigned Depth = 0) {
-  if (Depth > limits::kMaxCExprPrintDepth)
-    return std::nullopt;
-  const uint64_t Mask = E.Type && E.Type->Size && E.Type->Size < 8
-                            ? (uint64_t(1) << (E.Type->Size * 8)) - 1
-                            : ~uint64_t(0);
-  auto Trunc = [&](uint64_t V) { return V & Mask; };
-  if (E.Kind == ExprKind::Const)
-    return Trunc(E.ConstVal);
-  auto Operand = [&](size_t I) -> std::optional<uint64_t> {
-    return I < E.Operands.size() && E.Operands[I]
-               ? foldToConstant(*E.Operands[I], Depth + 1)
-               : std::nullopt;
-  };
-  if (E.Kind == ExprKind::Cast || E.Kind == ExprKind::BitCast) {
-    if (auto V = Operand(0))
-      return Trunc(*V);
-    return std::nullopt;
-  }
-  if (E.Kind == ExprKind::UnaryOp) {
-    const auto V = Operand(0);
-    if (!V)
-      return std::nullopt;
-    switch (E.Op) {
-    case NdOp::INT_ZEXT:
-    case NdOp::CAST:
-      return Trunc(*V);
-    case NdOp::INT_SEXT: {
-      const auto &Src = E.Operands[0];
-      const unsigned Bits =
-          Src && Src->Type && Src->Type->Size ? Src->Type->Size * 8u : 0;
-      if (!Bits || Bits >= 64)
-        return Trunc(*V);
-      const uint64_t Low = (uint64_t(1) << Bits) - 1;
-      uint64_t S = *V & Low;
-      if (S & (uint64_t(1) << (Bits - 1)))
-        S |= ~Low;
-      return Trunc(S);
-    }
-    case NdOp::INT_NEG2:
-    case NdOp::INT_NEGATE:
-      return Trunc(0 - *V);
-    case NdOp::INT_NOT:
-      return Trunc(~*V);
-    default:
-      return std::nullopt;
-    }
-  }
-  if (E.Kind != ExprKind::BinOp || E.Operands.size() != 2)
-    return std::nullopt;
-  const auto A = Operand(0);
-  const auto B = Operand(1);
-  if (!A || !B)
-    return std::nullopt;
-  switch (E.Op) {
-  case NdOp::INT_ADD:
-    return Trunc(*A + *B);
-  case NdOp::INT_SUB:
-    return Trunc(*A - *B);
-  case NdOp::INT_AND:
-    return Trunc(*A & *B);
-  case NdOp::INT_OR:
-    return Trunc(*A | *B);
-  case NdOp::INT_XOR:
-    return Trunc(*A ^ *B);
-  case NdOp::INT_EQUAL:
-    return *A == *B ? 1 : 0;
-  case NdOp::INT_NOTEQUAL:
-    return *A != *B ? 1 : 0;
-  default:
-    return std::nullopt;
-  }
-}
-
-/// Replace every integer subtree of \p Stmts that evaluates to a constant with
-/// that constant, so a straight-line body with the abnormal flag pinned folds
-/// to its concrete effect.
-void foldConstants(std::vector<HighStmt> &Stmts) {
-  mapExprs(Stmts, [](ExprPtr E) -> ExprPtr {
-    if (!E || E->Kind == ExprKind::Const || !E->Type ||
-        E->Type->Kind != NdTypeKind::Int)
-      return E;
-    if (auto V = foldToConstant(*E)) {
-      auto Const = HighExpr::makeConst(*V, E->Type->Size,
-                                       ConstantAddressProvenance::Scalar);
-      Const->Type = E->Type;
-      return Const;
-    }
-    return E;
-  });
-}
-
-/// Inline trivial copies (`v = <param|const>`) into their uses and drop the
-/// defining assignment, so a home-slot load the rebase turned into a parameter
-/// reads as that parameter.  Only straight-line pure copies are inlined.
-void inlineTrivialCopies(std::vector<HighStmt> &Stmts) {
-  std::map<std::pair<int, int>, ExprPtr> Copies;
-  auto key = [](const MedVar &V) { return std::make_pair(V.Id, V.SSAVer); };
-  auto substitutable = [](const ExprPtr &V) {
-    return V && (V->Kind == ExprKind::Var || V->Kind == ExprKind::Const) &&
-           !V->IndirectTarget;
-  };
-  std::vector<HighStmt> Result;
-  for (HighStmt &S : Stmts) {
-    if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
-        !S.DefaultBody.empty() || !S.EHClauseBodies.empty()) {
-      // Only straight-line funclet bodies reach here; a nested region is not
-      // a copy and keeps the whole statement.
-      Result.push_back(std::move(S));
-      continue;
-    }
-    auto replace = [&](ExprPtr &E) {
-      if (E && E->Kind == ExprKind::Var) {
-        auto It = Copies.find(key(E->Var));
-        if (It != Copies.end())
-          E = cloneExpr(It->second);
-      }
-    };
-    std::function<void(ExprPtr &)> apply = [&](ExprPtr &E) {
-      if (!E)
-        return;
-      for (ExprPtr &Operand : E->Operands)
-        apply(Operand);
-      apply(E->IndirectTarget);
-      replace(E);
-    };
-    forEachExpr(S, [&](ExprPtr &E) { apply(E); });
-    if (S.Kind == StmtKind::Assign && S.Dst && S.Dst->Kind == ExprKind::Var &&
-        substitutable(S.Val)) {
-      Copies[key(S.Dst->Var)] = S.Val;
-      continue; // drop the copy; its uses now read the value directly
-    }
-    Result.push_back(std::move(S));
-  }
-  Stmts = std::move(Result);
-}
 
 /// The incoming parameter a function homes at entry-SP displacement \p Offset,
 /// as a Win64 prologue spills `[rsp + k] = arg`.  Only the statements before
@@ -267,10 +63,10 @@ struct FuncletShape {
 };
 
 /// The funclet's straight-line body, with its trailing `return` dropped (a
-/// `__finally` yields no value), when its shape is supported; nullopt keeps the
-/// address comment.  The body must be straight line, with no nested region, no
-/// control transfer, no reference to its own stack pointer or a third
-/// parameter, and no exception metadata of its own.
+/// `__finally` yields no value; a call in it stays), when its shape is
+/// supported; nullopt keeps the address comment.  The body must be straight
+/// line, with no nested region, no control transfer, no reference to its own
+/// stack pointer or a third parameter, and no exception metadata of its own.
 std::optional<FuncletShape> funcletShape(const HighFunc &Funclet,
                                          Arch TargetArch) {
   if (Funclet.Body.empty() ||
@@ -280,7 +76,12 @@ std::optional<FuncletShape> funcletShape(const HighFunc &Funclet,
       (Funclet.ExceptionMetadata && Funclet.ExceptionMetadata->Itanium) ||
       (Funclet.ExceptionMetadata && Funclet.ExceptionMetadata->Registration))
     return std::nullopt;
-  const uint64_t SP = getTargetRegInfo(TargetArch).StackPointer;
+  // A finally callback takes only (flag, frame), and reads no register of
+  // the parent: the dispatcher calls it with its own.
+  if (!funcletVariablesMovable(Funclet.Body, TargetArch, /*MaxParam=*/1,
+                               [](const MedVar &) { return false; }) ||
+      callsLocalUnwind(Funclet.Body))
+    return std::nullopt;
   bool Bad = false;
   bool NoReturnTail = false;
   for (size_t I = 0; I < Funclet.Body.size(); ++I) {
@@ -305,20 +106,6 @@ std::optional<FuncletShape> funcletShape(const HighFunc &Funclet,
     if (!S.Body.empty() || !S.ElseBody.empty() || !S.Cases.empty() ||
         !S.DefaultBody.empty() || !S.EHClauseBodies.empty())
       Bad = true;
-    forEachExpr(S, [&](const ExprPtr &Root) {
-      std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
-        if (!E)
-          return;
-        if (E->Kind == ExprKind::Var) {
-          if (E->Var.Kind == MedVar::Reg && E->Var.RegOff == SP)
-            Bad = true; // its own frame would alias the parent's
-          if (E->Var.Kind == MedVar::Param && E->Var.Id >= 2)
-            Bad = true; // a finally callback takes only (flag, frame)
-        }
-        E->forEachChildExpr(Visit);
-      };
-      Visit(Root);
-    });
     if (Last && S.Kind == StmtKind::Call && isTerminatingHighCall(S.CallExpr))
       NoReturnTail = true;
   }
@@ -327,8 +114,12 @@ std::optional<FuncletShape> funcletShape(const HighFunc &Funclet,
   FuncletShape Shape;
   Shape.Body = cloneStmts(Funclet.Body);
   Shape.NoReturnTail = NoReturnTail;
-  if (!Shape.Body.empty() && Shape.Body.back().Kind == StmtKind::Return)
+  if (!Shape.Body.empty() && Shape.Body.back().Kind == StmtKind::Return) {
+    std::optional<HighStmt> Work = returnedWork(Shape.Body.back());
     Shape.Body.pop_back();
+    if (Work)
+      Shape.Body.push_back(std::move(*Work));
+  }
   return Shape;
 }
 
@@ -336,26 +127,21 @@ std::optional<FuncletShape> funcletShape(const HighFunc &Funclet,
 /// parameter rebased onto the parent's entry stack pointer, each home-slot load
 /// turned back into the parameter it holds, and the abnormal-termination
 /// parameter replaced by \p AbnormalFlag (a call to `AbnormalTermination()`, or
-/// a folded constant for the dedup check).
-std::vector<HighStmt>
+/// a folded constant for the dedup check), with the funclet's names moved
+/// past \p Names.  Nullopt when they cannot move.
+std::optional<std::vector<HighStmt>>
 projectFuncletBody(const std::vector<HighStmt> &FuncletBody,
                    const HighFunc &Parent, Arch TargetArch, uint64_t FrameBytes,
                    const ExprPtr &AbnormalFlag,
-                   const std::map<int64_t, MedVar> &Homed, int RenameBase) {
+                   const std::map<int64_t, MedVar> &Homed,
+                   const MedVar &EntrySP, FuncletNames &Names) {
   const TargetRegInfo &TRI = getTargetRegInfo(TargetArch);
   std::vector<HighStmt> Body = cloneStmts(FuncletBody);
+  // Rename first: the parent values substituted below keep their names.
+  if (!renameFuncletLocals(Body, Names))
+    return std::nullopt;
 
-  MedVar EntrySP;
-  EntrySP.Kind = MedVar::Reg;
-  EntrySP.TheArch = TargetArch;
-  EntrySP.RenameTag = -1;
-  EntrySP.SSAVer = 0;
-  EntrySP.RegOff = TRI.StackPointer;
-  EntrySP.Size = TRI.PointerSize;
-
-  // arg0 -> abnormal flag, arg1 -> entry SP - FrameBytes.  Give the funclet's
-  // own temporaries fresh rename tags so their printed `tN`/`vN` names cannot
-  // collide with the parent's.
+  // arg0 -> abnormal flag, arg1 -> entry SP - FrameBytes.
   mapExprs(Body, [&](ExprPtr E) -> ExprPtr {
     if (!E || E->Kind != ExprKind::Var)
       return E;
@@ -374,9 +160,6 @@ projectFuncletBody(const std::vector<HighStmt> &FuncletBody,
       Rebased->Type = E->Type ? E->Type : NdType::makeInt(8, false);
       return Rebased;
     }
-    if (E->Var.RenameTag >= 0 &&
-        RenameBase <= std::numeric_limits<int16_t>::max() - E->Var.RenameTag)
-      E->Var.RenameTag = static_cast<int16_t>(RenameBase + E->Var.RenameTag);
     return E;
   });
 
@@ -400,63 +183,8 @@ projectFuncletBody(const std::vector<HighStmt> &FuncletBody,
     });
   }
 
-  foldConstants(Body);
-  inlineTrivialCopies(Body);
+  simplifyProjectedBody(Body);
   return Body;
-}
-
-ExprPtr makeAbnormalTermination() {
-  // `AbnormalTermination()` is a compiler intrinsic declared by <excpt.h>,
-  // like `GetExceptionCode()`; it takes no arguments and needs no declaration.
-  ExprPtr Call = HighExpr::makeCall("AbnormalTermination", 0, {});
-  Call->Type = NdType::makeInt(4);
-  return Call;
-}
-
-int maxRenameTag(const std::vector<HighStmt> &Stmts) {
-  int Max = -1;
-  walkStmts(Stmts, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &Root) {
-      std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
-        if (!E)
-          return;
-        Max = std::max<int>(Max, E->Var.RenameTag);
-        for (const MedVar &Out : E->IntrinsicOutputs)
-          Max = std::max<int>(Max, Out.RenameTag);
-        E->forEachChildExpr(Visit);
-      };
-      Visit(Root);
-    });
-  });
-  return Max;
-}
-
-/// Whether \p Stmts call a routine that unwinds this frame to a target in the
-/// function (`_local_unwind`, `RtlUnwind[Ex]`).  The machine then runs the
-/// termination handler with the abnormal flag set, but C reads the call as an
-/// ordinary one followed by a normal exit, so a filled `__finally` would not
-/// run there.  Such a region keeps its out-of-line form until the call becomes
-/// a structured jump.
-bool callsLocalUnwind(const std::vector<HighStmt> &Stmts) {
-  bool Found = false;
-  auto IsUnwind = [](llvm::StringRef Name) {
-    Name = Name.ltrim('_');
-    return Name.starts_with("local_unwind") || Name == "RtlUnwind" ||
-           Name == "RtlUnwindEx";
-  };
-  walkStmts(Stmts, [&](const HighStmt &S) {
-    forEachExpr(S, [&](const ExprPtr &Root) {
-      std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
-        if (!E || Found)
-          return;
-        if (E->Kind == ExprKind::Call && IsUnwind(E->CallTarget))
-          Found = true;
-        E->forEachChildExpr(Visit);
-      };
-      Visit(Root);
-    });
-  });
-  return Found;
 }
 
 /// Whether any expression of \p Stmts reads the abnormal-termination
@@ -555,10 +283,8 @@ std::optional<size_t> inlineCopyLength(const std::vector<HighStmt> &Body,
 
 } // namespace
 
-void attachSEHFinallyBodies(std::vector<HighFunc> &Funcs, Arch TargetArch,
-                            std::set<va_t> *Merged) {
-  if (TargetArch != Arch::X64)
-    return;
+void attachX64(std::vector<HighFunc> &Funcs, std::set<va_t> *Merged) {
+  const Arch TargetArch = Arch::X64;
   // Only a parent with a certified termination frame can gain a body. Index
   // just the funclets those parents name, so a unit without one pays nothing.
   std::map<va_t, const HighFunc *> ByEntry;
@@ -578,31 +304,14 @@ void attachSEHFinallyBodies(std::vector<HighFunc> &Funcs, Arch TargetArch,
     // Whole-body facts, computed once a region of this parent qualifies.
     std::optional<std::map<int64_t, MedVar>> Homed;
     std::optional<std::set<va_t>> Targets;
-    int NextTag = 0;
+    FuncletNames Names;
+    MedVar EntrySP;
 
     // Top-level only: a termination region the structurer kept is a direct
     // statement of the body, and the inline normal-path copy follows it there.
     for (size_t I = 0; I < Parent.Body.size(); ++I) {
       HighStmt &Stmt = Parent.Body[I];
-      if (Stmt.Kind != StmtKind::SEHTry || !Stmt.EHIsReducible ||
-          Stmt.EHClauses.size() != 1 || Stmt.EHClauseBodies.size() != 1 ||
-          Stmt.EHClauses.front().Kind != HighEHClauseKind::SEHFinally ||
-          !Stmt.EHClauseBodies.front().empty())
-        continue;
-      // A protected body that itself transfers control cannot gain a non-empty
-      // finally: the writer no longer redirects its `__leave` to the finally.
-      // A nested exception region in the body is also left alone: a same-range
-      // inner `__except` reaches its handler by a `goto` that leaves this try,
-      // and a filled `__finally` would run on that edge, before the handler.
-      bool TransfersOut = false;
-      walkStmts(Stmt.Body, [&](const HighStmt &S) {
-        if (S.Kind == StmtKind::Return || S.Kind == StmtKind::Goto ||
-            S.Kind == StmtKind::Break || S.Kind == StmtKind::Continue ||
-            S.Kind == StmtKind::SEHTry || S.Kind == StmtKind::CxxTry ||
-            S.Kind == StmtKind::ItaniumTry)
-          TransfersOut = true;
-      });
-      if (TransfersOut || callsLocalUnwind(Stmt.Body))
+      if (!isEmptyFinallyRegion(Stmt) || !protectedBodyQualifies(Stmt))
         continue;
       const va_t FuncletVA = Stmt.EHClauses.front().FilterOrActionVA;
       auto Frame = Parent.SEHTerminationFrameBytes.find(FuncletVA);
@@ -617,7 +326,8 @@ void attachSEHFinallyBodies(std::vector<HighFunc> &Funcs, Arch TargetArch,
         continue;
       if (!Homed) {
         Homed = homedParameters(Parent, TargetArch);
-        NextTag = maxRenameTag(Parent.Body) + 1;
+        Names = firstFreeNames(Parent.Body);
+        EntrySP = entryStackPointer(Parent, TargetArch, Names);
       }
 
       // When the body does not depend on the abnormal flag, it runs the same
@@ -628,42 +338,42 @@ void attachSEHFinallyBodies(std::vector<HighFunc> &Funcs, Arch TargetArch,
       // runs twice (`__finally { if (AbnormalTermination()) *Counter = 99; }`).
       const bool DependsOnFlag = referencesAbnormalFlag(Shape->Body);
       std::optional<size_t> CopyLength;
+      std::optional<std::vector<HighStmt>> Normal;
+      FuncletNames NormalNames = Names;
       if (!DependsOnFlag && !Shape->NoReturnTail) {
-        std::vector<HighStmt> Normal = projectFuncletBody(
+        Normal = projectFuncletBody(
             Shape->Body, Parent, TargetArch, Frame->second,
             HighExpr::makeConst(0, 4, ConstantAddressProvenance::Scalar),
-            *Homed, NextTag);
+            *Homed, EntrySP, NormalNames);
         if (!Targets)
           Targets = gotoTargets(Parent.Body);
-        CopyLength = inlineCopyLength(Parent.Body, I, Normal, *Targets);
+        if (Normal)
+          CopyLength = inlineCopyLength(Parent.Body, I, *Normal, *Targets);
       }
 
+      // A later attach takes fresh names past the ones this one takes.
       if (CopyLength) {
-        Stmt.EHClauseBodies.front() = projectFuncletBody(
-            Shape->Body, Parent, TargetArch, Frame->second, /*AbnormalFlag=*/
-            HighExpr::makeConst(0, 4, ConstantAddressProvenance::Scalar),
-            *Homed, NextTag);
+        Stmt.EHClauseBodies.front() = std::move(*Normal);
         Parent.Body.erase(Parent.Body.begin() + I + 1,
                           Parent.Body.begin() + I + 1 + *CopyLength);
+        Names = NormalNames;
       } else {
-        std::vector<HighStmt> Abnormal = projectFuncletBody(
+        FuncletNames AbnormalNames = Names;
+        std::optional<std::vector<HighStmt>> Abnormal = projectFuncletBody(
             Shape->Body, Parent, TargetArch, Frame->second,
             HighExpr::makeConst(1, 4, ConstantAddressProvenance::Scalar),
-            *Homed, NextTag);
-        HighStmt Guard;
-        Guard.Kind = StmtKind::If;
-        Guard.Cond = makeAbnormalTermination();
-        Guard.Body = std::move(Abnormal);
-        Stmt.EHClauseBodies.front().push_back(std::move(Guard));
+            *Homed, EntrySP, AbnormalNames);
+        if (!Abnormal)
+          continue;
+        Stmt.EHClauseBodies.front().push_back(
+            guardAbnormalWork(std::move(*Abnormal)));
+        Names = AbnormalNames;
       }
       if (Merged)
         Merged->insert(FuncletVA);
-      // A later attach must take fresh names past this one's. Only the clause
-      // just filled can raise the maximum; a dropped copy can only lower it.
-      NextTag =
-          std::max(NextTag, maxRenameTag(Stmt.EHClauseBodies.front()) + 1);
     }
   }
 }
 
+} // namespace seh_finally
 } // namespace neverd

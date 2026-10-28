@@ -211,6 +211,23 @@ entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
 fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
 require a homed incoming pointer plus a reload or an advanced-pointer read;
 Darwin's register-only walk remains independently recognizable without a home.
+`MedVariadic.AAPCS64DropsTheVectorSaveAreaNoReadObserves` drops q0-q7's spills
+only where the area is whole and one va_list's va_start initializes
+`__vr_top`, `__vr_offs` and the rest, whatever the format. It keeps them where
+a load reads either field or the area, a frame address reaches a call, a
+return, a vector register, an intrinsic, other memory or a va_list pointer
+other than the one va_start stores there, a load's frame address has no fixed
+offset or an edge is exceptional, and where Apple's arm64 recognizer, which
+reads no save area, applies.
+
+`AArch64_VariadicSaveArea` compiles AAPCS64 variadic routines. One whose
+va_arg reads ints only leaves its vector half unread: MedIR keeps no q0-q7
+spill, and both C routes are free of unknown values, its LLVM C running like
+the kernel (`AArch64_HighCExecution.AVariadicCalleeReadsItsStackArgumentsInPlace`
+runs its HighC). Ones reading doubles, or longs between doubles, keep all
+eight spills, and the HighC still fails explicitly where it stores them. The
+Windows ARM64 and Apple arm64 builds save no vector register and take no
+floating parameter.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
@@ -5960,6 +5977,12 @@ ends its path, and a statement that the target returns decides over both.
 `InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
 imported from the Universal CRT ends its caller's block, and that the same name
 imported from another module does not.
+`InternalNoReturn.LeafWithoutAnUnwindEntryIsScreenedByItsStraightLineFlow`
+and `AArch64FastFailStubWithoutUnwindDataEndsItsBlock` check that a leaf callee
+of an x64 or ARM64 PE image, which needs no unwind entry, such as a
+`__fastfail` stub, still reaches the proof when straight-line flow from its
+entry ends at a trap that never resumes; a branch first, `brk #0xf000`, or an
+x86 image keeps the caller's fall-through.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
@@ -14575,9 +14598,20 @@ under `if (AbnormalTermination())` with the `100` copy kept,
 clause and removes the matching copy, and `FrameRegisterHandlerKeepsTheComment`,
 `LocalUnwindInTheProtectedBodyKeepsTheComment` and
 `NestedExceptInTheProtectedBodyKeepsTheComment` keep the address comment where
-the projection is unsound. Run the Windows SEH corpus and the xcpt4
-wine check after a change here; the latter recompiles the decompiled source and
-reruns it, exercising the filled `__finally` bodies end to end.
+the projection is unsound. Its `ARMSEHFinallyBodyTests.cpp` builds AArch64 and
+Thumb parents whose handler reads them through callee-saved registers:
+`ARMSEHFinallyRegisters.*` publishes a frame address set before the range, an
+incoming argument and a constant, the establisher frame only when the unwind
+codes allocate exactly the range's frame and x29 holds it too, finds a Thumb leaf handler that only
+the scope table names, and publishes nothing for a register written in the
+range, one the parent never set, or a copy of an argument register that a
+PHI joins; `ARMSEHFinallyBody.*` stores `99` to the
+parent's own local, through its parameter or through the establisher frame
+under `if (AbnormalTermination())`, fills a finally nested in an `__except`
+and both of two nested finallys, and keeps the comment for the unpublished
+registers and a contradicted frame. Run the Windows SEH corpus and the xcpt4
+wine check after a change here; the latter recompiles the decompiled source
+and reruns it, exercising the filled `__finally` bodies end to end.
 `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
@@ -16133,6 +16167,18 @@ Its serializer checks exact compact/indented bytes, every byte value, and
 hexadecimal address boundaries against an independent stream formatter. The
 address cases alternate short file offsets with high virtual addresses, cross
 every hexadecimal digit width, and round-trip complete rows at each indentation.
+Compact inventory output also matches independently constructed JSON objects
+across every patch kind, all byte values, decimal size boundaries and high
+addresses. Nested output retains its surrounding fields at indentation 0, 2
+and 4; the compact, canonical sidecar and general stream entry points share
+the row schema. The fixed sidecar writer matches independent two-space JSON
+bytes, including empty arrays, and the SDK raw-value wrapper supplies exactly
+one owner newline. Native adapter tests retain exact persisted bytes, stale
+digest refusals and failed-write preservation of the previous sidecar.
+Compact range JSON retains file-offset ordering across nonmonotonic virtual
+addresses and split runs. Its exact bytes are checked against independent
+objects across hexadecimal address and decimal size boundaries, including an
+empty overlay.
 
 The reader tests preserve leading zeroes, mixed-case digits, full unsigned
 64-bit values and numerically equal keys with different spellings. They reject

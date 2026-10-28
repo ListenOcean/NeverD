@@ -31,7 +31,7 @@
 #include "neverd/ir/NdOps.h"
 #include "neverd/ir/high/HighIRPrint.h"
 #include "neverd/ir/high/HighVariableEdits.h"
-#include "neverd/ir/high/X64SEHFinallyBodies.h"
+#include "neverd/ir/high/SEHFinallyBodies.h"
 #include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/LanguageRuntime.h"
@@ -2317,14 +2317,21 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     COpts.UserNames = S ? &S->Renames : nullptr;
     COpts.AccessWidths = AccessWidths ? &*AccessWidths : nullptr;
     recordDefinitions(COpts);
+    // As in HighC's unit, a definition whose C cannot be written is left out
+    // and named.
+    std::vector<CEmitterOptions::RefusedDefinition> RefusedDefinitions;
+    COpts.RefusedDefinitions = &RefusedDefinitions;
+    std::string Unit;
     try {
+      llvm::raw_string_ostream UnitOS(Unit);
       LLVMCEmitter Emitter;
-      Emitter.emit(*R.Result.LlvmModule, OS, COpts, Debug, &R.Img);
+      Emitter.emit(*R.Result.LlvmModule, UnitOS, COpts, Debug, &R.Img);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));
       return nullptr;
     }
+    OS << refusedDefinitionNotes(RefusedDefinitions) << Unit;
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;

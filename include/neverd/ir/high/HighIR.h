@@ -660,6 +660,9 @@ struct HighFunc {
   bool HasUnresolvedSEHFrame = false;
   /// MedFunc::SEHTerminationFrameBytes.
   std::map<va_t, uint64_t> SEHTerminationFrameBytes;
+  /// MedFunc::SEHFuncletRegisters.
+  std::map<va_t, std::map<uint64_t, SEHFuncletRegisterValue>>
+      SEHFuncletRegisters;
   std::set<va_t> CxxContinuationTargets;
   unsigned StructuredExceptionRegions = 0;
   unsigned UnstructuredExceptionRegions = 0;
