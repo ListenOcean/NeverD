@@ -1714,6 +1714,25 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
           if (llvm::Value *Sym = tryResolvePointerArg(
                   CI->Args[SourceIndex], /*FailClosed=*/false, Builder))
             AV = Builder.CreatePtrToInt(Sym, Want);
+        // The callee reads only the scalar in this floating argument
+        // register's low lane (MedCallInfo::ArgReadBytes), though its
+        // parameter takes the whole vector register.  The lanes above pass
+        // nothing: a scalar instruction such as `cvtsi2sd` or `mulsd` keeps
+        // them as the caller found them, its own unknown entry value where
+        // nothing set them.  Pass the scalar with zero above it, as HighC
+        // passes the scalar alone.
+        if (const unsigned Bits = AV->getType()->getPrimitiveSizeInBits();
+            Want->isVectorTy() && Bits && !AV->getType()->isPointerTy() && CI &&
+            SourceIndex >= 0 &&
+            static_cast<size_t>(SourceIndex) < CI->ArgReadBytes.size())
+          if (const unsigned ReadBits = CI->ArgReadBytes[SourceIndex] * 8u;
+              ReadBits && ReadBits < Bits)
+            AV = Builder.CreateTrunc(
+                AV->getType()->isIntegerTy()
+                    ? AV
+                    : Builder.CreateBitCast(AV,
+                                            llvm::Type::getIntNTy(*Ctx, Bits)),
+                llvm::Type::getIntNTy(*Ctx, ReadBits), "read_lane");
         if (AV->getType() != Want) {
           llvm::Type *AT = AV->getType();
           if (AT->isIntegerTy() && Want->isIntegerTy()) {

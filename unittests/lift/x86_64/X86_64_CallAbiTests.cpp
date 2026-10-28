@@ -38,6 +38,20 @@ protected:
 #endif
   }
 
+  /// Expect the C of both routes, HighC and then the LLVM route's, to run
+  /// like \p Kernel built for System V x86-64 (expectHighCRunsLikeSource).
+  void expectBothRoutesRunLikeSource(const std::string &Kernel,
+                                     const std::string &Entry,
+                                     std::initializer_list<const char *> Names,
+                                     std::initializer_list<int> Values) {
+    for (const bool Route : {false, true}) {
+      SCOPED_TRACE(Route ? "LLVM C" : "HighC");
+      LLVMC = Route;
+      ASSERT_NO_FATAL_FAILURE(expectHighCRunsLikeSource(
+          {"-target", "x86_64-linux-gnu"}, Kernel, Entry, Names, Values));
+    }
+  }
+
   /// Lifts \p Source's object to LLVM IR, links it with \p Source renamed,
   /// and compares \p Entry with the original over a range of arguments.
   /// \p Callee is the source's other function.
@@ -405,6 +419,27 @@ static double sb4(B4 s, double e) {
 )C",
                             "bcast", {"bcast", "sb4", "B4"},
                             {0, 1, -1, 0x10, 77, 1000});
+}
+
+// `cvtsi2sd` and `mulsd` write xmm0's low double and keep its upper lane,
+// which ep never set, and `cvtsi2ss` and `mulss` the twelve bytes above
+// ef's float.  gp and hf read only the scalar, so each call passes it
+// alone: the LLVM route, whose parameter takes the whole register, passes
+// zero above it, and neither C reads the caller's unknown entry value.
+TEST_F(X86_64_CallAbi, AScalarArgumentPassesOnlyItsLowLane) {
+  expectBothRoutesRunLikeSource(R"C(
+int gp(double x) __attribute__((noinline));
+int hf(float y) __attribute__((noinline));
+int ep(int a) __attribute__((noinline));
+int ef(int a) __attribute__((noinline));
+int gp(double x) { return (int)(x * 4.0) + 1; }
+int hf(float y) { return (int)(y * 2.0f) + 3; }
+int ep(int a) { return gp(a * 0.5); }
+int ef(int a) { return hf(a * 1.5f); }
+int lane_e(int a) { return ep(a) + ef(a) * 3; }
+)C",
+                                "lane_e", {"lane_e", "gp", "hf", "ep", "ef"},
+                                {0, 1, -1, 7, 1000});
 }
 
 // A pointer walking a string is compared against its end through `~W`, the
