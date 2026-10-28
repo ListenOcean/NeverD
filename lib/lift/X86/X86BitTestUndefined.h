@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Bind legacy register and non-atomic memory bit tests to undefined flags.
+/// Bind legacy register and memory bit tests to their undefined flags.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_LIFT_X86_X86BITTESTUNDEFINED_H
@@ -53,9 +53,9 @@ inline bool matches(llvm::ArrayRef<LowOp> Ops,
   return true;
 }
 
-// Legacy register bases and non-atomic memory bit strings. The raw ModRM,
-// SIB, displacement, immediate and FS/GS prefix must all agree with the detail.
-// LOCK/REP, duplicate prefixes and APX remain outside this audit.
+// The raw ModRM, SIB, displacement, immediate and FS/GS prefix must agree
+// with the detail. LOCK is admitted only on memory updates; REP, duplicates
+// and APX remain outside this audit. The lifter retains one atomic update.
 inline bool form(const cs_insn *Insn, Arch Target) {
   const auto &X = Insn->detail->x86;
   if (!isBitTest(Insn->id) || X.op_count != 2 || Insn->size > 15 || X.avx_sae ||
@@ -63,10 +63,13 @@ inline bool form(const cs_insn *Insn, Arch Target) {
     return false;
   const bool Long = Target == Arch::X64;
   size_t Pos = 0;
-  uint8_t OperandPrefix = 0, SegmentPrefix = 0, AddressPrefix = 0, Rex = 0;
+  uint8_t LockPrefix = 0, OperandPrefix = 0, SegmentPrefix = 0,
+          AddressPrefix = 0, Rex = 0;
   for (; Pos < Insn->size; ++Pos) {
     const uint8_t B = Insn->bytes[Pos];
-    if (B == 0x66 && !OperandPrefix && !Rex)
+    if (B == 0xf0 && !LockPrefix && !Rex)
+      LockPrefix = B;
+    else if (B == 0x66 && !OperandPrefix && !Rex)
       OperandPrefix = B;
     else if (B == 0x67 && !AddressPrefix && !Rex)
       AddressPrefix = B;
@@ -89,11 +92,12 @@ inline bool form(const cs_insn *Insn, Arch Target) {
                                                   : 3;
   const unsigned AddressSize =
       Long ? (AddressPrefix ? 4 : 8) : (AddressPrefix ? 2 : 4);
-  if ((Immediate ? ((ModRM >> 3) & 7) != Kind + 4 || (Rex & 4)
+  if ((LockPrefix && (!Memory || Insn->id == X86_INS_BT)) ||
+      (Immediate ? ((ModRM >> 3) & 7) != Kind + 4 || (Rex & 4)
                  : Opcode != 0xa3 + Kind * 8) ||
       X.modrm != ModRM || X.encoding.modrm_offset != Pos + 2 ||
       X.opcode[0] != 0x0f || X.opcode[1] != Opcode || X.opcode[2] ||
-      X.opcode[3] || X.rex != Rex || X.prefix[0] ||
+      X.opcode[3] || X.rex != Rex || X.prefix[0] != LockPrefix ||
       X.prefix[1] != SegmentPrefix || X.prefix[2] != OperandPrefix ||
       X.prefix[3] != AddressPrefix || X.addr_size != AddressSize ||
       X.encoding.imm_size != (Immediate ? 1 : 0) ||

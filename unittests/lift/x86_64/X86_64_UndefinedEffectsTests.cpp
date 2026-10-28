@@ -261,7 +261,7 @@ TEST_F(X86UndefinedEffects, CompatibilityShiftAliasDoesNotRelabelOtherGroups) {
 TEST_F(X86UndefinedEffects, XaddUnauditedFormsClearAllPartialEvidence) {
   const InstructionCase Cases[] = {
       {"segmented memory XADD", {0x64, 0x0f, 0xc1, 0x08}},
-      {"LOCK memory XADD", {0xf0, 0x0f, 0xc1, 0x08}},
+      {"duplicate LOCK memory XADD", {0xf0, 0xf0, 0x0f, 0xc1, 0x08}},
       {"LOCK register XADD", {0xf0, 0x0f, 0xc1, 0xc8}},
       {"REP XADD", {0xf3, 0x0f, 0xc1, 0xc8}},
       {"REPNZ XADD", {0xf2, 0x0f, 0xc1, 0xc8}},
@@ -550,7 +550,8 @@ TEST_F(X86UndefinedEffects, DoubleShiftChangedFormsDoNotPublishDraftEffects) {
 TEST_F(X86UndefinedEffects, BitAndRotateAuditBoundariesClearPartialEvidence) {
   const InstructionCase Cases[] = {
       {"duplicate memory bit segment", {0x65, 0x65, 0x0f, 0xb3, 0x08}},
-      {"locked memory bit base", {0xf0, 0x0f, 0xb3, 0x08}},
+      {"LOCK read-only bit test", {0xf0, 0x0f, 0xa3, 0x08}},
+      {"HLE locked memory bit base", {0xf2, 0xf0, 0x0f, 0xb3, 0x08}},
       {"REP bit test", {0xf3, 0x0f, 0xa3, 0xc8}},
       {"duplicate bit-test operand prefix", {0x66, 0x66, 0x0f, 0xb3, 0xc8}},
       {"unused bit-test REX.X", {0x42, 0x0f, 0xb3, 0xc8}},

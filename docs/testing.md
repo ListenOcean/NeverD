@@ -6,6 +6,16 @@
 
 [← Documentation Index](README.md)
 
+`X64ContinuationIntegerTest` in `NeverDX64ContinuationSourceTests` compares
+whole machine state and memory with original native vector, 64-bit multiply and
+atomic instructions through both C routes at O0/O2 with ASan/UBSan. The matching
+`NeverDX86NativeStateAuditTests` controls require exact bytes, decoder operands
+and effect receipts. `NeverDX86LockedLogicTests` executes ordinary C for locked
+logical and bit updates, including GS-relative addresses and unused flags;
+the audit requires one sequentially consistent transaction without an
+unlocked preparatory read. Run `NeverDX86UndefinedEffectsTests` when widening
+these audited forms so malformed-prefix controls remain refused.
+
 The source projection regressions include
 `NeverDOwnInteriorCallTests` (checked replaced-PC tails and closed recursive
 groups), `NeverDExecutableCodeOwnerTests` (COFF content flags independently of

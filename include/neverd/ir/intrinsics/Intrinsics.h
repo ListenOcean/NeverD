@@ -494,6 +494,11 @@ enum class Intrinsic : uint16_t {
   X86LockedOr,
   X86LockedXor,
 
+  // Append-only: one locked bit-string update returns the original bit.
+  X86LockedBts,
+  X86LockedBtr,
+  X86LockedBtc,
+
   _Count = 16000
 };
 
@@ -533,7 +538,8 @@ enum class X86SystemStateKind : uint8_t {
   CacheZero,
   TransactionAbort,
   SecureLaunch,
-  LockedLogic
+  LockedLogic,
+  LockedBit
 };
 
 struct X86SystemStateContract {

@@ -24,6 +24,7 @@
 #include "X86LiftBitCount.h"
 #include "X86LiftDetail.h"
 #include "X86LiftTBM.h"
+#include "X86MultiplyUndefined.h"
 #include "X86NativeStateAudit.h"
 #include "X86OpaqueStateAudit.h"
 #include "X86ShiftUndefined.h"
@@ -1338,6 +1339,10 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
             ? controlmoveundefined::matches(
                   llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
                   EffectsDraft)
+        : multiplyundefined::form(Insn, TargetArch)
+            ? multiplyundefined::matches(
+                  llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
         : divisionundefined::form(Insn, TargetArch)
             ? divisionundefined::matches(
                   llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
@@ -1353,6 +1358,7 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
                 !nativestateaudit::form(Insn, TargetArch) &&
                 !controlmoveundefined::form(Insn, TargetArch) &&
                 !divisionundefined::form(Insn, TargetArch) &&
+                !multiplyundefined::form(Insn, TargetArch) &&
                 !tbm::form(Insn, TargetArch) &&
                 !bextr::form(Insn, TargetArch) &&
                 !bitcount::form(Insn, TargetArch) &&

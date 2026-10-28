@@ -9,6 +9,8 @@
 
 #include "../../lib/analysis/arch/x86_64/StringTransfer.h"
 #include "../../lib/analysis/core/RecoveryArchitecture.h"
+#include "../../lib/lift/X86/X86LegacyVectorMoveAudit.h"
+#include "../../lib/lift/X86/X86MultiplyUndefined.h"
 #include "../../lib/lift/X86/X86NativeStateAudit.h"
 #include "gtest/gtest.h"
 
@@ -58,6 +60,73 @@ std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
   EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Plain));
   EXPECT_EQ(Preserved, LowInstructionPreservedState{});
   return Ops;
+}
+
+TEST(NativeStateAudit, IntegerExtensionsRequireExactEncodingAndEffectReceipts) {
+  struct Case {
+    std::vector<uint8_t> Bytes;
+    unsigned Kind, Arbitrary;
+  };
+  for (const auto &C : std::vector<Case>{{{0x0f, 0x57, 0xc1}, 0, 0},
+                                         {{0x66, 0x48, 0x0f, 0x7e, 0xc8}, 0, 0},
+                                         {{0x66, 0x0f, 0x6e, 0xc8}, 0, 0},
+                                         {{0x66, 0x0f, 0x73, 0xd9, 0xff}, 0, 0},
+                                         {{0x48, 0xf7, 0xe1}, 1, 4},
+                                         {{0x48, 0xf7, 0xe9}, 1, 4},
+                                         {{0x48, 0x0f, 0xaf, 0xc1}, 1, 4},
+                                         {{0xf0, 0x48, 0x0f, 0xc1, 0x37}, 2, 0},
+                                         {{0xf0, 0x0f, 0xba, 0x2f, 0x81}, 2, 4},
+                                         {{0xf0, 0x48, 0x0f, 0xb3, 0x37}, 2, 4},
+                                         {{0xf0, 0x83, 0x0f, 0xff}, 2, 1}}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    Dec.setStrict(true);
+    DecodedInsn Instruction{};
+    ASSERT_EQ(Dec.decodeOneForLift(C.Bytes.data(), C.Bytes.size(), 0x1000,
+                                   Instruction),
+              int(C.Bytes.size()));
+    const auto Form = [&](const cs_insn *Raw) {
+      return C.Kind == 0   ? vectormoveaudit::form(Raw, Arch::X64)
+             : C.Kind == 1 ? multiplyundefined::form(Raw, Arch::X64)
+                           : nativestateaudit::form(Raw, Arch::X64);
+    };
+    ASSERT_TRUE(Form(Instruction.Raw));
+    std::vector<LowOp> Ops, Plain;
+    LowInstructionUndefinedEffects Effects;
+    Dec.liftToLow(Instruction, Ops, {}, {}, &Effects);
+    Dec.liftToLow(Instruction, Plain);
+    ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+        << Effects.Diagnostic;
+    EXPECT_EQ(Effects.Effects.size(), C.Arbitrary);
+    EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
+    EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Plain));
+    if (C.Kind == 1)
+      EXPECT_TRUE(multiplyundefined::matches(Ops, Effects));
+    if (C.Kind == 2) {
+      unsigned Transactions = 0;
+      for (const auto &Op : Ops) {
+        EXPECT_NE(Op.Opcode, NdOp::LOAD);
+        EXPECT_NE(Op.Opcode, NdOp::STORE);
+        Transactions +=
+            Op.MemoryOrdering == NdMemoryOrdering::SequentiallyConsistent;
+      }
+      EXPECT_EQ(Transactions, 1u);
+    }
+    for (unsigned Mutation = 0; Mutation != 4; ++Mutation) {
+      cs_insn Raw = *Instruction.Raw;
+      cs_detail Detail = *Raw.detail;
+      Raw.detail = &Detail;
+      if (Mutation == 0)
+        Detail.x86.operands[0].size ^= 1;
+      else if (Mutation == 1)
+        Detail.x86.op_count += 1;
+      else if (Mutation == 2)
+        Raw.bytes[0] ^= 1;
+      else
+        Raw.size -= 1;
+      EXPECT_FALSE(Form(&Raw)) << Mutation;
+    }
+  }
 }
 
 TEST(NativeStateAudit, LegacyMsrAccessKeepsRuntimeSelectorAndWholeValue) {

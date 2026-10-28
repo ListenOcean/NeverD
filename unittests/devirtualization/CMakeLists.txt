@@ -245,6 +245,7 @@ add_neverd_unittest(NeverDInterpreterMachineStateTests
 
 add_neverd_unittest(NeverDX64ContinuationSourceTests
   X64ContinuationSourceTests.cpp
+  X64ContinuationIntegerTests.cpp
   LINK_COMPONENTS BackendC BackendLLVM Pipeline BinaryInterpreterSpecialization
 )
 target_compile_definitions(NeverDX64ContinuationSourceTests PRIVATE

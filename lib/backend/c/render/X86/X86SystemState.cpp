@@ -414,7 +414,8 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
   for (const auto Id : Inventory) {
     const auto C = x86SystemStateContract(Id);
     const bool Segmented = C.Kind == X86SystemStateKind::SegmentedBlock;
-    const bool Locked = C.Kind == X86SystemStateKind::LockedLogic;
+    const bool Locked = C.Kind == X86SystemStateKind::LockedLogic ||
+                        C.Kind == X86SystemStateKind::LockedBit;
     if (!(Segmented &&
           llvm::StringRef(Asm->getAsmString()).starts_with(C.Mnemonic)) &&
         !(Locked &&

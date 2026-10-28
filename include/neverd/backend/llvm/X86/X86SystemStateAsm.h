@@ -142,6 +142,12 @@ x86SystemStateAsm(Intrinsic Id, Arch TargetArch, uint16_t Width,
     P.InputConstraints = {"r", "{ax}", "{dx}"};
     P.Text += " " + Input(0) + "\n\tsetc $0";
     break;
+  case K::LockedBit:
+    P.Text += std::string(Width == 2   ? "w "
+                          : Width == 4 ? "l "
+                                       : "q ") +
+              Input(1) + ", " + Memory(0) + "\n\tsetc $0";
+    break;
   case K::LockedLogic: {
     const char *Suffix = Width == 1   ? "b"
                          : Width == 2 ? "w"

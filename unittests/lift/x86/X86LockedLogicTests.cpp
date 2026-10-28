@@ -32,11 +32,13 @@ TEST_F(X86LockedLogicSource, EveryWidthRetainsMemoryAndCompletedFlags) {
   Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
   std::vector<va_t> Entries;
   std::string Oracles, Checks;
-  for (unsigned Kind = 0; Kind != 3; ++Kind)
+  for (unsigned Kind = 0; Kind != 6; ++Kind)
     for (unsigned Width : {1u, 2u, 4u, 8u})
       for (bool Immediate : {false, true})
         for (bool Segmented : {false, true})
           for (bool Dead : {false, true}) {
+            if (Kind >= 3 && Width == 1)
+              continue;
             const unsigned Index = Entries.size();
             const va_t Address = Entry + Index * 64;
             Entries.push_back(Address);
@@ -49,8 +51,15 @@ TEST_F(X86LockedLogicSource, EveryWidthRetainsMemoryAndCompletedFlags) {
             if ((!Immediate && Width == 1) || Width == 8)
               Bytes.push_back(Width == 1 ? 0x40 : 0x48);
             const unsigned Opcode = Kind == 0 ? 0x20 : Kind == 1 ? 0x08 : 0x30;
-            // LOCK AND/OR/XOR [RDI], SIL/SI/ESI/RSI.
-            if (Immediate) {
+            // One logical or bit-string transaction owns the original flags.
+            if (Kind >= 3) {
+              Bytes.push_back(0x0f);
+              Bytes.push_back(Immediate ? 0xba : 0xab + (Kind - 3) * 8);
+              Bytes.push_back(Immediate ? uint8_t(((Kind + 2) << 3) | 7)
+                                        : 0x37);
+              if (Immediate)
+                Bytes.push_back(0x81);
+            } else if (Immediate) {
               const unsigned Extension = Kind == 0 ? 4 : Kind == 1 ? 1 : 6;
               Bytes.insert(Bytes.end(), {uint8_t(Width == 1 ? 0x80 : 0x81),
                                          uint8_t((Extension << 3) | 7)});
@@ -64,7 +73,9 @@ TEST_F(X86LockedLogicSource, EveryWidthRetainsMemoryAndCompletedFlags) {
               Bytes.insert(Bytes.end(), {0x31, 0xc0});
             else
               // Only architecturally defined logical flags are observed.
-              Bytes.insert(Bytes.end(), {0x9c, 0x58, 0x25, 0xc5, 0x08, 0, 0});
+              Bytes.insert(Bytes.end(),
+                           {0x9c, 0x58, 0x25, uint8_t(Kind >= 3 ? 1 : 0xc5),
+                            uint8_t(Kind >= 3 ? 0 : 8), 0, 0});
             Bytes.push_back(0xc3);
             Text.Data.resize(Index * 64, 0x90);
             Text.Data.insert(Text.Data.end(), Bytes.begin(), Bytes.end());
@@ -87,21 +98,24 @@ TEST_F(X86LockedLogicSource, EveryWidthRetainsMemoryAndCompletedFlags) {
                 "for(unsigned b=0;b<" +
                 std::string(Immediate ? "1" : "8") + ";++b) {\n";
             Checks += "unsigned char x[32],y[32];memset(x,0xa5,sizeof(x));\n";
+            Checks += "uint64_t argument=values[b]" +
+                      (Kind >= 3 ? " & " + std::to_string(Width * 8 - 1) : "") +
+                      ";\n";
             Checks += "memcpy(x+off,&values[a]," + std::to_string(Width) +
                       ");memcpy(y,x,sizeof(x));\n";
             if (Segmented)
               Checks +=
                   "if(syscall(SYS_arch_prctl,ARCH_SET_GS,x))return 201;\n";
             Checks += "uint64_t expected=" + Native +
-                      (Segmented ? "((void*)(uintptr_t)off,values[b]);\n"
-                                 : "(x+off,values[b]);\n");
+                      (Segmented ? "((void*)(uintptr_t)off,argument);\n"
+                                 : "(x+off,argument);\n");
             if (Segmented)
               Checks +=
                   "if(syscall(SYS_arch_prctl,ARCH_SET_GS,y))return 202;\n";
             Checks += "uint64_t actual=" + Name + "(ADDRESS_" +
                       std::to_string(Index) +
                       (Segmented ? "(off)" : "(y+off)") +
-                      (Immediate ? ");\n" : ",values[b]);\n");
+                      (Immediate ? ");\n" : ",argument);\n");
             if (Segmented)
               Checks += "if(syscall(SYS_arch_prctl,ARCH_SET_GS,saved_gs))"
                         "return 203;\n";
@@ -184,17 +198,20 @@ int main(void) {
 
 TEST(X86LockedLogic, ContractRequiresOneSequentialTransaction) {
   for (auto Id : {Intrinsic::X86LockedAnd, Intrinsic::X86LockedOr,
-                  Intrinsic::X86LockedXor})
+                  Intrinsic::X86LockedXor, Intrinsic::X86LockedBts,
+                  Intrinsic::X86LockedBtr, Intrinsic::X86LockedBtc})
     for (uint16_t Width : {1, 2, 4, 8}) {
       X86SystemStateShape S;
       S.TargetArch = Arch::X64;
       S.ValidId = S.WritableOutput = true;
-      S.OutputSize = 4;
+      const bool Bit =
+          x86SystemStateContract(Id).Kind == X86SystemStateKind::LockedBit;
+      S.OutputSize = Bit ? 1 : 4;
       S.Arguments = 2;
       S.InputSizes = {8, Width};
       S.ScalarInputs = {true, true};
       S.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
-      EXPECT_TRUE(x86SystemStateShapeIsValid(Id, S));
+      EXPECT_EQ(x86SystemStateShapeIsValid(Id, S), !Bit || Width != 1);
       S.MemoryOrdering = NdMemoryOrdering::None;
       EXPECT_FALSE(x86SystemStateShapeIsValid(Id, S));
       S.MemoryOrdering = NdMemoryOrdering::Relaxed;

@@ -19,6 +19,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/intrinsics/X86/X86SystemState.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/lift/X86/X86Regs.h"
 
@@ -139,14 +140,14 @@ std::optional<uint64_t> stateOffset(NdVar V) {
   return std::nullopt;
 }
 
-bool supportedValue(NdVar V, bool WideDivision = false) {
+bool supportedValue(NdVar V) {
   if (!V.Size)
     return true;
   if (V.isReg())
     return flagBit(V).has_value() || stateOffset(V).has_value();
   if (V.isTemp())
     return V.Size <= 16 && V.Offset < ScratchBase - V.Size;
-  return V.isConst() && V.Size <= (WideDivision ? 16 : 8);
+  return V.isConst() && V.Size <= 16;
 }
 
 bool flagIntrinsic(const LowOp &Op) {
@@ -356,31 +357,61 @@ bool wideDivisionArithmetic(const LowOp &Op) {
          Op.Opcode == NdOp::INT_REM;
 }
 
+// Integer widening is not specific to DIV: scalar vector loads and full-width
+// products use the same checked bit-vector operations and existing emitters.
+bool wideIntegerOperation(const LowOp &Op) {
+  if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT) &&
+      Op.Output.Size == 16 && Op.NumInputs == 1)
+    return Op.Inputs[0].Size && Op.Inputs[0].Size <= 8;
+  if (Op.NumInputs != 2 || Op.Inputs[0].Size != 16 || Op.Inputs[1].Size != 16)
+    return false;
+  if (Op.Opcode == NdOp::INT_MULT)
+    return Op.Output.Size == 16;
+  return (Op.Opcode == NdOp::INT_EQUAL || Op.Opcode == NdOp::INT_NOTEQUAL) &&
+         Op.Output.Size == 1;
+}
+
+bool lockedMemoryIntrinsic(const LowOp &Op,
+                           const X64ContinuationSourceOptions &Options) {
+  if (!hasControlState(Options) || Op.Opcode != NdOp::INTRINSIC ||
+      !Op.NumInputs || !Op.Inputs[0].isConst())
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  const auto Kind = x86SystemStateContract(Id).Kind;
+  return (Kind == X86SystemStateKind::LockedLogic ||
+          Kind == X86SystemStateKind::LockedBit) &&
+         x86SystemStateShapeIsValid(Id, x86SystemStateLowShape(Op, Arch::X64));
+}
+
 bool supportedOperation(const LowOp &Op,
                         const X64ContinuationSourceOptions &Options,
                         bool WideDivision) {
-  const bool AtomicAdd =
-      hasControlState(Options) && Op.Opcode == NdOp::ATOMIC_ADD &&
+  if (Op.NumInputs > std::size(Op.Inputs))
+    return false;
+  const bool AtomicScalar =
+      hasControlState(Options) &&
+      (Op.Opcode == NdOp::ATOMIC_ADD || Op.Opcode == NdOp::ATOMIC_XCHG) &&
       Op.NumInputs == 2 && Op.Output.isTemp() &&
       (Op.Output.Size == 1 || Op.Output.Size == 2 || Op.Output.Size == 4 ||
        Op.Output.Size == 8) &&
       Op.Inputs[0].Size == 8 && Op.Inputs[1].Size == Op.Output.Size &&
       Op.MemoryOrdering == NdMemoryOrdering::SequentiallyConsistent;
-  if (Op.NumInputs > std::size(Op.Inputs) ||
-      !supportedValue(Op.Output, WideDivision) ||
-      (Op.MemoryOrdering != NdMemoryOrdering::None && !AtomicAdd) ||
+  const bool Locked = lockedMemoryIntrinsic(Op, Options);
+  if (!supportedValue(Op.Output) ||
+      (Op.MemoryOrdering != NdMemoryOrdering::None && !AtomicScalar &&
+       !Locked) ||
       !isKnownMemoryAddressSpace(Op.MemoryAddressSpace))
     return false;
   for (unsigned I = 0; I < Op.NumInputs; ++I)
-    if (!supportedValue(Op.Inputs[I], WideDivision))
+    if (!supportedValue(Op.Inputs[I]))
       return false;
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
-      Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE && !AtomicAdd &&
-      !alignmentIntrinsic(Op) && !controlIntrinsic(Op, Options) &&
+      Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE && !AtomicScalar &&
+      !Locked && !alignmentIntrinsic(Op) && !controlIntrinsic(Op, Options) &&
       !writePrefetchIntrinsic(Op, Options) &&
       !descriptorQueryIntrinsic(Op, Options))
     return false;
-  if (AtomicAdd)
+  if (AtomicScalar || Locked || wideIntegerOperation(Op))
     return true;
   if (WideDivision &&
       (unsignedWideDivisionIntrinsic(Op) || wideDivisionArithmetic(Op)))

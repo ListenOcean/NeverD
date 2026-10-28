@@ -14,6 +14,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
+#include "X86MultiplyUndefined.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
@@ -955,6 +956,8 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                  {NdVar::reg(x86reg::CF, 1)});
         }
       }
+      if (!SuppressFlags)
+        multiplyundefined::record(S);
       break;
     }
     NdVar Dst{}, MulA{}, MulB{};
@@ -1007,6 +1010,7 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     S.emit(NdOp::INT_SLESS, NdVar::reg(x86reg::SF, 1),
            {Result, NdVar::scalar(0, Dst.Size)});
     emitZeroUpperWriteback();
+    multiplyundefined::record(S);
     break;
   }
 
@@ -1066,6 +1070,8 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                {NdVar::reg(x86reg::CF, 1)});
       }
     }
+    if (!SuppressFlags)
+      multiplyundefined::record(S);
     break;
   }
 

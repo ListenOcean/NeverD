@@ -231,6 +231,9 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         S.AddressSize == 2 || S.AddressSize == 4 || S.AddressSize == 8
             ? S.AddressSize
             : PtrSz;
+    const bool Locked = X86.prefix[0] == X86_PREFIX_LOCK;
+    if (Locked && !bitundefined::form(Insn, TargetArch))
+      return false;
     bool MemBase = (X86.operands[0].type == X86_OP_MEM);
     bool RegOffset = (X86.operands[1].type == X86_OP_REG);
 
@@ -277,8 +280,9 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         }
       }
       Base = S.makeTemp(Sz);
-      S.emit(NdOp::LOAD, Base, {ByteAddr}, NdMemoryOrdering::None,
-             LiftState::memoryAddressSpace(X86.operands[0]));
+      if (!Locked)
+        S.emit(NdOp::LOAD, Base, {ByteAddr}, NdMemoryOrdering::None,
+               LiftState::memoryAddressSpace(X86.operands[0]));
     } else {
       Base = operandRead(S, X86.operands[0]);
     }
@@ -286,6 +290,19 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     // In-chunk bit position, taken modulo the operand width.
     NdVar Idx = S.makeTemp(Sz);
     S.emit(NdOp::INT_AND, Idx, {IdxRaw, NdVar::scalar(Bits - 1, Sz)});
+
+    if (Locked) {
+      const auto Id = InsnId == X86_INS_BTS   ? Intrinsic::X86LockedBts
+                      : InsnId == X86_INS_BTR ? Intrinsic::X86LockedBtr
+                                              : Intrinsic::X86LockedBtc;
+      // The completed transaction owns both the old bit and the write.
+      // Do not precede it with an unlocked read, even when CF is dead.
+      S.emitIntrinsic(Id, NdVar::reg(x86reg::CF, 1), {ByteAddr, Idx},
+                      NdMemoryOrdering::SequentiallyConsistent,
+                      LiftState::memoryAddressSpace(X86.operands[0]));
+      bitundefined::record(S);
+      break;
+    }
 
     // CF = (Base >> Idx) & 1
     NdVar Shifted = S.makeTemp(Sz);

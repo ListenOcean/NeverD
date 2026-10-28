@@ -10,9 +10,12 @@
 #ifndef NEVERD_LIB_LIFT_X86_X86NATIVESTATEAUDIT_H
 #define NEVERD_LIB_LIFT_X86_X86NATIVESTATEAUDIT_H
 
+#include "X86BitTestUndefined.h"
 #include "X86DescriptorQueryAudit.h"
 #include "X86LegacyMemoryAudit.h"
+#include "X86LockedLogicAudit.h"
 #include "X86LockedUnary.h"
+#include "X86XaddAudit.h"
 
 namespace neverd::nativestateaudit {
 
@@ -213,6 +216,15 @@ inline bool accessCheckForm(const cs_insn *Insn, Arch Target) {
 // preservation. Their existing semantic owners retain those separate
 // obligations.
 inline bool form(const cs_insn *Insn, Arch Target) {
+  if (Insn->detail->x86.prefix[0] == X86_PREFIX_LOCK) {
+    if (Insn->id == X86_INS_XADD)
+      return xaddaudit::form(Insn, Target);
+    if (bitundefined::isBitTest(Insn->id))
+      return bitundefined::form(Insn, Target);
+    if (Insn->id == X86_INS_AND || Insn->id == X86_INS_OR ||
+        Insn->id == X86_INS_XOR)
+      return lockedlogicaudit::form(Insn, Target);
+  }
   if (sysretqForm(Insn, Target) || longModeEventForm(Insn, Target))
     return true;
   if (descriptorqueryaudit::form(Insn, Target))

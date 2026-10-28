@@ -123,3 +123,13 @@ unchanged native/invalid boundaries, and successful privilege-exit accounting.
 It compiles and executes both C routes at O0/O2 with ASan and UBSan. The semantic
 suite separately compares supported privileged transitions with native KVM
 fixtures; missing KVM coverage is reported as skipped.
+
+`X64ContinuationIntegerTest` compares complete state and memory with original
+native instructions for audited legacy vector transfers, XOR and byte shifts,
+64-bit products, scalar exchanges and locked memory updates. It exercises
+arbitrary arithmetic flags, preserved upper vector lanes, negative bit-string
+indices and unaligned RAM through both C routes at O0/O2 with ASan/UBSan.
+LOCK BTS/BTR/BTC retain one sequentially consistent native transaction, including
+the old bit returned in CF; an unlocked load/store pair is not equivalent.
+The encoding audit rejects inconsistent decoder details and unaudited prefixes.
+These tests do not extend the invocation domain to faulting or concurrent runs.
