@@ -11233,6 +11233,14 @@ objects. The caller provides the required original guest mappings; recovery
 proofs and reports remain attached to the input image. This machine-state
 contract does not change ordinary decompilation's address-binding policy.
 
+The machine-state wrapper also rejects residual CALL, INDIR_CALL and INDIR_BR
+operations. Guest call-stack effects have already become explicit memory
+operations. The fresh source conversion therefore omits the ordinary native
+CALL return-slot observation proof for this constructed wrapper, while keeping
+stack alignment and access preparation. Ordinary source conversion, including
+32-bit wide-return reconversion, retains that proof and its existing budget.
+Source declaration hints cannot establish the wrapper's call-free property.
+
 Interpreter specialization owns finite-query reuse in its run-local
 `FiniteQueryCache`. Complete domains and proved domain-limit excesses are
 keyed by the full ordered expression DAG under consistent free-variable
