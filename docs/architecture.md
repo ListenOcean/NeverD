@@ -13420,6 +13420,36 @@ missing values. Contracts follow API 28
 and [Binder](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Binder.java).
 See [application runtime inputs](android-application-runtime.md) for the schema.
 
+`AndroidParcel.cpp` owns the API 28 Java owned-Parcel lifecycle and object-free
+data subset. DEX and JNI use the same catalogue, heap identities and bounded
+byte storage; JNI adds no Parcel semantics. `obtain` and `recycle` retain the
+six-slot owned pool in slot order. Recycle clears the bytes and cursor; accessing
+a recycled object before another obtain, or a raw Java allocation without owned
+native state, stops explicitly. Heap growth is admitted before resizing, using
+the existing conservative retained-storage budget.
+
+Int32/int64 data uses little-endian carriers. Strings retain exact Java UTF-16
+units, null lengths, terminators and four-byte padding. Short scalar reads
+return zero without advancing; string reads retain any consumed length prefix.
+The API 28 reader does not validate the terminator. Marshalling copies initialized
+bytes into a shared Java byte array; unmarshalling valid array slices imports
+padded data and leaves the cursor at its end. Negative import lengths are no-ops.
+Nonnegative cursor positions can exceed initialized bytes, matching native size
+and availability queries, but exporting or writing through that unknown gap is
+unsupported. Negative positions and invalid native array ranges stop rather than
+inventing Java exceptions or allocator contents. Model resource stops preserve
+completed writes; Runtime retains its normal terminal-stop policy.
+
+This follows the pinned API 28
+[Java Parcel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Parcel.java),
+[JNI adapter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_Parcel.cpp)
+and [native data contract](https://android.googlesource.com/platform/frameworks/native/+/android-9.0.0_r1/libs/binder/Parcel.cpp).
+In the ServiceManagerProxy call sequence, both obtains now have shared semantics;
+`writeInterfaceToken` remains the next boundary because it reads Binder-thread
+StrictMode policy. No default policy or native Binder handle is inferred from
+Java proxy keys. Borrowed native Parcels, object/FD translation, custom string
+helpers, capacity/size mutation, floating methods and RPC remain unsupported.
+
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
 

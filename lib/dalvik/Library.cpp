@@ -362,6 +362,24 @@ static const LibraryMethod Methods[] = {
     {"java/lang/Integer", "<init>", "(I)V", Construct},
     {"java/lang/Long", "<init>", "(J)V", Construct},
     {"java/lang/Float", "<init>", "(F)V", Construct},
+    {"android/os/Parcel", "obtain", "()Landroid/os/Parcel;", ParcelData, true},
+    {"android/os/Parcel", "recycle", "()V", ParcelData, false, true},
+    {"android/os/Parcel", "dataSize", "()I", ParcelData, false, true},
+    {"android/os/Parcel", "dataPosition", "()I", ParcelData, false, true},
+    {"android/os/Parcel", "dataAvail", "()I", ParcelData, false, true},
+    {"android/os/Parcel", "setDataPosition", "(I)V", ParcelData, false, true},
+    {"android/os/Parcel", "writeInt", "(I)V", ParcelData, false, true},
+    {"android/os/Parcel", "readInt", "()I", ParcelData, false, true},
+    {"android/os/Parcel", "writeLong", "(J)V", ParcelData, false, true},
+    {"android/os/Parcel", "readLong", "()J", ParcelData, false, true},
+    {"android/os/Parcel", "writeString", "(Ljava/lang/String;)V", ParcelData,
+     false, true},
+    {"android/os/Parcel", "readString", "()Ljava/lang/String;", ParcelData,
+     false, true},
+    {"android/os/Parcel", "marshall", "()[B", ParcelData, false, true},
+    {"android/os/Parcel", "unmarshall", "([BII)V", ParcelData, false, true},
+    {"android/os/Parcel", "writeInterfaceToken", "(Ljava/lang/String;)V",
+     ParcelData, false, true},
 };
 
 struct LibraryStop {
@@ -488,6 +506,7 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == ServiceCheck || M.Op == ServiceInitCache ||
         M.Op == BinderAllowBlocking || M.Op == BinderQueryLocalInterface ||
         M.Op == ServiceAsBinder || M.Op == EventLogWrite ||
+        M.Op == ParcelData ||
         (M.Op == Construct &&
          (std::string_view(M.Class) == "android/os/Handler" ||
           std::string_view(M.Class) ==
