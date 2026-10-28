@@ -4769,6 +4769,10 @@ proof is shared by structured clauses and fallback annotations before any
 native filter code moves. Side-effecting filters retain their original body.
 The COFF C renderer emits lexical SEH/C++ protection only for reducible nodes;
 fallback views preserve native dispatch annotations and original statements.
+Table SEH scopes sharing one range print as nested single-clause `__try`
+statements, the first innermost, the order the runtime tries them in. Only the
+outermost arm takes its handler block: an inner handler lies outside the range,
+so outside the outer tries as well, and stays where it is.
 A catch funclet is outside the try block it handles, although MSVC maps the
 funclet's continuation tail back to a state of that try. The funclet gets no
 region of it, and the fallback view of a function under an IP-to-state map

@@ -383,6 +383,72 @@ TEST(COFFExceptionIR,
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
 }
 
+// The runtime tries the scopes of one range in table order, and a C __try
+// has a single handler: such scopes print as nested tries, the first
+// innermost.  The outermost arm takes its handler block.  An inner arm leaves
+// its handler where it is, after both tries: the outer try does not protect
+// that block.
+TEST(COFFExceptionIR, HighCSEHScopesSharingARangeNestInTableOrder) {
+  constexpr va_t FunctionVA = 0x140001000;
+  for (bool FinallyInside : {true, false}) {
+    SCOPED_TRACE(FinallyInside);
+    MedFunc Func = makeWindowsHandlerFixture("shared_range", 0x140009000);
+    ExceptionFunction EH;
+    EH.CodeRange = {FunctionVA, FunctionVA + 0x40};
+    EH.ParseStatus = ExceptionParseStatus::Complete;
+    EH.Personality = ExceptionPersonality::CSpecificHandler;
+    SEHScopeRecord Finally;
+    Finally.GuardedRange = {FunctionVA, FunctionVA + 0x10};
+    Finally.Kind = SEHScopeKind::Finally;
+    Finally.FilterOrFinallyVA = 0x14000C000;
+    SEHScopeRecord Except;
+    Except.GuardedRange = Finally.GuardedRange;
+    Except.Kind = SEHScopeKind::CatchAll;
+    Except.HandlerVA = FunctionVA + 0x20;
+    EH.SEH.emplace();
+    EH.SEH->Scopes = FinallyInside ? std::vector{Finally, Except}
+                                   : std::vector{Except, Finally};
+    Func.ExceptionMetadata = std::move(EH);
+
+    const HighFunc High = MedToHighConverter().convert(Func, Arch::X64);
+    unsigned Tries = 0;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::SEHTry)
+        return;
+      ++Tries;
+      EXPECT_TRUE(S.EHIsReducible);
+      EXPECT_EQ(S.EHClauses.size(), 1u);
+    });
+    EXPECT_EQ(Tries, 2u);
+    const std::string Source = emitHighC({High});
+    EXPECT_EQ(Source.find("unstructured SEH"), std::string::npos) << Source;
+    const size_t Outer = Source.find("__try {");
+    ASSERT_NE(Outer, std::string::npos) << Source;
+    const size_t Inner = Source.find("__try {", Outer + 1);
+    ASSERT_NE(Inner, std::string::npos) << Source;
+    EXPECT_EQ(Source.find_first_not_of(" \n", Outer + 7), Inner) << Source;
+    const size_t FinallyArm = Source.find("} __finally {");
+    const size_t ExceptArm =
+        Source.find("} __except (EXCEPTION_EXECUTE_HANDLER) {");
+    const size_t Handler = Source.find("sub_140009000();", Outer);
+    ASSERT_NE(FinallyArm, std::string::npos) << Source;
+    ASSERT_NE(ExceptArm, std::string::npos) << Source;
+    ASSERT_NE(Handler, std::string::npos) << Source;
+    EXPECT_EQ(FinallyArm < ExceptArm, FinallyInside) << Source;
+    // The handler's code is the outermost arm's, or follows both tries:
+    // never inside the outer try.
+    const size_t OuterArm = FinallyInside ? ExceptArm : FinallyArm;
+    const size_t OuterEnd = Source.find('}', OuterArm + 1);
+    ASSERT_NE(OuterEnd, std::string::npos) << Source;
+    if (FinallyInside)
+      EXPECT_TRUE(Handler > OuterArm && Handler < OuterEnd) << Source;
+    else
+      EXPECT_GT(Handler, OuterEnd) << Source;
+    EXPECT_EQ(Source.find("sub_140009000();", Handler + 1), std::string::npos)
+        << Source;
+  }
+}
+
 // MSVC maps the continuation tail of a catch funclet back to a state of the
 // try block it handles.  A handler is outside its own try block, so that tail
 // is not protected by it; a try block of another handler still protects it.

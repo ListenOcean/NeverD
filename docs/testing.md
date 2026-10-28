@@ -139,6 +139,11 @@ and encoding index instead of process-specific diagnostic object bytes.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
+`COFFExceptionIR.HighCSEHScopesSharingARangeNestInTableOrder` checks both
+orders of a finally and an except scope over one range: nested single-clause
+tries, the outermost arm holding its handler, and an inner handler left after
+both tries.
+
 `COFFExceptionIR.HighCCatchFuncletIsOutsideItsOwnTry` checks that a catch
 funclet whose tail maps back to its own try gets no region of it, nor of a
 parent try its states never reach, while another handler's try still protects

@@ -588,6 +588,37 @@ primaryCxxTryRange(const std::vector<ExceptionAddressRange> &Ranges) {
   return Best;
 }
 
+/// The runtime tries table SEH scopes in order and a C __try has a single
+/// handler, so scopes sharing one range are nested tries, the first
+/// innermost. Split each structured try holding several of them into nested
+/// single-clause tries. An inner clause keeps its handler out of line
+/// (structureExceptionRegions); one with a body is left as it is.
+void nestSEHScopesSharingARange(std::vector<HighStmt> &Body) {
+  walkStmts(Body, [](HighStmt &S) {
+    if (S.Kind != StmtKind::SEHTry || !S.EHIsReducible ||
+        S.EHClauses.size() < 2 ||
+        S.EHClauseBodies.size() != S.EHClauses.size() ||
+        llvm::any_of(llvm::drop_end(S.EHClauseBodies),
+                     [](const auto &Arm) { return !Arm.empty(); }))
+      return;
+    for (size_t C = 0; C + 1 < S.EHClauses.size(); ++C) {
+      HighStmt Inner;
+      Inner.Kind = StmtKind::SEHTry;
+      Inner.Addr = S.Addr;
+      Inner.EHRange = S.EHRange;
+      Inner.EHIsReducible = true;
+      Inner.Body = std::move(S.Body);
+      Inner.EHClauses.push_back(std::move(S.EHClauses[C]));
+      Inner.EHClauseBodies.emplace_back();
+      S.Body.clear();
+      S.Body.push_back(std::move(Inner));
+    }
+    S.EHClauses.erase(S.EHClauses.begin(), S.EHClauses.end() - 1);
+    S.EHClauseBodies.erase(S.EHClauseBodies.begin(),
+                           S.EHClauseBodies.end() - 1);
+  });
+}
+
 void addSEHCandidates(const ExceptionFunction &EH, Arch TargetArch,
                       std::vector<RegionCandidate> &Candidates,
                       unsigned &Rejected) {
@@ -2000,12 +2031,18 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     };
 
     auto ClauseBodies = std::move(SeparatedBodies);
+    // Table SEH scopes sharing this range become nested tries, the last
+    // outermost (nestSEHScopesSharingARange). An inner scope's handler lies
+    // outside the range, and so outside the outer tries: moved into its arm,
+    // it would be protected by them.
+    const bool NestedScopes = Candidate.Kind == StmtKind::SEHTry && EH.SEH;
     // Where a handler block that runs off its end continued: the statement
     // after it.  As a clause body it continues after the try statement.
     std::vector<std::optional<va_t>> ClauseFallTo(ClauseTargets.size());
     for (size_t ClauseIndex = 0; ClauseIndex < ClauseTargets.size();
          ++ClauseIndex) {
-      if (!ClauseBodies[ClauseIndex].empty())
+      if (!ClauseBodies[ClauseIndex].empty() ||
+          (NestedScopes && ClauseIndex + 1 != ClauseTargets.size()))
         continue;
       std::optional<va_t> Target = ClauseTargets[ClauseIndex];
       if (!Target || WindowsTargetUses[*Target] - JoinedParts != 1)
@@ -2065,7 +2102,8 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
           // on that statement alone once the handler code is in the clause.
           const std::vector<const HighStmt *> Follow = FollowInsertedTry();
           const bool FallsThrough =
-              ClauseTargets.size() == 1 && llvm::is_contained(Follow, Cont);
+              (ClauseTargets.size() == 1 || NestedScopes) &&
+              llvm::is_contained(Follow, Cont);
           const va_t Next = Cont->Addr;
           bool ContStarts = false;
           unsigned Starts = 0;
@@ -2129,6 +2167,8 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     RegionInstalled = true;
   }
   Func.UnstructuredExceptionRegions += Rejected;
+  if (EH.SEH)
+    nestSEHScopesSharingARange(Func.Body);
 
   // Without a provable lexical range, retain the native dispatch graph around
   // the original listing. Cleanup-only C++ still carries unwind actions;
