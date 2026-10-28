@@ -426,6 +426,16 @@ struct MedCallUnreadRegisters {
   uint32_t Families = 0;
 };
 
+/// A source LOAD, by its original occurrence, that may read the return
+/// address a physical CALL pushed into bytes the C frame does not model
+/// (validateSourceCallReturnReads). Whether the function observes its value
+/// is decided once call arguments and returns are settled.
+struct MedCallReturnRead {
+  va_t Load = InvalidVA;
+  int OriginSeq = -1;
+  std::string Diagnostic;
+};
+
 /// Caller-observed AArch64 direct-call return fields that include implicit
 /// clobbers.  Whole-program recovery validates these against the callee before
 /// materializing a multi-register return.
@@ -495,6 +505,9 @@ struct MedFunc {
   std::vector<MedCallClobber> CallClobbers;
   /// Original call-site id -> checked unobserved incoming GPR families.
   std::map<uint32_t, MedCallUnreadRegisters> CallUnreadRegisters;
+  /// Source loads of CALL return slots awaiting the settled observation proof
+  /// (validateObservedCallReturnReads).
+  std::vector<MedCallReturnRead> CallReturnReads;
   std::vector<MedStructReturnCandidate> StructReturnCandidates;
   SourceRegisterCopies RegisterCopyProjections;
   SourceClassGetterCalls ClassGetterCallFacts;

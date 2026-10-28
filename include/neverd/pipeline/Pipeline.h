@@ -164,6 +164,12 @@ struct PipelineOptions {
   /// CLI export on large PEs. Callers that later need a different subset must
   /// run a new pipeline.
   std::set<va_t> OnlyFunctionEntries;
+  /// A run restricted to OnlyFunctionEntries fails with the first of them
+  /// MedIR refuses, as a view of that function should. A unit written of
+  /// them as the whole program is written (neverd_decompile_functions)
+  /// instead leaves each refused one out and names it in its audit, as a
+  /// whole-image run does.
+  bool OmitRefusedFunctions = false;
   /// The user's function edits: an address made the entry of a function
   /// (true) or no longer one (false).  Whole-program detection follows them;
   /// a restricted run lifts its OnlyFunctionEntries.
@@ -288,6 +294,8 @@ struct PipelineFunctionAudit {
   bool HasMedIR = false;
   bool MedIRVerified = false;
   bool HasLLVMDefinition = false;
+  /// Why MedIR refused the function (MedIRFailed); empty otherwise.
+  std::string Diagnostic;
 };
 
 /// Signature bodies of the direct callees a set of functions leaves out.
@@ -827,9 +835,11 @@ private:
   void prepareSourceMedIR(const BinaryImage &Img, PipelineResult &Result,
                           DebugContext *Dbg, PipelineAnalysisCache *Cache);
   /// prepareSourceMedIR for a run that defers HighIR, which then succeeds;
-  /// a failure is the run's error.
+  /// a failure is the run's error. \p FailsRun names a run that a refused
+  /// function fails rather than omitting it (OmitRefusedFunctions).
   void prepareDeferredSource(const BinaryImage &Img, PipelineResult &Result,
-                             DebugContext *Dbg, PipelineAnalysisCache *Cache);
+                             DebugContext *Dbg, PipelineAnalysisCache *Cache,
+                             bool FailsRun);
   /// The import-address names of \p Img kept with \p Cache's image inputs, or
   /// null when \p Cache is null or those inputs are not built yet. Additions
   /// a run makes belong to that run and must not remain on the kept map.

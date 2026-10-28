@@ -7,14 +7,21 @@
 #include "gtest/gtest.h"
 
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/codegen/CodeGen.h"
+#include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/med/LowToMed.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/AArch64/AArch64Regs.h"
+#include "neverd/loader/DWARF/AArch64ReturnAddressState.h"
+#include "neverd/loader/DWARF/EHFrame.h"
 #include "neverd/support/BinaryEncoding.h"
 
+#include "llvm/IR/Verifier.h"
+#include "llvm/Object/ObjectFile.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <initializer_list>
@@ -25,6 +32,10 @@
 
 namespace {
 using namespace neverd;
+
+#define A64_RETURN_ABI_TEXT(Name, Text) constexpr char Name[] = Text;
+#define A64_RETURN_ABI_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "AArch64ReturnABIFixtures.def"
 
 MedFunc decodedFunction(std::initializer_list<uint32_t> Words,
                         BinaryFormat Format) {
@@ -322,5 +333,219 @@ TEST(AArch64ReturnProtection, MalformedRecipesCannotDisappearBeforeValidation) {
     ++Checked;
   }
   EXPECT_EQ(Checked, 2u);
+}
+
+TEST(AArch64ReturnProtection, LLVMLeafOwnsItsSignedFrameAndUnwindPolicy) {
+  for (BinaryFormat Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool BKey : {false, true}) {
+      const auto Function = decodedFunction(
+          {BKey ? kReturnSignB : kReturnSignA, kReturnSeven,
+           BKey ? kAuthenticatedReturnB : kAuthenticatedReturnA},
+          Format);
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                          Arch::AArch64, {}, nullptr, Format);
+      ASSERT_TRUE(Module);
+      ASSERT_FALSE(llvm::verifyModule(*Module));
+      const auto *Native = Module->getFunction(kProtectedFunction);
+      ASSERT_NE(Native, nullptr);
+      EXPECT_EQ(Native->getFnAttribute(kSigningScope).getValueAsString(),
+                kSigningAll);
+      EXPECT_EQ(Native->getFnAttribute(kSigningKey).getValueAsString(),
+                BKey ? kSigningBKey : kSigningAKey);
+      EXPECT_TRUE(Native->hasUWTable());
+      EXPECT_EQ(Module->getFunction(kRawAuthenticatedReturn), nullptr);
+      CEmitterOptions Options;
+      Options.TheArch = Arch::AArch64;
+      Options.Format = Format;
+      std::string Source;
+      llvm::raw_string_ostream Stream(Source);
+      ASSERT_TRUE(LLVMCEmitter().emit(*Module, Stream, Options));
+      EXPECT_NE(Source.find(BKey ? kSourceBKey : kSourceAKey),
+                std::string::npos)
+          << Source;
+    }
+}
+
+TEST(AArch64ReturnProtection, LLVMNonLeafOwnsThePrivateSavedReturnAddress) {
+  for (bool BKey : {false, true}) {
+    const auto Function = decodedFunction(
+        {BKey ? kReturnSignB : kReturnSignA, kReturnFrameSave,
+         kReturnFramePointer, kReturnCall, kReturnSeven, kReturnFrameRestore,
+         BKey ? kAuthenticatedReturnB : kAuthenticatedReturnA},
+        BinaryFormat::ELF);
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                        Arch::AArch64);
+    ASSERT_TRUE(Module);
+    ASSERT_FALSE(llvm::verifyModule(*Module));
+    const auto *Native = Module->getFunction(kProtectedFunction);
+    ASSERT_NE(Native, nullptr);
+    EXPECT_EQ(Native->getFnAttribute(kSigningScope).getValueAsString(),
+              kSigningNonLeaf);
+    EXPECT_EQ(Native->getFnAttribute(kSigningKey).getValueAsString(),
+              BKey ? kSigningBKey : kSigningAKey);
+    EXPECT_TRUE(Native->hasUWTable());
+    EXPECT_EQ(Module->getFunction(kRawAuthenticatedReturn), nullptr);
+  }
+}
+
+TEST(AArch64ReturnProtection, CompiledFramesDescribeTheirActualSigningPC) {
+  for (auto Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    for (bool BKey : {false, true})
+      for (bool Leaf : {false, true}) {
+        // Darwin arm64e's unwinder owns an implicit IB return-address ABI.
+        // Its CIE cannot describe an A-key override without an ABI extension.
+        if (Format == BinaryFormat::MachO && !BKey)
+          continue;
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(BKey);
+        SCOPED_TRACE(Leaf);
+        const auto Function =
+            Leaf ? decodedFunction(
+                       {BKey ? kReturnSignB : kReturnSignA, kReturnSeven,
+                        BKey ? kAuthenticatedReturnB : kAuthenticatedReturnA},
+                       Format)
+                 : decodedFunction(
+                       {BKey ? kReturnSignB : kReturnSignA, kReturnFrameSave,
+                        kReturnFramePointer, kReturnCall, kReturnSeven,
+                        kReturnFrameRestore,
+                        BKey ? kAuthenticatedReturnB : kAuthenticatedReturnA},
+                       Format);
+        llvm::LLVMContext Context;
+        auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                            Arch::AArch64, {}, nullptr, Format);
+        ASSERT_TRUE(Module);
+        const auto Object = Codegen().compile(
+            *Module, Arch::AArch64, Format,
+            Format == BinaryFormat::MachO ? kArm64eTriple : llvm::StringRef());
+        ASSERT_TRUE(Object.Success);
+        auto Parsed =
+            llvm::object::ObjectFile::createObjectFile(llvm::MemoryBufferRef(
+                llvm::StringRef(
+                    reinterpret_cast<const char *>(Object.ObjectData.data()),
+                    Object.ObjectData.size()),
+                kObjectName));
+        ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+        std::optional<size_t> SigningOffset, ReturnOffset;
+        bool CombinedReturn = false;
+        std::optional<dwarf_eh::ParseResult> Frames;
+        for (const auto &Section : (*Parsed)->sections()) {
+          auto Name = Section.getName();
+          ASSERT_TRUE(bool(Name)) << llvm::toString(Name.takeError());
+          auto Contents = Section.getContents();
+          ASSERT_TRUE(bool(Contents)) << llvm::toString(Contents.takeError());
+          const auto *Bytes =
+              reinterpret_cast<const uint8_t *>(Contents->data());
+          if (Section.isText())
+            for (size_t I = 0; I + kNativeWordBytes <= Contents->size();
+                 I += kNativeWordBytes) {
+              const auto Word = readLE<uint32_t>(Bytes + I);
+              if (Word == (BKey ? kReturnSignB : kReturnSignA)) {
+                EXPECT_FALSE(SigningOffset);
+                SigningOffset = I;
+              }
+              if (Word == kUnsignedReturn ||
+                  Word ==
+                      (BKey ? kAuthenticatedReturnB : kAuthenticatedReturnA)) {
+                EXPECT_FALSE(ReturnOffset);
+                ReturnOffset = I;
+                CombinedReturn = Word != kUnsignedReturn;
+              }
+            }
+          if (*Name == kELFFrameSection || *Name == kMachOFrameSection) {
+            BinaryImage Image;
+            Image.Arch = Arch::AArch64;
+            Image.Bits = Bitness::Bits64;
+            Image.Format = Format;
+            Image.MachOCPUSubtype = kArm64eSubtype;
+            Frames = dwarf_eh::parseEHFrame(
+                Image, {Bytes, Contents->size(), Section.getAddress()}, {});
+          }
+        }
+        ASSERT_TRUE(SigningOffset);
+        ASSERT_TRUE(ReturnOffset);
+        ASSERT_TRUE(Frames);
+        ASSERT_EQ(Frames->ParseStatus, ExceptionParseStatus::Complete);
+        ASSERT_EQ(Frames->CIEs.size(), 1u);
+        ASSERT_EQ(Frames->FDEs.size(), 1u);
+        const auto &CIE = Frames->CIEs.front();
+        const auto &FDE = Frames->FDEs.front();
+        EXPECT_EQ(CIE.HasPointerAuth, BKey && Format == BinaryFormat::ELF);
+        EXPECT_EQ(CIE.UsesArm64eReturnAddressABI,
+                  Format == BinaryFormat::MachO);
+        const auto Query = [&](size_t Offset) {
+          return dwarf_eh::evaluateAArch64ReturnAddressState(
+              Arch::AArch64, CIE, FDE, FDE.InitialLocation + Offset);
+        };
+        const auto Entry = Query(*SigningOffset);
+        ASSERT_TRUE(Entry.State);
+        EXPECT_EQ(Entry.State->Kind, dwarf_eh::AArch64RASigningKind::Unsigned);
+        const auto Signed = Query(*SigningOffset + kNativeWordBytes);
+        ASSERT_TRUE(Signed.State);
+        EXPECT_EQ(Signed.State->Kind, dwarf_eh::AArch64RASigningKind::SP);
+        EXPECT_EQ(Signed.State->Key,
+                  BKey ? dwarf_eh::AArch64RAKey::B : dwarf_eh::AArch64RAKey::A);
+        const auto Return = Query(*ReturnOffset);
+        ASSERT_TRUE(Return.State);
+        EXPECT_EQ(Return.State->Kind,
+                  CombinedReturn ? dwarf_eh::AArch64RASigningKind::SP
+                                 : dwarf_eh::AArch64RASigningKind::Unsigned);
+      }
+}
+
+TEST(AArch64ReturnProtection, Arm64eCannotInventAnAKeyUnwindConvention) {
+  const auto Function = decodedFunction(
+      {kReturnSignA, kReturnSeven, kAuthenticatedReturnA}, BinaryFormat::ELF);
+  for (bool Leaf : {false, true})
+    for (bool ExplicitKey : {false, true}) {
+      llvm::LLVMContext Context;
+      auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                          Arch::AArch64);
+      ASSERT_TRUE(Module);
+      auto *Native = Module->getFunction(kProtectedFunction);
+      ASSERT_NE(Native, nullptr);
+      Native->addFnAttr(kSigningScope, Leaf ? kSigningAll : kSigningNonLeaf);
+      if (!ExplicitKey)
+        Native->removeFnAttr(kSigningKey);
+      testing::internal::CaptureStderr();
+      const auto Object = Codegen().compile(*Module, Arch::AArch64,
+                                            BinaryFormat::MachO, kArm64eTriple);
+      llvm::mc_rewrite::RewriteOptions Options;
+      const auto Rewrite = Codegen().compileForRewrite(
+          *Module, Arch::AArch64, Options, BinaryFormat::MachO, kArm64eTriple);
+      const auto Diagnostic = testing::internal::GetCapturedStderr();
+      EXPECT_FALSE(Object.Success);
+      EXPECT_TRUE(Object.ObjectData.empty());
+      EXPECT_FALSE(Rewrite.ImageValid);
+      EXPECT_NE(Diagnostic.find(kArm64eUnwindDiagnostic), std::string::npos)
+          << Diagnostic;
+    }
+}
+
+TEST(AArch64ReturnProtection, LLVMCRejectsLostOrMalformedSigningPolicy) {
+  const auto Function = decodedFunction(
+      {kReturnSignA, kReturnSeven, kAuthenticatedReturnA}, BinaryFormat::ELF);
+  for (unsigned Case = 0; Case != 4; ++Case) {
+    llvm::LLVMContext Context;
+    auto Module = MedLLVMEmitter().emit({Function}, Context, kReturnModule,
+                                        Arch::AArch64);
+    ASSERT_TRUE(Module);
+    auto *Native = Module->getFunction(kProtectedFunction);
+    ASSERT_NE(Native, nullptr);
+    if (Case == 1)
+      Native->addFnAttr(kSigningScope, kBadSigningScope);
+    if (Case == 2)
+      Native->addFnAttr(kSigningKey, kBadSigningKey);
+    if (Case == 3)
+      Native->addFnAttr(kPCSigningAttribute);
+    CEmitterOptions Options;
+    Options.TheArch = Case == 0 ? Arch::X64 : Arch::AArch64;
+    std::string Source;
+    llvm::raw_string_ostream Stream(Source);
+    EXPECT_THROW(LLVMCEmitter().emit(*Module, Stream, Options),
+                 std::invalid_argument);
+    EXPECT_TRUE(Source.empty()) << Source;
+  }
 }
 } // namespace

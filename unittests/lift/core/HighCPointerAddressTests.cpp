@@ -1366,7 +1366,8 @@ TEST(HighCPointerAddresses, PointerOffsetAddressOmitsArithmeticWrap) {
   EXPECT_EQ(Source.find("(uint64_t)(8)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uintptr_t)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("+ 8"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__atomic_fetch_add"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__asm__ __volatile__(\"lock xaddl"), std::string::npos)
+      << Source;
   expectPortableStore(Source, "int32_t", "(uintptr_t)p + 8", "1");
 }
 
@@ -1406,11 +1407,36 @@ TEST(HighCPointerAddresses, AtomicFetchAddComposesIntoCompare) {
   Guard.Body = {Release};
   Func.Body = {Fetch, Guard};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (__atomic_fetch_add("), std::string::npos)
+  EXPECT_NE(Source.find("if (({ uint32_t neverd_atomic_value"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t94_7"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(uintptr_t)((uintptr_t)"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)p + 8"), std::string::npos) << Source;
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 memory operations require an x64 host";
+  compileAndRunCallOrdering("#include <stdint.h>\n"
+                            "typedef struct CAuxData { uint64_t pad; uint32_t "
+                            "refs, guard; } CAuxData;\n" +
+                                Source + R"(
+static unsigned calls;
+static uintptr_t last;
+int dtor(uintptr_t p) { ++calls; last=p; return 0; }
+int main(void) {
+  const uint32_t values[] = {0, 1, 2, UINT32_MAX};
+  for (unsigned i=0; i<4; ++i) {
+    CAuxData value = {UINT64_C(0x8877665544332211), values[i], 0xa5a5a5a5};
+    calls=0; last=0;
+    last_ref(&value);
+    if (value.refs != values[i]-1 || calls != (values[i]==1)) return 1;
+    if (calls && last != (uintptr_t)&value) return 2;
+    if (value.pad != UINT64_C(0x8877665544332211) || value.guard != 0xa5a5a5a5)
+      return 3;
+  }
+  return 0;
+}
+)",
+                            true);
 }
 
 TEST(HighCPointerAddresses, SameAddressSignedIncrementKeepsModularExpression) {
@@ -6485,9 +6511,11 @@ TEST(HighCPointerAddresses, UnionOverlayPicksUniqueAccessWidth) {
   Func.Body = {Load, Store, Fetch};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("p->_m_nRef"), std::string::npos) << Source;
-  EXPECT_NE(
-      Source.find("__atomic_fetch_add((uint32_t *)(&p->_m_nRef), 0xFFFFFFFF,"),
-      std::string::npos)
+  EXPECT_NE(Source.find("__asm__ __volatile__(\"lock xaddl"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)(&p->_m_nRef)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)(0xFFFFFFFF)"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(uint32_t)(-1)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("___u1"), std::string::npos) << Source;
@@ -43930,23 +43958,29 @@ int main(void) {
                             true);
 }
 
-TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+static void checkMemoryRmwThroughBothRoutes(NdOp Opcode) {
+  const bool Add = Opcode == NdOp::ATOMIC_ADD;
   if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
       llvm::Triple::x86_64)
-    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+    GTEST_SKIP() << "Native x64 memory operations require an x64 host";
   constexpr va_t Entry = 0x140001000;
   for (unsigned Bytes : {1U, 2U, 4U, 8U})
     for (bool Locked : {false, true}) {
+      if (Add && !Locked)
+        continue;
       std::vector<uint8_t> Code;
       if (Locked)
         Code.push_back(0xf0);
-      // xchg [rcx], dl/dx/edx/rdx; zero-extend the old value into the return
-      // register. No alignment promise can be inferred from the address.
+      // xchg/lock xadd [rcx], dl/dx/edx/rdx; extend the old value into the
+      // return register. No alignment promise can be inferred from the address.
       if (Bytes == 2)
         Code.push_back(0x66);
       if (Bytes == 8)
         Code.push_back(0x48);
-      Code.insert(Code.end(), {uint8_t(Bytes == 1 ? 0x86 : 0x87), 0x11});
+      if (Add)
+        Code.push_back(0x0f);
+      const uint8_t Base = Add ? 0xc0 : 0x86;
+      Code.insert(Code.end(), {uint8_t(Base + (Bytes != 1)), 0x11});
       if (Bytes <= 2)
         Code.insert(Code.end(),
                     {0x0f, uint8_t(Bytes == 1 ? 0xb6 : 0xb7), 0xc2});
@@ -43962,14 +43996,19 @@ TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
         const auto Image = makeCodeFixture(Entry, Code);
         const auto Source = LLVMRoute ? llvmcOnlyFunction(Image, Entry)
                                       : highcOnlyFunction(Image, Entry);
-        ASSERT_NE(Source.find("__asm__ __volatile__(\"xchg"), std::string::npos)
+        ASSERT_NE(Source.find(Add ? "__asm__ __volatile__(\"lock xadd"
+                                  : "__asm__ __volatile__(\"xchg"),
+                  std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("__atomic_fetch_add"), std::string::npos)
             << Source;
         EXPECT_EQ(Source.find("__atomic_exchange_n"), std::string::npos)
             << Source;
         compileAndRunCallOrdering(
             "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n" +
-                Source + "\ntypedef uint" + std::to_string(Bytes * 8) +
-                "_t word;\n" + R"(
+                Source + "\n#define ADDITION " + (Add ? "1" : "0") +
+                "\ntypedef uint" + std::to_string(Bytes * 8) + "_t word;\n" +
+                R"(
 int main(void) {
   _Alignas(64) unsigned char storage[64];
   const word values[] = {0, (word)-1, (word)UINT64_C(0x8877665544332211),
@@ -43982,7 +44021,8 @@ int main(void) {
         word old = sub_140001000((void *)(storage + offset), values[j]);
         word current;
         memcpy(&current, storage + offset, sizeof(word));
-        if (old != values[i] || current != values[j]) return 1;
+        word expected = ADDITION ? (word)(values[i] + values[j]) : values[j];
+        if (old != values[i] || current != expected) return 1;
         for (unsigned k = 0; k < sizeof(storage); ++k)
           if ((k < offset || k >= offset + sizeof(word)) && storage[k] != 0x5a)
             return 2;
@@ -43993,6 +44033,14 @@ int main(void) {
             true);
       }
     }
+}
+
+TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+  checkMemoryRmwThroughBothRoutes(NdOp::ATOMIC_XCHG);
+}
+
+TEST(HighCPointerAddresses, MemoryAdditionReturnsItsSnapshotThroughBothRoutes) {
+  checkMemoryRmwThroughBothRoutes(NdOp::ATOMIC_ADD);
 }
 
 TEST(HighCPointerAddresses,

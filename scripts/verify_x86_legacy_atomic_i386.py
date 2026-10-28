@@ -203,7 +203,7 @@ def main():
         print({"triple": triple, "objects": len(reports)}, flush=True)
     pipeline = []
     objects = sorted((args.exports / "i386-pipeline").glob("*.o"))
-    assert len(objects) == 144, "missing i386 decoded pipeline exports"
+    assert len(objects) == 288, "missing i386 decoded pipeline exports"
     for obj in objects:
         case = json.loads(obj.with_suffix(".json").read_text())
         checks = qualify_pipeline(oracle, obj, case)

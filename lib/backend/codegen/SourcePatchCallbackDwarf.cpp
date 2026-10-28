@@ -158,7 +158,7 @@ encodeSourceCallbackDwarfFrame(const SourceCallbackPrefix &Prefix,
       FDE.AddressRange < Prefix.CopiedSize || !CIE.CodeAlignmentFactor ||
       !CIE.DataAlignmentFactor || CIE.ReturnAddressRegister > 255 ||
       FDE.LSDAVA || CIE.IsSignalFrame || CIE.HasPointerAuth ||
-      CIE.UsesNonHintPAuthLR ||
+      CIE.UsesArm64eReturnAddressABI || CIE.UsesNonHintPAuthLR ||
       CIE.ParseStatus != ExceptionParseStatus::Complete ||
       FDE.ParseStatus != ExceptionParseStatus::Complete ||
       CIE.HasMTETaggedFrame || CIE.SegmentSelectorSize ||

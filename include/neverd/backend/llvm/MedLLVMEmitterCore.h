@@ -52,6 +52,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/Hashing.h"
+#include "llvm/ADT/SmallPtrSet.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
@@ -2294,6 +2295,10 @@ private:
 
   llvm::Function *CurFunc = nullptr;
   const MedFunc *CurMedFunc = nullptr;
+  llvm::SmallPtrSet<const MedOp *, 8> AArch64ReturnProtectionOps;
+  llvm::SmallPtrSet<const PhiNode *, 8> AArch64ReturnProtectionPhis;
+  llvm::DenseMap<const MedOp *, const MedOp *> AArch64AuthenticatedCalls;
+  llvm::SmallPtrSet<const MedOp *, 8> AArch64CallAuthentications;
   LLVMSourceMap *SourceMap = nullptr;
   const DebugContext *Dbg = nullptr;
   const std::set<va_t> *PrototypeArgumentCallees = nullptr;

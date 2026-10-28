@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import threading
 import traceback
 
 
@@ -38,7 +39,8 @@ def export(output, result, profile):
     if identity is None:
         raise RuntimeError("IDA input SHA-256 is unavailable")
     result.update(input_sha256=identity.hex(), ida_version=ida_kernwin.get_kernel_version(),
-                  database_path=str(output), profile=profile)
+                  database_path=str(output), profile=profile,
+                  image_base=hex(ida_nalt.get_imagebase()))
     if profile["decompiler"]:
         import ida_hexrays
 
@@ -68,11 +70,25 @@ def compare(output, result):
     matcher = diaphora.CBinDiff(str(before))
     # This is also the standalone Diaphora CLI's name policy.
     matcher.ignore_all_names = False
+    # Diaphora joins heuristic threads, but their exceptions do not make diff()
+    # return False. Retain the failure before admitting a completed result.
+    result["worker_errors"] = []
+    previous_hook = threading.excepthook
+    def worker_failed(args):
+        result["worker_errors"].append({
+            "thread": args.thread.name,
+            "error": "".join(traceback.format_exception(args.exc_type, args.exc_value, args.exc_traceback)),
+        })
+        previous_hook(args)
+    threading.excepthook = worker_failed
     try:
         if matcher.diff(str(after)) is not True:
             raise RuntimeError("Diaphora matching did not complete")
+        if result["worker_errors"]:
+            raise RuntimeError("Diaphora heuristic worker failed")
         matcher.save_results(str(output))
     finally:
+        threading.excepthook = previous_hook
         matcher.db_close()
     for value, path in zip(declarations, (before, after)):
         if value["export_sha256"] != digest(path):

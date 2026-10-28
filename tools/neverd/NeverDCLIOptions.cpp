@@ -1763,10 +1763,10 @@ cl::opt<unsigned long long>
                 cl::init(0), cl::sub(DiffCmd));
 cl::opt<std::string> DiffList(
     "list",
-    cl::desc(
-        "Page all/matched/changed/ambiguous/unmatched functions, regions or "
-        "region-anchors, dataflow, flow-regions, flow-region-anchors or "
-        "reviews"),
+    cl::desc("Page all/matched/changed/uncertain/ambiguous/unmatched "
+             "functions, regions or "
+             "region-anchors, dataflow, flow-regions, flow-region-anchors or "
+             "reviews"),
     cl::sub(DiffCmd));
 cl::opt<unsigned> DiffOffset("offset", cl::desc("Inventory page offset"),
                              cl::init(0), cl::sub(DiffCmd));
@@ -1904,7 +1904,8 @@ cl::opt<bool> DecompileCallees(
     "callees",
     cl::desc("With --func, also decompile every function it calls, directly "
              "or not, into one C file; imports and library functions stay "
-             "declarations"),
+             "declarations, and a callee that is not decompiled is named in "
+             "a note at the top"),
     cl::sub(DecompileCmd));
 
 //===----------------------------------------------------------------------===//

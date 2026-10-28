@@ -373,6 +373,14 @@ SymRef SymContext::mkURem(SymRef A, SymRef B) {
   }
   if (isConst(B) && constValue(B).isOne())
     return mkZero(W);
+  if (op(A) == SymOp::ZExt && op(B) == SymOp::ZExt) {
+    const auto X = operand(A, 0), Y = operand(B, 0);
+    const auto Narrow = std::max(width(X), width(Y));
+    // Both unsigned inputs fit this width. The remainder does too, including
+    // the total bitvector case x % 0 == x. Division by zero instead produces
+    // all ones at its original width and cannot use this extension rule.
+    return mkZExt(mkURem(mkZExt(X, Narrow), mkZExt(Y, Narrow)), W);
+  }
   return intern(SymOp::URem, W, {A, B}, 0);
 }
 

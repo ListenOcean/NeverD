@@ -5896,6 +5896,18 @@ After:
       <source>Restoring comparison</source>
       <translation>正在恢复比较</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>正在应用比较编辑</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>正在准备比较编辑</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>正在更新受影响的函数</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5910,10 +5922,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · %4 条匹配 / %5 条保留观察记录
 原生指令行 %6 / %7；覆盖率 %8；歧义关联 %9。SSA：主文件 %10；次文件 %11。
-边界：主文件 %12；次文件 %13。</translation>
+边界：主文件 %12；次文件 %13。 引用身份：%14。</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6074,6 +6086,14 @@ Boundaries: primary %12; secondary %13.</source>
     <message>
         <source>unknown input</source>
         <translation>未知输入</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>已比较</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>未解析</translation>
     </message>
 </context>
 <context>
@@ -6282,8 +6302,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>%1 个已匹配 · %2 个已更改 · %3 个有歧义 · %4 / %5 个未匹配 · %6 / %7 个不完整</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>%1 个已匹配 · %2 个已更改 · %3 个有歧义 · %4 / %5 个未匹配 · %6 / %7 个不完整  ·  %8 不确定</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6740,6 +6760,16 @@ Secondary name: %2</source>
 
 主侧名称：%1
 次侧名称：%2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>不确定</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+引用身份：未解析。部分调用或数据目标无法比较。仅凭这一点不能认定发生了变化。</translation>
     </message>
 </context>
 <context>
@@ -7733,6 +7763,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>对应函数：%1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>不确定</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8099,6 +8133,10 @@ Supersedes: %11</source>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>无法恢复比较。原来的比较结果仍可使用。%1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>编辑已停止。之前的比较结果和编辑历史仍然可用。</translation>
     </message>
 </context>
 <context>

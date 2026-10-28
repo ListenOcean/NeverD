@@ -1587,7 +1587,7 @@ void recoverCallAbi(
       if (IntRegArgsApply)
         for (int J = static_cast<int>(OI) - 1; J >= 0; --J) {
           auto &Prev = Blk.Ops[J];
-          bool IsCall = isAbiRecoveryBarrier(Prev);
+          bool IsCall = endsCallArgumentSetup(Prev, /*RegistersOnly=*/true);
           // A preceding call's return value lands in the result register, which
           // is also argument register 0 on these ABIs, so it is the reaching
           // definition for a following call's argument when nothing overwrites
@@ -1707,18 +1707,21 @@ void recoverCallAbi(
         while (Setup && Seen.insert(Setup->Id).second) {
           for (size_t J = End; J > 0; --J) {
             const auto &Prev = Setup->Ops[J - 1];
-            if (isAbiRecoveryBarrier(Prev))
+            if (endsCallArgumentSetup(Prev, /*RegistersOnly=*/true))
               return {};
             if (Prev.Output.Kind == MedVar::Reg && Prev.Output.RegOff == IRR &&
                 Prev.Output.Size) {
-              if (Prev.Output.Size != TRI.PointerSize)
+              // A narrow SUBBYTES sync reads the full result pointer; it
+              // does not overwrite its upper bytes with an unknown value.
+              const MedVar Pointer = argRegSourceValueInBlock(
+                  *Setup, static_cast<int>(J) - 1, TRI, IntegerLayout);
+              if (Pointer.Size != TRI.PointerSize)
                 return {};
-              return {Prev.Output,
-                      derivesFromFrameReg(*Setup, TRI, Prev.Output) ||
-                          entryStackOffset(Func, Prev.Output, TheArch,
-                                           Img ? Img->abiFormat()
-                                               : BinaryFormat::Unknown)
-                              .has_value()};
+              return {Pointer, derivesFromFrameReg(*Setup, TRI, Pointer) ||
+                                   entryStackOffset(Func, Pointer, TheArch,
+                                                    Img ? Img->abiFormat()
+                                                        : BinaryFormat::Unknown)
+                                       .has_value()};
             }
           }
           if (!Setup->ExceptionalPreds.empty())

@@ -320,6 +320,7 @@ FunctionChangeObservations observeFunctionChanges(
   Out.State = Delta.State;
   Out.TotalRows = Delta.Rows.size();
   Out.NativeAnalysisComplete = Delta.AnalysisComplete;
+  Out.ReferenceComparisonComplete = Delta.ReferenceComparisonComplete;
   if (!Delta.ComputationComplete)
     return Out;
   Budget Work(Out, Options, Control);
@@ -359,7 +360,7 @@ FunctionChangeObservations observeFunctionChanges(
         throw Stopped{ComparisonState::ResourceLimited};
       Work.charge();
       const auto &R = Delta.Rows[I];
-      require(unsigned(R.Kind) <= unsigned(RowKind::Deleted),
+      require(unsigned(R.Kind) <= unsigned(RowKind::Uncertain),
               "observation delta row has an invalid kind");
       require(R.Primary != NoIndex || R.Secondary != NoIndex,
               "observation delta row has no instruction");
@@ -432,7 +433,7 @@ FunctionChangeObservations observeFunctionChanges(
           }
       }
       if (Out.Observations.size() == Before && R.Kind != RowKind::Identical &&
-          R.Kind != RowKind::Moved) {
+          R.Kind != RowKind::Moved && R.Kind != RowKind::Uncertain) {
         ChangeObservation O;
         O.Row = I;
         if (R.Kind == RowKind::Constant)

@@ -62,6 +62,31 @@ enum class InstructionFlow : uint8_t {
   Unknown,
 };
 
+/// What a reference refers to.
+enum class ReferenceKind : uint8_t {
+  /// A string; the key hashes its text.
+  String,
+  /// A scalar immediate; the key is its value.
+  Constant,
+  /// A named data object or import; the key hashes its name.
+  Data,
+  /// A known native function address. The key is its entry address, not a
+  /// call edge. A filtered snapshot may omit that function's body.
+  Function,
+  /// An address whose object identity is unknown. Its key is scoped to the
+  /// exact input/analysis identity; equal RVAs in different inputs are not
+  /// evidence that the referenced objects correspond.
+  UnresolvedData,
+};
+
+/// One address-taking operand. Occurrences retain position and multiplicity;
+/// a function-wide target set cannot distinguish swapped callback arguments.
+struct AddressReference {
+  uint64_t Key = 0;
+  uint32_t Operand = 0;
+  ReferenceKind Kind = ReferenceKind::Function;
+};
+
 /// One decoded instruction.
 struct Instruction {
   uint64_t Address = 0;
@@ -74,12 +99,21 @@ struct Instruction {
   uint64_t Shape = 0;
   /// The shape without scalar immediates and displacements.
   uint64_t Skeleton = 0;
+  /// Shape retaining scalar operands but replacing address identities with a
+  /// category marker. Used only to distinguish a reference gap from an observed
+  /// operand change; it never establishes normalized equality.
+  uint64_t AddressIndependentShape = 0;
   /// Where the instruction's bytes begin in Program::Code.
   uint32_t CodeOffset = 0;
   /// The modeled call or tail transfer's target, including a resolved import
   /// slot, as an index into Program::Functions, or NoIndex. Consumers use this
   /// admitted relation rather than inferring callees again from opcode kind.
   uint32_t Callee = NoIndex;
+  /// A modeled transfer whose target was omitted from this snapshot.
+  bool UnresolvedCallee = false;
+  bool HasUnresolvedData = false;
+  uint32_t FirstAddressReference = 0;
+  uint32_t AddressReferenceCount = 0;
   /// Index into Program::Mnemonics.
   uint16_t Mnemonic = 0;
   uint8_t Size = 0;
@@ -178,16 +212,6 @@ struct Function {
   bool hasBody() const { return BlockCount != 0; }
 };
 
-/// What a reference refers to.
-enum class ReferenceKind : uint8_t {
-  /// A string; the key hashes its text.
-  String,
-  /// A scalar immediate; the key is its value.
-  Constant,
-  /// A named data object or import; the key hashes its name.
-  Data,
-};
-
 /// One distinct thing a function's instructions refer to.
 struct Reference {
   ReferenceKind Kind = ReferenceKind::Constant;
@@ -226,6 +250,13 @@ struct ProgramIdentity {
   bool DiscoveryComplete = true;
 };
 
+inline constexpr llvm::StringLiteral NativeX86Normalization =
+    "native-x86-operands-v3";
+inline constexpr llvm::StringLiteral NativeAArch64Normalization =
+    "native-aarch64-operands-v3";
+/// All revisions preserve scalar operands; v3 distinguishes reference gaps.
+bool isNativeX86Normalization(llvm::StringRef Profile);
+
 /// Versioned, length-delimited identity of an analyzed snapshot. Preserves
 /// exact field bytes and excludes only the caller's path. This is an encoding,
 /// not a digest or authentication of the input or its analysis.
@@ -242,6 +273,7 @@ struct Program {
   std::vector<Edge> Edges;
   std::vector<Instruction> Instructions;
   std::vector<Reference> References;
+  std::vector<AddressReference> AddressReferences;
   /// The bytes of every instruction, at Instruction::CodeOffset.
   std::vector<uint8_t> Code;
   /// Distinct mnemonics, by Instruction::Mnemonic.
@@ -264,6 +296,11 @@ struct Program {
   }
   llvm::ArrayRef<uint8_t> bytes(const Instruction &I) const {
     return llvm::ArrayRef(Code).slice(I.CodeOffset, I.Size);
+  }
+  llvm::ArrayRef<AddressReference>
+  addressReferences(const Instruction &I) const {
+    return llvm::ArrayRef(AddressReferences)
+        .slice(I.FirstAddressReference, I.AddressReferenceCount);
   }
   llvm::StringRef mnemonic(const Instruction &I) const {
     return I.Mnemonic < Mnemonics.size()
@@ -298,12 +335,16 @@ public:
   uint32_t addBlock(uint64_t Address);
   /// Adds an instruction to the last block.  \p CallTarget is the address
   /// a direct call reaches; finish() names the function that begins there.
-  void addInstruction(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
-                      llvm::StringRef Mnemonic, uint64_t Shape,
-                      uint64_t Skeleton, InstructionFlow Flow,
-                      std::optional<uint64_t> CallTarget = std::nullopt,
-                      llvm::StringRef Operands = {},
-                      std::optional<uint64_t> Target = std::nullopt);
+  void
+  addInstruction(uint64_t Address, llvm::ArrayRef<uint8_t> Bytes,
+                 llvm::StringRef Mnemonic, uint64_t Shape, uint64_t Skeleton,
+                 InstructionFlow Flow,
+                 std::optional<uint64_t> CallTarget = std::nullopt,
+                 llvm::StringRef Operands = {},
+                 std::optional<uint64_t> Target = std::nullopt,
+                 llvm::ArrayRef<AddressReference> AddressReferences = {},
+                 std::optional<uint64_t> AddressIndependentShape = std::nullopt,
+                 bool HasUnresolvedData = false);
   void addEdge(uint32_t From, uint32_t To, EdgeKind Kind);
   /// Records a reference of the current function's block \p Block; a
   /// repeated reference is kept once.

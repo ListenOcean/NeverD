@@ -59,7 +59,7 @@ struct DenseCarryFixture {
   }
 };
 
-enum class FactorOrder { Natural, Interleaved };
+enum class FactorOrder { Natural, Interleaved, Rotated };
 
 DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
                                     unsigned HighBits, unsigned Degree = 48,
@@ -80,7 +80,8 @@ DenseCarryFixture denseCarryFixture(SymContext &Ctx, unsigned Width,
     const unsigned I =
         Order == FactorOrder::Interleaved
             ? 2 * (Position % (Degree / 2)) + Position / (Degree / 2)
-            : Position;
+        : Order == FactorOrder::Rotated ? (Position + 3) % Degree
+                                        : Position;
     std::string High = "((y+" + std::to_string(I) + ")&-" +
                        std::to_string(uint64_t(1) << HighBits) + ")";
     if (MixedMasks)
@@ -501,12 +502,13 @@ TEST(SymMBALazyPolynomial, SignatureOperandsSurviveLowWordInterning) {
     SymContext Ctx;
     // Reduced constant views grow the operand pool while a recursive wide
     // signature still needs its siblings. ASan caught a stale span here.
+    // Its mixed carries must also finish within the shared work budget.
     const auto F = denseCarryFixture(Ctx, Width, 2, 47, 7, false, true, 5);
     MBAOptions Options;
     Options.MaxWork = 65536;
     const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
-    EXPECT_LE(Result.Work, Options.MaxWork);
-    EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+    EXPECT_LT(Result.Work, Options.MaxWork);
+    EXPECT_LE(Result.SizeAfter, 266u);
     checkFullWidthOracle(Ctx, F, Result.Expr);
   }
 }
@@ -526,6 +528,52 @@ TEST(SymMBALazyPolynomial, FusedArithmeticFinishesDegree64CarryProducts) {
       EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
       checkFullWidthOracle(Ctx, F, Result.Expr);
     }
+}
+
+TEST(SymMBALazyPolynomial, BalancedCarryColumnsFinishRotatedProducts) {
+  for (unsigned Width : {8u, 16u, 32u, 64u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 3, 64, 8, false, false, 3,
+                                     FactorOrder::Rotated);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LT(Result.Work, 54000u);
+    EXPECT_LE(Result.SizeAfter, 170u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
+TEST(SymMBALazyPolynomial, InterruptedCarryColumnsRetainCompleteValues) {
+  for (size_t MaxWork : {1u, 1024u, 8192u, 16384u, 32768u, 49151u}) {
+    SCOPED_TRACE(MaxWork);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, 64, 3, 64, 8, false, false, 3,
+                                     FactorOrder::Rotated);
+    MBAOptions Options;
+    Options.MaxWork = MaxWork;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LE(Result.Work, MaxWork);
+    EXPECT_LE(Result.SizeAfter, Result.SizeBefore);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
+}
+
+TEST(SymMBALazyPolynomial, DenseFrequenciesFinishWidePartialProducts) {
+  for (unsigned Width : {8u, 64u, 65u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto F = denseCarryFixture(Ctx, Width, 4, 62, 7, false, true);
+    MBAOptions Options;
+    Options.MaxWork = 65536;
+    const auto Result = simplifyMBADeep(Ctx, F.Input, Options);
+    EXPECT_LT(Result.Work, 60000u);
+    EXPECT_LE(Result.SizeAfter, 286u);
+    EXPECT_EQ(Result.Evidence, MBAEvidence::Derivation);
+    checkFullWidthOracle(Ctx, F, Result.Expr);
+  }
 }
 
 TEST(SymMBALazyPolynomial, ExhaustsDegree64CarryLowWords) {

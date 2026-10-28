@@ -247,6 +247,13 @@ TEST(BinaryDiffScalarValidation, UnknownContractsAndEffectsAreNeverStripped) {
   B.function().clearGC();
   B.Native.Instructions[0].Flow = InstructionFlow::IndirectCall;
   EXPECT_EQ(check(A, B).Proof.Status, Status::Unsupported);
+  for (InstructionFlow Flow :
+       {InstructionFlow::Jump, InstructionFlow::Branch}) {
+    B.Native.Instructions[0].Flow = Flow;
+    B.Native.Instructions[0].UnresolvedCallee = true;
+    EXPECT_EQ(check(A, B).Proof.Status, Status::Unsupported);
+  }
+  B.Native.Instructions[0].UnresolvedCallee = false;
   B.Native.Instructions[0].Flow = InstructionFlow::Return;
   B.Native.Functions[0].Traits |= TraitIncomplete;
   EXPECT_EQ(check(A, B).Proof.Status, Status::Unsupported);

@@ -521,8 +521,8 @@ public:
                  : &RelocationRoots.emplace(Img));
         OwnersLent = true;
       }
-      Low.emplace(
-          Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+      Low.emplace(Builder.buildCallSignatureProof(
+          Img, Dec, Target, Img.getFunctionNameAt(Target)));
     }
     return *Low;
   }

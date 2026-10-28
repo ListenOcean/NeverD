@@ -5932,6 +5932,18 @@ Nachher:
       <source>Restoring comparison</source>
       <translation>Vergleich wird wiederhergestellt</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>Vergleichsänderung wird angewendet</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>Vergleichsänderung wird vorbereitet</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>Betroffene Funktionen werden aktualisiert</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5946,10 +5958,10 @@ Nachher:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · %4 passende / %5 beibehaltene Beobachtungen
 Native Zeilen %6 / %7; Abdeckung %8; mehrdeutige Zuordnungen %9. SSA: primär %10; sekundär %11.
-Grenzen: primär %12; sekundär %13.</translation>
+Grenzen: primär %12; sekundär %13. Referenzidentitäten: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6110,6 +6122,14 @@ Grenzen: primär %12; sekundär %13.</translation>
     <message>
         <source>unknown input</source>
         <translation>unbekannte Eingabe</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>verglichen</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>ungeklärt</translation>
     </message>
 </context>
 <context>
@@ -6318,8 +6338,8 @@ Strukturelle Zuordnung belegt weder semantische Äquivalenz noch das Vorhandense
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>%1 zugeordnet · %2 geändert · %3 mehrdeutig · %4 / %5 nicht zugeordnet · %6 / %7 unvollständig</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>%1 zugeordnet · %2 geändert · %3 mehrdeutig · %4 / %5 nicht zugeordnet · %6 / %7 unvollständig  ·  %8 ungewiss</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6776,6 +6796,16 @@ Secondary name: %2</source>
 
 Primärer Name: %1
 Sekundärer Name: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Ungewiss</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+Referenzidentitäten: ungeklärt. Einige Aufruf- oder Datenziele können nicht verglichen werden. Dies allein belegt keine Änderung.</translation>
     </message>
 </context>
 <context>
@@ -7769,6 +7799,10 @@ Jede Verwendung eines projizierten Parameters liest dieselben unteren Bits. Das 
         <source>Counterpart: %1</source>
         <translation>Zugeordnete Funktion: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Ungewiss</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8135,6 +8169,10 @@ Ersetzt: %11</translation>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>Der Vergleich konnte nicht wiederhergestellt werden. Ihr vorheriger Vergleich ist weiterhin verfügbar. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>Bearbeitung gestoppt. Der vorherige Vergleich und der Bearbeitungsverlauf sind weiterhin verfügbar.</translation>
     </message>
 </context>
 <context>

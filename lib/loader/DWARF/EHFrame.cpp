@@ -267,6 +267,7 @@ ParseResult parseFrameSection(const BinaryImage &Img, const FrameSection &Sec,
     if (Id == 0) {
       DwarfCIE CIE;
       CIE.SectionOffset = EntryStart;
+      CIE.UsesArm64eReturnAddressABI = Img.isArm64e();
       const bool Decoded =
           parseCIE(Buf, Size, Offset, EntryEnd, Sec.VA, Bases, PtrSize, &Img,
                    Limits, DecodeCFI, CIE, CIE.ParseStatus, Result.Diagnostics);

@@ -84,6 +84,15 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
     ScanStmt(S);
 
   std::set<int> AddrParams;
+  std::set<uint64_t> PhysicalAddressRegisters;
+  std::set<int> PhysicalAddressParams;
+  if (CurMed)
+    for (const auto &Value : x86PhysicalAddressInputValues(*CurMed)) {
+      if (Value.Kind == MedVar::Reg && Value.Id >= 0 && Value.SSAVer == 0)
+        PhysicalAddressRegisters.insert(Value.RegOff);
+      if (Value.Kind == MedVar::Param && Value.SSAVer == 0)
+        PhysicalAddressParams.insert(Value.Id);
+    }
   auto Unwrap = [](const HighExpr *E) -> const HighExpr * {
     unsigned Depth = 0;
     while (
@@ -141,6 +150,14 @@ void MedToHighConverter::inferTypes(HighFunc &Func) {
     // Native context carriers may intentionally be declared as integer bits.
     if (Func.SourceTypeHint)
       continue;
+    if ((Param.RegOff != kNoParamReg &&
+         PhysicalAddressRegisters.count(Param.RegOff)) ||
+        PhysicalAddressParams.count(Param.MedIndex) ||
+        PhysicalAddressParams.count(static_cast<int>(I))) {
+      if (CurMed && I < CurMed->Params.size())
+        Param.Type = NdType::makeInt(CurMed->Params[I].Size);
+      continue;
+    }
     if (Param.Type && Param.Type->Kind == NdTypeKind::Ptr)
       continue;
     if (AddrParams.count(static_cast<int>(I)))
@@ -200,7 +217,10 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
         DefMap[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
 
   std::set<uint64_t> PtrRegs;
-  std::set<uint64_t> SegmentOffsetRegs;
+  std::set<uint64_t> RawAddressRegs;
+  for (const auto &Value : x86PhysicalAddressInputValues(Med))
+    if (Value.Kind == MedVar::Reg && Value.Id >= 0 && Value.SSAVer == 0)
+      RawAddressRegs.insert(Value.RegOff);
   auto recordAddressRegs = [&](const MedVar &AddrVar,
                                std::set<uint64_t> &Roles) {
     if (AddrVar.Kind == MedVar::Reg && AddrVar.Id >= 0 && AddrVar.SSAVer == 0)
@@ -245,11 +265,11 @@ std::set<uint64_t> detectPtrParamRegs(const MedFunc &Med) {
                                       NdMemoryAddressSpace::Default &&
                                   !x86NativeMemoryHasSegmentOffset(Op)
                               ? PtrRegs
-                              : SegmentOffsetRegs);
+                              : RawAddressRegs);
       }
     }
   }
-  for (uint64_t Reg : SegmentOffsetRegs)
+  for (uint64_t Reg : RawAddressRegs)
     PtrRegs.erase(Reg);
   return PtrRegs;
 }
@@ -262,6 +282,10 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
         DefMap[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
 
   std::set<int> PtrParams;
+  std::set<int> PhysicalAddressParams;
+  for (const auto &Value : x86PhysicalAddressInputValues(Med))
+    if (Value.Kind == MedVar::Param && Value.SSAVer == 0)
+      PhysicalAddressParams.insert(Value.Id);
   auto recordAddressParams = [&](const MedVar &AddrVar) {
     if (AddrVar.Kind == MedVar::Param && AddrVar.SSAVer == 0)
       PtrParams.insert(AddrVar.Id);
@@ -298,6 +322,8 @@ std::set<int> detectPtrParamIds(const MedFunc &Med) {
         recordAddressParams(*MemoryAddress);
     }
   }
+  for (int Id : PhysicalAddressParams)
+    PtrParams.erase(Id);
   return PtrParams;
 }
 

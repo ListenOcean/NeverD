@@ -67,6 +67,7 @@ struct ChangeObservation {
 struct FunctionChangeObservations {
   ComparisonState State = ComparisonState::Complete;
   bool NativeAnalysisComplete = false;
+  bool ReferenceComparisonComplete = false;
   bool PrimarySSA = false, SecondarySSA = false;
   uint64_t TotalRows = 0, VisitedRows = 0, Work = 0;
   /// Operation families with more than one candidate at an aligned origin.

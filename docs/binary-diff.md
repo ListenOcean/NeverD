@@ -58,6 +58,12 @@ address role is established. Illegal or unsupported instructions retain their
 original bytes with incomplete analysis. AArch64 matching does not broaden the
 separately qualified x86 scalar-validation and import-effect proof profiles.
 
+Matcher version 8 uses normalized identity for bodies containing address
+encodings. Reused relative call or data-reference bytes cannot distinguish two
+otherwise identical wrappers after layout changes. Their original bytes remain
+inspectable; separate normalized features, names and call context can still
+establish correspondence, while indistinguishable candidates remain ambiguous.
+
 ## Command line
 
 ```sh
@@ -70,7 +76,7 @@ neverd diff --structural -a original.exe -b patched.exe --ignore-names --timeout
 neverd diff --structural -a original.nddb -b patched.nddb --json --save review.nddiff
 ```
 
-Progress goes to stderr. `--list` supports `all`, `matched`, `changed`,
+Progress goes to stderr. `--list` supports `all`, `matched`, `changed`, `uncertain`,
 `ambiguous` and `unmatched`, with `--offset` and `--limit`. `--func` selects a
 primary entry address or an unambiguous name and returns paired original bytes,
 operands, instruction alignment, CFG and matching evidence.
@@ -180,7 +186,7 @@ during editing or before output publication leaves stdout empty and an existing
 | 0 | No observed non-movement changes or unresolved functions, with complete coverage |
 | 1 | Load, option, comparison, saved-result binding or output failure |
 | 2 | Changes or unresolved functions with complete coverage |
-| 3 | Stopped work or incomplete analysis/discovery coverage |
+| 3 | Stopped work or incomplete body, reference-comparison or discovery coverage |
 
 ## Native region hypotheses
 
@@ -1038,6 +1044,26 @@ scalar immediates remain meaningful even when their value happens to equal an
 image address. Only decoded control-flow operands, exact relocation fields and
 known address references receive address normalization.
 
+Native operand profile v2 compares function-address uses at their instruction
+and operand positions through the current function mapping. Swapping callback
+uses or changing their multiplicity remains visible. Strong body matching also
+requires corresponding modeled callees, so identical relative-call bytes cannot
+silently swap wrapper identities after layout changes. Conditional transfers
+to another function also retain the target and fallthrough. Unknown or filtered
+targets retain uncertainty. Unnamed data references are scoped to the input's
+effective mapping and overlays; matching RVAs in different binaries or raw
+slices do not establish the same data object. Pure rebasing preserves this scope.
+
+Matcher version 7 keeps reference uncertainty separate from observed changes.
+`analysis_complete` describes decoded bodies; `reference_comparison_complete`
+describes the evidence needed to compare call and data identities. An unknown
+target alone produces an `uncertain` row or function, not a changed operand,
+call or reference. Independent constant, instruction and byte differences stay
+visible. Uncertain pairs cannot be normalized unchanged or receive a perfect
+similarity score. The GUI has an Uncertain filter, and the shared API exposes
+`change_state` plus separate uncertain/reference-gap counts. A changed pair may
+also have reference gaps; inspect both fields. These states do not prove behavior.
+
 Instruction alignment uses the same weighted objective for small and large
 paired basic blocks: equal normalized instructions score 4, a shared skeleton
 with changed constants scores 3, and a shared mnemonic scores 2. Large blocks
@@ -1088,7 +1114,8 @@ named `sub_1234` remains eligible, as do names admitted by recognition. Display
 renames do not replace those names or change native snapshot revisions. Numeric
 suffixes added to distinguish equal names in the listing do not manufacture
 unique name evidence; literal suffixes in the original symbols remain intact. The
-`sdk-native-decode-v2` extraction identity records this contract; historical
+`sdk-native-decode-v4` extraction identity records this contract and the v3
+address-evidence profile described in the architecture guide; historical
 reports keep their original evidence and require a new comparison for fresh
 binding under the revised extraction profile.
 Use the [offline report workflow](binary-diff-lineage.md#open-a-report-from-an-older-analysis-profile)
@@ -1109,9 +1136,13 @@ Region spans use coordinates in the exact revision-bound snapshots; reopening
 checks their bounds, normalized instructions and derived hypothesis fields.
 Positive unique-seed claims are checked against both complete seed indexes;
 saved hypothesis membership must agree with the connected anchor components.
-Schema version 2 introduced identity-only pairs; version 3 adds analyst history. Reopening recomputes each
+Schema version 2 introduced identity-only pairs; version 3 adds analyst history;
+version 4 requires reference-comparison coverage. Older readers reject version 4
+instead of discarding uncertainty and deriving a false unchanged result.
+Historical version 2/3 reports have no complete reference-coverage claim and
+remain available through offline inspection. Reopening recomputes each
 measured function delta under the saved correspondence and rejects inconsistent
-changes, body coverage, scores or instruction/block/edge tallies. Analyst pairing
+changes, body/reference coverage, scores or instruction/block/edge tallies. Analyst pairing
 and confirmation decisions remain distinct from those decoded facts.
 Reopening requires the original input content and extraction settings. A stale
 identity or reversed direction is rejected without replacing the current result.

@@ -2588,29 +2588,51 @@ static bool stmtTreeUsesVar(const HighStmt &S, const MedVar &V) {
   return false;
 }
 
-static bool exprHasSameCall(const HighExpr *E, va_t Addr,
-                            const std::string &Target) {
+static bool exprHasCallOccurrence(const HighExpr *E, const HighExpr &Call) {
   if (!E)
     return false;
-  if (E->Kind == ExprKind::Call &&
-      ((Addr && E->CallAddr == Addr) ||
-       (!Target.empty() && E->CallTarget == Target)))
+  // A callee name or address identifies an implementation, not an execution.
+  // Only a copy of this exact instruction can replace the saved call effect.
+  // Merged/synthetic calls without a site retain their independent effects.
+  if (E->Kind == ExprKind::Call && Call.CallSiteAddr &&
+      Call.CallSiteAddr != InvalidVA && E->CallSiteAddr == Call.CallSiteAddr &&
+      E->structuralEq(Call))
     return true;
-  for (const auto &Op : E->Operands)
-    if (exprHasSameCall(Op.get(), Addr, Target))
-      return true;
-  return false;
+  bool Found = false;
+  E->forEachChildExpr([&](const ExprPtr &Child) {
+    if (!Found)
+      Found = exprHasCallOccurrence(Child.get(), Call);
+  });
+  return Found;
 }
 
-static bool isPredicateOrLoadAssign(const HighStmt &S, const ExprPtr &Pred) {
+/// Whether the call of Body[End] occurs in \p Pred as a predicate composed
+/// from Body[0, End) spells it. Composition substitutes earlier prefix values
+/// into the call's operands, so `t = f(u)` after `u = x + 1` appears as
+/// `f(x + 1)`: the same execution, which must not run again from the prefix.
+static bool predicateHasPrefixCall(const ExprPtr &Pred,
+                                   const std::vector<HighStmt> &Body,
+                                   size_t End, ExprPtr Call) {
+  for (size_t N = std::min(End, Body.size()); N > 0; --N) {
+    MedVar Dest;
+    ExprPtr Val;
+    if (isValueAssign(Body[N - 1], Dest, Val) && Val &&
+        exprUsesVar(Call.get(), Dest))
+      Call = replaceVarInExpr(Call, Dest, Val);
+  }
+  return exprHasCallOccurrence(Pred.get(), *Call);
+}
+
+static bool isPredicateOrLoadAssign(const std::vector<HighStmt> &Body, size_t K,
+                                    const ExprPtr &Pred) {
   MedVar Dest;
   ExprPtr Val;
-  if (!isValueAssign(S, Dest, Val) || !Val)
+  if (!isValueAssign(Body[K], Dest, Val) || !Val)
     return false;
   if (Val->Kind == ExprKind::Load)
     return true;
   return Val->Kind == ExprKind::Call &&
-         exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
+         predicateHasPrefixCall(Pred, Body, K, Val);
 }
 
 /// Marks the prefix assignments Body[0, End) folded into \p Pred that no
@@ -2624,7 +2646,7 @@ composedPrefixDrops(const std::vector<HighStmt> &Body, size_t End,
   std::vector<bool> Drop(Body.size(), false);
   std::set<const HighStmt *> Dropped;
   for (size_t K = 0; K < End && K < Body.size(); ++K)
-    if (prefixOkForChain(Body[K]) && isPredicateOrLoadAssign(Body[K], Pred)) {
+    if (prefixOkForChain(Body[K]) && isPredicateOrLoadAssign(Body, K, Pred)) {
       Drop[K] = true;
       Dropped.insert(&Body[K]);
     }
@@ -2736,8 +2758,7 @@ static bool dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
     --I;
     // A jump that enters a copied predicate call still runs it.
     if (Body[I].Kind == StmtKind::Call && Body[I].CallExpr &&
-        exprHasSameCall(Pred.get(), Body[I].CallExpr->CallAddr,
-                        Body[I].CallExpr->CallTarget) &&
+        predicateHasPrefixCall(Pred, Body, I, Body[I].CallExpr) &&
         !isFunctionJumpTarget(Body[I].Addr, Body)) {
       Body.erase(Body.begin() + static_cast<long>(I));
       Changed = true;
@@ -2752,9 +2773,8 @@ static bool dropUnusedTrailingAssigns(std::vector<HighStmt> &Body, size_t End,
         continue;
       break;
     }
-    const bool PredCall =
-        Val->Kind == ExprKind::Call &&
-        exprHasSameCall(Pred.get(), Val->CallAddr, Val->CallTarget);
+    const bool PredCall = Val->Kind == ExprKind::Call &&
+                          predicateHasPrefixCall(Pred, Body, I, Val);
     const bool IsLoad = Val->Kind == ExprKind::Load;
     // Only a predicate call or a load can be dropped; other values keep their
     // assignment whether or not anything reads it.

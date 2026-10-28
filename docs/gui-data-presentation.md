@@ -77,11 +77,14 @@ decoded operand index, starting at zero, so the immediate of `imul r,r,imm` is
 operand 2 even when the GUI folds its text to `imul r,imm`. ARM-family
 operands count like their text, by the commas outside brackets, braces and
 parentheses; the immediate is the one its `#value` spells, so
-`ld1 {v0.16b, v1.16b}, [x0], #32` has `#32` as operand 2.
+`ld1 {v0.16b, v1.16b}, [x0], #32` has `#32` as operand 2. SBF operands count
+the same way, so `mov64 r1, 5` has its immediate as operand 1, and EVM PUSH
+data is operand 0; an enumerator names PUSH data of at most 64 bits.
 The display uses the same decoded operand width as SDK admission; a byte shift
 count does not take the width of its destination register.
 SDK/CLI disassembly preserves raw `op_str` and adds `display_op_str` when an
-enum changes its spelling. Text output uses the same enum formatting. Missing
+enum changes its spelling; an SBF row's `op_str` holds its operands alone, as
+every other row's does. Text output uses the same enum formatting. Missing
 or deleted enum types leave the numeric operand visible.
 
 Run `neverd items program.exe --json` or `neverd operands program.exe --json`

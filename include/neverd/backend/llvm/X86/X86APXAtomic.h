@@ -152,6 +152,15 @@ inline std::optional<unsigned> x86APXSegmentPrefix(NdMemoryAddressSpace Space) {
   return std::nullopt;
 }
 
+inline std::optional<unsigned>
+x86APXAtomicNativePrefix(const ApxAtomicIntrinsicShape &S) {
+  const auto Prefix = x86APXSegmentPrefix(S.MemoryAddressSpace);
+  if (!Prefix)
+    return std::nullopt;
+  return *Prefix | S.segmentPrefix() |
+         (S.stackReference() ? X86NativeStackReference : 0);
+}
+
 inline std::optional<X86APXAtomicPlan> x86APXAtomicName(std::string_view Name) {
   for (const auto Id : X86APXAtomicInventory)
     for (unsigned Bytes : {4u, 8u}) {

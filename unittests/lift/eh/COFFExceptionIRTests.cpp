@@ -770,6 +770,131 @@ TEST(COFFExceptionIR, HighCLeftOutTryTailKeepsTheLabelAJumpLandsOn) {
   EXPECT_LT(Label, Except) << Source;
 }
 
+// `*(int32_t *)*(int64_t *)(arg1 + 0x30) = Value`: a write through the slot
+// that the second argument of an x64 termination handler points at.
+HighStmt storeThroughEstablisherSlot(uint32_t Value) {
+  MedVar Frame;
+  Frame.Kind = MedVar::Param;
+  Frame.Id = 1;
+  Frame.Size = 8;
+  Frame.TheArch = Arch::X64;
+  HighStmt Store;
+  Store.Kind = StmtKind::Store;
+  Store.StoreAddr = HighExpr::makeLoad(
+      HighExpr::makeBinop(NdOp::INT_ADD,
+                          HighExpr::makeVar(Frame, NdType::makeInt(8)),
+                          HighExpr::makeConst(0x30, 8)),
+      NdType::makeInt(8));
+  Store.StoreVal = HighExpr::makeConst(Value, 4);
+  return Store;
+}
+
+TEST(COFFExceptionIR, HighCSEHHandlerArmReadsItsOwnSecondArgument) {
+  // xcpt4's Test61Part2 nests a __try in its __finally. MSVC's termination
+  // handler (`push rbx; push rbp; sub rsp, 0x28; mov rbp, rdx`) receives the
+  // parent's establisher frame as its second argument and guards its own
+  // range. The unwinder resumes that range's __except arm with the RBP the
+  // range holds, so the arm reaches the parent's slot through the argument,
+  // as the protected body does. Only a catch body attached to a C++ try reads
+  // RDX as the frame of the function printed around it.
+  constexpr va_t Entry = 0x140004BF0;
+  constexpr va_t Handler = 0x140004C17;
+  for (bool Cxx : {false, true}) {
+    SCOPED_TRACE(Cxx);
+    HighFunc Function;
+    Function.Name = Cxx ? "catch_parent" : "termination_handler";
+    Function.Entry = Entry;
+    Function.FrameSize = 0x38;
+    Function.ReturnType = NdType::makeVoid();
+    Function.Params = {{"arg0", NdType::makeInt(8)},
+                       {"arg1", NdType::makeInt(8)}};
+    HighStmt Try;
+    if (Cxx) {
+      Function.ExceptionMetadata = makeFH3Metadata({Handler});
+      Try.Kind = StmtKind::CxxTry;
+      Try.EHIsReducible = true;
+      Try.Addr = Entry + 0xA;
+      Try.EHRange = {Entry + 0xA, Handler};
+      HighStmt Work;
+      Work.Kind = StmtKind::Call;
+      Work.Addr = Entry + 0xA;
+      Work.CallExpr = HighExpr::makeCall("may_raise", 0x140002000, {});
+      Try.Body.push_back(std::move(Work));
+      HighEHClause Catch;
+      Catch.Kind = HighEHClauseKind::CxxCatch;
+      Catch.HandlerVA = Handler;
+      Try.EHClauses.push_back(std::move(Catch));
+      Try.EHClauseBodies.push_back({storeThroughEstablisherSlot(5)});
+    } else {
+      ExceptionFunction EH = sehMetadata(Entry, Entry + 0x39);
+      SEHScopeRecord Scope;
+      Scope.GuardedRange = {Entry + 0xA, Handler};
+      Scope.Kind = SEHScopeKind::CatchAll;
+      Scope.HandlerVA = Handler;
+      Scope.ContinuationVA = Handler;
+      EH.SEH.emplace();
+      EH.SEH->Scopes.push_back(Scope);
+      Function.ExceptionMetadata = std::move(EH);
+      Try = sehTryAround(Entry + 0xA, Handler, /*Filter=*/0, Handler,
+                         "may_raise", {storeThroughEstablisherSlot(5)});
+    }
+    Try.Body.insert(Try.Body.begin(), storeThroughEstablisherSlot(2));
+    Function.Body.push_back(std::move(Try));
+    HighStmt Return;
+    Return.Kind = StmtKind::Return;
+    Return.Addr = Entry + 0x37;
+    Function.Body.push_back(std::move(Return));
+
+    const std::string Source = emitHighC({Function});
+    const size_t Arm = Source.find(Cxx ? "catch (" : "} __except (");
+    ASSERT_NE(Arm, std::string::npos) << Source;
+    if (Cxx) {
+      // The attached catch funclet's RDX still names the parent's slot.
+      EXPECT_NE(Source.find("var_m8", Arm), std::string::npos) << Source;
+      EXPECT_EQ(Source.find("arg1", Arm), std::string::npos) << Source;
+      continue;
+    }
+    EXPECT_TRUE(std::regex_search(Source.substr(Arm),
+                                  std::regex(R"(\barg1\)? \+ 0x30\b)")))
+        << Source;
+    EXPECT_EQ(Source.find("var_m8"), std::string::npos) << Source;
+
+    // A setjmp provider stands in for the unwinder: it resumes the arm with
+    // the same argument, which must reach the parent's slot.
+    const std::string Harness = R"(
+#include <setjmp.h>
+#include <stdint.h>
+#define EXCEPTION_EXECUTE_HANDLER 1
+static jmp_buf destination;
+static int raising;
+#define __try if (setjmp(destination) == 0)
+#define __except(filter) else
+int may_raise(void) {
+  if (raising)
+    longjmp(destination, 1);
+  return 0;
+}
+)";
+    const std::string Main = R"(
+int main(void) {
+  for (raising = 0; raising != 2; ++raising) {
+    int32_t counter = 0;
+    uint64_t frame[8] = {0};
+    frame[6] = (uint64_t)(uintptr_t)&counter;
+    termination_handler(1, (int64_t)(uintptr_t)frame);
+    if (counter != (raising ? 5 : 2))
+      return 1;
+  }
+  return 0;
+}
+)";
+    for (llvm::StringRef Level : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          Harness + Source + Main,
+          {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
+}
+
 TEST(COFFExceptionIR, HighCCommentsDisabledStillEmitsOnlyTrap) {
   HighFunc Function;
   Function.Name = "analysis_no_comments";

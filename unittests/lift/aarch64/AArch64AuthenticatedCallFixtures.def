@@ -1,0 +1,86 @@
+//===- AArch64AuthenticatedCallFixtures.def - Call ABI oracles -*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Independent BLRAA/B encodings, source compiler arguments and expectations.
+//===----------------------------------------------------------------------===//
+
+#ifndef A64_CALL_TEXT
+#define A64_CALL_TEXT(Name, Text)
+#endif
+#ifndef A64_CALL_VALUE
+#define A64_CALL_VALUE(Type, Name, Value)
+#endif
+#ifndef A64_CALL_WORD
+#define A64_CALL_WORD(Word, Key, Zero, TargetLR, ModifierLR)
+#endif
+
+A64_CALL_TEXT(kFunction, "authenticated_dispatch")
+A64_CALL_TEXT(kResolvedCallback, "resolved_callback")
+A64_CALL_TEXT(kTemporaryPrefix, "neverd-authenticated-call")
+A64_CALL_TEXT(kSourceExtension, "c")
+A64_CALL_TEXT(kLLVMExtension, "ll")
+A64_CALL_TEXT(kErrorExtension, "err")
+A64_CALL_TEXT(kCompiler, "clang")
+A64_CALL_TEXT(kCompilerUnavailable,
+              "Clang is required for authenticated-call C ABI checks")
+A64_CALL_TEXT(kTargetOption, "-target")
+A64_CALL_TEXT(kTriple, "arm64e-apple-macos15")
+A64_CALL_TEXT(kFreestandingOption, "-ffreestanding")
+A64_CALL_TEXT(kResourceHeadersOption, "-nostdlibinc")
+A64_CALL_TEXT(kIncludeOption, "-I")
+A64_CALL_TEXT(kStandardOption, "-std=gnu11")
+A64_CALL_TEXT(kUnwindOption, "-funwind-tables")
+A64_CALL_TEXT(kAsyncUnwindOption, "-fasynchronous-unwind-tables")
+A64_CALL_TEXT(kAssemblyOption, "-S")
+A64_CALL_TEXT(kLLVMOption, "-emit-llvm")
+A64_CALL_TEXT(kOutputOption, "-o")
+A64_CALL_TEXT(kNoOptimize, "-O0")
+A64_CALL_TEXT(kOptimize, "-O2")
+A64_CALL_TEXT(kBundle, "ptrauth")
+A64_CALL_TEXT(kStandaloneAuthentication, "llvm.ptrauth.auth")
+A64_CALL_TEXT(kResignBuiltin, "__builtin_ptrauth_auth_and_resign")
+A64_CALL_TEXT(kRawCallMacro, "__neverd_aarch64_raw_call")
+A64_CALL_TEXT(kArtifactEnvironment, "NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR")
+A64_CALL_TEXT(kArtifactProperty, "authenticated_call_artifact_dir")
+A64_CALL_TEXT(kHighSource, "high.c")
+A64_CALL_TEXT(kLLVMSource, "llvm.c")
+A64_CALL_TEXT(kLLVMIR, "native.ll")
+A64_CALL_TEXT(kELFObject, "native.o")
+A64_CALL_TEXT(kMachOObject, "native-macho.o")
+A64_CALL_TEXT(kCaseDirectory, "{0}-{1}-{2}")
+A64_CALL_TEXT(kRawCaseDirectory, "raw-{0}")
+A64_CALL_TEXT(kHighRoute, "high")
+A64_CALL_TEXT(kLLVMRoute, "llvm")
+A64_CALL_TEXT(kCompiledObject, "{0}-{1}.o")
+A64_CALL_TEXT(kCompiledIR, "{0}-{1}.ll")
+A64_CALL_VALUE(unsigned, kCompilerTimeoutSeconds, 30)
+A64_CALL_VALUE(unsigned, kPathCapacity, 128)
+A64_CALL_VALUE(unsigned, kPointerBytes, 8)
+A64_CALL_VALUE(uint64_t, kEntryAddress, 0x1000U)
+A64_CALL_VALUE(int, kAuthenticationTemporaryId, 64)
+A64_CALL_VALUE(int, kCallResultId, 65)
+A64_CALL_VALUE(unsigned, kManyArguments, 10)
+A64_CALL_VALUE(uint32_t, kSaveFrame, 0xa9bf7bfdU)
+A64_CALL_VALUE(uint32_t, kRestoreFrame, 0xa8c17bfdU)
+A64_CALL_VALUE(uint32_t, kReturn, 0xd65f03c0U)
+A64_CALL_VALUE(uint32_t, kTargetX16, 0xaa0003f0U)
+A64_CALL_VALUE(uint32_t, kTargetX30, 0xaa0003feU)
+A64_CALL_VALUE(uint32_t, kModifierX17, 0xaa0103f1U)
+A64_CALL_VALUE(uint32_t, kModifierX30, 0xaa0103feU)
+A64_CALL_VALUE(uint32_t, kArgumentX0, 0xaa0203e0U)
+A64_CALL_VALUE(uint32_t, kAddFive, 0x91001400U)
+A64_CALL_WORD(0xd73f0a11U, 0, false, false, false)
+A64_CALL_WORD(0xd73f0e11U, 1, false, false, false)
+A64_CALL_WORD(0xd63f0a1fU, 0, true, false, false)
+A64_CALL_WORD(0xd63f0e1fU, 1, true, false, false)
+A64_CALL_WORD(0xd73f0bd1U, 0, false, true, false)
+A64_CALL_WORD(0xd73f0fd1U, 1, false, true, false)
+A64_CALL_WORD(0xd73f0a1eU, 0, false, false, true)
+A64_CALL_WORD(0xd73f0e1eU, 1, false, false, true)
+
+#undef A64_CALL_TEXT
+#undef A64_CALL_VALUE
+#undef A64_CALL_WORD

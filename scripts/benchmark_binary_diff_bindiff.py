@@ -47,7 +47,8 @@ def run(args: argparse.Namespace) -> int:
     script = Path(__file__).resolve().parents[1] / "tools/neverd-bench/export_ida_bindiff.py"
     output = args.output_dir.resolve()
     tools = [executable, ida, plugin, config, script, Path(__file__).resolve(),
-             Path(bench.__file__).resolve(), Path(__file__).with_name("benchmark_binary_diff_external.py").resolve()]
+             Path(bench.__file__).resolve(), Path(bench.binexport.__file__).resolve(),
+             Path(__file__).with_name("benchmark_binary_diff_external.py").resolve()]
     identities = {path: bench.digest(path) for path in tools}
     # Validate every input before starting an external process or creating results.
     inputs = [[bench.checked_artifact(case[side], corpus_path.parent)
@@ -75,6 +76,7 @@ def run(args: argparse.Namespace) -> int:
                       "result": None, "stages": [], "error": None}
         try:
             exports = []
+            run_record["analyses"] = []
             for side, source in zip(("before", "after"), pair):
                 exported, receipt = folder / (side + ".BinExport"), folder / (side + "-export.json")
                 export_env = dict(env, NEVERD_BENCH_BINEXPORT_OUTPUT=str(exported),
@@ -88,6 +90,8 @@ def run(args: argparse.Namespace) -> int:
                 bench.require(outcome["exit"] == 0 and outcome["error"] is None,
                               "IDA export failed: " + side)
                 exports.append(checked_export(receipt, exported, source))
+                run_record["analyses"].append({"receipt": bench.artifact(receipt, folder),
+                                               "export": bench.artifact(exported, folder)})
             run_record["exporters"] = exports
             command = [str(executable), "--config=" + str(config),
                        "--primary=" + str(folder / "before.BinExport"),
@@ -116,14 +120,14 @@ def run(args: argparse.Namespace) -> int:
             result = {"case": case["id"], "error": str(error), "run_sha256": bench.digest(run_path)}
         bench.save(folder / "evaluation.json", result)
         results.append(result)
-        print(case["id"], result.get("metrics", result.get("error")), flush=True)
+        print(case["id"], bench.metric_summary(result), flush=True)
     bench.require(all(bench.digest(path) == sha for path, sha in identities.items()),
                   "a tool or configuration changed during the run")
     bench.save(output / "results.json", {"schema": bench.RESULT_SCHEMA, "cases": results,
                                        "track": "end-to-end", "runtime": [bench.artifact(p, output) for p in archived]})
     if any("metrics" not in result for result in results):
         return 2
-    return 0 if all(result["metrics"]["exact_mapping"] for result in results) else 1
+    return 0 if all(bench.mapping_passed(result) for result in results) else 1
 
 
 def main(argv: list[str] | None = None) -> int:

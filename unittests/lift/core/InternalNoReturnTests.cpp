@@ -355,7 +355,8 @@ TEST(InternalNoReturn, NoReturnInstructionStillFollowsExceptionalPaths) {
 TEST(InternalNoReturn, CallThroughALoaderBoundNoReturnSlotEndsItsBlock) {
   // `_start: call *__libc_start_main@GOT(%rip); hlt`. The import the loader
   // binds to the slot is the callee; nothing after the call runs.
-  for (const char *Bound : {"__libc_start_main", "puts"}) {
+  for (const char *Bound :
+       {"__libc_start_main", "__libc_init", "__libc_init_common", "puts"}) {
     SCOPED_TRACE(Bound);
     std::vector<uint8_t> Code(0x40, 0xcc);
     // call qword ptr [rip + 0x1ffa] (the slot at 0x3000); hlt
@@ -371,7 +372,8 @@ TEST(InternalNoReturn, CallThroughALoaderBoundNoReturnSlotEndsItsBlock) {
     ASSERT_TRUE(Image.recordImportStorageSlot(
         0x3000, Bound, 0, ImportStorageEvidence::LoaderBind));
     EXPECT_EQ(callAtBaseEndsItsBlock(Image),
-              std::string_view(Bound) == "__libc_start_main");
+              std::string_view(Bound) == "__libc_start_main" ||
+                  std::string_view(Bound) == "__libc_init");
   }
 }
 

@@ -4689,9 +4689,34 @@ bool Listing::showsNumberFormats() {
   return neverd::worker::showsNumberFormats(impl_->dialect);
 }
 
-bool Listing::spellsArmOperands() {
+std::string_view Listing::operandSyntax() {
   impl_->build();
-  return operand_format_detail::armDialect(impl_->dialect);
+  switch (impl_->dialect) {
+  case OperandDialect::AArch64:
+  case OperandDialect::ARM:
+    return "arm";
+  case OperandDialect::SBF:
+    return "sbf";
+  case OperandDialect::EVM:
+    return "evm";
+  case OperandDialect::X86:
+  case OperandDialect::Generic:
+    break;
+  }
+  return {};
+}
+
+std::optional<operand_format_detail::SbfAccess>
+Listing::ownAccess(std::uint64_t address, std::size_t operand) {
+  auto &d = *impl_;
+  d.build();
+  const auto item = d.itemAt(address);
+  if (d.dialect != OperandDialect::SBF || !item ||
+      item->kind != ItemKind::Instruction || item->start != address)
+    return std::nullopt;
+  const auto &instruction = d.instructionOf(*item);
+  return operand_format_detail::sbfOperandAccess(instruction.mnemonic,
+                                                 instruction.operands, operand);
 }
 
 std::optional<std::vector<bool>>
@@ -4702,7 +4727,8 @@ Listing::numberOperands(std::uint64_t address) {
   if (!item || item->kind != ItemKind::Instruction || item->start != address)
     return std::nullopt;
   const auto &instruction = d.instructionOf(*item);
-  return formattableOperands(instruction.operands, d.dialect);
+  return formattableOperands(instruction.operands, d.dialect,
+                             instruction.mnemonic);
 }
 
 std::optional<std::vector<bool>>
@@ -4713,7 +4739,8 @@ Listing::structOperands(std::uint64_t address) {
   if (!item || item->kind != ItemKind::Instruction || item->start != address)
     return std::nullopt;
   const auto &instruction = d.instructionOf(*item);
-  return neverd::worker::structOperands(instruction.operands, d.dialect);
+  return neverd::worker::structOperands(instruction.operands, d.dialect,
+                                        instruction.mnemonic);
 }
 
 bool Listing::namesStructOffsets() { return impl_->typeMember != nullptr; }
@@ -4726,9 +4753,12 @@ Listing::structOperand(std::uint64_t address, std::optional<std::size_t> asked,
   const auto item = d.itemAt(address);
   if (!item || item->kind != ItemKind::Instruction || item->start != address)
     return std::nullopt;
-  const auto &operands = d.instructionOf(*item).operands;
-  const auto structs = neverd::worker::structOperands(operands, d.dialect);
-  const auto numbers = formattableOperands(operands, d.dialect);
+  const auto &instruction = d.instructionOf(*item);
+  const auto &operands = instruction.operands;
+  const auto &mnemonic = instruction.mnemonic;
+  const auto structs =
+      neverd::worker::structOperands(operands, d.dialect, mnemonic);
+  const auto numbers = formattableOperands(operands, d.dialect, mnemonic);
   std::optional<std::size_t> chosen;
   if (asked && *asked < structs.size() && structs[*asked])
     chosen = asked;
@@ -4740,7 +4770,7 @@ Listing::structOperand(std::uint64_t address, std::optional<std::size_t> asked,
       chosen = i;
   if (chosen && number)
     *number = *chosen < numbers.size() && numbers[*chosen]
-                  ? operandNumber(operands, *chosen, d.dialect)
+                  ? operandNumber(operands, *chosen, d.dialect, mnemonic)
                   : std::nullopt;
   return chosen;
 }

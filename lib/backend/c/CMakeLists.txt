@@ -14,6 +14,7 @@ add_neverd_component_library(NeverDBackendC
   HighC/HighCEmitter.cpp
   HighC/HighCExprBinOp.cpp
   HighC/HighCExprWriter.cpp
+  HighC/X86/HighCNativeMemory.cpp
   HighC/X86/HighCX87Context.cpp
   HighC/X86/HighCPortableX87.cpp
   HighC/HighCSourceCalls.cpp
@@ -65,7 +66,7 @@ add_neverd_component_library(NeverDBackendC
   render/X86/X86CompressExpand.cpp
   render/X86/X86FourSource.cpp
   render/X86/X86APXAtomic.cpp
-  render/X86/X86AtomicExchange.cpp
+  render/X86/X86AtomicRmw.cpp
   render/X86/X86AmxState.cpp
   render/X86/X86NativeFeatures.cpp
 

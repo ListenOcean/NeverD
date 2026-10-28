@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "BytecodeOperands.h"
 #include "InstructionFlow.h"
 #include "JSONText.h"
 #include "SessionImpl.h"
@@ -41,11 +42,13 @@ using namespace neverd::sdk;
 namespace {
 // Keep raw decoder operands available to clients such as the GUI's listing.
 // Only the display field/text consumes the shared enum formatter.
-std::string displayOperands(Session &S, const Decoder &D,
-                            const DecodedInsn &I) {
-  const std::string Raw = I.Raw ? I.Raw->op_str : "";
+/// \p Raw, the operands of the instruction at \p Addr, with the enumerators
+/// the user chose naming the immediates \p Immediate types.
+std::string enumOperands(
+    Session &S, va_t Addr, const std::string &Raw,
+    llvm::function_ref<std::optional<NativeImmediate>(unsigned)> Immediate) {
   // An instruction without an enumerator keeps the decoder's text as is.
-  const auto At = S.OperandFormats.find(I.Addr);
+  const auto At = S.OperandFormats.find(Addr);
   if (At == S.OperandFormats.end() ||
       llvm::none_of(At->second, [](const auto &Entry) {
         return Entry.second.Base == "enum";
@@ -67,12 +70,11 @@ std::string displayOperands(Session &S, const Decoder &D,
       Start = N + 1;
     }
   }
-  const auto Facts = describeNativeOperands(D, I, S.Img.Arch, false);
   bool Changed = false;
   for (const auto &[Index, Format] : At->second) {
     if (Format.Base != "enum" || Index >= Parts.size())
       continue;
-    const auto O = nativeImmediateAt(Facts, I, S.Img.Arch, Index);
+    const auto O = Immediate(Index);
     if (!O)
       continue;
     const auto Previous = S.LastError;
@@ -106,6 +108,17 @@ std::string displayOperands(Session &S, const Decoder &D,
     Result += Part;
   }
   return Result;
+}
+
+std::string displayOperands(Session &S, const Decoder &D,
+                            const DecodedInsn &I) {
+  std::optional<NativeOperands> Facts;
+  return enumOperands(
+      S, I.Addr, I.Raw ? I.Raw->op_str : "", [&](unsigned Index) {
+        if (!Facts)
+          Facts = describeNativeOperands(D, I, S.Img.Arch, false);
+        return nativeImmediateAt(*Facts, I, S.Img.Arch, Index);
+      });
 }
 
 std::string evmBytes(const evm::LowInstruction &Instruction) {
@@ -258,7 +271,14 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
       Object["addr"] = vaHex(Instruction.PC);
       Object["size"] = static_cast<int64_t>(Instruction.Encoding.size());
       Object["mnemonic"] = std::string(Instruction.Info.Name);
-      Object["op_str"] = evm::formatImmediate(Instruction);
+      const std::string Operands = evm::formatImmediate(Instruction);
+      Object["op_str"] = Operands;
+      const std::string Display =
+          enumOperands(*S, Instruction.PC, Operands, [&](unsigned Index) {
+            return evmImmediate(Instruction, Index);
+          });
+      if (Display != Operands)
+        Object["display_op_str"] = Display;
       Object["decode_status"] =
           evm::opcodeDecodeStatusName(Instruction.DecodeStatus);
       Object["immediate_status"] =
@@ -295,7 +315,19 @@ const char *neverd_disasm_json_ex(neverd_session_t Sess, neverd_va_t Addr,
           static_cast<int64_t>(Instruction.SlotWidth * sbf::kInstructionSize);
       Object["mnemonic"] =
           Instruction.Info ? Instruction.Info->Mnemonic.str() : ".byte";
-      Object["op_str"] = jsonSafeText(sbf::formatInstruction(Instruction));
+      // The operands alone: the mnemonic has its own field. An invalid slot
+      // keeps the rule it breaks.
+      const std::string Operands =
+          Instruction.isInvalid() ? sbf::formatInstruction(Instruction)
+          : Instruction.Info ? sbf::formatOperands(Instruction)
+                             : "0x" + llvm::utohexstr(Instruction.RawOpcode);
+      Object["op_str"] = jsonSafeText(Operands);
+      const std::string Display =
+          enumOperands(*S, Instruction.Address, Operands, [&](unsigned Index) {
+            return sbfImmediate(Instruction, Index);
+          });
+      if (Display != Operands)
+        Object["display_op_str"] = jsonSafeText(Display);
       Object["bytes"] = sbfBytes(Instruction);
       Instructions.push_back(std::move(Object));
       ++Count;

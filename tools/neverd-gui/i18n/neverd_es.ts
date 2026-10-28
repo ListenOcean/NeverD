@@ -5932,6 +5932,18 @@ Después:
       <source>Restoring comparison</source>
       <translation>Restaurando la comparación</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>Aplicando la edición de la comparación</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>Preparando la edición de la comparación</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>Actualizando las funciones afectadas</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5946,10 +5958,10 @@ Después:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · %4 coincidentes / %5 observaciones conservadas
 Filas nativas %6 / %7; cobertura %8; asociaciones ambiguas %9. SSA: principal %10; secundaria %11.
-Límites: principal %12; secundaria %13.</translation>
+Límites: principal %12; secundaria %13. Identidades de las referencias: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6110,6 +6122,14 @@ Límites: principal %12; secundaria %13.</translation>
     <message>
         <source>unknown input</source>
         <translation>entrada desconocida</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>comparadas</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>sin resolver</translation>
     </message>
 </context>
 <context>
@@ -6318,8 +6338,8 @@ La correspondencia estructural no establece equivalencia semántica ni la presen
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>%1 coincidentes  ·  %2 modificadas  ·  %3 ambiguas  ·  %4 / %5 sin coincidencia  ·  %6 / %7 incompletas</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>%1 coincidentes  ·  %2 modificadas  ·  %3 ambiguas  ·  %4 / %5 sin coincidencia  ·  %6 / %7 incompletas  ·  %8 inciertos</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6776,6 +6796,16 @@ Secondary name: %2</source>
 
 Nombre principal: %1
 Nombre secundario: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Incierto</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+Identidades de las referencias: sin resolver. Algunos destinos de llamadas o datos no se pueden comparar. Esto por sí solo no demuestra un cambio.</translation>
     </message>
 </context>
 <context>
@@ -7769,6 +7799,10 @@ Cada uso de un parámetro proyectado lee los mismos bits inferiores. El comporta
         <source>Counterpart: %1</source>
         <translation>Función correspondiente: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Incierto</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8135,6 +8169,10 @@ Sustituye a: %11</translation>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>No se pudo restaurar la comparación. Su comparación anterior sigue disponible. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>Edición detenida. La comparación anterior y el historial de ediciones siguen disponibles.</translation>
     </message>
 </context>
 <context>

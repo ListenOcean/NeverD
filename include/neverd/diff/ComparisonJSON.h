@@ -37,12 +37,14 @@ namespace neverd::diff {
 
 /// The document's schema name and the version this build writes and reads.
 inline constexpr llvm::StringLiteral ComparisonSchema = "neverd.bindiff";
-inline constexpr unsigned ComparisonSchemaVersion = 3;
+inline constexpr unsigned ReferenceEvidenceSchemaVersion = 4;
+inline constexpr unsigned ComparisonSchemaVersion =
+    ReferenceEvidenceSchemaVersion;
 inline constexpr unsigned OldestComparisonSchemaVersion = 2;
 /// The version of the matcher, the features and the delta; part of a
 /// comparison's identity.  Raise it whenever a change could pair functions
 /// differently, measure a pair differently or retain different candidates.
-inline constexpr unsigned MatcherVersion = 5;
+inline constexpr unsigned MatcherVersion = 9;
 
 /// Writes \p Result of \p Primary and \p Secondary as a saved comparison.
 /// SummaryOnly emits bounded metadata and counts without inventories or pairs.

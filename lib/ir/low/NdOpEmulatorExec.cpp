@@ -900,9 +900,14 @@ bool NdOpEmulator::executeIntrinsic(const LowOp &Op) {
       AtomicId == Intrinsic::ApxRaoOr || AtomicId == Intrinsic::ApxRaoXor;
   const bool IsApxCmpccXadd = AtomicId == Intrinsic::ApxCmpccXadd;
   if (IsApxRao || IsApxCmpccXadd) {
+    const auto Shape = apxAtomicLowShape(Op, Img.Arch);
     if (!isKnownMemoryAddressSpace(Op.MemoryAddressSpace) ||
         !intrinsicSupportsMemoryAddressSpace(Id) ||
-        !intrinsicApxAtomicShapeIsValid(Id, apxAtomicLowShape(Op, Img.Arch)))
+        !intrinsicApxAtomicShapeIsValid(Id, Shape))
+      return false;
+    // Native execution owns CS/ES/SS descriptor checks. The concrete evaluator
+    // must not reinterpret an i386 segment offset as ordinary image memory.
+    if (Shape.segmentPrefix())
       return false;
 
     for (unsigned I = 1; I != Op.NumInputs; ++I)

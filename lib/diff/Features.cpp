@@ -213,7 +213,9 @@ ProgramFeatures computeFeatures(const Program &P,
       for (const Instruction &I : P.instructions(B)) {
         if (Control.stop())
           return R;
-        if (I.Callee != NoIndex || I.Flow == InstructionFlow::Call)
+        if (I.Callee != NoIndex || I.UnresolvedCallee ||
+            I.Flow == InstructionFlow::Call ||
+            I.Flow == InstructionFlow::IndirectCall)
           Sites.emplace_back(FI, I.Callee);
       }
   R.CallSites = buildAdjacency(N, Sites, false);
@@ -223,6 +225,20 @@ ProgramFeatures computeFeatures(const Program &P,
   for (auto &[From, To] : Sites)
     std::swap(From, To);
   R.Callers = buildAdjacency(N, std::move(Sites), true);
+
+  std::vector<std::pair<uint32_t, uint32_t>> References;
+  for (uint32_t FI = 0; FI < N; ++FI)
+    for (const Reference &Ref : P.references(P.Functions[FI])) {
+      if (Control.stop())
+        return R;
+      if (Ref.Kind == ReferenceKind::Function)
+        if (const auto Target = P.functionAt(Ref.Key))
+          References.emplace_back(FI, *Target);
+    }
+  R.Referents = buildAdjacency(N, References, true);
+  for (auto &[From, To] : References)
+    std::swap(From, To);
+  R.Referrers = buildAdjacency(N, std::move(References), true);
 
   // A thunk stands for the one function it passes control to.
   R.Resolved.resize(N);
@@ -270,6 +286,16 @@ ProgramFeatures computeFeatures(const Program &P,
           Mnemonics.add(Mnemonic);
           Prime *= oddFactor(Mnemonic);
           Skeletons.push_back(I.Skeleton);
+          Out.AddressEncodings |= I.Target.has_value() || I.Callee != NoIndex ||
+                                  I.AddressReferenceCount != 0;
+          for (const auto &Address : P.addressReferences(I))
+            if (Address.Kind == ReferenceKind::Function)
+              Out.AddressSites.push_back(
+                  {P.functionAt(Address.Key).value_or(NoIndex),
+                   Out.Instructions, Address.Operand});
+          if (I.Callee != NoIndex)
+            Out.AddressSites.push_back({I.Callee, Out.Instructions, NoIndex});
+          Out.UnresolvedCallee |= I.UnresolvedCallee;
           ++Out.Instructions;
           if (I.Flow == InstructionFlow::Call ||
               I.Flow == InstructionFlow::IndirectCall)
@@ -319,6 +345,10 @@ ProgramFeatures computeFeatures(const Program &P,
         } else if (Ref.Kind == ReferenceKind::Constant) {
           Constants.add(Ref.Key);
           ++ConstantCount;
+        } else if (Ref.Kind == ReferenceKind::Function) {
+          ++Out.FunctionReferences;
+        } else if (Ref.Kind == ReferenceKind::UnresolvedData) {
+          Out.UnresolvedData = true;
         }
       }
       if (StringCount)

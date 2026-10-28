@@ -14,16 +14,21 @@ build sampled with `tools/neverd-bench/sigprof`. Inputs:
 - a switch-heavy PE x64 DLL (Capstone built at O2);
 - x64 and Mach-O arm64 Rust test binaries.
 
+Items 1 and 7 also cite a whole-image `neverd decompile` of Ubuntu's x64
+libsqlite3.so.0.8.6, profiled at `origin/dev` 4c991c2416 with the return-slot
+fix that lets it complete; their paths are checked there.
+
 On a 20-core host, half or more of each run's wall time passed with one or
 two busy threads, so the serial stretches matter as much as the CPU hotspots.
 These items meet their entry condition. Each change still needs a same-base
 A/B with identical output.
 
 1. **C emission is serial.** `HighCWriter::writeAll`
-   (`lib/backend/c/HighC/HighCEmitter.cpp:4656`) writes every function on the
+   (`lib/backend/c/HighC/HighCEmitter.cpp:4672`) writes every function on the
    caller's thread. On the Rust runs it held one thread for about a third of
-   the wall time. Most of that is per-function projection
-   (`writeFunctionProjection`, `lib/backend/c/HighC/HighCFuncWriter.cpp:5826`),
+   the wall time; on a whole-image run of the x64 libsqlite3 it held one
+   thread for more than half of it. Most of that is per-function projection
+   (`writeFunctionProjection`, `lib/backend/c/HighC/HighCFuncWriter.cpp:5827`),
    which could run in per-worker writer copies writing per-function buffers,
    joined in order.
    - Audit first. `HighCWriter` (`lib/backend/c/HighC/HighCWriter.h:118`) has
@@ -31,9 +36,9 @@ A/B with identical output.
      per-function; the rest are prepared before the loop. Find any member
      written inside the loop and read by a later function.
    - `SourceRecorder->positionDefinition(..., OS.tell())`
-     (`lib/backend/c/HighC/HighCEmitter.cpp:4745`) must be rebased onto the
+     (`lib/backend/c/HighC/HighCEmitter.cpp:4761`) must be rebased onto the
      joined output.
-   - `writeForwardDecls` (`:4736`) is a separate serial cost that a
+   - `writeForwardDecls` (`:4752`) is a separate serial cost that a
      per-function split does not touch.
 2. **Restricted runs read omitted callees serially.**
    `omittedDirectCalleeSignatures` (`lib/pipeline/PipelineCallAbi.cpp:655`) is
@@ -108,8 +113,21 @@ A/B with identical output.
      (`lib/pipeline/PipelineLowIR.cpp:5027`), HighIR batches by operation count
      (`lib/pipeline/PipelineHighIR.cpp:358`). Neither weight counts jump
      tables or x87 proofs, which drive LowIR cost (items 3 and 4).
-   - Items 3 and 4 also shorten the tail.
-7. **Serial loading of small inputs.** `Loader::loadWithProgress` held one
+   - Items 3 and 4 also shorten the LowIR tail, and item 7 the HighIR tail.
+7. **Late HighIR cleanup reruns all of dead-code elimination.**
+   `reduceLateGotos` (`lib/ir/high/lower/MedToHigh.cpp:1252`) runs the whole
+   `eliminateDeadStmts` (`lib/ir/high/pass/HighDCE.cpp:749`, about thirty
+   passes) after each of its six phases that rewrote, and once more at the
+   end.
+   - On the whole-image libsqlite3 run, these reruns took about two thirds of
+     the samples under `eliminateDeadStmts` and about a tenth of all CPU.
+     The largest functions, which form the HighIR tail (item 6), spend most of
+     their MedToHigh time here.
+   - The phase comment asks only that dead copies between a jump and its label
+     be cleared. Find what each later phase needs from the cleanup; a
+     narrower pass must still give byte-identical output on the regression
+     inputs.
+8. **Serial loading of small inputs.** `Loader::loadWithProgress` held one
    thread for a visible part of the short libstdc++ runs. Entry: a latency
    target for opening small images.
 

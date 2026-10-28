@@ -22,7 +22,9 @@
 #include "neverd/ir/med/MedDispatchSlots.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/ADT/SmallPtrSet.h"
 
 #include <functional>
 #include <map>
@@ -412,6 +414,7 @@ private:
   /// Put the copies a handler block's PHIs take on the dispatcher's entry in
   /// the `__except` arm that reaches it (see PhiNode::ExceptionalEntry).
   void attachSEHHandlerEntryCopies(HighFunc &Func, const MedFunc &Med);
+  void collectItaniumCallFrameOffsets(HighFunc &Func, const MedFunc &Med);
   void inferTypes(HighFunc &Func);
   void simplifyControlFlow(HighFunc &Func, const MedFunc &Med);
   void inlineGotoReturns(HighFunc &Func, const MedFunc &Med);
@@ -629,6 +632,8 @@ private:
   void anchorDispatcherEntries(HighFunc &Func) const;
   const MedFunc *CurMed = nullptr;
   std::set<const MedOp *> ReturnProtectionOps;
+  llvm::DenseMap<const MedOp *, const MedOp *> AArch64AuthenticatedCalls;
+  llvm::SmallPtrSet<const MedOp *, 8> AArch64CallAuthentications;
   /// Entry-relative stack slots CurMed loads anywhere or whose address
   /// escapes; such a slot is a local, not an outgoing argument (cached per
   /// function).

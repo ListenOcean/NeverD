@@ -295,13 +295,17 @@ std::string refusedFunctionNotes(const PipelineResult &Result) {
     std::string Name = Audit->Name.empty()
                            ? "sub_" + llvm::utohexstr(Audit->Entry)
                            : Audit->Name;
-    // A name cannot end the comment it stands in.
-    for (size_t At = Name.find("*/"); At != std::string::npos;
-         At = Name.find("*/", At))
-      Name.replace(At, 2, "* /");
-    Notes += "/* neverd.not-decompiled: " + Name + " at 0x" +
+    // Neither a name nor a reason, which may quote one, can end the comment
+    // it stands in.
+    auto Commented = [](std::string Text) {
+      for (size_t At = Text.find("*/"); At != std::string::npos;
+           At = Text.find("*/", At))
+        Text.replace(At, 2, "* /");
+      return Text;
+    };
+    Notes += "/* neverd.not-decompiled: " + Commented(Name) + " at 0x" +
              llvm::utohexstr(Audit->Entry) + ": " +
-             functionAuditReason(*Audit) + " */\n";
+             Commented(functionAuditReason(*Audit)) + " */\n";
   }
   return Notes.empty() ? Notes : Notes + "\n";
 }
@@ -2111,8 +2115,12 @@ static const char *decompileAllImpl(neverd_session_t Sess,
   if (S) {
     S->applyAnalysisOptions(Opts);
   }
-  if (Only)
+  // A unit of selected functions is written as the whole program is: one
+  // the pipeline refuses is named at its head and left out.
+  if (Only) {
     Opts.OnlyFunctionEntries = *Only;
+    Opts.OmitRefusedFunctions = true;
+  }
   if (UseLlvmRoute)
     Opts.LiftMode = true;
   Opts.SourceProjection = true;

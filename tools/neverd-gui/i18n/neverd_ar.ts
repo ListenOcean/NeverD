@@ -6076,6 +6076,18 @@ After:
       <source>Restoring comparison</source>
       <translation>جارٍ استعادة المقارنة</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>جارٍ تطبيق تعديل المقارنة</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>جارٍ تجهيز تعديل المقارنة</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>جارٍ تحديث الدوال المتأثرة</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -6090,10 +6102,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · %4 متطابقة / %5 ملاحظات محتفظ بها
 صفوف الشيفرة الأصلية %6 / %7؛ التغطية %8؛ الارتباطات الملتبسة %9. SSA: الأساسي %10؛ الثانوي %11.
-الحدود: الأساسي %12؛ الثانوي %13.</translation>
+الحدود: الأساسي %12؛ الثانوي %13. هويات المراجع: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6254,6 +6266,14 @@ Boundaries: primary %12; secondary %13.</source>
     <message>
         <source>unknown input</source>
         <translation>إدخال غير معروف</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>تمت مقارنتها</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>غير محسومة</translation>
     </message>
 </context>
 <context>
@@ -6462,8 +6482,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>%1 متطابقة  ·  %2 متغيرة  ·  %3 ملتبسة  ·  %4 / %5 دون تطابق  ·  %6 / %7 غير مكتملة</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>%1 متطابقة  ·  %2 متغيرة  ·  %3 ملتبسة  ·  %4 / %5 دون تطابق  ·  %6 / %7 غير مكتملة  ·  %8 غير مؤكدة</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6920,6 +6940,16 @@ Secondary name: %2</source>
 
 الاسم في الطرف الأساسي: %1
 الاسم في الطرف الثانوي: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>غير مؤكد</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+هويات المراجع: غير محسومة. لا يمكن مقارنة بعض أهداف الاستدعاءات أو البيانات. وهذا وحده لا يثبت حدوث تغيير.</translation>
     </message>
 </context>
 <context>
@@ -7913,6 +7943,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>الدالة المقابلة: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>غير مؤكد</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8279,6 +8313,10 @@ Supersedes: %11</source>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>تعذرت استعادة المقارنة. لا تزال المقارنة السابقة متاحة. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>توقف التعديل. لا تزال المقارنة السابقة وسجل التعديلات متاحين.</translation>
     </message>
 </context>
 <context>

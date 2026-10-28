@@ -5968,6 +5968,18 @@ After:
       <source>Restoring comparison</source>
       <translation>Восстановление сравнения</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>Применение правки сравнения</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>Подготовка правки сравнения</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>Обновление затронутых функций</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5982,10 +5994,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · совпадений: %4 / сохранённых наблюдений: %5
 Строки машинного кода: %6 / %7; покрытие: %8; неоднозначные связи: %9. SSA: основной %10; дополнительный %11.
-Границы: основной %12; дополнительный %13.</translation>
+Границы: основной %12; дополнительный %13. Идентичности ссылок: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6146,6 +6158,14 @@ Boundaries: primary %12; secondary %13.</source>
     <message>
         <source>unknown input</source>
         <translation>неизвестный вход</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>сопоставлены</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>не определены</translation>
     </message>
 </context>
 <context>
@@ -6354,8 +6374,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>Совпадений: %1  ·  изменённых: %2  ·  неоднозначных: %3  ·  без соответствия: %4 / %5  ·  неполных: %6 / %7</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>Совпадений: %1  ·  изменённых: %2  ·  неоднозначных: %3  ·  без соответствия: %4 / %5  ·  неполных: %6 / %7  ·  %8 неопределённых</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6812,6 +6832,16 @@ Secondary name: %2</source>
 
 Имя в основном файле: %1
 Имя во втором файле: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Неопределённо</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+Идентичности ссылок: не определены. Некоторые цели вызовов или ссылки на данные нельзя сравнить. Само по себе это не доказывает наличие изменения.</translation>
     </message>
 </context>
 <context>
@@ -7805,6 +7835,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>Соответствующая функция: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Неопределённо</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8171,6 +8205,10 @@ Supersedes: %11</source>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>Не удалось восстановить сравнение. Предыдущее сравнение по-прежнему доступно. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>Редактирование остановлено. Предыдущее сравнение и история правок по-прежнему доступны.</translation>
     </message>
 </context>
 <context>

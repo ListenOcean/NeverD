@@ -5896,6 +5896,18 @@ After:
       <source>Restoring comparison</source>
       <translation>比較を復元中</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>比較の編集を適用しています</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>比較の編集を準備しています</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>影響を受ける関数を更新しています</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5910,10 +5922,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · 一致 %4 / 保持された観測 %5 件
 ネイティブ行 %6 / %7; カバレッジ %8; 曖昧な関連付け %9。SSA: 主入力 %10; 副入力 %11。
-境界: 主入力 %12; 副入力 %13。</translation>
+境界: 主入力 %12; 副入力 %13。 参照の識別情報：%14。</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6074,6 +6086,14 @@ Boundaries: primary %12; secondary %13.</source>
     <message>
         <source>unknown input</source>
         <translation>不明な入力</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>比較済み</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>未解決</translation>
     </message>
 </context>
 <context>
@@ -6282,8 +6302,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>一致 %1 件  ·  変更 %2 件  ·  曖昧 %3 件  ·  不一致 %4 / %5 件  ·  不完全 %6 / %7 件</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>一致 %1 件  ·  変更 %2 件  ·  曖昧 %3 件  ·  不一致 %4 / %5 件  ·  不完全 %6 / %7 件  ·  不確定 %8</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6740,6 +6760,16 @@ Secondary name: %2</source>
 
 比較元の名前: %1
 比較先の名前: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>不確定</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+参照の識別情報：未解決。一部の呼び出し先またはデータ参照先を比較できません。これだけでは変更があったとは判断できません。</translation>
     </message>
 </context>
 <context>
@@ -7733,6 +7763,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>対応する関数: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>不確定</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8099,6 +8133,10 @@ Supersedes: %11</source>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>比較を復元できませんでした。以前の比較は引き続き利用できます。%1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>編集を停止しました。以前の比較結果と編集履歴は引き続き利用できます。</translation>
     </message>
 </context>
 <context>

@@ -206,10 +206,9 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   // recovery, including floating return veneers and variadic format joins.
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
-  if (Convention &&
-      (Convention->ArgumentsFromCallSetup ||
-       (Convention->StackArgumentSummary &&
-        Convention->PositionalArgumentSlots))) {
+  if (Convention && (Convention->ArgumentsFromCallSetup ||
+                     (Convention->StackArgumentSummary &&
+                      Convention->PositionalArgumentSlots))) {
     recoverModuleCallAbi(Img, Result, AllFuncNames);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
     // A variadic callee takes its call sites' overflow arguments as trailing
@@ -270,6 +269,8 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
 void Pipeline::buildHighIR(const BinaryImage &Img, const PipelineOptions &Opts,
                            PipelineResult &Result, DebugContext *Dbg) {
   prepareSourceMedIR(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
+  if (!refuseObservedCallReturnReads(Img, Result, refusalFailsRun(Opts), Dbg))
+    throw std::runtime_error(Result.Error);
   rebuildHighIR(Img, Opts, Result, Dbg);
 }
 

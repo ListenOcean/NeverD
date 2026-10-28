@@ -253,6 +253,30 @@ TEST(SourceParameterPlacement, AAPCS64UsesHomogeneousAggregatesAndPairs) {
                  0, 8, /*Indirect=*/true);
 }
 
+TEST(SourceParameterPlacement, AAPCS64KeepsTheResultPointerApartFromArguments) {
+  constexpr Arch A64 = Arch::AArch64;
+  const auto Large = record(24, NdRecordPassing::ByValue,
+                            {{0, 8, false}, {8, 8, false}, {16, 8, false}}, 8);
+  const auto Floating = record(24, NdRecordPassing::ByValue,
+                               {{0, 8, true}, {8, 8, true}, {16, 8, true}}, 8);
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF}) {
+    const auto P = place(A64, Format, Large, {intType(8)});
+    ASSERT_TRUE(P.ResultPointer);
+    EXPECT_EQ(P.ResultPointer->RegisterOffset,
+              getTargetRegInfo(A64).indirectResultReg());
+    expectRegister(P.Parameters[0][0], IntegerReg,
+                   integerRegister(A64, Format, 0), 0, 8);
+    EXPECT_FALSE(place(A64, Format, Floating, {}).ResultPointer);
+    EXPECT_FALSE(
+        place(A64, Format, record(24, NdRecordPassing::Unknown, {}, 8), {})
+            .ResultPointer);
+    EXPECT_TRUE(
+        place(A64, Format, pairOfLongs(NdRecordPassing::ByReference), {})
+            .ResultPointer);
+  }
+}
+
 TEST(SourceParameterPlacement, I386PassesEverythingOnTheStack) {
   constexpr Arch X86 = Arch::X86;
   const int64_t Base = stackBase(X86, ELF);

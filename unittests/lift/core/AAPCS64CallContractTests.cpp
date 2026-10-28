@@ -176,6 +176,78 @@ std::string body(const std::string &Source, const std::string &Name) {
   return Source.substr(Begin, Close + 2 - Begin);
 }
 
+TEST(AAPCS64CallContract, FloatingCallResultsSurviveViewsAndSharedReturns) {
+  for (bool Double : {false, true})
+    for (bool IntegerResult : {false, true}) {
+      SCOPED_TRACE(Double);
+      SCOPED_TRACE(IntegerResult);
+      const uint32_t MoveToOne = Double ? 0x1E604001 : 0x1E204001;
+      const uint32_t MoveToZero = Double ? 0x1E604020 : 0x1E204020;
+      std::vector<uint32_t> Code{
+          0xA9BE7BFD, // stp x29,x30,[sp,-32]!
+          0xF9000BF3, // str x19,[sp,16]
+          SetFrame,
+          0xAA0103F3, // mov x19,x1
+          0xB4000140, // cbz x0,zero
+          0xAA1F03E1, // mov x1,xzr
+          0,          // bl strtof/strtod
+          0xB4000113, // cbz x19,done
+          0x2F00E401, // movi d1,0
+          0xF1000A7F, // cmp x19,2
+          0x54000041, // b.ne selected
+          MoveToOne,  // fmov s1,s0 / d1,d0
+          MoveToZero, // selected: fmov s0,s1 / d0,d1
+          0x14000002, // b done
+          0x2F00E400, // zero: movi d0,0
+      };
+      Code[6] = 0x94000000 | ((Plt - (Text + 6 * 4)) / 4);
+      if (IntegerResult)
+        Code.push_back(0xD28000E0); // done: mov x0,7
+      Code.insert(Code.end(), {0xF9400BF3, 0xA8C27BFD, Ret});
+      const auto Image = makeImage({{Text, Code}, {Plt, pltEntry(Plt, Got)}},
+                                   {{Text, "conditional_parse"}},
+                                   {Double ? "strtod" : "strtof"});
+      for (bool LLVM : {false, true}) {
+        llvm::LLVMContext Context;
+        auto Result = run(Image, Context, {Text}, LLVM);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions Options;
+        Options.TheArch = Image.Arch;
+        Options.Format = Image.Format;
+        Options.Image = &Image;
+        ASSERT_TRUE(
+            LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, Options,
+                                       nullptr, &Image)
+                 : HighCEmitter().emit(Result.HighFuncs, Output, Options));
+        EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+        EXPECT_NE(Source.find(IntegerResult ? "int64_t conditional_parse"
+                              : Double      ? "double conditional_parse"
+                                            : "float conditional_parse"),
+                  std::string::npos)
+            << Source;
+        const std::string Oracle = IntegerResult ? R"oracle(
+int main(void) {
+  return conditional_parse((uintptr_t)"-3.25", 0) != 7 ||
+         conditional_parse((uintptr_t)"-3.25", 1) != 7 ||
+         conditional_parse((uintptr_t)"-3.25", 2) != 7 ||
+         conditional_parse(0, 0) != 7;
+}
+)oracle"
+                                                 : R"oracle(
+int main(void) {
+  return conditional_parse((uintptr_t)"-3.25", 0) != -3.25 ||
+         conditional_parse((uintptr_t)"-3.25", 1) != 0 ||
+         conditional_parse((uintptr_t)"-3.25", 2) != -3.25 ||
+         conditional_parse(0, 0) != 0;
+}
+)oracle";
+        source_call_execution_test::compileAndRun(Source + Oracle);
+      }
+    }
+}
+
 TEST(AAPCS64CallContract, SelectedCallsKeepBothProvenReturnWords) {
   constexpr va_t Callee = Text + 0x40;
   const uint32_t Call = 0x94000000u | ((Callee - (Text + 8)) / 4);
@@ -233,6 +305,7 @@ TEST(AAPCS64CallContract, SelectedCallsKeepBothProvenReturnWords) {
 unsigned __int128 omitted_pair(uint64_t x) {
   return (unsigned __int128)(x << 3) << 64 | (uint64_t)(x + 7);
 }
+
 )C";
       }
       source_call_execution_test::compileAndRun(Source + R"C(
@@ -248,6 +321,372 @@ int main(void) {
 )C");
     }
   }
+}
+
+TEST(AAPCS64CallContract, ReadingOnlyTheSecondReturnWordStillRequiresTheBody) {
+  constexpr va_t Callee = Text + 0x40;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 8)) / 4);
+  for (const auto [WritesSecond, Split] :
+       {std::pair{false, false}, {true, false}, {false, true}, {true, true}}) {
+    const BinaryImage Image = makeImage(
+        {{Text,
+          Split ? std::vector<uint32_t>{PushFrame, SetFrame, Call, 0x14000002u,
+                                        0xD503201Fu, 0xAA0103E0u, PopFrame, Ret}
+                : std::vector<uint32_t>{PushFrame, SetFrame, Call, 0xAA0103E0u,
+                                        PopFrame, Ret}},
+         {Callee, WritesSecond
+                      ? std::vector<uint32_t>{0xD37DF001u, 0x91001C00u, Ret}
+                      : std::vector<uint32_t>{PushFrame, SetFrame,
+                                              0xD63F0040u, // blr x2
+                                              0x91001C00u, PopFrame, Ret}}},
+        {{Text, "second_word"}, {Callee, "omitted_pair"}}, {});
+    for (const auto &Entries :
+         {std::set<va_t>{Text}, std::set<va_t>{Text, Callee}}) {
+      const std::string Source = highC(Image, Entries);
+      if (!WritesSecond) {
+        EXPECT_EQ(Source.find("__int128"), std::string::npos) << Source;
+        continue;
+      }
+      ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+      const std::string External = Entries.size() == 1 ? R"C(
+unsigned __int128 omitted_pair(uint64_t x) {
+  return (unsigned __int128)(x << 3) << 64 | (uint64_t)(x + 7);
+}
+)C"
+                                                       : "";
+      source_call_execution_test::compileAndRun(Source + External + R"C(
+int main(void) {
+  uint64_t values[] = {0, 1, 7, 0x123456789ABCDEF0, UINT64_MAX};
+  for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+    if ((uint64_t)second_word(values[i]) != (values[i] << 3))
+      return 1;
+  return 0;
+}
+)C");
+    }
+  }
+}
+
+TEST(AAPCS64CallContract, AConstantFormatSelectsIntegerAndVectorArguments) {
+  constexpr va_t Format = 0x21000;
+  const uint32_t Call = 0x94000000u | ((Plt - (Text + 20)) / 4);
+  BinaryImage Image = makeImage(
+      {{Text,
+        {PushFrame, SetFrame, 0xAA0203E3u, // mov x3, x2
+         adrp(2, Text + 12, Format), addX(2, 2, Format), Call, PopFrame, Ret}},
+       {Plt, pltEntry(Plt, Got)}},
+      {{Text, "format_values"}}, {"snprintf"});
+  Segment Data;
+  Data.Name = ".rodata";
+  Data.VA = Format;
+  const std::string FormatText = "%d %.2f";
+  Data.Data.assign(FormatText.begin(), FormatText.end());
+  Data.Data.push_back(0);
+  Data.Size = Data.FileSz = Data.Data.size();
+  Data.Flags = SegmentFlags::Readable;
+  Image.Segments.push_back(std::move(Data));
+  llvm::LLVMContext Context;
+  const auto Result = run(Image, Context, {Text});
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  const auto Bound = Result.FormattedCalls.find(Text + 20);
+  ASSERT_NE(Bound, Result.FormattedCalls.end());
+  ASSERT_EQ(Bound->second.Arguments.size(), 5u);
+  EXPECT_TRUE(Bound->second.Arguments.back().Floating);
+  const std::string Source = highC(Image, {Text});
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("\"%d %.2f\""), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(Source + R"C(
+#include <string.h>
+int main(void) {
+  char text[32];
+  int (*format)(char *, unsigned long, int, double) =
+      (int (*)(char *, unsigned long, int, double))(void *)format_values;
+  for (int i = -2; i != 3; ++i) {
+    char expected[32];
+    int n = snprintf(expected, sizeof expected, "%d %.2f", i, 3.25);
+    if (format(text, sizeof text, i, 3.25) != n || strcmp(text, expected))
+      return 1;
+  }
+  return 0;
+}
+)C");
+}
+
+TEST(AAPCS64CallContract, AFormatMustBeImmutableAndSupportedByTheTargetABI) {
+  constexpr va_t Format = 0x21000;
+  const uint32_t Call = 0x94000000u | ((Plt - (Text + 16)) / 4);
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    BinaryImage Image =
+        makeImage({{Text,
+                    {PushFrame, SetFrame, adrp(2, Text + 8, Format),
+                     addX(2, 2, Format), Call, PopFrame, Ret}},
+                   {Plt, pltEntry(Plt, Got)}},
+                  {{Text, "format_values"}}, {"snprintf"});
+    Segment Data;
+    Data.Name = ".rodata";
+    Data.VA = Format;
+    const std::string FormatText = Variant == 1 ? "%Lf" : "%d %.2f";
+    Data.Data.assign(FormatText.begin(), FormatText.end());
+    Data.Data.push_back(0);
+    Data.Size = Data.FileSz = Data.Data.size();
+    Data.Flags = Variant == 0 ? SegmentFlags::Readable | SegmentFlags::Writable
+                              : SegmentFlags::Readable;
+    Image.Segments.push_back(std::move(Data));
+    if (Variant == 2)
+      Image.Format = BinaryFormat::MachO;
+    if (Variant == 3)
+      Image.Format = BinaryFormat::COFF;
+    llvm::LLVMContext Context;
+    const auto Result = run(Image, Context, {Text});
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    EXPECT_EQ(Result.FormattedCalls.count(Text + 16), Variant == 4 ? 1u : 0u)
+        << Variant;
+  }
+}
+
+TEST(AAPCS64CallContract, AnIndirectObjectReturnHasNoFabricatedScalarResult) {
+  class Header : public NullDebugContext {
+  public:
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address != Text)
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = "copy_result";
+      Function.ReturnType = NdType::makeStruct(
+          {NdType::makeInt(8), NdType::makeInt(8), NdType::makeInt(8)});
+      Function.ReturnType->Passing = NdRecordPassing::ByValue;
+      Function.Params = {{"a", NdType::makeInt(8)},
+                         {"b", NdType::makeInt(8)},
+                         {"c", NdType::makeInt(8)}};
+      return Function;
+    }
+  } Debug;
+  const BinaryImage Image =
+      makeImage({{Text, {0xF9000100u, 0xF9000501u, 0xF9000902u, Ret}}},
+                {{Text, "copy_result"}}, {});
+  llvm::LLVMContext Context;
+  const auto Result = run(Image, Context, {Text});
+  ASSERT_TRUE(Result.Success) << Result.Error;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  CEmitterOptions Options;
+  Options.TheArch = Image.Arch;
+  Options.Format = Image.Format;
+  Options.Image = &Image;
+  ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, Output, Options, &Debug));
+  EXPECT_NE(Source.find("void copy_result("), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(Source + R"C(
+int main(void) {
+  uint64_t result[3] = {0};
+  copy_result(7, 11, 13, (void *)result);
+  return result[0] != 7 || result[1] != 11 || result[2] != 13;
+}
+)C");
+}
+
+TEST(AAPCS64CallContract, ReadingW8DoesNotReplaceTheIndirectResultPointer) {
+  constexpr va_t Callee = Text + 0x80;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 16)) / 4);
+  BinaryImage Image =
+      makeImage({{Text,
+                  {0xA9BD7BFDu, SetFrame, // 48-byte frame
+                   0x910043E8u,           // add x8, sp, #16
+                   0xB9002FE8u,           // str w8, [sp, #44] (reads W8)
+                   Call, 0xA94107E0u,     // ldp x0, x1, [sp, #16]
+                   0xF94013E2u,           // ldr x2, [sp, #32]
+                   0x8B010000u, 0x8B020000u, 0xA8C37BFDu, Ret}},
+                 {Callee,
+                  {0xF9000100u, 0x91000401u, 0xF9000501u, 0x91000802u,
+                   0xF9000902u, Ret}}},
+                {{Text, "sum_triplet"}, {Callee, "fill_triplet"}}, {});
+  const std::string Source = highC(Image, {Text, Callee});
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(Source + R"C(
+int main(void) {
+  uint64_t values[] = {0, 1, 17, 0xFFFFFFFF};
+  for (unsigned i = 0; i != sizeof(values) / sizeof(values[0]); ++i)
+    if ((uint64_t)sum_triplet(values[i]) != 3 * values[i] + 3)
+      return 1;
+  return 0;
+}
+)C");
+}
+
+TEST(AAPCS64CallContract, CxxCleanupUsesTheFrameAtTheThrowingCall) {
+  const auto Call = [](va_t At, va_t Target) {
+    return 0x94000000u |
+           (static_cast<uint32_t>((Target - At) / 4) & 0x3FFFFFFu);
+  };
+  BinaryImage Image = makeImage(
+      {{Text,
+        {0xA9BE7BFDu, SetFrame, 0xF9000BE0u, // frame; local = x0
+         0xB4000061u,                        // cbz x1, +12
+         Call(Text + 16, Plt), 0x14000002u, Call(Text + 24, Plt), 0xF9400BE0u,
+         0xA8C27BFDu, Ret, 0xAA0003F3u,
+         0xF9400BA0u, // pad: save exception; x0 = fp[16]
+         Call(Text + 48, Plt + 16), 0xAA1303E0u, Call(Text + 56, Plt + 32)}},
+       {Plt, pltEntry(Plt, Got)},
+       {Plt + 16, pltEntry(Plt + 16, Got + 8)},
+       {Plt + 32, pltEntry(Plt + 32, Got + 16)}},
+      {{Text, "protected_value"}}, {"getchar", "putchar", "_Unwind_Resume"});
+  ExceptionFunction EH;
+  EH.CodeRange = {Text, Text + 60};
+  EH.Encoding = ExceptionEncoding::DwarfFDE;
+  EH.ParseStatus = ExceptionParseStatus::Complete;
+  EH.Personality = ExceptionPersonality::GxxPersonalityV0;
+  EH.Itanium.emplace();
+  EH.Itanium->IsCallSiteAddressForm = true;
+  ItaniumCallSite Site;
+  // The machine range includes the epilogue, whose restored FP is different
+  // from the FP at either call. The C++ clause runs only when a call throws.
+  Site.GuardedRange = {Text + 12, Text + 40};
+  Site.LandingPadVA = Text + 40;
+  EH.Itanium->CallSites.push_back(Site);
+  Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+  const std::string Source = highC(Image, {Text});
+  ASSERT_NE(Source.find("catch (...)"), std::string::npos) << Source;
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(
+      Source + R"C(
+static bool should_throw;
+static int cleaned;
+extern "C" int getchar(void) {
+  if (should_throw) throw 42;
+  return 0;
+}
+extern "C" int putchar(int value) { cleaned = value; return value; }
+int main(void) {
+  for (int branch = 0; branch != 2; ++branch) {
+    should_throw = false;
+    cleaned = 0;
+    if (protected_value(7, branch) != 7 || cleaned) return 1;
+    should_throw = true;
+    try { protected_value(7, branch); return 2; }
+    catch (int value) { if (value != 42 || cleaned != 7) return 3; }
+  }
+  return 0;
+}
+)C",
+      {"--driver-mode=g++", "-x", "c++", "-std=c++20"});
+}
+
+TEST(AAPCS64CallContract, CleanupFrameAddressesAlsoSurviveInSavedRegisters) {
+  const auto Call = [](va_t At, va_t Target) {
+    return 0x94000000u |
+           (static_cast<uint32_t>((Target - At) / 4) & 0x3FFFFFFu);
+  };
+  for (bool FrameAddress : {true, false}) {
+    BinaryImage Image = makeImage(
+        {{Text,
+          {0xA9BD7BFDu, SetFrame, 0xF9000BE0u,       // local = x0
+           0xF90013FAu,                              // save x26 at sp+32
+           FrameAddress ? 0x910043BAu : 0xAA0203FAu, // x26=fp+16 or x2
+           0xB4000061u, Call(Text + 24, Plt), 0x14000002u, Call(Text + 32, Plt),
+           0xF9400BE0u, 0xF94013FAu, 0xA8C37BFDu, Ret, 0xAA0003F3u,
+           0xF9400340u, // pad: x0 = *x26
+           Call(Text + 60, Plt + 16), 0xAA1303E0u, Call(Text + 68, Plt + 32)}},
+         {Plt, pltEntry(Plt, Got)},
+         {Plt + 16, pltEntry(Plt + 16, Got + 8)},
+         {Plt + 32, pltEntry(Plt + 32, Got + 16)}},
+        {{Text, "protected_value"}}, {"getchar", "putchar", "_Unwind_Resume"});
+    ExceptionFunction EH;
+    EH.CodeRange = {Text, Text + 72};
+    EH.Encoding = ExceptionEncoding::DwarfFDE;
+    EH.ParseStatus = ExceptionParseStatus::Complete;
+    EH.Personality = ExceptionPersonality::GxxPersonalityV0;
+    EH.Itanium.emplace();
+    EH.Itanium->IsCallSiteAddressForm = true;
+    ItaniumCallSite Site;
+    Site.GuardedRange = {Text + 20, Text + 52};
+    Site.LandingPadVA = Text + 52;
+    EH.Itanium->CallSites.push_back(Site);
+    Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+    const std::string Source = highC(Image, {Text});
+    ASSERT_NE(Source.find("catch (...)"), std::string::npos) << Source;
+    if (!FrameAddress) {
+      // An arbitrary saved pointer is not proved to be the frame, even if
+      // the very same register carried a frame address in the previous run.
+      EXPECT_NE(Source.find("unknown register"), std::string::npos) << Source;
+      continue;
+    }
+    ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+    source_call_execution_test::compileAndRun(
+        Source + R"C(
+static bool should_throw;
+static int cleaned;
+extern "C" int getchar(void) {
+  if (should_throw) throw 42;
+  return 0;
+}
+extern "C" int putchar(int value) { cleaned = value; return value; }
+int main(void) {
+  for (int branch = 0; branch != 2; ++branch) {
+    should_throw = false;
+    cleaned = 0;
+    if (protected_value(7, branch) != 7 || cleaned) return 1;
+    should_throw = true;
+    try { protected_value(7, branch); return 2; }
+    catch (int value) { if (value != 42 || cleaned != 7) return 3; }
+  }
+  return 0;
+}
+)C",
+        {"--driver-mode=g++", "-x", "c++", "-std=c++20"});
+  }
+}
+
+TEST(AAPCS64CallContract, RegisterArgumentsSurviveAddressStores) {
+  constexpr va_t Callee = Text + 0x80;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 28)) / 4);
+  const BinaryImage Image =
+      makeImage({{Text,
+                  {PushFrame, SetFrame, 0xAA0103E3u, // mov x3, x1
+                   0xD28002E1u, 0xD2800002u,         // x1 = 23; x2 = 0
+                   0xF8226803u,                      // str x3, [x0, x2]
+                   0xD28000E0u, Call, PopFrame, Ret}},
+                 {Callee, {0x8B010000u, Ret}}},
+                {{Text, "store_then_call"}, {Callee, "sum_words"}}, {});
+  const std::string Source = highC(Image, {Text, Callee});
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+#if defined(__aarch64__)
+  source_call_execution_test::compileAndRun(Source + R"C(
+int main(void) {
+  uint64_t stored = 0;
+  if ((uint64_t)store_then_call(&stored, 123) != 30 || stored != 123)
+    return 1;
+  return 0;
+}
+)C");
+#endif
+}
+
+TEST(AAPCS64CallContract, ArgumentSetupSurvivesMoreThanOnePredecessor) {
+  constexpr va_t Callee = Text + 0x80;
+  const uint32_t Call = 0x94000000u | ((Callee - (Text + 40)) / 4);
+  const BinaryImage Image =
+      makeImage({{Text,
+                  {PushFrame, SetFrame, 0xAA0203E0u, // mov x0, x2
+                   0xB4000063u,                      // cbz x3, +12
+                   0xD28000E1u, 0x14000002u,         // x1 = 7; b +8
+                   0xD2800161u,                      // x1 = 11
+                   0xB4000044u,                      // cbz x4, +8
+                   0xD28001A1u,                      // x1 = 13
+                   0x14000001u, Call, PopFrame, Ret}},
+                 {Callee, {0x8B010000u, Ret}}},
+                {{Text, "split_setup"}, {Callee, "sum_words"}}, {});
+  const std::string Source = highC(Image, {Text, Callee});
+  ASSERT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+  source_call_execution_test::compileAndRun(Source + R"C(
+int main(void) {
+  for (unsigned a = 0; a != 2; ++a)
+    for (unsigned b = 0; b != 2; ++b)
+      if ((uint64_t)split_setup(2, 3, 101, a, b) !=
+          101 + (b ? 13 : a ? 7 : 11))
+        return 1;
+  return 0;
+}
+)C");
 }
 
 TEST(AAPCS64CallContract, SelectedLLVMCallsKeepBothProvenReturnWords) {

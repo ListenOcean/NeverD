@@ -53,13 +53,23 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
     return std::nullopt;
   // The result's storage address travels in X8, so the result moves no
   // parameter.
-  (void)ReturnType;
   const auto Layout = TRI.integerArgumentLayout(F);
   const llvm::ArrayRef<uint64_t> Integer = Layout.Registers;
   const llvm::ArrayRef<uint64_t> Vector = TRI.FPParamRegs;
   if (Integer.empty() || Vector.empty())
     return std::nullopt;
   SourceParameterPlacement Placement;
+  if (isRecord(ReturnType) &&
+      (ReturnType->Passing == NdRecordPassing::ByReference ||
+       ((ReturnType->Passing == NdRecordPassing::ByValue ||
+         ReturnType->Passing == NdRecordPassing::Complex) &&
+        ReturnType->Size > kMaxRegisterRecordBytes &&
+        (ReturnType->Size > kMaxAggregateBytes || scalarLeaves(ReturnType)) &&
+        !aapcs64FloatingAggregate(ReturnType))))
+    Placement.ResultPointer =
+        registerPiece(SourceABICarrierKind::IntegerRegister,
+                      TRI.indirectResultReg(), 0, TRI.PointerSize)
+            .Location;
   size_t NextInteger = 0, NextVector = 0;
   int64_t NextStack = Layout.EntryStackBase;
   bool Undescribed = false;

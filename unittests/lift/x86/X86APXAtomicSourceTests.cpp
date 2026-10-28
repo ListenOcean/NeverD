@@ -90,9 +90,12 @@ ExprPtr high(const X86APXAtomicPlan &P) {
   return E;
 }
 std::string highExpression(const HighExpr &E, Arch A = Arch::X64) {
-  return renderX86APXAtomicExpression(A, E, [](const HighExpr &V) {
-    return V.Var.Id == 0 ? "address" : V.Var.Id == 1 ? "compare" : "add";
-  });
+  std::vector<std::string> Args;
+  for (const auto &V : E.Operands)
+    Args.push_back(V->Var.Id == 0   ? "address"
+                   : V->Var.Id == 1 ? "compare"
+                                    : "add");
+  return renderX86APXAtomicExpression(A, E, Args);
 }
 llvm::CallInst *call(llvm::IRBuilder<> &B, llvm::Module &M,
                      const X86APXAtomicPlan &P, std::vector<llvm::Value *> Args,
@@ -257,6 +260,12 @@ TEST(X86APXAtomicSource, SourceRoutesValidateContractsBeforePrinting) {
   for (auto Id : AtomicInventory)
     for (unsigned Bytes : {4u, 8u}) {
       const auto P = *x86APXAtomicPlan(Id, Bytes, 64, 0);
+      EXPECT_THROW(highExpression(*high(P), Arch::Unknown),
+                   std::invalid_argument);
+      llvm::LLVMContext UnknownContext;
+      EXPECT_THROW(MedLLVMEmitter().emit({med(P)}, UnknownContext,
+                                         "unknown-target", Arch::Unknown),
+                   std::invalid_argument);
       for (unsigned Mutation = 0; Mutation < 8; ++Mutation) {
         auto E = high(P);
         Arch A = Arch::X64;
@@ -641,12 +650,12 @@ TEST(X86APXAtomicSource, PublicPipelineKeepsFlagsAddressesAndNativeMemory) {
           };
           if (P.stackReference())
             Bytes.push_back(0x55); // preserve the entry frame pointer
-          Immediate(0xb9, 0x8765432100000208ull);        // RCX: source offset
-          Immediate(0xb8, 0x0123456789abcdefull);        // RAX: comparator
-          Immediate(0xba, 0xfedcba9876543210ull);        // RDX: addend
+          Immediate(0xb9, 0x8765432100000208ull); // RCX: source offset
+          Immediate(0xb8, 0x0123456789abcdefull); // RAX: comparator
+          Immediate(0xba, 0xfedcba9876543210ull); // RDX: addend
           if (P.stackReference())
             Bytes.insert(Bytes.end(), {0x48, 0x89, 0xcd}); // RBP = RCX
-          Bytes.insert(Bytes.end(), {0x48, 0x39, 0xd0}); // incoming flags
+          Bytes.insert(Bytes.end(), {0x48, 0x39, 0xd0});   // incoming flags
           if (Address32)
             Bytes.push_back(0x67);
           if (x86NativeMemoryPrefix(P.SegmentPrefix))
@@ -797,8 +806,8 @@ TEST(X86LegacyAtomicSource, I386PreservesNativeModeAndAddressControls) {
               EXPECT_EQ(Parsed->TargetArch, Arch::X86);
               EXPECT_THROW(x86APXAtomicCallPlan(Arch::X64, *Call),
                            std::invalid_argument);
-              // HighIR addresses are normalized offsets. Explicit native calls
-              // also cover CS/ES/SS, which normalized HighIR does not admit.
+              // Explicit native calls retain the original address-width and
+              // segment controls independently of normalized HighIR offsets.
               High += *renderX86APXAtomicCall(
                   Arch::X86, *Call, "", false,
                   Native ? std::vector<std::string>{"address", "add",
@@ -862,7 +871,7 @@ TEST(X86LegacyAtomicSource, I386DecodedPipelineKeepsFlagsAndWrappedAddresses) {
   for (auto Format :
        {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
     for (unsigned Kind = 0; Kind != 4; ++Kind)
-      for (unsigned Segment : {0u, 0x64u, 0x65u})
+      for (unsigned Segment : {0u, 0x64u, 0x65u, 0x26u, 0x2eu, 0x36u})
         for (bool Narrow : {false, true})
           for (bool NoOpt : {false, true}) {
             const auto P =
@@ -954,7 +963,7 @@ TEST(X86LegacyAtomicSource, I386DecodedPipelineKeepsFlagsAndWrappedAddresses) {
             }
             ++Index;
           }
-  EXPECT_EQ(Index, 144u);
+  EXPECT_EQ(Index, 288u);
 }
 #endif
 

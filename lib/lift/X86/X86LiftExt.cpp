@@ -804,6 +804,7 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_TPAUSE:
   case X86_INS_UMONITOR:
   case X86_INS_UMWAIT:
+  case X86_INS_SKINIT:
     return liftSystemState(*this, S, Insn, X86);
 
   case X86_INS_ENCLS:
@@ -816,7 +817,6 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
 
   // Machine transitions need a complete-state continuation contract.
   case X86_INS_VMRUN:
-  case X86_INS_SKINIT:
     return false;
 
   // These change processor state only; none of them produces a value, so

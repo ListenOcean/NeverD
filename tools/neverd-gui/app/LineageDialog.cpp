@@ -168,9 +168,10 @@ LineageDialog::LineageDialog(const QString &Worker, QWidget *Parent)
                     "lineageTraceNodes", TraceTabs);
   TraceEdges =
       page(Session,
-           {tr("Edge"), tr("Primary node"), tr("Secondary node"),
+           {tr("Edge"), tr("State"), tr("Primary node"), tr("Secondary node"),
             tr("Source report"), tr("Method"), tr("Changes")},
-           {"edge", "primary", "secondary", "report", "step", "changes"},
+           {"edge", "change_state", "primary", "secondary", "report", "step",
+            "changes"},
            "lineageTraceEdges", TraceTabs);
   TraceConflicts =
       page(Session, {tr("Conflict"), tr("Kind"), tr("Snapshot"), tr("Members")},

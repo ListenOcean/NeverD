@@ -18,6 +18,8 @@
 #include "llvm/Support/Program.h"
 
 #include <string>
+#include <utility>
+#include <vector>
 
 namespace {
 using namespace neverd;
@@ -398,6 +400,43 @@ int main(void) {
   return address(0x100000004ull) == 8 ? 0 : 1;
 }
 )");
+}
+
+TEST(HighCIntegerConversion, UnprototypedImmediatesKeepTheirCompleteWord) {
+  const TypeRef U64 = integer(8, false), I64 = integer(8, true);
+  const TypeRef U32 = integer(4, false), I32 = integer(4, true);
+  std::vector<std::pair<ExprPtr, uint64_t>> Cases;
+  for (uint64_t Value :
+       {UINT64_C(0), UINT64_C(1), UINT64_C(0x7fffffff), UINT64_C(0xffffffff),
+        UINT64_C(0x100000000), UINT64_C(0xffffffffffffffff)})
+    Cases.emplace_back(typed(constant(Value), U64), Value);
+  Cases.emplace_back(typed(constant(UINT64_MAX), I64), UINT64_MAX);
+  Cases.emplace_back(
+      extend(NdOp::INT_ZEXT, typed(constant(UINT32_MAX, 4), U32), U64),
+      UINT32_MAX);
+  Cases.emplace_back(
+      extend(NdOp::INT_SEXT, typed(constant(UINT32_MAX, 4), I32), I64),
+      UINT64_MAX);
+  Cases.emplace_back(cast(typed(constant(UINT32_MAX, 4), U32), U64),
+                     UINT32_MAX);
+  std::string Source, Checks;
+  for (unsigned I = 0; I < Cases.size(); ++I) {
+    const std::string Name = "untyped_word_" + std::to_string(I);
+    auto Call = HighExpr::makeCall("indirect", 0x2000, {Cases[I].first});
+    Call->Type = U64;
+    Call->IsIndirectCall = true;
+    Call->IndirectTarget = input();
+    Source += emit(function(Name, U64, {result(Call)}));
+    Checks += "if (" + Name + "(address) != UINT64_C(" +
+              std::to_string(Cases[I].second) + ")) return 1;\n";
+  }
+  Source += R"(
+static uint64_t actual(uint64_t value) { return value; }
+int main(void) {
+  uint64_t address=(uint64_t)(uintptr_t)&actual;
+)" + Checks +
+            "return 0;\n}\n";
+  compileAndRun(Source);
 }
 
 TEST(HighCIntegerConversion, AWideningArgumentKeepsItsExtension) {

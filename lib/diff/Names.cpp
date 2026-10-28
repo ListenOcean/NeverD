@@ -54,7 +54,7 @@ constexpr ChangeInfo Changes[] = {
 
 constexpr llvm::StringLiteral RowKinds[] = {
     "identical", "moved",    "constant", "operand",
-    "replaced",  "inserted", "deleted",
+    "replaced",  "inserted", "deleted",  "uncertain",
 };
 
 } // namespace

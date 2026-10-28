@@ -24,8 +24,11 @@ struct AArch64ReturnProtection {
 struct AArch64ReturnProtectionProjection {
   AArch64ReturnProtection Protection;
   /// Only these operations implement the proved policy. The machine IR is
-  /// unchanged; the source converter omits them and carries the policy.
+  /// unchanged; native and source projections carry the policy on their own
+  /// compiler-owned frame instead of authenticating a synthetic entry LR.
   std::set<const MedOp *> Operations;
+  /// Private return-address PHIs have no independent source value.
+  std::set<const PhiNode *> Phis;
 };
 
 std::optional<AArch64ReturnProtectionProjection>

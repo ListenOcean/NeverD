@@ -12,6 +12,7 @@ import ida_kernwin
 import ida_loader
 import ida_nalt
 import ida_pro
+import idautils
 
 
 output = Path(os.environ["NEVERD_BENCH_BINEXPORT_OUTPUT"])
@@ -28,6 +29,8 @@ try:
         raise RuntimeError("IDA did not retain the input SHA-256")
     result["input_sha256"] = identity.hex()
     result["ida_version"] = ida_kernwin.get_kernel_version()
+    result["image_base"] = hex(ida_nalt.get_imagebase())
+    result["function_entries"] = [hex(entry) for entry in idautils.Functions()]
     plugin = ida_loader.load_plugin(os.environ["NEVERD_BENCH_BINEXPORT_PLUGIN"])
     if plugin is None:
         raise RuntimeError("the selected BinExport plugin did not load")

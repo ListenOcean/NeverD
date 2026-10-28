@@ -5932,6 +5932,18 @@ After:
       <source>Restoring comparison</source>
       <translation>Restoring comparison</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>Applying comparison edit</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>Preparing comparison edit</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>Updating affected functions</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5946,10 +5958,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</translation>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6110,6 +6122,14 @@ Boundaries: primary %12; secondary %13.</translation>
     <message>
         <source>unknown input</source>
         <translation>unknown input</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>compared</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>unresolved</translation>
     </message>
 </context>
 <context>
@@ -6318,8 +6338,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6776,6 +6796,16 @@ Secondary name: %2</source>
 
 Primary name: %1
 Secondary name: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Uncertain</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</translation>
     </message>
 </context>
 <context>
@@ -7769,6 +7799,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>Counterpart: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>Uncertain</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8135,6 +8169,10 @@ Supersedes: %11</translation>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>Could not restore the comparison. Your previous comparison is still available. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>Edit stopped. Your previous comparison and edit history are still available.</translation>
     </message>
 </context>
 <context>

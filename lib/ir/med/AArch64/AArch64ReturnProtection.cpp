@@ -492,6 +492,10 @@ public:
       for (const auto &Arg : Call.Args)
         if (Removed.count(key(Arg)) || EscapesSlot(Arg))
           return std::nullopt;
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Phi : Block.Phis)
+        if (Removed.count(key(Phi.Output)))
+          Result.Phis.insert(&Phi);
     return Result;
   }
 };

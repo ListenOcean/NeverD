@@ -14,6 +14,7 @@
 #include <QCheckBox>
 #include <QDataStream>
 #include <QDialogButtonBox>
+#include <QDir>
 #include <QFile>
 #include <QInputDialog>
 #include <QJsonDocument>
@@ -58,6 +59,20 @@ QString fixture(const QTemporaryDir &Directory,
              ? Path
              : QString();
 }
+// Navigation and presentation cases need a stable user-owned entry before
+// the first view asks discovery for it. Function creation has separate tests.
+QString createdFunctionFixture(const QTemporaryDir &Directory,
+                               const QByteArray &Code) {
+  const QString Path = fixture(Directory, Code);
+  if (Path.isEmpty() || !QDir().mkpath(Path + ".neverd"))
+    return {};
+  QFile Functions(Path + ".neverd/functions.json");
+  const QByteArray State = R"json([{"addr":"0x400078","state":"created"}])json";
+  return Functions.open(QIODevice::WriteOnly) &&
+                 Functions.write(State) == State.size()
+             ? Path
+             : QString();
+}
 } // namespace
 
 class SourceVariableTypesTests : public QObject {
@@ -81,8 +96,9 @@ private slots:
   void immediateAndRegisterNavigation() {
     QFETCH(QString, Kind);
     QTemporaryDir Directory;
-    const auto Path =
-        fixture(Directory, QByteArray::fromHex("b82a00000089c183c007c3"));
+    const auto Path = createdFunctionFixture(
+        Directory, QByteArray::fromHex("b82a00000089c183c007c3"));
+    QVERIFY(!Path.isEmpty());
     Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
     McpConnectionManager Mcp;
     GuiSessionBroker Broker;
@@ -94,13 +110,6 @@ private slots:
     Window.show();
     Session.open(Path);
     QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
-    bool Created = false;
-    connect(&Session, &Session::message, this, [&](const QString &Text, int) {
-      if (Text.startsWith("Created a function"))
-        Created = true;
-    });
-    Session.createFunction(0x400078);
-    QTRY_VERIFY_WITH_TIMEOUT(Created, 30000);
     Window.disassembly()->navigate(0x40007D);
     QTRY_COMPARE_WITH_TIMEOUT(Window.disassembly()->currentItem(),
                               std::optional<Address>(0x40007D), 30000);
@@ -148,9 +157,19 @@ private slots:
   void dataPresentationDialogs() {
     QFETCH(QString, Kind);
     QTemporaryDir Directory;
-    const auto Path =
-        fixture(Directory, QByteArray::fromHex("554889e5b80b0000005dc3") +
-                               QByteArray(96, '\0'));
+    const auto Path = createdFunctionFixture(
+        Directory,
+        QByteArray::fromHex("554889e5b80b0000005dc3") + QByteArray(96, '\0'));
+    QVERIFY(!Path.isEmpty());
+    if (Kind == "alignment") {
+      // This dialog edits a chosen data item. A byte row gives the chosen
+      // address a stable boundary inside the automatically grouped padding.
+      QFile Item(Path + ".neverd/items.json");
+      const QByteArray Boundary =
+          R"json([{"addr":"0x4000a0","kind":"byte","size":1}])json";
+      QVERIFY(Item.open(QIODevice::WriteOnly));
+      QCOMPARE(Item.write(Boundary), Boundary.size());
+    }
     Session Session(QString::fromLocal8Bit(TEST_REAL_WORKER));
     McpConnectionManager Mcp;
     GuiSessionBroker Broker;
@@ -162,15 +181,6 @@ private slots:
     Window.show();
     Session.open(Path);
     QTRY_VERIFY_WITH_TIMEOUT(Session.loaded(), 30000);
-    // The minimal ELF fixture has no symbol table. Publish the function as
-    // user state so every analysis replica has the same code ownership.
-    bool Created = false;
-    connect(&Session, &Session::message, this, [&](const QString &Text, int) {
-      if (Text.startsWith("Created a function"))
-        Created = true;
-    });
-    Session.createFunction(0x400078);
-    QTRY_VERIFY_WITH_TIMEOUT(Created, 30000);
     bool Declared = false;
     Session.declareTypes("c", "enum GUI_FLAGS { GUI_READ = 1, GUI_WRITE = 2 };",
                          [&](const QJsonObject &) { Declared = true; });

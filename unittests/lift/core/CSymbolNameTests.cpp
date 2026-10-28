@@ -387,6 +387,25 @@ TEST(CSymbolNames, ANumberedDefinitionNamesItsSymbolAndItsCallsReachIt) {
   EXPECT_EQ(Source.find("helper_1200"), NotFound) << Source;
 }
 
+TEST(CSymbolNames, ACallToTheFirstOfSameNamedDefinitionsTakesItsPrototype) {
+  // The first static helper takes one argument, though its call collected
+  // three operands; the second helper holds the name's other definition.
+  HighFunc First = function("helper", 0x1100, {});
+  First.Params.push_back({"a0", NdType::makeInt(8, false)});
+  std::vector<ExprPtr> Operands;
+  for (uint64_t Value : {1, 2, 3})
+    Operands.push_back(HighExpr::makeConst(Value, 8));
+  const std::string Source = emitHighC(
+      {First, function("helper", 0x1200, {}),
+       function("main", 0x1300,
+                {callStatement("helper", 0x1100, std::move(Operands))})},
+      BinaryFormat::ELF, Arch::X64);
+  EXPECT_NE(lineAfter(Source, "/* helper */").find(" helper_2("), NotFound)
+      << Source;
+  EXPECT_NE(Source.find("helper(1);"), NotFound) << Source;
+  EXPECT_EQ(Source.find("helper(1, 2"), NotFound) << Source;
+}
+
 TEST(CSymbolNames, LLVMCDeclaresCxxImportsByMangledName) {
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Diagnostic;

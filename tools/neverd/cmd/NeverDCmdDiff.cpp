@@ -288,14 +288,16 @@ int runStructuralDiff() {
     const bool ReviewView = DiffList == "reviews";
     const bool FunctionInventory =
         DiffList == "all" || DiffList == "matched" || DiffList == "changed" ||
-        DiffList == "ambiguous" || DiffList == "unmatched";
+        DiffList == "uncertain" || DiffList == "ambiguous" ||
+        DiffList == "unmatched";
     if (!FunctionInventory && (DiffListSide.getNumOccurrences() ||
                                DiffListSearch.getNumOccurrences() ||
                                DiffListSort.getNumOccurrences() ||
                                DiffListDescending.getNumOccurrences() ||
                                DiffAmbiguousWith.getNumOccurrences()))
-      throw std::runtime_error("function inventory filters require --list "
-                               "all/matched/changed/ambiguous/unmatched");
+      throw std::runtime_error(
+          "function inventory filters require --list "
+          "all/matched/changed/uncertain/ambiguous/unmatched");
     if (!ReviewView && (DiffReviewCase.getNumOccurrences() ||
                         DiffReviewFunction.getNumOccurrences() ||
                         DiffReviewSide.getNumOccurrences() ||
@@ -466,6 +468,7 @@ int runStructuralDiff() {
     const auto &Counts = *Root.getObject("counts");
     bool Partial = Root.getString("state") != "complete" ||
                    Counts.getInteger("unmeasured").value_or(0) != 0 ||
+                   Counts.getInteger("reference_gap_pairs").value_or(0) != 0 ||
                    Counts.getInteger("incomplete_pairs").value_or(0) != 0;
     const uint64_t Changed = Counts.getInteger("changed").value_or(0);
     const uint64_t PairCount = Counts.getInteger("matches").value_or(0);
@@ -674,13 +677,15 @@ int runStructuralDiff() {
     std::string Human;
     llvm::raw_string_ostream HumanOutput(Human);
     if (!JSONOutput) {
-      HumanOutput << "A: " << DiffFileA.getValue()
-                  << "\nB: " << DiffFileB.getValue()
-                  << "\nState: " << Root.getString("state").value_or("unknown")
-                  << "\nMatched: " << PairCount << "  Changed: " << Changed
-                  << "  Unmatched/ambiguous: " << Unresolved << "\nSimilarity: "
-                  << Root.getNumber("similarity").value_or(0)
-                  << " (structural heuristic)\n";
+      HumanOutput
+          << "A: " << DiffFileA.getValue() << "\nB: " << DiffFileB.getValue()
+          << "\nState: " << Root.getString("state").value_or("unknown")
+          << "\nMatched: " << PairCount << "  Changed: " << Changed
+          << "  Uncertain: "
+          << Counts.getInteger("uncertain_without_observed_change").value_or(0)
+          << "  Unmatched/ambiguous: " << Unresolved
+          << "\nSimilarity: " << Root.getNumber("similarity").value_or(0)
+          << " (structural heuristic)\n";
       for (const auto &W : *Root.getArray("warnings"))
         HumanOutput << "Warning: " << W.getAsString().value_or("") << '\n';
       if (const auto *Regions = Root.getObject("regions");

@@ -227,8 +227,7 @@ void LowToMedConverter::runDce(MedFunc &Func) {
                              bool DirectCall) {
     for (int J = Before; J >= 0; --J) {
       const MedOp &Prev = Ops[static_cast<size_t>(J)];
-      if (Prev.Opcode == NdOp::CALL || Prev.Opcode == NdOp::INDIR_CALL ||
-          Prev.Opcode == NdOp::INTRINSIC)
+      if (endsCallArgumentSetup(Prev, /*RegistersOnly=*/true))
         break;
       if (Prev.Output.Kind == MedVar::Reg && Prev.Output.Size > 0 &&
           (TRI.isParamReg(Prev.Output.RegOff) ||
@@ -255,12 +254,14 @@ void LowToMedConverter::runDce(MedFunc &Func) {
   // Each call/return prefix is queried once per register. Only predecessor
   // block ends recur, so the shared set needs no record for each call site.
   llvm::DenseSet<std::pair<const MedBlock *, uint64_t>> ReachedEnds;
+  llvm::DenseSet<std::pair<const MedBlock *, uint64_t>> ReachedArgumentEnds;
   llvm::SmallVector<std::pair<const MedBlock *, int>> ReachingWorklist;
   // Keep the definition of register \p RegOff that reaches the point after
   // op \p Before of \p Start on every incoming path: the newest write there,
   // else the register's PHI, else what reaches the end of each predecessor.
-  auto seedReachingDef = [&](const MedBlock &Start, int Before,
-                             uint64_t RegOff) {
+  auto seedReachingDef = [&](const MedBlock &Start, int Before, uint64_t RegOff,
+                             bool Argument = false) {
+    auto &Completed = Argument ? ReachedArgumentEnds : ReachedEnds;
     ReachingWorklist.push_back({&Start, Before});
     std::set<std::pair<int, int>> Visited;
     while (!ReachingWorklist.empty()) {
@@ -268,14 +269,24 @@ void LowToMedConverter::runDce(MedFunc &Func) {
       ReachingWorklist.pop_back();
       if (UniqueBlockIds) {
         if (Last == static_cast<int>(Block->Ops.size()) - 1 &&
-            !ReachedEnds.insert({Block, RegOff}).second)
+            !Completed.insert({Block, RegOff}).second)
           continue;
       } else if (!Visited.insert({Block->Id, Last}).second) {
         continue;
       }
       bool Found = false;
       for (int J = Last; J >= 0; --J) {
-        const MedVar &Output = Block->Ops[static_cast<size_t>(J)].Output;
+        const MedOp &Op = Block->Ops[static_cast<size_t>(J)];
+        const MedVar &Output = Op.Output;
+        if (Argument && endsCallArgumentSetup(Op, /*RegistersOnly=*/true)) {
+          // The preceding call's explicit result can be passed on, but
+          // setup before a call or opaque intrinsic is no later argument.
+          if (Output.Kind == MedVar::Reg && Output.Size &&
+              Output.RegOff == RegOff)
+            MarkLive(Output);
+          Found = true;
+          break;
+        }
         if (Output.Kind != MedVar::Reg || Output.Size == 0 ||
             Output.RegOff != RegOff)
           continue;
@@ -329,6 +340,19 @@ void LowToMedConverter::runDce(MedFunc &Func) {
           Call.Inputs[0].isConst() &&
           !(Image && Image->findImportAt(Call.Inputs[0].ConstVal));
       seedParamWrites(Blk.Ops, static_cast<int>(I) - 1, DirectCall);
+      // Setup can dominate several branches before the call. Keeping only
+      // its immediate predecessor silently deletes these implicit inputs
+      // before ABI recovery has bound them. Reuse the per-register walk,
+      // stopping at each earlier call; its shared block-end cache bounds
+      // repeated queries to one visit per register and block.
+      if (Call.Opcode == NdOp::CALL || Call.Opcode == NdOp::INDIR_CALL ||
+          IsTail)
+        for (const auto &[Register, Ids] : RegOffVars)
+          if (TRI.isParamReg(Register) || TRI.isVectorReg(Register) ||
+              (DirectCall &&
+               llvm::is_contained(AlternateArgumentRegisters, Register)))
+            seedReachingDef(Blk, static_cast<int>(I) - 1, Register,
+                            /*Argument=*/true);
       // IP-map / EH splits often isolate the CALL. `lea r8; mov edx; lea rcx`
       // then sit in the predecessor and must stay live as call setup.  A
       // conditional choice between two calls does the same: each arm may add

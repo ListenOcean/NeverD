@@ -221,6 +221,13 @@ jobs:
         env:
           PYTHON: ${{ matrix.python }}
 
+      - name: Install DIFF source-truth test dependency
+        if: runner.os == 'Linux'
+        shell: bash
+        run: '"$PYTHON" -m pip install --require-hashes -r scripts/requirements-binary-diff-bench.txt'
+        env:
+          PYTHON: ${{ matrix.python }}
+
       - name: Verify Debug and Release target flags
         shell: bash
         run: |
@@ -244,7 +251,10 @@ jobs:
             scripts.tests.test_benchmark_cpu \
             scripts.tests.test_benchmark_binary_diff \
             scripts.tests.test_benchmark_binary_diff_bindiff \
+            scripts.tests.test_benchmark_binary_diff_binexport \
+            scripts.tests.test_benchmark_binary_diff_corpus \
             scripts.tests.test_benchmark_binary_diff_external \
+            scripts.tests.test_benchmark_binary_diff_qualification \
             scripts.tests.test_radare2_cli_compare \
             scripts.tests.test_ida_source_order \
             scripts.tests.test_audit_evm_opcode_metadata \

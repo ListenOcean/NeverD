@@ -5896,6 +5896,18 @@ After:
       <source>Restoring comparison</source>
       <translation>비교 복원 중</translation>
     </message>
+    <message>
+        <source>Applying comparison edit</source>
+        <translation>비교 편집 적용 중</translation>
+    </message>
+    <message>
+        <source>Preparing comparison edit</source>
+        <translation>비교 편집 준비 중</translation>
+    </message>
+    <message>
+        <source>Updating affected functions</source>
+        <translation>영향을 받는 함수 업데이트 중</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonChangesDialog</name>
@@ -5910,10 +5922,10 @@ After:
     <message>
         <source>%1 ↔ %2 · %3 · %4 matching / %5 retained observations
 Native rows %6 / %7; coverage %8; ambiguous associations %9. SSA: primary %10; secondary %11.
-Boundaries: primary %12; secondary %13.</source>
+Boundaries: primary %12; secondary %13. Reference identities: %14.</source>
         <translation>%1 ↔ %2 · %3 · 일치 %4 / 유지된 관찰 %5개
 네이티브 행 %6 / %7; 적용 범위 %8; 모호한 연결 %9개. SSA: 기본 %10; 보조 %11.
-경계: 기본 %12; 보조 %13.</translation>
+경계: 기본 %12; 보조 %13. 참조 식별 정보: %14.</translation>
     </message>
     <message>
         <source>; indexing incomplete</source>
@@ -6074,6 +6086,14 @@ Boundaries: primary %12; secondary %13.</source>
     <message>
         <source>unknown input</source>
         <translation>알 수 없는 입력</translation>
+    </message>
+    <message>
+        <source>compared</source>
+        <translation>비교됨</translation>
+    </message>
+    <message>
+        <source>unresolved</source>
+        <translation>미확인</translation>
     </message>
 </context>
 <context>
@@ -6282,8 +6302,8 @@ Structural correspondence does not establish semantic equivalence or patch prese
         <translation>%1 %2  ↔  %3 %4</translation>
     </message>
     <message>
-        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete</source>
-        <translation>일치 %1개  ·  변경 %2개  ·  모호 %3개  ·  불일치 %4 / %5개  ·  불완전 %6 / %7개</translation>
+        <source>%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / %5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain</source>
+        <translation>일치 %1개  ·  변경 %2개  ·  모호 %3개  ·  불일치 %4 / %5개  ·  불완전 %6 / %7개  ·  불확실 %8</translation>
     </message>
     <message>
         <source>All functions</source>
@@ -6740,6 +6760,16 @@ Secondary name: %2</source>
 
 주 측 이름: %1
 보조 측 이름: %2</translation>
+    </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>불확실</translation>
+    </message>
+    <message>
+        <source>
+Reference identities: unresolved. Some call or data targets cannot be compared. This alone does not establish a change.</source>
+        <translation>
+참조 식별 정보: 미확인. 일부 호출 또는 데이터 대상을 비교할 수 없습니다. 이 사실만으로 변경이 발생했다고 판단할 수는 없습니다.</translation>
     </message>
 </context>
 <context>
@@ -7733,6 +7763,10 @@ Every use of a projected parameter reads the same low bits. Whole-function behav
         <source>Counterpart: %1</source>
         <translation>대응 함수: %1</translation>
     </message>
+    <message>
+        <source>Uncertain</source>
+        <translation>불확실</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonRegionsDialog</name>
@@ -8099,6 +8133,10 @@ Supersedes: %11</source>
     <message>
       <source>Could not restore the comparison. Your previous comparison is still available. %1</source>
       <translation>비교를 복원할 수 없습니다. 이전 비교를 계속 사용할 수 있습니다. %1</translation>
+    </message>
+    <message>
+        <source>Edit stopped. Your previous comparison and edit history are still available.</source>
+        <translation>편집이 중지되었습니다. 이전 비교 결과와 편집 기록은 계속 사용할 수 있습니다.</translation>
     </message>
 </context>
 <context>

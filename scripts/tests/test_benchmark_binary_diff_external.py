@@ -8,6 +8,7 @@ import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
 import unittest
 from unittest import mock
 
@@ -70,6 +71,7 @@ class NativeReceiptTests(unittest.TestCase):
         value = self.native()
         for change in ({"complete": False}, {"schema": "unknown"},
                        {"input_sha256": list(reversed(value["input_sha256"]))},
+                       {"worker_errors": [{"thread": "Loop count", "error": "database or disk is full"}]},
                        {"diaphora_version": "unknown"}):
             with self.subTest(change=change), self.assertRaises(ValueError):
                 self.read_native(value | change)
@@ -188,7 +190,7 @@ class NativeReceiptTests(unittest.TestCase):
                 "diaphora_ida": mock.Mock(CIDABinDiff=mock.Mock(return_value=exporter)),
                 "ida_auto": mock.Mock(auto_wait=mock.Mock(return_value=True)),
                 "ida_hexrays": mock.Mock(), "ida_kernwin": mock.Mock(get_kernel_version=lambda: "9.4"),
-                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0]))),
+                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0])), get_imagebase=lambda: 0),
                 "ida_pro": mock.Mock(qexit=mock.Mock(side_effect=SystemExit(1)))}
         env = {"NEVERD_BENCH_DIAPHORA_MODE": "export", "NEVERD_BENCH_DIAPHORA_OUTPUT": str(output),
                "NEVERD_BENCH_DIAPHORA_SOURCE": str(self.root),
@@ -235,7 +237,7 @@ class NativeReceiptTests(unittest.TestCase):
                 "diaphora_ida": mock.Mock(CIDABinDiff=mock.Mock(return_value=exporter)),
                 "ida_auto": mock.Mock(auto_wait=lambda: True), "ida_hexrays": None,
                 "ida_kernwin": mock.Mock(get_kernel_version=lambda: "9.4", user_cancelled=lambda: False),
-                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0]))),
+                "ida_nalt": mock.Mock(retrieve_input_file_sha256=lambda: bytes.fromhex(bench.digest(self.inputs[0])), get_imagebase=lambda: 0),
                 "ida_pro": mock.Mock(qexit=mock.Mock(side_effect=SystemExit(0)))}
         env = {"NEVERD_BENCH_DIAPHORA_MODE": "export", "NEVERD_BENCH_DIAPHORA_OUTPUT": str(output),
                "NEVERD_BENCH_DIAPHORA_SOURCE": str(self.root),
@@ -248,6 +250,49 @@ class NativeReceiptTests(unittest.TestCase):
         self.assertTrue(bench.load(Path(str(output) + ".json"))["complete"])
         self.assertFalse(exporter.use_decompiler)
         self.assertFalse(exporter.export_microcode)
+
+    def test_diaphora_worker_failure_cannot_save_a_success_result(self):
+        self.native()
+        script = Path(__file__).resolve().parents[2] / "tools/neverd-bench/run_diaphora.py"
+        for side in ("primary", "secondary"):
+            shutil.copyfile(self.root / (side + ".json"), self.root / (side + ".sqlite.json"))
+        for failed in (True, False):
+            with self.subTest(failed=failed):
+                output = self.root / ("thread-failed.diaphora" if failed else "thread-ok.diaphora")
+                matcher = mock.Mock()
+                def worker():
+                    if failed:
+                        raise sqlite3.OperationalError("database or disk is full")
+                def compare(_):
+                    thread = threading.Thread(target=worker, name="Loop count")
+                    thread.start()
+                    thread.join()
+                    return True
+                matcher.diff.side_effect = compare
+                matcher.save_results.side_effect = lambda path: Path(path).write_bytes(b"complete result")
+                fake = mock.Mock(VERSION_VALUE="3.4", CBinDiff=mock.Mock(return_value=matcher))
+                env = {"NEVERD_BENCH_DIAPHORA_MODE": "match", "NEVERD_BENCH_DIAPHORA_OUTPUT": str(output),
+                       "NEVERD_BENCH_DIAPHORA_SOURCE": str(self.root),
+                       "NEVERD_BENCH_DIAPHORA_PRIMARY": str(self.root / "primary.sqlite"),
+                       "NEVERD_BENCH_DIAPHORA_SECONDARY": str(self.root / "secondary.sqlite")}
+                original_hook = threading.excepthook
+                with mock.patch.dict(sys.modules, {"diaphora": fake}), mock.patch.dict(os.environ, env), \
+                        mock.patch.object(sys, "path", list(sys.path)), self.assertRaises(SystemExit) as stop:
+                    runpy.run_path(str(script))
+                self.assertIs(threading.excepthook, original_hook)
+                self.assertEqual(stop.exception.code, 1 if failed else 0)
+                receipt = bench.load(Path(str(output) + ".json"))
+                self.assertEqual(receipt["complete"], not failed)
+                matcher.db_close.assert_called_once()
+                if failed:
+                    matcher.save_results.assert_not_called()
+                    self.assertFalse(output.exists())
+                    self.assertEqual(receipt["worker_errors"][0]["thread"], "Loop count")
+                    self.assertIn("database or disk is full", receipt["worker_errors"][0]["error"])
+                    self.assertIn("worker failed", receipt["error"])
+                else:
+                    matcher.save_results.assert_called_once_with(str(output))
+                    self.assertEqual(receipt["worker_errors"], [])
 
     @unittest.skipUnless(sys.platform.startswith("linux"), "Linux external runner")
     def test_zero_exit_without_receipt_and_cancellation_remain_incomplete(self):

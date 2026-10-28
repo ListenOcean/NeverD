@@ -49,6 +49,7 @@ inline constexpr Intrinsic X86SystemStateNativeInventory[] = {
     Intrinsic::Clac,
     Intrinsic::Stac,
     Intrinsic::Clzero,
+    Intrinsic::X86Skinit,
     Intrinsic::X86ClearTaskSwitched,
     Intrinsic::X86WriteMsrNonSerializing,
     Intrinsic::X86ReadMsrList,

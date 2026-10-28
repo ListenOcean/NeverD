@@ -1062,11 +1062,13 @@ TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
       EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
       const std::string Oracle = R"(
 extern _Noreturn void _Exit(int);
-#define SYMBOL_PREFIX_(prefix) #prefix
-#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
-_Noreturn uint64_t stop_provider(void)
-    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "abort");
-_Noreturn uint64_t stop_provider(void) { _Exit(0); }
+/* A recognized libc call uses the host C name; an address-only target keeps
+   the PE symbol. Darwin needs both spellings because C names gain an _. */
+_Noreturn void abort(void) { _Exit(0); }
+#if defined(__APPLE__)
+_Noreturn void raw_stop_provider(void) __asm__("abort");
+_Noreturn void raw_stop_provider(void) { _Exit(0); }
+#endif
 int main(void) {
   if (loaded_noreturn(0) != 37) return 1;
   loaded_noreturn(1);
@@ -1284,6 +1286,8 @@ TEST(Win64CallContract, AddressOnlyCallbackConvertsToItsKnownParameterType) {
   llvm::raw_string_ostream Output(Source);
   ASSERT_TRUE(HighCEmitter().emit({Caller}, Output, Options, &Debug));
   const std::string Oracle = R"(
+/* Match the emitted PE symbol, including on hosts with a C label prefix. */
+uint64_t callback_provider(uint64_t value) __asm__("callback_provider");
 uint64_t callback_provider(uint64_t value) { return value ^ UINT64_C(0xFEDCBA9876543210); }
 uint64_t apply_callback(uint64_t (*callback)(uint64_t)) { return callback(37); }
 int main(void) { return invoke_typed_callback() != (37 ^ UINT64_C(0xFEDCBA9876543210)); }

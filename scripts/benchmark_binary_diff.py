@@ -20,13 +20,19 @@ import subprocess
 import sys
 import time
 
+if __package__:
+    from . import benchmark_binary_diff_binexport as binexport
+else:
+    import benchmark_binary_diff_binexport as binexport
 
 CORPUS_SCHEMA = "neverd.benchmark.diff.corpus.v1"
+PARTIAL_CORPUS_SCHEMA = "neverd.benchmark.diff.corpus.v2"
 RUN_SCHEMA = "neverd.benchmark.diff.run.v1"
 RESULT_SCHEMA = "neverd.benchmark.diff.result.v1"
 DEFAULT_TIMEOUT_SECONDS = 180.0
 HASH_BLOCK_BYTES = 1024 * 1024
 ADDRESS_BITS = 64
+EVALUATOR_SHA256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
 
 
 def require(condition: bool, message: str) -> None:
@@ -91,7 +97,8 @@ def truth_pairs(rows: list[dict]) -> set[tuple[int, int]]:
 
 
 def corpus_cases(corpus: dict) -> list[dict]:
-    require(corpus["schema"] == CORPUS_SCHEMA, "unsupported corpus schema")
+    require(corpus["schema"] in (CORPUS_SCHEMA, PARTIAL_CORPUS_SCHEMA),
+            "unsupported corpus schema")
     cases = corpus["cases"]
     require(isinstance(cases, list) and bool(cases), "corpus must contain cases")
     identities = set()
@@ -102,8 +109,21 @@ def corpus_cases(corpus: dict) -> list[dict]:
                 "case identity must be a single portable directory name")
         require(identity not in identities, "case identities must be unique")
         identities.add(identity)
-        require(case["truth_complete"] is True,
-                "this evaluator requires complete function truth")
+        if corpus["schema"] == CORPUS_SCHEMA:
+            require(case["truth_complete"] is True,
+                    "this evaluator requires complete function truth")
+        else:
+            require(case["truth_complete"] is False,
+                    "v2 requires explicitly partial function truth")
+            require(case["truth_kind"] == "unique-source-bodies-v1",
+                    "unsupported partial truth contract")
+            require(isinstance(case["truth_artifacts"], list) and
+                    bool(case["truth_artifacts"]), "partial truth requires evidence")
+            for side in ("primary", "secondary"):
+                address(case[side]["image_base"])
+            require(all(row["primary"] is not None and row["secondary"] is not None
+                        for row in case["truth"]),
+                    "partial source truth cannot infer added or removed functions")
         truth_pairs(case["truth"])
     return cases
 
@@ -118,9 +138,41 @@ def score(expected: set[tuple[int, int]], observed: list[tuple[int, int]]) -> di
         "correct": len(correct), "wrong": len(wrong), "missed": len(missed),
         "precision": len(correct) / len(actual) if actual else None,
         "recall": len(correct) / len(expected) if expected else None,
+        "f1": 2 * len(correct) / (len(actual) + len(expected))
+        if actual or expected else None,
         "wrong_pairs": encode(wrong), "missed_pairs": encode(missed),
         "exact_mapping": not wrong and not missed,
     }
+
+
+def score_partial(expected: set[tuple[int, int]], observed: list[tuple[int, int]]) -> dict:
+    """Judge known endpoints only; neither unlabelled endpoint implies an error."""
+    left = {a for a, _ in expected}
+    right = {b for _, b in expected}
+    actual = set(observed)
+    scored = {(a, b) for a, b in actual if a in left or b in right}
+    unscored = actual - scored
+    result = score(expected, list(scored))
+    result.update({
+        "truth_complete": False, "accepted_pairs": len(actual),
+        "scored_accepted_pairs": len(scored), "unscored": len(unscored),
+        "unscored_pairs": [[hex(a), hex(b)] for a, b in sorted(unscored)],
+        "scored_accepted_fraction": len(scored) / len(actual) if actual else None,
+        "duplicate_evidence_rows": len(observed) - len(actual),
+        "scored_mapping_exact": result["exact_mapping"], "exact_mapping": None,
+        "precision_scope": "accepted pairs with at least one labelled endpoint",
+    })
+    return result
+
+
+def mapping_passed(result: dict) -> bool:
+    metrics = result.get("metrics", {})
+    return metrics.get("scored_mapping_exact", metrics.get("exact_mapping")) is True
+
+
+def metric_summary(result: dict) -> dict:
+    return {key: value for key, value in result.get("metrics", result).items()
+            if not isinstance(value, (list, dict))}
 
 
 def checked_diaphora_export(receipt: Path, database: Path, source: Path) -> dict:
@@ -149,6 +201,7 @@ def read_diaphora_native(path: Path, inputs: list[Path]) -> list[tuple[int, int]
     receipt = load(path)
     require(receipt["schema"] == "neverd.benchmark.diaphora-match.v1" and
             receipt["complete"] is True, "Diaphora matching did not complete")
+    require(receipt.get("worker_errors", []) == [], "Diaphora heuristic worker failed")
     require(receipt["input_sha256"] == [digest(source) for source in inputs],
             "Diaphora matching input direction differs")
     exports = []
@@ -178,7 +231,7 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
         return read_diaphora_native(path, inputs)
     if kind == "neverd":
         report = load(path)
-        require(report["schema"] == "neverd.bindiff" and report["schema_version"] == 3,
+        require(report["schema"] == "neverd.bindiff" and report["schema_version"] in (3, 4),
                 "unsupported NeverD report schema")
         require(report["state"] == "complete", "NeverD comparison did not complete")
         for side, source in zip(("primary", "secondary"), inputs):
@@ -197,9 +250,13 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
                 require(report[key] == digest(source), "Ghidra input identity does not match the corpus")
         rows = [row for group in report["match_sets"] for row in group["matches"]
                 if row["type"] == "Function" and row["status"] == "ACCEPTED"]
-        require(all(row["source_space"] == row["destination_space"] == "ram" for row in rows),
+        require(all((row["source_space"], row["destination_space"]) in
+                    (("ram", "ram"), ("EXTERNAL", "EXTERNAL")) for row in rows),
                 "Ghidra address-space mapping needs an explicit adapter")
-        return [(address(row["source"], 10), address(row["destination"], 10)) for row in rows]
+        # EXTERNAL addresses name Ghidra's synthetic imports, not bodies in
+        # the input image. Keep the native rows but do not turn them into RVAs.
+        return [(address(row["source"], 10), address(row["destination"], 10))
+                for row in rows if row["source_space"] == "ram"]
     with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as database:
         if kind == "bindiff":
             identities = database.execute(
@@ -223,36 +280,127 @@ def read_pairs(kind: str, path: Path, inputs: list[Path]) -> list[tuple[int, int
                 if category in ("best", "partial")]
 
 
+def analysis_spaces(run: dict, result: Path, root: Path, inputs: list[Path]) -> list[dict]:
+    """Read native analysis bases, never infer a relocation from scored matches."""
+    kind = run["format"]
+    if kind == "neverd":
+        report = load(result)
+        return [{"image_base": address(report[side]["image_base"]),
+                 "entries": [address(row[0]) for row in report["functions"][side]]}
+                for side in ("primary", "secondary")]
+    if kind == "ghidra-vt":
+        report = load(result)
+        return [{"image_base": address(report[side + "_image_base"], 10),
+                 "entries": [address(entry, 10) for entry in report[side + "_function_entries"]]}
+                for side in ("source", "destination")]
+    if kind == "bindiff":
+        require(len(run["analyses"]) == 2, "BinDiff requires two retained analysis receipts")
+        spaces = []
+        for item, source in zip(run["analyses"], inputs):
+            receipt = load(checked_artifact(item["receipt"], root))
+            graph = checked_artifact(item["export"], root)
+            require(receipt["schema"] == "neverd.benchmark.binexport.v1" and
+                    receipt["complete"] is True and receipt["input_sha256"] == digest(source) and
+                    receipt["export_sha256"] == digest(graph), "BinDiff analysis binding differs")
+            native = binexport.inventory(graph)
+            identity = native.pop("executable_id")
+            require(len(identity) in (40, 64) and
+                    identity.lower() == digest(source, "sha1" if len(identity) == 40 else "sha256"),
+                    "BinExport input identity differs")
+            spaces.append({"image_base": address(receipt["image_base"]), **native,
+                           "ida_function_entries": len(receipt["function_entries"])})
+        return spaces
+    require(kind == "diaphora-native", "partial source scoring requires native analysis address evidence")
+    receipt = load(result)
+    spaces = []
+    for side, source in zip(("primary", "secondary"), inputs):
+        item = receipt[side]
+        database = checked_artifact(item["database"], result.parent)
+        declaration = checked_artifact(item["export_receipt"], result.parent)
+        export = checked_diaphora_export(declaration, database, source)
+        with closing(sqlite3.connect(database.as_uri() + "?mode=ro", uri=True)) as connection:
+            entries = [address(row[0], 10) for row in connection.execute("SELECT address FROM functions")]
+        spaces.append({"image_base": address(export["image_base"]), "entries": entries})
+    return spaces
+
+
+def normalize_pairs(pairs: list[tuple[int, int]], spaces: list[dict], case: dict) -> tuple[list, list]:
+    require(len(spaces) == 2, "two native address spaces are required")
+    bases = [address(case[side]["image_base"]) for side in ("primary", "secondary")]
+
+    def translate(value, side):
+        require(value >= spaces[side]["image_base"], "function lies below its native image base")
+        return address(value - spaces[side]["image_base"] + bases[side])
+
+    inventories = [{translate(value, side) for value in spaces[side]["entries"]} for side in range(2)]
+    normalized = [(translate(a, 0), translate(b, 1)) for a, b in pairs]
+    require(all(a in inventories[0] and b in inventories[1] for a, b in normalized),
+            "accepted association is absent from its native function inventory")
+    coverage = []
+    for side, key in enumerate(("primary", "secondary")):
+        labelled = {address(row[key]) for row in case["truth"]}
+        discovered = inventories[side] & labelled
+        coverage.append({"native_image_base": hex(spaces[side]["image_base"]),
+                         "corpus_image_base": hex(bases[side]),
+                         "discovered_functions": len(inventories[side]), "labelled_functions": len(labelled),
+                         "inventory_source": spaces[side].get("inventory_source", "native-function-inventory"),
+                         "vertex_types": spaces[side].get("vertex_types"),
+                         "ida_function_entries": spaces[side].get("ida_function_entries"),
+                         "discovered_labelled_functions": len(discovered),
+                         "missing_labelled_functions": [hex(value) for value in sorted(labelled - discovered)]})
+    return normalized, coverage
+
+
 def evaluate(corpus_path: Path, run_path: Path) -> dict:
     corpus, run = load(corpus_path), load(run_path)
+    for item in corpus.get("preparation_artifacts", []):
+        checked_artifact(item, corpus_path.parent)
     require(run["schema"] == RUN_SCHEMA, "unsupported run schema")
     cases = [case for case in corpus_cases(corpus) if case["id"] == run["case"]]
     require(len(cases) == 1, "run must identify exactly one corpus case")
     case = cases[0]
     expected = truth_pairs(case["truth"])
+    for item in case.get("truth_artifacts", []):
+        checked_artifact(item, corpus_path.parent)
     inputs = [checked_artifact(case[side], corpus_path.parent) for side in ("primary", "secondary")]
     require(run["input_sha256"] == [digest(path) for path in inputs],
             "run input identities or comparison direction do not match the corpus")
     require(run["completed"] is True, "tool run did not complete")
     require(run["track"] in ("end-to-end", "common-input"), "unknown comparison track")
+    if not case["truth_complete"]:
+        require(run["track"] == "end-to-end",
+                "partial source corpus has no qualified common-input representation")
     require(bool(run["tool"]["name"]) and bool(run["tool"]["version"]), "tool version is required")
     result = checked_artifact(run["result"], run_path.parent)
     for item in run["artifacts"]:
         checked_artifact(item, run_path.parent)
     pairs = read_pairs(run["format"], result, inputs)
+    coverage = None
+    if not case["truth_complete"]:
+        pairs, coverage = normalize_pairs(pairs, analysis_spaces(run, result, run_path.parent, inputs), case)
     # Detect mutations during evaluation as well as stale receipts.
     for side in ("primary", "secondary"):
         checked_artifact(case[side], corpus_path.parent)
     checked_artifact(run["result"], run_path.parent)
+    native = load(result) if run["format"] == "neverd" else None
     return {
         "schema": RESULT_SCHEMA, "case": case["id"], "category": case["category"],
         "tool": run["tool"], "track": run["track"], "format": run["format"],
         "corpus_sha256": digest(corpus_path), "run_sha256": digest(run_path),
-        "evaluator_sha256": digest(Path(__file__)),
+        "evaluator_sha256": EVALUATOR_SHA256,
+        "evaluator_components": {"benchmark_binary_diff.py": EVALUATOR_SHA256,
+                                 "benchmark_binary_diff_binexport.py": binexport.READER_SHA256},
         "result_sha256": run["result"]["sha256"], "input_sha256": run["input_sha256"],
         "input_binding": "native-and-receipt" if run["format"] in ("neverd", "bindiff", "ghidra-vt", "diaphora-native") else "receipt",
-        "metrics": score(expected, pairs),
-        "scope": "Owned development diagnostics; no held-out or timing qualification.",
+        "metrics": score(expected, pairs) if case["truth_complete"] else score_partial(expected, pairs),
+        "analysis_coverage": coverage,
+        "native_coverage": native.get("coverage") if native else None,
+        "native_discovery_complete": ([native[side].get("discovery_complete")
+                                       for side in ("primary", "secondary")] if native else None),
+        "completion_scope": run.get("completion_scope", "function-mapping"),
+        "scope": ("Complete authored function truth." if case["truth_complete"] else
+                  "Partial source-body correspondence; unlabelled pairs are unscored.") +
+                 " No held-out, semantic-equivalence or timing qualification.",
         "metric_note": "A wrong pair can also miss a true pair; wrong and missed are not disjoint function counts.",
     }
 
@@ -374,6 +522,10 @@ def generate(args: argparse.Namespace) -> int:
 
 
 def run_neverd(args: argparse.Namespace) -> int:
+    if __package__:
+        from . import benchmark_binary_diff_external as external
+    else:
+        import benchmark_binary_diff_external as external
     corpus_path = args.corpus.resolve()
     corpus = load(corpus_path)
     cases = corpus_cases(corpus)
@@ -382,9 +534,16 @@ def run_neverd(args: argparse.Namespace) -> int:
             "run requires Linux and an explicit libneverd.so runtime")
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)
-    env = dict(os.environ, LD_LIBRARY_PATH=str(library.parent), NEVERD_THREADS=str(args.threads))
-    version = subprocess.check_output([str(executable), "--version"], env=env, text=True, stderr=subprocess.STDOUT).strip()
-    runtime = [artifact(path, output) for path in (executable, library)]
+    env = dict(os.environ, LD_LIBRARY_PATH=str(library.parent), NEVERD_THREADS=str(args.threads),
+               DEBUGINFOD_URLS="")
+    version_stage = external.stage(output, "version", [str(executable), "--version"], env, args.timeout)
+    require(version_stage["error"] is None and version_stage["exit"] == 0,
+            "runtime version probe failed; see version.json")
+    version = (output / "version.log").read_text(encoding="utf-8").strip()
+    require(bool(version), "runtime version probe returned no version")
+    runtime_files = (executable, library, Path(__file__).resolve(),
+                     Path(binexport.__file__).resolve(), Path(external.__file__).resolve())
+    runtime = [artifact(path, output) for path in runtime_files]
     results = []
     for case in cases:
         inputs = [checked_artifact(case[side], corpus_path.parent) for side in ("primary", "secondary")]
@@ -393,20 +552,32 @@ def run_neverd(args: argparse.Namespace) -> int:
         report = folder / "result.nddiff"
         command = [str(executable), "diff", "--structural", "-a", str(inputs[0]), "-b", str(inputs[1]),
                    "--save", str(report), "--json"]
-        start = time.monotonic()
-        with (folder / "stdout.log").open("w") as stdout, (folder / "stderr.log").open("w") as stderr:
-            try:
-                exit_code = subprocess.run(command, env=env, stdout=stdout, stderr=stderr,
-                                           timeout=args.timeout).returncode
-                error = None
-            except subprocess.TimeoutExpired:
-                exit_code, error = None, "timeout"
+        cancelled = False
+        try:
+            outcome = external.stage(folder, "compare", command, env, args.timeout)
+        except KeyboardInterrupt:
+            outcome = load(folder / "compare.json")
+            cancelled = True
+        exit_code, error = outcome["exit"], outcome["error"]
+        native = None
+        try:
+            if report.is_file():
+                native = load(report)
+                require(isinstance(native, dict), "native report must be an object")
+        except (ValueError, OSError) as failure:
+            error = f"invalid native report: {failure}" if error is None else f"{error}; invalid native report: {failure}"
+            native = None
+        completed = (error is None and exit_code in (0, 2, 3) and native is not None and
+                     native.get("state") == "complete")
         run = {"schema": RUN_SCHEMA, "case": case["id"], "format": "neverd", "track": "end-to-end",
-               "runner_sha256": digest(Path(__file__)),
+               "runner_sha256": EVALUATOR_SHA256,
                "tool": {"name": "NeverD", "version": version}, "input_sha256": [item["sha256"] for item in (case["primary"], case["secondary"])],
-               "command": command, "configuration": {"threads": args.threads}, "exit": exit_code,
-               "wall_seconds": time.monotonic() - start, "completed": exit_code in (0, 2) and report.is_file(),
-               "error": error, "artifacts": [artifact(path, folder) for path in (executable, library)],
+               "command": command, "configuration": {"threads": args.threads,
+                                                        "stage_timeout_seconds": args.timeout}, "exit": exit_code,
+               "wall_seconds": outcome["wall_seconds"], "resources": outcome["resources"],
+               "completed": completed, "completion_scope": "function-mapping",
+               "native_coverage": native.get("coverage") if native else None,
+               "error": error, "artifacts": [artifact(path, folder) for path in runtime_files],
                "result": artifact(report, folder) if report.exists() else None}
         run_path = folder / "run.json"
         save(run_path, run)
@@ -416,11 +587,15 @@ def run_neverd(args: argparse.Namespace) -> int:
             result = {"case": case["id"], "error": str(failure)}
         save(folder / "evaluation.json", result)
         results.append(result)
-        print(case["id"], result.get("metrics", result.get("error")), flush=True)
+        print(case["id"], metric_summary(result), flush=True)
+        if cancelled:
+            raise KeyboardInterrupt
     for item in runtime:
         checked_artifact(item, output)
     save(output / "results.json", {"schema": RESULT_SCHEMA, "cases": results, "runtime": runtime})
-    return 0 if all(result.get("metrics", {}).get("exact_mapping", False) for result in results) else 1
+    if any("metrics" not in result for result in results):
+        return 2
+    return 0 if all(mapping_passed(result) for result in results) else 1
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -448,7 +623,10 @@ def main(argv: list[str] | None = None) -> int:
         result = evaluate(args.corpus.resolve(), args.run.resolve())
         save(args.output, result)
         print(json.dumps(result["metrics"], sort_keys=True))
-        return 0 if result["metrics"]["exact_mapping"] else 1
+        return 0 if mapping_passed(result) else 1
+    except KeyboardInterrupt:
+        print("binary diff benchmark: cancelled", file=sys.stderr)
+        return 130
     except (ValueError, KeyError, TypeError, OSError, sqlite3.Error, subprocess.SubprocessError) as error:
         print(f"binary diff benchmark: {error}", file=sys.stderr)
         return 2

@@ -27,7 +27,9 @@
 #include "neverd/backend/ParameterSites.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/MsvcCallee.h"
+#include "neverd/backend/c/render/AArch64/AArch64ReturnProtectionC.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64ReturnProtection.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/backend/llvm/SourceFrameBytes.h"
@@ -55,6 +57,7 @@
 #include "llvm/IR/Intrinsics.h"
 #include "llvm/IR/Metadata.h"
 #include "llvm/Support/ErrorHandling.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/TargetParser/Triple.h"
 
@@ -9802,6 +9805,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
     SignatureOS << ")";
     DefinitionDeclarations[&Fn] = Signature;
+    if (const auto Protection = getLLVMAArch64ReturnProtection(Fn)) {
+      if (Opts.TheArch != Arch::AArch64)
+        throw std::invalid_argument(kReturnProtectionCRequiresAArch64);
+      OS << llvm::formatv(kReturnProtectionCAttribute,
+                          aarch64ReturnProtectionCTarget(*Protection));
+    }
     OS << Signature << " {\n";
   } else {
     unsigned ParamIdx = 0;

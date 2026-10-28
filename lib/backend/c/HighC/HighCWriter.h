@@ -782,6 +782,8 @@ public:
   /// Peel zext/trunc around a named scalar or field load for x86 intrinsic
   /// snippets. Keep wraps on add/sub/mul.
   std::string intrinsicOperandStr(const HighExpr &E);
+  const HighExpr &intrinsicOperandExpr(const HighExpr &E) const;
+  std::vector<std::string> x86NativeMemoryArguments(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
   /// Where \p Bits come from, under views that keep at least the bytes of
@@ -983,6 +985,9 @@ public:
   /// x64 catch funclets receive the parent frame in rdx (`Param` id 1). After
   /// attach that param is not the parent's rdx argument.
   bool isCatchFuncletParentFrame(const MedVar &V) const;
+  /// Itanium landing pads and SEH scope bodies run in the printed function;
+  /// attached MSVC C++ funclets have their own parameters and return ABI.
+  bool exceptionClausesUseFunctionFrame() const;
   bool isRegistrationEstablisherFrame(const MedVar &V) const;
   const HighExpr *parentFrameStoredValue(const HighStmt &Stmt) const;
   std::optional<std::string> copyForwardSource(const HighExpr &E) const;

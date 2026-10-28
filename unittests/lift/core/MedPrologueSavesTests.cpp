@@ -9,6 +9,7 @@
 #include "neverd/Common.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedCallReturnReads.h"
 #include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/lift/X86/X86Regs.h"
@@ -20,6 +21,8 @@
 #include <cstdint>
 #include <initializer_list>
 #include <limits>
+#include <map>
+#include <string>
 #include <utility>
 #include <vector>
 
@@ -1492,6 +1495,296 @@ TEST(SourceCallReturnReads,
   EXPECT_TRUE(validateSourceCallReturnReads(observedCallSlot(),
                                             callSlotImage(0xe9), Error));
   EXPECT_TRUE(Error.empty());
+}
+
+TEST(SourceCallReturnReads, DeferredLoadsWaitForTheSettledObservation) {
+  auto Func = observedCallSlot();
+  Func.Blocks[0].Ops[5].OriginSeq = 7;
+  std::vector<MedCallReturnRead> Deferred;
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(
+      Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
+      nullptr, nullptr, &Deferred))
+      << Error;
+  ASSERT_EQ(Deferred.size(), 1u);
+  EXPECT_EQ(Deferred[0].Load, 0x100du);
+  EXPECT_EQ(Deferred[0].OriginSeq, 7);
+  EXPECT_NE(Deferred[0].Diagnostic.find("physical CALL return slot"),
+            std::string::npos);
+  // Other refusals do not wait.
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error, 0,
+                                             nullptr, nullptr, &Deferred));
+  EXPECT_NE(Error.find("work budget"), std::string::npos);
+  // The function returns the loaded value, so it is still refused, and the
+  // diagnostic names what observes it.
+  Func.CallReturnReads = {Deferred[0]};
+  EXPECT_FALSE(validateObservedCallReturnReads(Func, callSlotImage(), Error));
+  EXPECT_EQ(Error.rfind(Deferred[0].Diagnostic + "; ", 0), 0u) << Error;
+  EXPECT_NE(Error.find("the RETURN at 0x0 returns the value"),
+            std::string::npos)
+      << Error;
+}
+
+TEST(SourceCallReturnReads, EachDeferredLoadLeavesTheProofOnce) {
+  // Two loads after the CALL read its slot; one on the other path reads the
+  // same bytes after a store rewrote them. The proof records each of the two
+  // once, and what it then proves about the third stands.
+  auto Func = observedCallSlot();
+  auto &Entry = Func.Blocks[0];
+  const auto Store = Entry.Ops[3];
+  const auto Call = Entry.Ops[4];
+  auto Load = Entry.Ops[5];
+  Entry.Ops.resize(4);
+  Entry.Succs = {1, 2};
+  MedBlock Called, Rewritten;
+  Called.Id = 1;
+  Called.StartAddr = 0x1008;
+  Called.Preds = {0};
+  Called.Ops = {Call, Load};
+  Load.Output = temp(23);
+  Load.Addr = 0x1010;
+  Called.Ops.push_back(Load);
+  Called.Ops.push_back(op(NdOp::RETURN, none(), {temp(22)}));
+  Rewritten.Id = 2;
+  Rewritten.StartAddr = 0x1020;
+  Rewritten.Preds = {0};
+  Load.Output = temp(24);
+  Load.Addr = 0x1024;
+  Rewritten.Ops = {Store, Load, op(NdOp::RETURN, none(), {temp(24)})};
+  Func.Blocks.insert(Func.Blocks.end(), {Called, Rewritten});
+  std::string Error;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error));
+  EXPECT_NE(Error.find("load at 0x100D observes"), std::string::npos) << Error;
+  std::vector<MedCallReturnRead> Deferred;
+  EXPECT_TRUE(validateSourceCallReturnReads(
+      Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
+      nullptr, nullptr, &Deferred))
+      << Error;
+  std::vector<va_t> Loads;
+  for (const MedCallReturnRead &Read : Deferred)
+    Loads.push_back(Read.Load);
+  std::sort(Loads.begin(), Loads.end());
+  EXPECT_EQ(Loads, (std::vector<va_t>{0x100d, 0x1010}));
+  // Without the rewrite, the third is recorded as well.
+  Func.Blocks[2].Ops.erase(Func.Blocks[2].Ops.begin());
+  Func.Blocks[2].Ops.insert(Func.Blocks[2].Ops.begin(), Call);
+  Deferred.clear();
+  EXPECT_TRUE(validateSourceCallReturnReads(
+      Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
+      nullptr, nullptr, &Deferred))
+      << Error;
+  EXPECT_EQ(Deferred.size(), 3u);
+}
+
+/// GCC's `sub rsp, 8; push arg; call; pop rax; pop rdx` stack-argument
+/// cleanup in MedIR: the second pop reads padding an earlier CALL's return
+/// address was written to, into RDX, which only a join then carries on to a
+/// call that does not take it.
+MedFunc poppedArgumentPadding() {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.Name = "popped_padding";
+  Func.CC = CallingConv::SysV_AMD64;
+  Func.FrameSize = 40;
+  const auto RDX = [](int Version) { return reg(40, x86reg::RDX, Version); };
+  const auto RDI = [](int Version) { return reg(41, x86reg::RDI, Version); };
+  MedBlock Entry;
+  Entry.Id = 0;
+  Entry.StartAddr = Func.Entry;
+  Entry.Succs = {1};
+  Entry.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(32, 8)}),
+               op(NdOp::INT_SUB, temp(20), {sp(1), MedVar::makeConst(8, 8)}),
+               op(NdOp::CALL, temp(21), {MedVar::makeConst(0x2000, 8)}),
+               op(NdOp::LOAD, temp(22), {temp(20)}),
+               op(NdOp::COPY, RDX(1), {temp(22)}),
+               op(NdOp::BRANCH, none(), {MedVar::makeConst(0x1020, 8)})};
+  Entry.Ops[3].Addr = 0x1008;
+  Entry.Ops[4].Addr = 0x100d;
+  Entry.Ops[4].OriginSeq = 7;
+  Entry.Ops[5].Addr = 0x100d;
+  Entry.Ops[5].OriginSeq = 8;
+  MedBlock Join;
+  Join.Id = 1;
+  Join.StartAddr = 0x1020;
+  Join.Preds = {0};
+  PhiNode Carried;
+  Carried.Output = RDX(2);
+  Carried.Args = {{0, RDX(1)}};
+  Join.Phis.push_back(std::move(Carried));
+  Join.Ops = {op(NdOp::COPY, RDI(1), {MedVar::makeConst(5, 8)}),
+              op(NdOp::CALL, none(), {MedVar::makeConst(0x3000, 8), RDI(1)}),
+              op(NdOp::RETURN, none(), {})};
+  Join.Ops[1].Addr = 0x1028;
+  Func.Blocks = {std::move(Entry), std::move(Join)};
+  MedCallInfo Call;
+  Call.BlockId = 1;
+  Call.OpIdx = 1;
+  Call.TargetAddr = 0x3000;
+  Call.Args = {RDI(1)};
+  Func.CallInfos.push_back(std::move(Call));
+  Func.CallReturnReads = {{0x100d, 7, "observed padding"}};
+  return Func;
+}
+
+TEST(SourceCallReturnReads, ACleanupPopObservedByNothingIsNotRefused) {
+  auto Func = poppedArgumentPadding();
+  Func.CallReturnReads.clear();
+  std::string Error;
+  EXPECT_TRUE(validateSourceCallReturnReads(
+      Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
+      nullptr, nullptr, &Func.CallReturnReads))
+      << Error;
+  ASSERT_EQ(Func.CallReturnReads.size(), 1u);
+  EXPECT_TRUE(validateObservedCallReturnReads(Func, callSlotImage(), Error))
+      << Error;
+  EXPECT_TRUE(Error.empty());
+}
+
+TEST(SourceCallReturnReads, SettledReadersCallsAndReturnsDecideObservation) {
+  const auto RDX = [](int Version) { return reg(40, x86reg::RDX, Version); };
+  const uint32_t KeepsRDX = 1u << *gprFamilyOf(Arch::X64, x86reg::RDX);
+  for (unsigned Mode = 0; Mode != 21; ++Mode) {
+    SCOPED_TRACE(Mode);
+    auto Func = poppedArgumentPadding();
+    auto &Join = Func.Blocks[1];
+    auto &Call = Join.Ops[1];
+    bool Observed = false;
+    // What the diagnostic names as the observer.
+    std::string Because;
+    // What each callee of this run is passed, by entry, when known.
+    std::map<va_t, unsigned> Arity;
+    size_t Work = limits::ir::kSourceCallReturnReadWork;
+    switch (Mode) {
+    case 1: // the function returns what was loaded
+      Join.Ops[2].addInput(temp(22));
+      Observed = true;
+      break;
+    case 2: // the settled call passes it
+      Func.CallInfos[0].Args.push_back(RDX(2));
+      Observed = true;
+      Because = "the call at 0x1028 takes the value as an argument";
+      break;
+    case 3: // no settled arguments: the call may still read RDX
+      Func.CallInfos.clear();
+      Observed = true;
+      Because = "the call at 0x1028, whose arguments are not settled, may "
+                "read the value in ";
+      break;
+    case 4: // RDX survives the call, but a single result never reads it
+      Call.CallPreservedGPRs = KeepsRDX;
+      break;
+    case 5: // ... unless RDX is half of the returned pair
+      Call.CallPreservedGPRs = KeepsRDX;
+      Func.MultiReturn = {{x86reg::RAX, 8, false}, {x86reg::RDX, 8, false}};
+      Observed = true;
+      break;
+    case 6:  // the join's register is used before the call
+    case 17: // a copy of it that nothing reads only moves it
+      Join.Ops.insert(
+          Join.Ops.begin(),
+          Mode == 6
+              ? op(NdOp::INT_ADD, temp(23), {RDX(2), MedVar::makeConst(1, 8)})
+              : op(NdOp::COPY, reg(42, x86reg::RSI, 1), {RDX(2)}));
+      Func.CallInfos[0].OpIdx = 2;
+      Observed = Mode == 6;
+      break;
+    case 7: // no surviving operation performs the load
+      Func.Blocks[0].Ops[4].Dead = true;
+      break;
+    case 8: // an unfinished proof cannot clear the load
+      Work = 0;
+      Observed = true;
+      break;
+    case 9: // an exception may leave with RDX still holding the value
+      Join.ExceptionalSuccs.push_back(ExceptionalEdge{});
+      Observed = true;
+      Because = "an exception may leave 0x1020 with the value in ";
+      break;
+    case 10: // a complete overwrite ends RDX's copy before an unsettled call
+      Func.CallInfos.clear();
+      Join.Ops.insert(Join.Ops.begin(),
+                      op(NdOp::COPY, RDX(3), {MedVar::makeConst(0, 8)}));
+      break;
+    case 11: // a partial overwrite does not
+      Func.CallInfos.clear();
+      Join.Ops.insert(Join.Ops.begin(), op(NdOp::COPY, reg(43, x86reg::RDX, 4),
+                                           {MedVar::makeConst(0, 4)}));
+      Join.Ops[0].Output.Size = 4;
+      Observed = true;
+      break;
+    case 12: // System V publishes a summarized callee's registers instead
+      Func.CallInfos.clear();
+      Call.CalleeRegisterArgs = 1;
+      break;
+    case 13: // EDX only views the loaded bytes
+    case 14: // ... which an operation then uses
+      Func.Blocks[0].Ops.insert(Func.Blocks[0].Ops.begin() + 6,
+                                op(NdOp::SUBBYTES, reg(44, x86reg::RDX, 1),
+                                   {temp(22), MedVar::makeConst(0, 4)}));
+      Func.Blocks[0].Ops[6].Output.Size = 4;
+      if (Mode == 14) {
+        Func.Blocks[0].Ops.insert(
+            Func.Blocks[0].Ops.begin() + 7,
+            op(NdOp::INT_ADD, temp(23),
+               {Func.Blocks[0].Ops[6].Output, MedVar::makeConst(1, 4)}));
+        Func.Blocks[0].Ops[7].Addr = 0x100f;
+        Observed = true;
+        Because = "the operation at 0x100F uses the value";
+      }
+      break;
+    case 15: // another version of RDX is another value
+    case 16: // another variable over RDX's bytes may view it
+      Join.Ops.insert(Join.Ops.begin(),
+                      op(NdOp::STORE, none(),
+                         {Mode == 15 ? RDX(0) : reg(45, x86reg::RDX, 1),
+                          MedVar::makeConst(1, 8)}));
+      Join.Ops[0].Addr = 0x1022;
+      Func.CallInfos[0].OpIdx = 2;
+      Observed = Mode == 16;
+      if (Observed)
+        Because = "the operation at 0x1022 reads ";
+      break;
+    case 18: // a callee of this run taking two integer arguments: RDX is none
+    case 19: // ... or three: RDX, the third, is one
+    case 20: // a bound for another function says nothing of this callee
+      Func.CallInfos.clear();
+      Arity = {{Mode == 20 ? 0x4000 : 0x3000, Mode == 19 ? 3u : 2u}};
+      Observed = Mode != 18;
+      Because = Mode == 19 ? "the call at 0x1028 passes 3 integer arguments, "
+                             "the value in "
+                           : "the call at 0x1028, whose arguments are not "
+                             "settled, may read the value in ";
+      break;
+    default:
+      break;
+    }
+    std::string Error;
+    EXPECT_EQ(validateObservedCallReturnReads(Func, callSlotImage(), Error,
+                                              Work, &Arity),
+              !Observed)
+        << Error;
+    if (Observed) {
+      EXPECT_EQ(Error.rfind("observed padding; ", 0), 0u) << Error;
+      EXPECT_EQ(Error.find("work budget") != std::string::npos, Mode == 8)
+          << Error;
+      EXPECT_NE(Error.find(Because), std::string::npos) << Error;
+    }
+  }
+}
+
+TEST(SourceCallReturnReads, NarrowTargetsReturnTheSecondIntegerRegister) {
+  // RDX itself reaches the RETURN.
+  auto Func = poppedArgumentPadding();
+  Func.Blocks[1].Ops.erase(Func.Blocks[1].Ops.begin() + 1);
+  Func.CallInfos.clear();
+  auto Image = callSlotImage();
+  std::string Error;
+  // A 64-bit target returns a register pair only as MultiReturn.
+  EXPECT_TRUE(validateObservedCallReturnReads(Func, Image, Error)) << Error;
+  // An i386 register pair returns a 64-bit result in EDX:EAX.
+  Image.Arch = Arch::X86;
+  EXPECT_FALSE(validateObservedCallReturnReads(Func, Image, Error));
 }
 
 TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {

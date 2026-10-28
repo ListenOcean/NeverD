@@ -20,6 +20,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/debug/DebugContext.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -62,6 +63,10 @@ MedStackProjection medStackProjection(const PipelineOptions &Options) {
              : MedStackProjection::Machine;
 }
 
+bool refusalFailsRun(const PipelineOptions &Options) {
+  return !Options.OnlyFunctionEntries.empty() && !Options.OmitRefusedFunctions;
+}
+
 void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
                              MedStackProjection Projection,
@@ -71,10 +76,13 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
     return;
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
+  // Loads of CALL return slots wait for settled calls and returns
+  // (refuseObservedCallReturnReads); other refusals are final now.
   std::string Diagnostic;
-  if (!validateSourceCallReturnReads(Func, Image, Diagnostic,
-                                     limits::ir::kSourceCallReturnReadWork,
-                                     &Source, CallReturns))
+  Func.CallReturnReads.clear();
+  if (!validateSourceCallReturnReads(
+          Func, Image, Diagnostic, limits::ir::kSourceCallReturnReadWork,
+          &Source, CallReturns, &Func.CallReturnReads))
     throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
@@ -119,6 +127,130 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
     if (Complete.count(Func.Entry))
       markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
                                         Callees);
+}
+
+void omitRefusedFunctions(PipelineResult &Result,
+                          const std::map<size_t, std::string> &Refused) {
+  if (Refused.empty())
+    return;
+  std::map<va_t, size_t> Audits;
+  for (size_t A = 0; A < Result.FunctionAudits.size(); ++A)
+    Audits.try_emplace(Result.FunctionAudits[A].Entry, A);
+  for (const auto &[I, Diagnostic] : Refused) {
+    // A refused conversion leaves no MedFunc identity; LowIR keeps it.
+    const LowFunc &Low = Result.LowFuncs[I];
+    const auto [Found, Missing] =
+        Audits.try_emplace(Low.Entry, Result.FunctionAudits.size());
+    if (Missing) {
+      PipelineFunctionAudit Added;
+      Added.Entry = Low.Entry;
+      Added.Name = Low.Name;
+      Added.HasLowIR = true;
+      Result.FunctionAudits.push_back(std::move(Added));
+    }
+    PipelineFunctionAudit &Audit = Result.FunctionAudits[Found->second];
+    Audit.Disposition = PipelineFunctionDisposition::MedIRFailed;
+    Audit.HasMedIR = false;
+    Audit.Diagnostic = Diagnostic;
+  }
+  // Later stages read both lists by the same index. Each keeps its order.
+  auto Omit = [&](auto &List) {
+    size_t Kept = 0;
+    auto Next = Refused.begin();
+    for (size_t I = 0; I < List.size(); ++I) {
+      if (Next != Refused.end() && Next->first == I) {
+        ++Next;
+        continue;
+      }
+      if (Kept != I)
+        List[Kept] = std::move(List[I]);
+      ++Kept;
+    }
+    List.erase(List.begin() + Kept, List.end());
+  };
+  Omit(Result.LowFuncs);
+  Omit(Result.MedFuncs);
+}
+
+namespace {
+/// The integer arguments each function of this run that \p Pending calls
+/// directly can be passed: its emitted parameters, which both C routes pass
+/// a defined callee exactly. They are the MedIR parameters this run settled
+/// and those its debug declaration adds. A callee this proof may still
+/// refuse, a variadic one, one a source type hint declares, or one whose
+/// declaration places parameters off the platform convention is left out.
+std::map<va_t, unsigned> settledCalleeIntegerArity(
+    const BinaryImage &Image, const PipelineResult &Result,
+    const std::vector<size_t> &Pending, const DebugContext *Dbg) {
+  std::set<va_t> Targets;
+  for (const size_t I : Pending)
+    for (const MedBlock &Block : Result.MedFuncs[I].Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs >= 1 &&
+            Op.Inputs[0].isConst())
+          Targets.insert(Op.Inputs[0].ConstVal);
+  const llvm::ArrayRef<uint64_t> Registers =
+      getTargetRegInfo(Image.Arch).integerParamRegs(Image.abiFormat());
+  std::map<va_t, unsigned> Arity;
+  for (const MedFunc &Callee : Result.MedFuncs) {
+    if (!Targets.count(Callee.Entry) || !Callee.CallReturnReads.empty() ||
+        Callee.IsVariadic || Callee.SourceTypeHint)
+      continue;
+    unsigned Count = 0;
+    for (const MedVar &Param : Callee.Params)
+      for (size_t K = 0; K < Registers.size(); ++K)
+        if (Param.RegOff == Registers[K])
+          Count = std::max(Count, static_cast<unsigned>(K + 1));
+    if (const auto Declared =
+            Dbg ? Dbg->resolveFunction(Callee.Entry) : std::nullopt) {
+      if (Declared->IsVariadic || !Declared->PlatformConvention ||
+          !Declared->ParamEntryLocations.empty())
+        continue;
+      Count = std::max(Count, static_cast<unsigned>(Declared->Params.size()));
+    }
+    Arity.emplace(Callee.Entry, Count);
+  }
+  return Arity;
+}
+} // namespace
+
+bool refuseObservedCallReturnReads(const BinaryImage &Image,
+                                   PipelineResult &Result, bool FailsRun,
+                                   const DebugContext *Dbg) {
+  std::vector<size_t> Pending;
+  for (size_t I = 0; I < Result.MedFuncs.size(); ++I)
+    if (!Result.MedFuncs[I].CallReturnReads.empty())
+      Pending.push_back(I);
+  if (Pending.empty())
+    return true;
+  const std::map<va_t, unsigned> Arity =
+      settledCalleeIntegerArity(Image, Result, Pending, Dbg);
+  std::vector<std::optional<std::string>> Observations(Pending.size());
+  parallelForEach(Pending.size(), [&](auto Claim, size_t Total) {
+    for (size_t J; (J = Claim()) < Total;) {
+      std::string Diagnostic;
+      if (!validateObservedCallReturnReads(
+              Result.MedFuncs[Pending[J]], Image, Diagnostic,
+              limits::ir::kSourceCallReturnReadWork, &Arity))
+        Observations[J] = std::move(Diagnostic);
+    }
+  });
+  std::map<size_t, std::string> Refused;
+  for (size_t J = 0; J < Pending.size(); ++J) {
+    MedFunc &Func = Result.MedFuncs[Pending[J]];
+    Func.CallReturnReads.clear();
+    if (!Observations[J])
+      continue;
+    std::string Error =
+        "source MedIR failed for " + Func.Name + ": " + *Observations[J];
+    if (FailsRun) {
+      Result.Error = std::move(Error);
+      return false;
+    }
+    Refused.emplace(Pending[J], std::move(Error));
+  }
+  omitRefusedFunctions(Result, Refused);
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -503,15 +635,24 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     CompleteStackProofs();
   }
 
+  // A run restricted to requested functions fails with the first one MedIR
+  // refuses, as asking for that function should (refusalFailsRun). Any other
+  // run names each refused function in its audit and converts the others.
+  std::map<size_t, std::string> Refused;
   for (size_t I = 0; I < Total; ++I) {
     if (!ConversionErrors[I])
       continue;
-    Result.Error = "LowIR to MedIR failed for " + Result.LowFuncs[I].Name +
-                   ": " + *ConversionErrors[I];
-    Result.Success = false;
-    Result.MedFuncs.clear();
-    return;
+    std::string Error = "LowIR to MedIR failed for " + Result.LowFuncs[I].Name +
+                        ": " + *ConversionErrors[I];
+    if (refusalFailsRun(Opts)) {
+      Result.Error = std::move(Error);
+      Result.Success = false;
+      Result.MedFuncs.clear();
+      return;
+    }
+    Refused.emplace(I, std::move(Error));
   }
+  omitRefusedFunctions(Result, Refused);
 
   recordMedIRVerification(Result, "pipeline-med-final");
 

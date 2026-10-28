@@ -20,7 +20,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
-#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86AtomicRmw.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
 #include "../render/X86/X86ScalarSystem.h"
@@ -1158,9 +1158,9 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic exchange requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-  if (const auto Plan =
-          x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
-    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
+  if (const auto Plan = x86AtomicRmwPlan(Opts.TheArch, NdOp::ATOMIC_XCHG,
+                                         Ty->Size, AddressSpace))
+    return renderX86AtomicRmw(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1176,6 +1176,9 @@ HighCWriter::atomicFetchAddExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic fetch-add requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan = x86AtomicRmwPlan(Opts.TheArch, NdOp::ATOMIC_ADD,
+                                         Ty->Size, AddressSpace))
+    return renderX86AtomicRmw(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_fetch_add(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1708,6 +1711,7 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   bool NeedsBlockObject = false;
   bool NeedsBool = false;
   bool HasFloatingArithmetic = false;
+  bool NeedsAArch64RawCall = false;
   const auto CheckType = [&](const TypeRef &Type) {
     TypeRef Current = Type;
     while (Current && Current->Kind == NdTypeKind::Ptr)
@@ -1727,6 +1731,10 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
         Expr->Op == NdOp::FLOAT_ADD || Expr->Op == NdOp::FLOAT_SUB ||
         Expr->Op == NdOp::FLOAT_MULT || Expr->Op == NdOp::FLOAT_DIV;
     if (Expr->Kind == ExprKind::Call) {
+      NeedsAArch64RawCall |=
+          Expr->IsIndirectCall &&
+          (!Expr->IndirectTarget ||
+           Expr->IndirectTarget->IntrinsicId != Intrinsic::A64_AuthBranch);
       CheckType(knownCallReturnType(*Expr));
       if (Expr->SourceCallHint) {
         CheckType(Expr->SourceCallHint->Signature.ReturnType);
@@ -1761,6 +1769,8 @@ void HighCWriter::writeIncludes(const std::vector<HighFunc> &Funcs) {
   };
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS);
+  if (Opts.TheArch == Arch::AArch64 && NeedsAArch64RawCall)
+    OS << kAArch64PAuthCRawCallHeader;
   if (!Opts.EmitIncludes) {
     WriteInt128Spelling();
     if (NeedsBlockObject)
@@ -4929,6 +4939,8 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
       for (HighFunc &Func : Working) {
         attachCxxObjectActionCalls(Func, Opts.TheArch);
         attachItaniumHandlerBodies(Func);
+        if (Func.StructuredExceptionRegions)
+          eliminateHighDeadPhiCopies(Func);
       }
     }
     const bool Prepared = Opts.Image && Opts.Image == PreparedImage;

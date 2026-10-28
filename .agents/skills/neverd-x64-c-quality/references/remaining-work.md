@@ -5,6 +5,17 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+x87 context propagation retains a definite nested use across unresolved or
+recursive sibling calls. Complete-function cache admission uses the same
+requirement, and both call orders have public cross-format regressions.
+This repairs context transport; it does not resolve a VM's incoming register
+bank, dynamic dispatch target or return-address ownership.
+Signature-only Win64 wrappers now avoid proving unused descendant x87 context
+transport. Local observers, other ABIs and actual definitions keep their normal
+state contracts. LLVM C's narrow-bit projection also follows 80/128-bit
+producers, retaining demanded unknowns while removing unobserved enclosing
+register fragments; FILD and sign-state NoOpt regressions cover that boundary.
+
 Shared MedIR flag folding preserves both subtraction operands even when they
 are equal. Treating `A-A` as `A-0` changes branch results and invents incoming
 register dependencies. `NeverDSelfCompareFlagTests` compares original machine

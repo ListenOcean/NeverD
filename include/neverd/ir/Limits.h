@@ -818,7 +818,6 @@ inline constexpr int kMedTypePassScalarFPLoadElemSizeDepthLimit = 16;
 inline constexpr int kMedTypePassX87ReturnElemSizeDepthLimit = 16;
 inline constexpr int kMedTypePassIsReturnRegRestoreDepthLimit = 8;
 inline constexpr int kMedTypePassIntRetEffWidthRecDepthLimit = 8;
-inline constexpr int kMedTypePassDefinedLowBytesRecDepthLimit = 16;
 inline constexpr int kMedTypePassInferReturnTypeStepsLimit = 16;
 
 // include/neverd/ir/med/MedSwitchNorm.h

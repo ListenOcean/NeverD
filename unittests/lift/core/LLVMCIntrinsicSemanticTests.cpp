@@ -11,7 +11,7 @@
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
-#include "neverd/backend/llvm/X86/X86AtomicExchange.h"
+#include "neverd/backend/llvm/X86/X86AtomicRmw.h"
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -158,7 +158,8 @@ struct MovsFixture {
 void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
                      llvm::ArrayRef<llvm::StringRef> ExpectedIR = {},
                      llvm::StringRef Optimization = "-O1",
-                     bool CheckUndefined = false) {
+                     bool CheckUndefined = false,
+                     llvm::StringRef ExtraInput = {}) {
   auto Compiler = llvm::sys::findProgramByName("clang");
   ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
   llvm::SmallString<128> Input, Output, Errors;
@@ -186,6 +187,8 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
       Input,
       "-o",
       Output};
+  if (!ExtraInput.empty())
+    Args.push_back(ExtraInput);
   if (LLVMOnly)
     Args.append({"-target", "x86_64-pc-windows-msvc", "-S", "-emit-llvm"});
   // Clang lowers the i128 conversion controls to its compiler runtime. The
@@ -3072,23 +3075,23 @@ int main(void) {
     compileAndCheck(Text + Main, false, {}, Level);
 }
 
-TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
+static void checkNativeRmwMemory(NdOp Opcode) {
   if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
       llvm::Triple::x86_64)
-    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+    GTEST_SKIP() << "Native x64 memory operations require an x64 host";
   llvm::LLVMContext Context;
-  llvm::Module Module("native-exchange", Context);
+  llvm::Module Module("native-rmw", Context);
   Module.setDataLayout("e-p:64:64");
   llvm::IRBuilder<> B(Context);
-  std::string Driver;
+  std::string Driver, Declarations;
   for (unsigned Bytes : {1U, 2U, 4U, 8U})
     for (auto Space :
          {NdMemoryAddressSpace::Default, NdMemoryAddressSpace::X86FS,
           NdMemoryAddressSpace::X86GS})
       for (bool Live : {false, true}) {
-        const auto Plan = x86AtomicExchangePlan(Arch::X64, Bytes, Space);
+        const auto Plan = x86AtomicRmwPlan(Arch::X64, Opcode, Bytes, Space);
         ASSERT_TRUE(Plan);
-        const auto Name = "exchange_" + std::to_string(Bytes) + "_" +
+        const auto Name = "atomic_update_" + std::to_string(Bytes) + "_" +
                           std::to_string(static_cast<unsigned>(Space)) + "_" +
                           std::to_string(Live);
         auto *Word = B.getIntNTy(Bytes * 8);
@@ -3098,7 +3101,7 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
             llvm::FunctionType::get(Live ? Word : B.getVoidTy(),
                                     {Pointer, Word}, false),
             llvm::GlobalValue::ExternalLinkage, Name, Module);
-        Fn->getArg(0)->setName("neverd_xchg_value");
+        Fn->getArg(0)->setName("neverd_atomic_value");
         B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
         auto *Assembly = llvm::InlineAsm::get(Type, Plan->assembly(),
                                               Plan->constraints(), true);
@@ -3112,6 +3115,8 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
         if (Space != NdMemoryAddressSpace::Default)
           continue;
         const auto CWord = "uint" + std::to_string(Bytes * 8) + "_t";
+        Declarations +=
+            (Live ? CWord : "void") + " " + Name + "(void *, " + CWord + ");\n";
         Driver += "for (unsigned offset=8; offset<24; ++offset) {\n";
         Driver += CWord + " initial = (" + CWord +
                   ")UINT64_C(0x8877665544332211), desired = (" + CWord +
@@ -3122,13 +3127,28 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
         Driver += Name + "((void *)(storage+offset), desired);\n";
         if (Live)
           Driver += "if (old != initial) return 1;\n";
+        const std::string Expected = Opcode == NdOp::ATOMIC_ADD
+                                         ? "(" + CWord + ")(initial + desired)"
+                                         : "desired";
         Driver += "memcpy(&current, storage+offset, sizeof(current));\n"
-                  "if (current != desired) return 2;\n"
+                  "if (current != " +
+                  Expected +
+                  ") return 2;\n"
                   "for (unsigned i=0; i<sizeof(storage); ++i)\n"
                   " if ((i<offset || i>=offset+sizeof(current)) && "
                   "storage[i]!=0x5a) return 3;\n}\n";
       }
   ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  llvm::SmallString<128> IRPath;
+  ASSERT_FALSE(
+      llvm::sys::fs::createTemporaryFile("neverd-native-rmw", "ll", IRPath));
+  llvm::FileRemover RemoveIR(IRPath);
+  std::error_code EC;
+  {
+    llvm::raw_fd_ostream IR(IRPath, EC);
+    ASSERT_FALSE(EC);
+    Module.print(IR, nullptr);
+  }
   CEmitterOptions Options;
   Options.TheArch = Arch::X64;
   Options.PreserveLLVMFunctionTypes = true;
@@ -3136,17 +3156,33 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
   llvm::raw_string_ostream OS(Text);
   ASSERT_TRUE(LLVMCEmitter().emit(Module, OS, Options));
   EXPECT_EQ(Text.find("__atomic_exchange_n"), std::string::npos) << Text;
+  EXPECT_EQ(Text.find("__atomic_fetch_add"), std::string::npos) << Text;
+  EXPECT_NE(Text.find(Opcode == NdOp::ATOMIC_ADD ? "lock xadd" : "xchg"),
+            std::string::npos)
+      << Text;
   EXPECT_NE(Text.find("%%fs:"), std::string::npos) << Text;
   EXPECT_NE(Text.find("%%gs:"), std::string::npos) << Text;
-  for (const char *Level : {"-O0", "-O2"})
-    compileAndCheck(Text +
-                        "\n#include <string.h>\nint main(void) {\n"
-                        "_Alignas(64) unsigned char storage[64];\n" +
-                        Driver + "return 0;\n}\n",
-                    false, {}, Level, true);
+  const std::string Main = "\n#include <string.h>\nint main(void) {\n"
+                           "_Alignas(64) unsigned char storage[64];\n" +
+                           Driver + "return 0;\n}\n";
+  for (const char *Level : {"-O0", "-O2"}) {
+    compileAndCheck(Text + Main, false, {}, Level, true);
+    // Compile the original LLVM assembly too: the C recognizer uses a
+    // separate constraint spelling and cannot validate LLVM code generation.
+    compileAndCheck("#include <stdint.h>\n" + Declarations + Main, false, {},
+                    Level, true, IRPath);
+  }
 }
 
-TEST(LLVMCIntrinsicSemantics, NativeExchangeRejectsChangedContracts) {
+TEST(LLVMCIntrinsicSemantics, NativeExchangeKeepsDeadWritesAndUnalignedBytes) {
+  checkNativeRmwMemory(NdOp::ATOMIC_XCHG);
+}
+
+TEST(LLVMCIntrinsicSemantics, NativeAdditionKeepsDeadWritesAndUnalignedBytes) {
+  checkNativeRmwMemory(NdOp::ATOMIC_ADD);
+}
+
+static void checkNativeRmwContract(NdOp Opcode) {
   for (bool Live : {false, true})
     for (unsigned Mutation = 0; Mutation < 10; ++Mutation) {
       SCOPED_TRACE(Live);
@@ -3156,7 +3192,7 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeRejectsChangedContracts) {
       Module.setDataLayout("e-p:64:64");
       llvm::IRBuilder<> B(Context);
       const auto Plan =
-          x86AtomicExchangePlan(Arch::X64, 8, NdMemoryAddressSpace::Default);
+          x86AtomicRmwPlan(Arch::X64, Opcode, 8, NdMemoryAddressSpace::Default);
       auto *Type = llvm::FunctionType::get(
           B.getInt64Ty(), {B.getPtrTy(Mutation == 8 ? 1 : 0), B.getInt64Ty()},
           false);
@@ -3184,6 +3220,14 @@ TEST(LLVMCIntrinsicSemantics, NativeExchangeRejectsChangedContracts) {
       EXPECT_THROW(LLVMCEmitter().emit(Module, OS, Options),
                    std::invalid_argument);
     }
+}
+
+TEST(LLVMCIntrinsicSemantics, NativeExchangeRejectsChangedContracts) {
+  checkNativeRmwContract(NdOp::ATOMIC_XCHG);
+}
+
+TEST(LLVMCIntrinsicSemantics, NativeAdditionRejectsChangedContracts) {
+  checkNativeRmwContract(NdOp::ATOMIC_ADD);
 }
 
 } // namespace

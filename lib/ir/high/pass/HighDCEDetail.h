@@ -110,6 +110,7 @@ void eliminateUnusedValues(HighFunc &Func);
 //===----------------------------------------------------------------------===//
 
 void renameVars(std::vector<HighStmt> &Stmts);
+void renameVars(HighFunc &Func);
 void postRenameCleanup(HighFunc &Func);
 void postRenameCleanup(std::vector<HighStmt> &Stmts);
 

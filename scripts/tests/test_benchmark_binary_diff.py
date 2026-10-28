@@ -5,6 +5,7 @@ import copy
 import json
 from pathlib import Path
 import sqlite3
+import sys
 import tempfile
 import unittest
 from unittest import mock
@@ -36,6 +37,7 @@ class MappingTests(unittest.TestCase):
         result = bench.score({(1, 3)}, [])
         self.assertIsNone(result["precision"])
         self.assertEqual(result["recall"], 0)
+        self.assertEqual(result["f1"], 0)
         self.assertFalse(result["exact_mapping"])
 
     def test_unrelated_functions_have_no_expected_pair(self):
@@ -46,7 +48,49 @@ class MappingTests(unittest.TestCase):
         result = bench.score(expected, [(0x1000, 0x2000)])
         self.assertEqual(result["wrong"], 1)
         self.assertIsNone(result["recall"])
+        self.assertEqual(result["f1"], 0)
         self.assertFalse(result["exact_mapping"])
+
+    def test_partial_truth_does_not_score_unknown_pairs_as_errors(self):
+        result = bench.score_partial({(1, 3), (2, 4)}, [(1, 3), (9, 10), (9, 10)])
+        self.assertEqual((result["correct"], result["wrong"], result["missed"], result["unscored"]), (1, 0, 1, 1))
+        self.assertEqual(result["accepted_pairs"], 2)
+        self.assertEqual(result["scored_accepted_pairs"], 1)
+        self.assertEqual(result["duplicate_evidence_rows"], 1)
+        self.assertEqual(result["precision"], 1)
+        self.assertEqual(result["recall"], 0.5)
+        self.assertAlmostEqual(result["f1"], 2 / 3)
+        self.assertIsNone(result["exact_mapping"])
+
+    def test_either_known_endpoint_makes_a_contradiction_scorable(self):
+        result = bench.score_partial({(1, 3), (2, 4)}, [(1, 7), (8, 4), (9, 10)])
+        self.assertEqual((result["wrong"], result["missed"], result["unscored"]), (2, 2, 1))
+        self.assertEqual(result["f1"], 0)
+
+    def test_partial_exactness_never_promises_whole_mapping_exactness(self):
+        result = bench.score_partial({(1, 3)}, [(1, 3), (9, 10)])
+        self.assertTrue(result["scored_mapping_exact"])
+        self.assertIsNone(result["exact_mapping"])
+        self.assertTrue(bench.mapping_passed({"metrics": result}))
+        empty = bench.score_partial({(1, 3)}, [(9, 10)])
+        self.assertIsNone(empty["precision"])
+        self.assertEqual(empty["f1"], 0)
+        self.assertFalse(bench.mapping_passed({"metrics": empty}))
+
+    def test_native_relocation_uses_declared_bases_and_complete_inventories(self):
+        case = {"primary": {"image_base": "0x0"}, "secondary": {"image_base": "0x400000"},
+                "truth": [{"primary": "0x120", "secondary": "0x400230"},
+                          {"primary": "0x240", "secondary": "0x400350"}]}
+        spaces = [{"image_base": 0x100000, "entries": [0x100120]},
+                  {"image_base": 0x200000, "entries": [0x200230, 0x200350]}]
+        pairs, coverage = bench.normalize_pairs([(0x100120, 0x200230)], spaces, case)
+        self.assertEqual(pairs, [(0x120, 0x400230)])
+        self.assertEqual(coverage[0]["missing_labelled_functions"], ["0x240"])
+        self.assertEqual(coverage[1]["discovered_labelled_functions"], 2)
+        with self.assertRaisesRegex(ValueError, "below"):
+            bench.normalize_pairs([(0x120, 0x200230)], spaces, case)
+        with self.assertRaisesRegex(ValueError, "absent"):
+            bench.normalize_pairs([(0x100130, 0x200230)], spaces, case)
 
     def test_invalid_truth_is_not_silently_reduced(self):
         row = {"id": "one", "primary": "0x1000", "secondary": "0x2000"}
@@ -110,6 +154,41 @@ class ArtifactTests(unittest.TestCase):
         self.assertTrue(result["metrics"]["exact_mapping"])
         self.assertEqual(result["metrics"]["accepted_pairs"], 1)
         self.assertEqual(result["input_binding"], "native-and-receipt")
+
+    def test_runner_retains_bad_output_and_distinguishes_mapping_from_body_coverage(self):
+        report = copy.deepcopy(self.report)
+        report["coverage"] = {"primary": {"incomplete": 2}, "unmeasured": 0}
+        report["primary"]["discovery_complete"] = False
+        report["secondary"]["discovery_complete"] = True
+        executable = self.root / "neverd"
+        executable.write_text(f"#!{sys.executable}\n" +
+            "import json, sys\nfrom pathlib import Path\n" +
+            "if '--version' in sys.argv:\n print('owned fake CLI')\n sys.exit(0)\n" +
+            "output = Path(sys.argv[sys.argv.index('--save') + 1])\n" +
+            "if output.parent.name == 'bad':\n output.write_text('{broken')\n sys.exit(1)\n" +
+            f"report = json.loads({json.dumps(report)!r})\n" +
+            "if output.parent.name == 'stopped':\n report['state'] = 'cancelled'\n" +
+            "output.write_text(json.dumps(report))\nsys.exit(3)\n")
+        executable.chmod(0o755)
+        library = self.root / "libneverd.so"
+        library.write_bytes(b"owned runner fixture, never loaded")
+        path = self.write("corpus.json", {"schema": bench.CORPUS_SCHEMA,
+            "cases": [dict(self.case, id=name) for name in ("bad", "partial", "stopped")]})
+        output = self.root / "runs"
+        args = argparse.Namespace(corpus=path, neverd=executable, library=library,
+                                  output_dir=output, threads=1, timeout=10)
+        self.assertEqual(bench.run_neverd(args), 2)
+        results = bench.load(output / "results.json")["cases"]
+        self.assertEqual(len(results), 3)
+        self.assertIn("error", results[0])
+        self.assertTrue(results[1]["metrics"]["exact_mapping"])
+        self.assertEqual(results[1]["native_coverage"], report["coverage"])
+        self.assertEqual(results[1]["native_discovery_complete"], [False, True])
+        self.assertIn("error", results[2])
+        receipt = bench.load(output / "bad/run.json")
+        self.assertFalse(receipt["completed"])
+        self.assertIn("invalid native report", receipt["error"])
+        bench.checked_artifact(receipt["result"], output / "bad")
 
     def test_invalid_corpus_is_rejected_before_runtime_or_output_creation(self):
         invalid_cases = [[], [self.case, self.case],
@@ -182,6 +261,43 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "complete function truth"):
             bench.evaluate(corpus, run)
 
+    def partial_receipt(self):
+        self.case.update(truth_complete=False, truth_kind="unique-source-bodies-v1")
+        evidence = self.root / "truth-evidence.json"
+        evidence.write_text("{}")
+        self.case["truth_artifacts"] = [bench.artifact(evidence, self.root)]
+        for side, entry in (("primary", "0x1000"), ("secondary", "0x2000")):
+            self.case[side]["image_base"] = "0x0"
+            self.report[side]["image_base"] = "0x0"
+            self.report.setdefault("functions", {})[side] = [[entry]]
+        corpus, run, record = self.receipt()
+        self.write(corpus.name, {"schema": bench.PARTIAL_CORPUS_SCHEMA, "cases": [self.case]})
+        return corpus, run, record
+
+    def test_partial_source_schema_retains_coverage_and_evidence_binding(self):
+        corpus, run, _ = self.partial_receipt()
+        result = bench.evaluate(corpus, run)
+        self.assertTrue(result["metrics"]["scored_mapping_exact"])
+        self.assertIsNone(result["metrics"]["exact_mapping"])
+        self.assertEqual(result["analysis_coverage"][0]["discovered_labelled_functions"], 1)
+        (self.root / "truth-evidence.json").write_text("changed")
+        with self.assertRaisesRegex(ValueError, "SHA-256 mismatch"):
+            bench.evaluate(corpus, run)
+
+    def test_partial_source_rejects_unqualified_track_and_missing_native_base(self):
+        corpus, run, record = self.partial_receipt()
+        record["track"] = "common-input"
+        self.write(run.name, record)
+        with self.assertRaisesRegex(ValueError, "common-input"):
+            bench.evaluate(corpus, run)
+        record["track"] = "end-to-end"
+        del self.report["primary"]["image_base"]
+        path = self.write("report.json", self.report)
+        record["result"] = bench.artifact(path, self.root)
+        self.write(run.name, record)
+        with self.assertRaises(KeyError):
+            bench.evaluate(corpus, run)
+
     def test_stale_runtime_artifact_is_rejected(self):
         corpus, run_path, run = self.receipt()
         tool = self.root / "tool"
@@ -196,7 +312,8 @@ class ArtifactTests(unittest.TestCase):
         row = {"source": "4096", "destination": "8192", "source_space": "ram",
                "destination_space": "ram", "type": "Function", "status": "ACCEPTED"}
         report = {"schema": "neverd.baseline.ghidra-vt-smoke.v1", "match_sets": [
-            {"matches": [row, dict(row, type="Data"), dict(row, status="AVAILABLE")]},
+            {"matches": [row, dict(row, type="Data"), dict(row, status="AVAILABLE"),
+                         dict(row, source_space="EXTERNAL", destination_space="EXTERNAL")]},
             {"matches": [copy.deepcopy(row)]},
         ]}
         path = self.write("ghidra.json", report)

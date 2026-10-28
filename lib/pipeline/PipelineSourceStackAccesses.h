@@ -15,9 +15,14 @@
 
 #include "neverd/ir/med/MedIntegerReturnRange.h"
 
+#include <cstddef>
+#include <map>
+#include <string>
+
 namespace neverd {
 
 struct BinaryImage;
+class DebugContext;
 struct LowFunc;
 struct MedFunc;
 struct PipelineOptions;
@@ -45,6 +50,27 @@ MedCallReturnRanges sourceCallReturnRanges(const BinaryImage &Image,
 /// Shared source-only frame observation proof after call ABI recovery.
 void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
                                          PipelineResult &Result);
+
+/// Whether a function MedIR refuses fails the run of \p Options rather than
+/// leaving it out (PipelineOptions::OmitRefusedFunctions).
+bool refusalFailsRun(const PipelineOptions &Options);
+
+/// Leave each refused function, by its index in Result.LowFuncs and
+/// Result.MedFuncs (which later stages pair by index), out of the run. Its
+/// audit records MedIRFailed with the diagnostic, which whole-unit output
+/// names; the other functions continue.
+void omitRefusedFunctions(PipelineResult &Result,
+                          const std::map<size_t, std::string> &Refused);
+
+/// Settle the deferred CALL return-slot loads of every function
+/// (validateObservedCallReturnReads) once call ABI recovery is complete and
+/// before any source cleanup. A run omits each function that still observes
+/// one; a run that \p FailsRun (refusalFailsRun) fails with Result.Error
+/// instead and returns false. \p Dbg is the debug information the C routes
+/// declare parameters from.
+bool refuseObservedCallReturnReads(const BinaryImage &Image,
+                                   PipelineResult &Result, bool FailsRun,
+                                   const DebugContext *Dbg);
 
 } // namespace neverd
 

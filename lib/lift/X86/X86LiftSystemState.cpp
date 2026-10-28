@@ -19,6 +19,53 @@
 namespace neverd {
 namespace {
 
+bool secureLaunchEncoding(const cs_insn *Insn, const cs_x86 &X, bool Mode64) {
+  if (!Insn->detail || Insn->size < 3 || Insn->size > x86::kMaxInstructionLen ||
+      X.op_count != 1 || X.operands[0].type != X86_OP_REG ||
+      X.operands[0].reg != X86_REG_EAX || X.operands[0].size != 4 ||
+      X.operands[0].access != CS_AC_READ || X.eflags || X.encoding.imm_size ||
+      X.encoding.disp_size || X.encoding.imm_offset || X.encoding.disp_offset ||
+      X.opcode[2] || X.opcode[3] || X.sib || X.disp || X.rex2 || X.sib_index ||
+      X.sib_base || X.sib_scale || X.xop_cc || X.sse_cc || X.avx_cc ||
+      X.avx_sae || X.avx_rm)
+    return false;
+  uint8_t Prefix[4]{}, Rex = 0;
+  const unsigned Offset = Insn->size - 3;
+  for (unsigned I = 0; I < Offset; ++I) {
+    const uint8_t Byte = Insn->bytes[I];
+    if (Mode64 && Byte >= 0x40 && Byte <= 0x4f) {
+      Rex = Byte;
+      continue;
+    }
+    Rex = 0;
+    if (Byte == 0xf2 || Byte == 0xf3)
+      Prefix[0] = Byte;
+    else if (Byte == 0x66)
+      Prefix[2] = Byte;
+    else if (Byte == 0x67)
+      Prefix[3] = Byte;
+    else if (Byte == 0x26 || Byte == 0x2e || Byte == 0x36 || Byte == 0x3e ||
+             Byte == 0x64 || Byte == 0x65)
+      Prefix[1] = Byte;
+    else
+      return false;
+  }
+  for (unsigned I = 0; I < 4; ++I)
+    // Capstone may omit an ignored REP/REPNE prefix from the normalized slot.
+    if (Prefix[I] != X.prefix[I] && (I != 0 || X.prefix[I]))
+      return false;
+  const auto &Detail = *Insn->detail;
+  return Insn->id == X86_INS_SKINIT && X.rex == Rex &&
+         X.addr_size == (Mode64 ? (Prefix[3] ? 4 : 8) : (Prefix[3] ? 2 : 4)) &&
+         Detail.regs_read_count == 1 && Detail.regs_read[0] == X86_REG_EAX &&
+         Detail.regs_write_count == 0 && Detail.groups_count == 2 &&
+         Detail.groups[0] == X86_GRP_PRIVILEGE &&
+         Detail.groups[1] == X86_GRP_VM && Insn->bytes[Offset] == 0x0f &&
+         Insn->bytes[Offset + 1] == 0x01 && Insn->bytes[Offset + 2] == 0xde &&
+         X.opcode[0] == 0x0f && X.opcode[1] == 0x01 && X.modrm == 0xde &&
+         X.encoding.modrm_offset == Offset + 2;
+}
+
 bool implicitMsrEncoding(const cs_insn *Insn, const cs_x86 &X, bool Mode64) {
   if (!Insn->detail || Insn->size < 3 || Insn->size > x86::kMaxInstructionLen ||
       X.op_count || X.eflags || X.encoding.imm_size || X.encoding.disp_size ||
@@ -214,6 +261,13 @@ bool liftSystemState(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   const bool Mode64 = L.targetArch() == Arch::X64;
   const uint16_t Word = Mode64 ? 8 : 4;
   switch (Insn->id) {
+  case X86_INS_SKINIT:
+    if (!secureLaunchEncoding(Insn, X86, Mode64))
+      return false;
+    // Native checks, reset and SLB reads belong to this terminating launch.
+    // No old register, flag, stack or descriptor state survives in this CFG.
+    S.emitIntrinsic(Intrinsic::X86Skinit, {}, {NdVar::reg(x86reg::RAX, 4)});
+    return true;
   case X86_INS_CLUI:
   case X86_INS_STUI:
   case X86_INS_TESTUI:

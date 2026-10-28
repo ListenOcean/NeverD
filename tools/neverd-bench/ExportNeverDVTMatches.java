@@ -42,6 +42,18 @@ public class ExportNeverDVTMatches extends AbstractGhidraVersionTrackingScript {
             result.put("destination_functions", getDestinationProgram().getFunctionManager().getFunctionCount());
             result.put("source_image_base", Long.toUnsignedString(getSourceProgram().getImageBase().getOffset()));
             result.put("destination_image_base", Long.toUnsignedString(getDestinationProgram().getImageBase().getOffset()));
+            List<String> sourceEntries = new ArrayList<>();
+            for (ghidra.program.model.listing.Function function : getSourceProgram().getFunctionManager().getFunctions(true)) {
+                monitor.checkCancelled();
+                sourceEntries.add(Long.toUnsignedString(function.getEntryPoint().getOffset()));
+            }
+            List<String> destinationEntries = new ArrayList<>();
+            for (ghidra.program.model.listing.Function function : getDestinationProgram().getFunctionManager().getFunctions(true)) {
+                monitor.checkCancelled();
+                destinationEntries.add(Long.toUnsignedString(function.getEntryPoint().getOffset()));
+            }
+            result.put("source_function_entries", sourceEntries);
+            result.put("destination_function_entries", destinationEntries);
             List<Object> sets = new ArrayList<>();
             for (VTMatchSet set : getVTSession().getMatchSets()) {
                 monitor.checkCancelled();

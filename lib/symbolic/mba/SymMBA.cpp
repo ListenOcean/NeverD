@@ -256,11 +256,10 @@ SymRef foldObservedWindow(SymContext &Ctx, SymRef Root, WorkBudget &Budget,
       return Root;
     auto Window =
         Ctx.mkMul(Ctx.mkConst(Mask), Ctx.mkZExt(Part, Ctx.width(Root)));
-    // A flattened mask has no single source word. Its window is useful only
-    // when it drops lanes; otherwise it spells every input again as an extract.
-    if (Ctx.numOperands(Root) > 2 && !doesNotGrow(Ctx, Window, Root))
-      return Root;
-    return Window;
+    // A window is useful only when it drops lanes. A longer one spells every
+    // input again as an extract and hides the mask from the exact known-bits
+    // fold that follows: 8192 & (4*q + p) is zero, but its window is not.
+    return doesNotGrow(Ctx, Window, Root) ? Window : Root;
   }
   // A shifted low mask is also an explicit observed window. Keep ordinary
   // masked arithmetic in its original region: narrowing every internal mask

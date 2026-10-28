@@ -165,6 +165,9 @@ struct FunctionMatch {
   bool IdentityOnly = false;
   /// Both bodies were completely decoded/modelled by the selected profile.
   bool AnalysisComplete = false;
+  /// Calls and address references have sufficient correspondence evidence.
+  /// Independent of decoded-body coverage and observed changes.
+  bool ReferenceComparisonComplete = false;
   /// Heuristic scores in [0, 1].
   double Similarity = 0;
   double Confidence = 0;
@@ -177,9 +180,12 @@ struct FunctionMatch {
 
   bool identical() const {
     return Measured && !IdentityOnly && AnalysisComplete &&
-           (Changes & ~MovementChanges) == 0;
+           ReferenceComparisonComplete && (Changes & ~MovementChanges) == 0;
   }
 };
+
+/// One authoritative display/filter state, independent of heuristic scores.
+llvm::StringRef changeState(const FunctionMatch &Match);
 
 /// Unpaired alternatives retained by one feature. Every primary member is
 /// a candidate for every secondary member. Groups may overlap; a function's

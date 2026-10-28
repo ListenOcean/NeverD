@@ -118,17 +118,21 @@ protected:
           for (const auto &Block : F)
             for (const auto &I : Block)
               if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&I))
-                if (const auto P = Recognize(Arch::X86, *Call)) {
+                if (const auto ActualPrefix = Recognize(Arch::X86, *Call)) {
                   ++Calls;
-                  EXPECT_EQ(P->Prefix, Prefix);
+                  EXPECT_EQ(*ActualPrefix, Prefix);
                   if (AbsoluteOffset) {
-                    const auto *Pointer = llvm::dyn_cast<llvm::ConstantExpr>(
-                        Call->getArgOperand(0));
-                    ASSERT_NE(Pointer, nullptr);
-                    ASSERT_EQ(Pointer->getOpcode(),
-                              llvm::Instruction::IntToPtr);
-                    const auto *Offset = llvm::dyn_cast<llvm::ConstantInt>(
-                        Pointer->getOperand(0));
+                    const llvm::Value *Value = Call->getArgOperand(0);
+                    if (Value->getType()->isPointerTy()) {
+                      const auto *Pointer =
+                          llvm::dyn_cast<llvm::ConstantExpr>(Value);
+                      ASSERT_NE(Pointer, nullptr);
+                      ASSERT_EQ(Pointer->getOpcode(),
+                                llvm::Instruction::IntToPtr);
+                      Value = Pointer->getOperand(0);
+                    }
+                    const auto *Offset =
+                        llvm::dyn_cast<llvm::ConstantInt>(Value);
                     ASSERT_NE(Offset, nullptr);
                     EXPECT_EQ(Offset->getZExtValue(), 0x4000u);
                   }

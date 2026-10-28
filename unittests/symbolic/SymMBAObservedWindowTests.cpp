@@ -175,6 +175,23 @@ TEST(SymMBAObservedWindow, FinishedReadingsDoNotReplaceShorterWords) {
   }
 }
 
+TEST(SymMBAObservedWindow, LongerWindowsLeaveMasksToKnownBits) {
+  // Widths within kSymKnownBitsMaxWidth, where the exact fact fold applies.
+  for (unsigned Width : {16u, 64u, 128u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto P = C.mkVar("p", 1), Q = C.mkVar("q", 1);
+    // At most five: bit 13 is a known zero, not a lane to project.
+    auto Small = C.mkAdd(C.mkMul(C.mkConst(Width, 4), C.mkZExt(Q, Width)),
+                         C.mkZExt(P, Width));
+    EXPECT_EQ(simplifyWindow(C, C.mkAnd(C.mkConst(Width, 8192), Small)),
+              C.mkZero(Width));
+    // (K | s) - K is s & ~K: the known-OR subtraction leaves the same mask.
+    auto K = C.mkConst(~llvm::APInt(Width, 8192));
+    EXPECT_EQ(simplifyWindow(C, C.mkSub(C.mkOr(K, Small), K)), C.mkZero(Width));
+  }
+}
+
 TEST(SymMBAObservedWindow, SingleBitObservationKeepsArithmeticCarry) {
   SymContext C;
   auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);

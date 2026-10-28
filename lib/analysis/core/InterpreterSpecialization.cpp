@@ -513,9 +513,10 @@ bool supportedWideOperation(const LowOp &Op,
 /// division model does not certify architectural division faults, and naming an
 /// opaque result is not permission to publish a replacement of its instruction.
 bool supported(const LowOp &Op, const SpecializationOptions &Options) {
-  if (Op.Opcode == NdOp::ATOMIC_CMPXCHG)
+  if (Op.Opcode == NdOp::ATOMIC_CMPXCHG || Op.Opcode == NdOp::ATOMIC_ADD ||
+      Op.Opcode == NdOp::ATOMIC_XCHG)
     return Options.ExplicitMachineState && Options.NormalNonfaultingExecution &&
-           supportsCmpxchgPreservation(Op);
+           supportsAtomicWritePreservation(Op);
   if (Op.NumInputs > std::size(Op.Inputs) ||
       Op.MemoryOrdering != NdMemoryOrdering::None)
     return false;
@@ -2857,9 +2858,12 @@ bool Specializer::evaluate(int Id) {
           PriorityOperation == detail::X64TaskPriorityOperation::Read ||
           RuntimeControl;
       const bool CompareExchange = Original.Opcode == NdOp::ATOMIC_CMPXCHG;
+      const bool AtomicAdd = Original.Opcode == NdOp::ATOMIC_ADD;
+      const bool AtomicWrite =
+          CompareExchange || AtomicAdd || Original.Opcode == NdOp::ATOMIC_XCHG;
       // An offset's provenance says nothing about the value read through an
       // arbitrary base. Keep that value unsafe through copies and frame spills.
-      bool OutputUnsafe = EnvironmentRead || CompareExchange;
+      bool OutputUnsafe = EnvironmentRead || AtomicWrite;
       bool ExactFrameAddress = false;
       bool StoreWithinEntryFrame = false;
       bool ProvedFrameSeparation = false;
@@ -2870,7 +2874,7 @@ bool Specializer::evaluate(int Id) {
         OutputUnsafe |= unsafeOrigin(Original.Inputs[J], Origins);
       if (FrameRoot && (!RuntimeMemory || Original.Opcode == NdOp::STORE) &&
           (Original.Opcode == NdOp::LOAD || Original.Opcode == NdOp::STORE ||
-           CompareExchange)) {
+           AtomicWrite)) {
         const auto Memory = lowMemoryOperands(Original);
         // An offset behind a runtime base is not a frame address, even when
         // the offset itself contains the frame root. Separation checks below
@@ -2886,7 +2890,7 @@ bool Specializer::evaluate(int Id) {
         if (Displacement) {
           ExactFrameAddress = true;
           if (Options.ProveStoreFrameSeparation &&
-              (Original.Opcode == NdOp::STORE || CompareExchange)) {
+              (Original.Opcode == NdOp::STORE || AtomicWrite)) {
             if (Result.EvaluatedOperations >= Options.MaxOperations)
               return fail(SpecializationStatus::BudgetExceeded,
                           "frame write containment budget exhausted");
@@ -2903,9 +2907,9 @@ bool Specializer::evaluate(int Id) {
           Evaluated.Inputs[Memory.Address - Original.Inputs] =
               NdVar::tmp(FrameAddressTemp, 8);
         }
-        if (Original.Opcode == NdOp::LOAD || CompareExchange) {
-          // CMPXCHG returns the pre-write memory value. Capture its origin
-          // before the conditional write changes frame-byte metadata.
+        if (Original.Opcode == NdOp::LOAD || AtomicWrite) {
+          // Each atomic returns the pre-write memory value. Capture its
+          // origin before the write changes frame-byte metadata.
           OutputUnsafe = true;
           if (Displacement) {
             OutputUnsafe = false;
@@ -2914,7 +2918,7 @@ bool Specializer::evaluate(int Id) {
                   !Origins.ExternalFrameBytes.count(*Displacement + B);
           }
         }
-        if (Original.Opcode == NdOp::STORE || CompareExchange) {
+        if (Original.Opcode == NdOp::STORE || AtomicWrite) {
           if (!Displacement && !RuntimeMemory &&
               Options.ExternalStoresDisjointEntryFrame &&
               !unsafeOrigin(*Memory.Address, Origins)) {
@@ -3157,7 +3161,7 @@ bool Specializer::evaluate(int Id) {
               else
                 ++It;
             }
-            if (Memory.AccessSize == 8 && !CompareExchange) {
+            if (Memory.AccessSize == 8 && !AtomicWrite) {
               // A complete saved root may later restore stack or control
               // state. Prove its displacement before projection even when its
               // expression has no alignment-shaped mask.
@@ -3245,10 +3249,12 @@ bool Specializer::evaluate(int Id) {
                           "nonalias contract");
             }
           }
-          // Desired alone does not describe a conditional write: on failure
-          // the original bytes remain, and Expected controls that choice.
+          // Addition keeps the old value as a dependency; exchange replaces
+          // it. A compare-exchange also depends on the expected value,
+          // because failure retains the old bytes.
           const bool ValueUnsafe =
               unsafeOrigin(*Memory.StoredValue, Origins) ||
+              (AtomicAdd && OutputUnsafe) ||
               (CompareExchange &&
                (OutputUnsafe || unsafeOrigin(*Memory.ExpectedValue, Origins)));
           if (Displacement) {
@@ -3281,7 +3287,7 @@ bool Specializer::evaluate(int Id) {
       // An ordinary symbolic store also havocs the absolute bank. Preserve
       // only its current materialized cells whose complete byte footprints
       // are proved disjoint from this particular write under this path.
-      if ((Original.Opcode == NdOp::STORE || CompareExchange) &&
+      if ((Original.Opcode == NdOp::STORE || AtomicWrite) &&
           Options.ProveStoreFrameSeparation) {
         const auto Memory = lowMemoryOperands(Evaluated);
         const auto Address = Exec.memoryAddressValue(Evaluated);

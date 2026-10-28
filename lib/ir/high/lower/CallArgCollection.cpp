@@ -613,7 +613,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   bool ReachedBlockStart = true;
   for (int J = static_cast<int>(CallIdx) - 1; J >= 0; --J) {
     const MedOp &Prev = Ops[J];
-    if (call_args_detail::endsCallSetup(Prev)) {
+    if (endsCallArgumentSetup(Prev, /*RegistersOnly=*/true)) {
       ReachedBlockStart = false;
       break;
     }

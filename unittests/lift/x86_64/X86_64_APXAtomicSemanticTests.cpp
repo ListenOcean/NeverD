@@ -1787,7 +1787,6 @@ TEST(X86LegacyAtomic, StackAddressControlsFollowModeWidthAndSegment) {
               const bool Address16 = A == Arch::X86 && Narrow;
               const bool StackBase = Address16 || Base < 8;
               const bool TLS = Segment == 0x64 || Segment == 0x65;
-              const bool Refused = A == Arch::X86 && !TLS && Segment != 0x3e;
               const bool Stack = A == Arch::X64 && !Narrow && StackBase && !TLS;
               std::vector<uint8_t> Bytes;
               if (Narrow)
@@ -1812,18 +1811,20 @@ TEST(X86LegacyAtomic, StackAddressControlsFollowModeWidthAndSegment) {
                 Bytes.push_back(0x10 | (Base & 7)); // index RDX, scale one
               Bytes.push_back(0);
               SCOPED_TRACE(testing::PrintToString(Bytes));
-              if (Refused) {
-                expectDecodeOrLiftRejected(Bytes, A);
-                continue;
-              }
               const auto Lifted = liftX64(Bytes, A);
               const auto *Atomic = findIntrinsic(Lifted.Ops, Ids[Kind]);
               ASSERT_NE(Atomic, nullptr);
               const auto Shape = apxAtomicLowShape(*Atomic, A);
               EXPECT_TRUE(intrinsicApxAtomicShapeIsValid(Ids[Kind], Shape));
               EXPECT_EQ(Shape.stackReference(), Stack);
+              const unsigned I386Segment =
+                  A != Arch::X86 || TLS || Segment == 0x3e ? 0
+                  : Segment                                ? Segment
+                                                           : 0x36;
+              EXPECT_EQ(Shape.segmentPrefix(), I386Segment);
               EXPECT_EQ(Atomic->NumInputs,
-                        x86AtomicAddressControlIndex(Ids[Kind]) + Stack);
+                        x86AtomicAddressControlIndex(Ids[Kind]) +
+                            (Stack || I386Segment != 0));
             }
 }
 

@@ -324,18 +324,21 @@ llvm::json::Array changes(uint32_t Mask) {
   return A;
 }
 llvm::json::Object match(const FunctionMatch &M) {
-  return llvm::json::Object{{"step", stepName(M.Step)},
-                            {"explanation", stepDescription(M.Step)},
-                            {"similarity", M.Similarity},
-                            {"confidence", M.Confidence},
-                            {"heuristic", true},
-                            {"from_context", M.FromContext},
-                            {"confirmed", M.Confirmed},
-                            {"measured", M.Measured},
-                            {"identity_only", M.IdentityOnly},
-                            {"analysis_complete", M.AnalysisComplete},
-                            {"normalized_unchanged", M.identical()},
-                            {"changes", changes(M.Changes)}};
+  return llvm::json::Object{
+      {"step", stepName(M.Step)},
+      {"explanation", stepDescription(M.Step)},
+      {"similarity", M.Similarity},
+      {"confidence", M.Confidence},
+      {"heuristic", true},
+      {"from_context", M.FromContext},
+      {"confirmed", M.Confirmed},
+      {"measured", M.Measured},
+      {"identity_only", M.IdentityOnly},
+      {"analysis_complete", M.AnalysisComplete},
+      {"reference_comparison_complete", M.ReferenceComparisonComplete},
+      {"change_state", changeState(M)},
+      {"normalized_unchanged", M.identical()},
+      {"changes", changes(M.Changes)}};
 }
 llvm::StringRef displayName(const Comparison &C, const Program &P,
                             uint32_t Index) {
@@ -887,7 +890,8 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
     }
     const auto Kind = string(*O, "kind", "all");
     require(Kind == "all" || Kind == "matched" || Kind == "changed" ||
-                Kind == "ambiguous" || Kind == "unmatched",
+                Kind == "uncertain" || Kind == "ambiguous" ||
+                Kind == "unmatched",
             "invalid inventory kind");
     const auto Search = llvm::StringRef(string(*O, "search")).lower();
     const auto Sort = string(*O, "sort", "address");
@@ -917,6 +921,7 @@ const char *neverd_comparison_functions_json(neverd_comparison_t Handle,
         if ((Kind == "matched" && !M) ||
             (Kind == "changed" &&
              (!M || !M->Measured || !(M->Changes & ~MovementChanges))) ||
+            (Kind == "uncertain" && (!M || changeState(*M) != "uncertain")) ||
             (Kind == "ambiguous" && !Ambiguous) ||
             (Kind == "unmatched" && (M || Ambiguous)))
           return;
@@ -1064,7 +1069,8 @@ const char *neverd_comparison_function_json(neverd_comparison_t Handle,
       Blocks.push_back(llvm::json::Object{{"primary", B.Primary},
                                           {"secondary", B.Secondary},
                                           {"step", stepName(B.Step)},
-                                          {"unchanged", B.Unchanged}});
+                                          {"unchanged", B.Unchanged},
+                                          {"uncertain", B.Uncertain}});
     Out["rows"] = std::move(Rows);
     Out["block_pairs"] = std::move(Blocks);
     return dupStr(jsonToString(std::move(Out)));
@@ -1420,7 +1426,8 @@ const char *neverd_comparison_function_page_json(neverd_comparison_t Handle,
           Pairs.push_back(llvm::json::Object{{"primary", BP.Primary},
                                              {"secondary", BP.Secondary},
                                              {"step", stepName(BP.Step)},
-                                             {"unchanged", BP.Unchanged}});
+                                             {"unchanged", BP.Unchanged},
+                                             {"uncertain", BP.Uncertain}});
         }
       }
     } else {
@@ -1491,7 +1498,9 @@ const char *neverd_comparison_graph_json(neverd_comparison_t Handle,
             Secondary ? D->SecondaryBlockPair[BI] : D->PrimaryBlockPair[BI];
         if (Pair != NoIndex) {
           const auto &BP = D->Blocks[Pair];
-          Change = BP.Unchanged ? "unchanged" : "changed";
+          Change = BP.Unchanged   ? "unchanged"
+                   : BP.Uncertain ? "uncertain"
+                                  : "changed";
           const auto &Other = Secondary ? C.Primary : C.Secondary;
           const auto &OtherF =
               Other.Functions[Secondary ? M->Primary : M->Secondary];
@@ -2028,6 +2037,7 @@ const char *neverd_comparison_observations_json(neverd_comparison_t Handle,
         {"pairing", match(*M)},
         {"query", std::move(Recipe)},
         {"native_analysis_complete", R.NativeAnalysisComplete},
+        {"reference_comparison_complete", R.ReferenceComparisonComplete},
         {"primary_ssa",
          SSAStatus(AE, C.Result.PrimaryDataFlow.get(), R.PrimarySSA)},
         {"secondary_ssa",

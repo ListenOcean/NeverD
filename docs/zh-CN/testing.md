@@ -1999,6 +1999,8 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 
 `SymAtomicCmpxchg.*` 与 `InterpreterSpecialization.AtomicCmpxchg*` 覆盖完整字节效果、两种字节序、旧值来源、输入输出别名、原生返回单元、跨汇合点的仿射溢出存储失效、有序操作发生次数的保留、严格准入及精确／不足预算。独立字节校验器仅模拟顺序值语义。源码包装对照采用初始化完整、结构有效的图，要求在有序内存边界拒绝。独立 LowIR 对照还绑定完整 sidecar，并要求不产生证书。原生二进制证明可能更早拒绝，因为 LOCK CMPXCHG 尚缺完整的架构未定义输出审计。原始收据检查绑定内存序、地址空间和目标操作数。声明支持前应运行所属测试集；测试定义本身不是执行证据。
 
+`InterpreterSpecialization.AtomicUpdates*` 覆盖 ADD/XCHG 的所有标量宽度和两种字节序、旧值输出重叠、原生返回范围、不改变值的操作保留、跨节点的新旧内存来源、显式域拒绝及帧保留的精确／不足预算。应与全部解释器特化、条件存储和原子符号测试一起运行；字节校验器只提供顺序值语义。
+
 `InterpreterSpecialization.WideIntegerConcat*` 覆盖两种字节序、高低字、常量输入、重叠输出、高字控制、非法形状、精确／不足预算及未知内存来源保留。严格解码的 `PSHUFD` 以独立双字索引验证全部 256 种选择值及相同／不同目标寄存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生证明和两种源码布局的拒绝。
 
 `InterpreterSpecialization.Timestamp*` 用独立值和状态参考实现检查完整读数、寄存器高半部清零、独立及重复读取、寄存器／标志／内存／段基址保持、精确和不足预算、非法序列与未知地址来源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 检查原始恢复完成，同时保留原生证明和源码布局拒绝。现有 `X86_64_Intrinsics` 时间戳用例检查源码生成和一次读取的完整位结果；`DriverTimestamp` 单独检查 Unicorn/KVM/WHP 共享时钟策略、状态保持、预算及溢出。平台跳过不代表该后端已执行。
@@ -2102,7 +2104,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting` 和 `ExecutorUsesIndependentRegionsForOnlyOneStore` 覆盖一次 STORE 保留两到三个独立当前根、两种字节序、跨相对零点的部分区间、重叠声明、未保护间隙和写入后的未知值世代。精确预算及少一个单位的预算检查完整计费，缺失区域不得被物化。无效或越界引用、窄或常量基址、空或反向区间，以及实际写入自身的基址均应拒绝且不改变状态。空 `AdditionalRegions` 保持已有单根和 `AdditionalRanges` 计费。执行器检查单次事件、同区域邻接字节及后续普通写入的失效效果。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` 覆盖比较匹配和不匹配、精确和不足预算、两个保留根、旧值输出及既有保守拒绝路径。
 
-`NeverDSymConditionalStoreTests` 覆盖独立根的当前字节条件效果、128 位写入、双端序、部分重叠、符号相对坐标环绕及绝对内存，并检查自身区域相邻字节、当前与历史事实、写后未知时期、不支持的输入、精确及少一单位预算。执行器用例覆盖沿用现有段基址处理的 STORE、严格 CMPXCHG 的成功与失败、Old 延后发布、拒绝时 havoc，以及其他操作保持 Invalid。普通写入和保留契约的默认行为不变。这些测试验证有界内存语义，不认证访问权限或完整程序恢复。
+`NeverDSymConditionalStoreTests` 覆盖绝对及符号存储区的有界字节效果、双端序、重叠、环绕、未知时期和精确预算。执行器测试包含 STORE、标量原子 ADD/XCHG/CMPXCHG、地址/值/输出寄存器重叠、Old 延后发布、非法形状及拒绝时 havoc。`SymStorePreservation` 以显式栈帧保留契约检查同一原子写入路径，以及精确和少一单位预算。无描述符的普通执行行为不变；这些检查不认证访问权限或完整程序恢复。
 
 
 `AbsoluteMemoryFactsTests.inc` 覆盖绝对地址目标跨节点传递、冲突汇合、部分重叠及未知别名写入，以及两种字节序和启用/禁用串接时的栈分离证明。独立字节执行器检查保留的副作用；缺少排除范围或预算不足时必须拒绝。`SymStorePreservation.Absolute*` 与 `SymState.AbsoluteProjections*` 检查绝对/符号区域共存、高地址、纯只读有界投影、写入后的未知值世代和事务性拒绝。运行 `NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`，随后运行原生独立性与 LowIR 精化测试。
@@ -2186,3 +2188,9 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 `Win64CallContract.AddressOnlySymbolsDoNotInventCallableTypes` 将地址输出分别与整数、指针、浮点和 void 返回的实现拼接；`AddressOnlyCallbackConvertsToItsKnownParameterType` 执行带类型的回调。`SelectedWordCalleesKeepTheirPointerDeclarations` / `PipelineOutcome.OmittedPointerDeclarationsStayInSourceModules` 拼接分别选择的调用者和读取指针的被调函数，对比整单元及冷、热缓存输出。x64/ARM64 的 PE、ELF、Mach-O 输入模型生成的 C 在主机上以 O0/O2 和 UBSan 编译执行。这不代表所有目标平台的原生执行已验证。修改此边界后运行调用契约、指针投影、源码 ABI 和被调函数缓存相关测试。
 
 调用后内存测试覆盖保留值、条件结果、未知状态更新、调用前目标与无效输入拒绝。修改此边界时，一并运行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 和 `NeverDSymMemoryKnowledgeTests`。
+
+`NeverDSymbolicCallEffectTests` 还检查提供者能获取两条分支、先前调用效果、重复调用以及合流后的完整路径条件；矛盾效果会阻止后续操作和提供者调用。这些是不依赖求解器的探索回归，不是外部 API 契约验证。
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` 与交换对照在 O0/O2 和 UBSan 下执行两条 C 输出路线，覆盖四种 x64 宽度、未对齐地址、旧值和所有邻接字节。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` 还执行原始 LLVM IR、保留未使用结果的写入，并拒绝改变的汇编契约。FS/GS 形式只编译，不访问宿主 TLS；执行需要 x64 宿主。这些检查不认证并发争用或硬件故障。
+
+`X86LegacyAtomic.LockedArithmetic*` 检查 x86/x64 标量宽度、独立算术标志、源寄存器和进位保留、有符号立即数、未对齐邻接字节、只读及截断映射、FS/GS 地址和无锁对照。不支持的带锁核心运算不能发布普通存储。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` 还检查四种带锁算术的原始特化，并保留有序内存证明拒绝。

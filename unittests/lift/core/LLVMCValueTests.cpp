@@ -14,6 +14,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
+#include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
@@ -4452,6 +4453,11 @@ done:
                         "__gmon_start__(void);"),
             std::string::npos)
       << Source;
+#if !defined(__ELF__)
+  // This fixture emits ELF's undefined-weak contract. Mach-O requires a
+  // weak_import declaration, so its native linker cannot execute this oracle.
+  GTEST_SKIP() << "requires native ELF undefined-weak linkage";
+#endif
   Source += R"c(
 int main(void) {
   init_profiling();
@@ -6334,6 +6340,82 @@ TEST(LLVMCValues, IntegerSlicesRetainFreezeAndPoisonPromises) {
     Module.print(AfterOS, nullptr);
     EXPECT_EQ(Before, After);
   }
+}
+
+TEST(LLVMCValues, IntegerSlicesFollowWideProducersWithoutObservingUpperState) {
+  using namespace llvm;
+  for (unsigned Width : {64u, 80u, 128u})
+    for (unsigned Start : {0u, Width - 16})
+      for (bool DirectWide : {false, true})
+        for (bool ObserveUnknown : {false, true}) {
+          SCOPED_TRACE(Width);
+          SCOPED_TRACE(DirectWide);
+          SCOPED_TRACE(Start);
+          SCOPED_TRACE(ObserveUnknown);
+          LLVMContext Context;
+          Module Module("wide-slice", Context);
+          Module.setDataLayout("e-p:64:64");
+          auto *I16 = Type::getInt16Ty(Context);
+          auto *I64 = Type::getInt64Ty(Context);
+          auto *Wide = IntegerType::get(Context, Width);
+          auto *Word = DirectWide ? Wide : I64;
+          auto *F = Function::Create(
+              FunctionType::get(I16, {PointerType::getUnqual(Context)}, false),
+              GlobalValue::ExternalLinkage, "wide_slice", Module);
+          IRBuilder<> B(BasicBlock::Create(Context, "entry", F));
+          auto *Load = B.CreateAlignedLoad(Wide, F->getArg(0), Align(1));
+          auto *Low = B.CreateZExtOrTrunc(
+              B.CreateLShr(Load, ConstantInt::get(Wide, Start)), Word);
+          auto *Known =
+              B.CreateAnd(B.CreateTrunc(Low, I16), B.getInt16(0x4700));
+          auto *Unknown = neverd::llvm_source_unknown::createEntrySeed(B, Word);
+          APInt UpperMask = APInt::getHighBitsSet(Word->getBitWidth(),
+                                                  Word->getBitWidth() - 16);
+          if (ObserveUnknown)
+            UpperMask.setBit(0);
+          auto *Upper = B.CreateAnd(Unknown, ConstantInt::get(Word, UpperMask));
+          B.CreateRet(
+              B.CreateTrunc(B.CreateOr(Upper, B.CreateZExt(Known, Word)), I16));
+          ASSERT_FALSE(verifyModule(Module, &errs()));
+          std::string Before;
+          raw_string_ostream BeforeOS(Before);
+          Module.print(BeforeOS, nullptr);
+          for (bool PreserveTypes : {false, true}) {
+            SCOPED_TRACE(PreserveTypes);
+            neverd::CEmitterOptions Options;
+            Options.PreserveLLVMFunctionTypes = PreserveTypes;
+            std::string Source;
+            raw_string_ostream OS(Source);
+            ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, Options));
+            EXPECT_EQ(Source.find("unknown machine state") != std::string::npos,
+                      ObserveUnknown);
+            if (ObserveUnknown)
+              continue;
+            Source += "#define SLICE_BYTE " + std::to_string(Start / 8) + "\n";
+            Source += R"c(
+int main(void) {
+  uint8_t memory[16];
+  uint64_t seed = 1;
+  for (unsigned i = 0; i < 1024; ++i) {
+    for (unsigned j = 0; j < sizeof memory; ++j) {
+      seed = seed * UINT64_C(6364136223846793005) + 1;
+      memory[j] = (uint8_t)(seed >> 32);
+    }
+    uint16_t expected = ((uint16_t)memory[SLICE_BYTE] |
+                         (uint16_t)memory[SLICE_BYTE + 1] << 8) & 0x4700;
+    if (wide_slice(memory) != expected) return 1;
+  }
+  return 0;
+}
+)c";
+            for (StringRef Level : {"-O0", "-O2"})
+              compileAndRun(Source, Level, {}, true);
+          }
+          std::string After;
+          raw_string_ostream AfterOS(After);
+          Module.print(AfterOS, nullptr);
+          EXPECT_EQ(Before, After);
+        }
 }
 
 TEST(LLVMCValues, IntegerSlicesKeepCallsVolatileReadsAndWholeWordStores) {

@@ -718,6 +718,13 @@ public:
   LowFunc buildIntegerFrameProof(const BinaryImage &Img, Decoder &Dec,
                                  va_t EntryAddr, const std::string &FuncName);
 
+  /// Build only the evidence needed to recover an omitted callee's signature.
+  /// Win64 wrappers without local x87 use need no context transport for this
+  /// read. Local state consumers and other ABIs keep ordinary normalization.
+  /// Never emit this signature-only projection as a function definition.
+  LowFunc buildCallSignatureProof(const BinaryImage &Img, Decoder &Dec,
+                                  va_t EntryAddr, const std::string &FuncName);
+
   /// Reuse only the inputs to an ordinary x64 call-register summary, under
   /// these exact immutable-image indexes and default CFG proof limits.
   /// No-return decisions are replayed at depth zero and every skipped x87
@@ -1271,6 +1278,7 @@ private:
   /// so table-only labels cannot become independent x87 entries again.
   void fixupFpuStack(LowFunc &Func,
                      const std::set<va_t> &SuppressedRelocationRoots);
+  bool hasLocalFpuStackUse() const;
   /// Prove termination without computing unused floating return values.
   /// Local x87 state consumers retain the ordinary normalized CFG build.
   /// Only the internal no-return index may consume this reduced projection.

@@ -184,7 +184,8 @@ llvm::Error compareFrameStates(const dwarf_eh::ParseResult &Before,
         C.SegmentSelectorSize, C.FDEPointerEncoding, C.LSDAPointerEncoding,
         C.PersonalityEncoding, C.PersonalityVA, C.PersonalitySlotVA,
         C.HasAugmentationData, C.IsSignalFrame, C.HasPointerAuth,
-        C.UsesNonHintPAuthLR, C.HasMTETaggedFrame, C.ParseStatus);
+        C.UsesArm64eReturnAddressABI, C.UsesNonHintPAuthLR, C.HasMTETaggedFrame,
+        C.ParseStatus);
   };
   std::map<uint64_t, size_t> CIEIndices;
   for (size_t Index = 0; Index < Before.CIEs.size(); ++Index) {

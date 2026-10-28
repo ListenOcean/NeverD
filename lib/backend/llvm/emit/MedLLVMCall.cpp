@@ -26,6 +26,7 @@
 #include "neverd/backend/llvm/SafetyCallsiteMetadata.h"
 #include "neverd/backend/llvm/X86/X86X87ImportCall.h"
 #include "neverd/debug/DebugContext.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64PAuth.h"
 #include "neverd/ir/low/X86/X87ImportCall.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/libc/LibCFloatingArguments.h"
@@ -556,8 +557,22 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       rejectEscapingAddressFragment(Arg, "a call argument");
 
   llvm::Value *Target = nullptr;
-  if (Op.Opcode == NdOp::INDIR_CALL &&
-      !getX86RegistrationSEHRuntimeTarget(Op)) {
+  const MedOp *Authentication = AArch64AuthenticatedCalls.lookup(&Op);
+  llvm::SmallVector<llvm::OperandBundleDef, 1> AuthenticationBundles;
+  if (Authentication) {
+    const auto Integer = [&](const MedVar &Value) {
+      auto *Result = getVar(Value, Builder);
+      return Result->getType()->isPointerTy()
+                 ? Builder.CreatePtrToInt(Result, Builder.getInt64Ty())
+                 : Result;
+    };
+    Target = Integer(Authentication->Inputs[1]);
+    llvm::SmallVector<llvm::Value *, 2> Operands{
+        Builder.getInt32(Authentication->Inputs[2].ConstVal),
+        Integer(Authentication->Inputs[3])};
+    AuthenticationBundles.emplace_back(kAArch64PAuthCallBundle, Operands);
+  } else if (Op.Opcode == NdOp::INDIR_CALL &&
+             !getX86RegistrationSEHRuntimeTarget(Op)) {
     if (Op.NumInputs > 0)
       Target = tryResolveIndirectCallTarget(Op.Inputs[0], Builder);
     if (!Target)
@@ -716,12 +731,12 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     DefaultRetTy = llvm::Type::getIntNTy(*Ctx, Op.Output.Size * 8);
 
   llvm::GlobalValue *KnownTarget =
-      Target
+      Target && !Authentication
           ? constantCallIdentity(Target, Mod->getDataLayout(),
                                  getTargetRegInfo(TargetArch).PointerSize * 8)
           : nullptr;
   std::string IndirectImportName;
-  bool PreserveHeaderTarget = false;
+  bool PreserveHeaderTarget = Authentication != nullptr;
   std::optional<FunctionSym> VariadicHeader;
   if (Op.CalleeVariadicFrom >= 0 && Img && CI && Dbg) {
     const std::string Name = importCalleeName(*Img, CI->TargetAddr);
@@ -913,7 +928,8 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     }
     if (Callable->getType()->isIntegerTy())
       Callable = Builder.CreateIntToPtr(Callable, PtrTy);
-    auto *Call = Builder.CreateCall(FT, Callable, Values);
+    auto *Call =
+        Builder.CreateCall(FT, Callable, Values, AuthenticationBundles);
     if (Hint.Signature.ReturnType->Kind == NdTypeKind::Int &&
         Hint.Signature.ReturnType->IsSigned)
       Call->addFnAttr(llvm::Attribute::get(*Ctx, LLVMSourceSignedResult));
@@ -1661,14 +1677,14 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       CoercedArgs.push_back(llvm::Constant::getNullValue(PadTy));
     }
     llvm::Value *Callable = Callee;
-    if (PreserveHeaderTarget) {
+    if (PreserveHeaderTarget || Authentication) {
       Callable = Target;
       if (Callable->getType()->isIntegerTy())
         Callable = Builder.CreateIntToPtr(Callable, PtrTy);
     }
-    auto *Call =
-        Builder.CreateCall(CalleeTy, Callable, CoercedArgs,
-                           CalleeTy->getReturnType()->isVoidTy() ? "" : "call");
+    auto *Call = Builder.CreateCall(
+        CalleeTy, Callable, CoercedArgs, AuthenticationBundles,
+        CalleeTy->getReturnType()->isVoidTy() ? "" : "call");
     Call->setCallingConv(Callee->getCallingConv());
     Result = Call;
   } else {
@@ -1802,8 +1818,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     }
     auto *FPtr =
         Builder.CreateIntToPtr(Target, llvm::PointerType::get(*Ctx, 0));
-    Result = Builder.CreateCall(IndirectFT, FPtr, CoercedArgs,
-                                CoercedArgs.empty() ? "icall" : "call");
+    Result =
+        Builder.CreateCall(IndirectFT, FPtr, CoercedArgs, AuthenticationBundles,
+                           CoercedArgs.empty() ? "icall" : "call");
   }
 
   // Itanium call-site ranges are tight around individual calls rather than

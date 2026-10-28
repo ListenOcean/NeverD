@@ -60,6 +60,7 @@
           "neverd_func_type_json",
           "neverd_function_chunks_json",
           "neverd_function_disasm_json",
+          "neverd_function_presentation_json",
           "neverd_functions_json",
           "neverd_functions_load",
           "neverd_functions_save",
@@ -93,6 +94,7 @@
           "neverd_local_types_json",
           "neverd_local_types_source",
           "neverd_map_reference_json",
+          "neverd_metadata_items_json",
           "neverd_name_check",
           "neverd_operand_format_set",
           "neverd_operand_formats_json",
@@ -232,6 +234,7 @@
           "neverd_set_opaque_predicate",
           "neverd_set_text_section",
           "neverd_set_value_launder",
+          "neverd_sha256_hex",
           "neverd_sig_compute_crc16",
           "neverd_sig_match_count",
           "neverd_sig_matches_json",
@@ -263,6 +266,7 @@
           "neverd_unwind_frame_json",
           "neverd_version",
           "neverd_version_number",
+          "neverd_visit_metadata_items",
           "neverd_warm_functions_json",
           "neverd_xrefs_from_json",
           "neverd_xrefs_scan",
@@ -1726,6 +1730,7 @@
           "neverd_func_type_json",
           "neverd_function_chunks_json",
           "neverd_function_disasm_json",
+          "neverd_function_presentation_json",
           "neverd_functions_json",
           "neverd_headers_json",
           "neverd_identify_json",
@@ -1738,6 +1743,7 @@
           "neverd_local_types_fit_json",
           "neverd_local_types_json",
           "neverd_map_reference_json",
+          "neverd_metadata_items_json",
           "neverd_operand_formats_json",
           "neverd_pdb_reference_json",
           "neverd_plugins_list_json",
@@ -2398,6 +2404,17 @@
             "linux",
             "windows"
           ]
+        },
+        {
+          "runner": "python-unittest",
+          "target": "NeverDPythonSDKUnitTests",
+          "source": "pluginsdk/python/tests/test_byte_patch_integration.py",
+          "filter": "BytePatchIntegrationTests.test_range_snapshots_keep_file_order_with_reverse_virtual_addresses",
+          "platforms": [
+            "darwin",
+            "linux",
+            "windows"
+          ]
         }
       ],
       "public_surfaces": {
@@ -2406,7 +2423,9 @@
           "neverd_byte_patch_apply",
           "neverd_byte_patch_context_json",
           "neverd_byte_patch_preview",
+          "neverd_byte_patch_range_snapshot_free_v1",
           "neverd_byte_patch_ranges_json",
+          "neverd_byte_patch_ranges_snapshot_v1",
           "neverd_byte_patch_revert",
           "neverd_byte_patch_snapshot_free_v1",
           "neverd_byte_patch_source_preview_json",

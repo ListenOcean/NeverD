@@ -1569,6 +1569,8 @@ TEST(AArch64PAuthSemantics, LLVMAndBothCRoutesRetainMachineAuthentication) {
 
 TEST(AArch64PAuthSemantics,
      CompilerReturnSequenceKeepsAuthenticationAndX0Result) {
+#define A64_RETURN_ABI_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "AArch64ReturnABIFixtures.def"
   // pacibsp; mov x0, #7; retab. RETAB's LR is control flow, never the C result.
   BinaryImage Image;
   Image.Arch = Arch::AArch64;
@@ -1605,6 +1607,9 @@ TEST(AArch64PAuthSemantics,
   EXPECT_FALSE(llvm::verifyModule(*Module));
   auto *Fn = Module->getFunction("signed_return");
   ASSERT_TRUE(Fn);
+  EXPECT_EQ(Fn->getFnAttribute(kSigningScope).getValueAsString(), kSigningAll);
+  EXPECT_EQ(Fn->getFnAttribute(kSigningKey).getValueAsString(), kSigningBKey);
+  EXPECT_TRUE(Fn->hasUWTable());
   llvm::SmallVector<llvm::AllocaInst *> Allocas;
   for (auto &Insn : Fn->getEntryBlock())
     if (auto *Alloca = llvm::dyn_cast<llvm::AllocaInst>(&Insn))
@@ -1631,10 +1636,9 @@ TEST(AArch64PAuthSemantics,
   EXPECT_TRUE(LLVMCEmitter().emit(*Module, LowOS, Options));
   auto High = MedToHighConverter().convert(Med, Arch::AArch64);
   EXPECT_TRUE(HighCEmitter().emit({High}, HighOS, Options));
-  EXPECT_NE(LowC.find("__builtin_ptrauth_auth"), std::string::npos) << LowC;
-  EXPECT_NE(HighC.find("branch-protection=pac-ret+leaf+b-key"),
-            std::string::npos)
-      << HighC;
+  EXPECT_NE(LowC.find(kSourceBKey), std::string::npos) << LowC;
+  EXPECT_EQ(LowC.find("__builtin_ptrauth_auth"), std::string::npos) << LowC;
+  EXPECT_NE(HighC.find(kSourceBKey), std::string::npos) << HighC;
   EXPECT_EQ(HighC.find("__builtin_ptrauth_auth"), std::string::npos) << HighC;
   compileArm64eC(LowC);
   compileArm64eC(HighC);

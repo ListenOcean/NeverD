@@ -61,7 +61,8 @@ def run(args: argparse.Namespace) -> int:
     tools = [launcher, java / "bin/java", java / "release", root / "Ghidra/application.properties",
              root / "Ghidra/Features/VersionTracking/lib/VersionTracking.jar",
              root / "Ghidra/Features/Base/lib/Base.jar", Path(__file__).resolve(),
-             Path(bench.__file__).resolve(), Path(external.__file__).resolve(), *scripts]
+             Path(bench.__file__).resolve(), Path(bench.binexport.__file__).resolve(),
+             Path(external.__file__).resolve(), *scripts]
     identities = {path: bench.digest(path) for path in tools}
     output = args.output_dir.resolve()
     output.mkdir(parents=True, exist_ok=False)

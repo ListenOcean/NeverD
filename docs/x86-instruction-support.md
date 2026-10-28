@@ -123,6 +123,52 @@ while an unused vvvv field must still be all ones. Arithmetic, COMI, mask
 comparison, scalar/packed conversion, approximation and ROUND retain their
 family-specific rules. REX2 cannot encode ROUND's map 3.
 
+## Native secure-loader launch
+
+SKINIT now has an explicit terminating contract on x86 and x64. It consumes
+the original low 32 bits of EAX as a physical Secure Loader Block address and
+has no ordinary continuation in the calling machine context. The processor
+owns privilege/feature checks, address rounding, reset, SLB accesses,
+attestation and entry transfer. No eager compiler read, pre-alignment or
+synthetic success replaces those effects. This follows [AMD APM Volume 3,
+revision 3.38, pages 472–473](https://docs.amd.com/v/u/en-US/24594_3.38_APM_Vol3_PUB).
+
+One appended intrinsic identity and the shared system-state inventory own the
+operand shape. The common architectural termination helper ends LowIR and
+MedIR flow; HighIR retains termination with a dynamic physical input. Native
+emission uses `llvm.x86.skinit(i32)` when the SDK provides it, and the owned
+real-instruction assembly contract otherwise. NeverC exposes
+`__builtin_ia32_skinit(unsigned)` and the Microsoft `__svm_skinit(int)` spelling
+as native nonreturning builtins. The LLVM declaration is convergent and
+noduplicate, retains unknown memory effects, and makes no willreturn, nosync,
+nofree or nocallback promise. Both C routes reject malformed native or owned
+assembly signatures and incomplete effect/termination contracts.
+
+Physical inputs remain integer bits even beside ordinary process-memory uses.
+The MedIR value-dependency owner follows register slices, scalar operations and
+PHIs back to entry parameters; MedIR and both HighIR inference stages consume
+that fact. Process-address printing also retains the original zero/sign
+extension and truncation before pointer conversion. Thus an EDI input with bit
+31 set cannot become a full-width pointer or a sign-extended DS address.
+The concrete emulator refuses the operation before reading an SLB or changing
+registers: no CPU reset or TPM environment is invented.
+
+The retained qualification and exact source snapshots are recorded in
+[evidence/x86-skinit-2026-10-27.json](evidence/x86-skinit-2026-10-27.json).
+Instruction checks cover 240 decode/lift/termination combinations and 112
+contradictory-metadata refusals. Each SDK covers 36 pipeline profiles and 180
+objects across x86/x64 ELF, COFF and Mach-O, plus eight sanitized caller-input
+observations and eight UBSan source executions with a high-bit address. The
+privileged operation is removed before those source executions. NeverC also
+compiles both actual C routes into 72 native x64 objects and passes sixteen
+unsanitized input-recorder executions per SDK; its emitted IR uses the native
+intrinsic instead of selecting the assembly fallback. Independent
+binary-boundary checks cover 1,080 raw-EAX observations in twelve LLVM objects
+and another 1,080 in six NeverC objects. They stop before the independently
+verified `0f 01 de` instruction; they do not execute SKINIT or qualify reset,
+attestation, successful launch or architectural faults. Global completion and
+the later LLVM release/SDK/gitlink update remain separate work.
+
 ## Known remaining gaps
 
 | Instructions or family | Missing contract |
@@ -131,7 +177,6 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
-| SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
@@ -142,7 +187,7 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
 | Remaining compact-memory descriptor/fault execution | Native LLVM and both C routes retain long-mode stack references and i386 CS/ES/SS offsets, including implicit SS for SP/BP bases, alongside DS/FS/GS. Concrete i386 CS/ES/SS accesses still require a descriptor environment; zero-mask suppression remains available. Physical AVX-512 and descriptor-fault execution remain unqualified. |
 | Remaining four-source descriptor/fault execution | Native lowering retains explicit SSA sources, long-mode stack references and i386 CS/ES/SS offsets, including implicit SS. Concrete active CS/ES/SS accesses still require a descriptor environment. Physical AVX512_4FMAPS/AVX512_4VNNIW execution and faults remain unqualified. Legacy implicit-bank IDs remain guarded at native output. |
-| Remaining RAO-INT/CMPccXADD fault provenance | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, now have distinct native encoding contracts. Legacy RAO includes i386. Long-mode default-stack memory retains an explicit provenance control. i386 non-DS segments still require an owned segment contract; see the native atomic sections below. Physical atomicity and CPU faults remain unqualified. |
+| Remaining RAO-INT/CMPccXADD descriptor/fault execution | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, have distinct native encoding contracts. Legacy RAO includes i386 CS/ES/SS and implicit SS offsets; long-mode default-stack memory retains its independent provenance control. Concrete i386 CS/ES/SS accesses still require a descriptor environment. Physical atomicity, memory-type behavior and CPU faults remain unqualified. |
 | AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
@@ -168,7 +213,8 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-VMRUN and SKINIT still fail strict lifting explicitly. ENCLU and GETSEC decode
+VMRUN still fails strict lifting explicitly. SKINIT uses the native
+nonreturning launch contract above. ENCLU and GETSEC decode
 to pending state, which cannot enter MedIR or either emitter until the CFG
 proves a supported leaf. Dynamic, transferring and unknown leaves remain
 explicitly unsupported. Legacy
@@ -478,7 +524,7 @@ incomplete intermediate batch.
    integration below is implemented; selectors with unknown natural-register
    high bits and transferring leaves still require additional contracts.
 3. Introduce a versioned complete-machine-state boundary and explicit
-   continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
+   continuations for VMRUN and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
    state, distinguish native return, VM exit and nonlocal transfer, and reject
    states the selected runtime cannot transport. A compiler calling convention
@@ -1992,7 +2038,8 @@ LowIR/MedIR/HighIR. It maps to the fork's `0x100` native memory bit; ignored
 CS/DS/ES/SS prefixes cannot replace that independent provenance. Address32,
 R12/R13 and FS/GS retain ordinary data-reference forms. The optional final
 byte is checked at every IR boundary; invalid widths, values, address
-provenance, i386 mode and FS/GS combinations fail before memory or results
+provenance, stack-marker use in i386 mode and FS/GS combinations fail before
+memory or results
 are committed. The semantic contract lives in `X86/X86AtomicMemory.h`.
 
 The native stack carrier leaves RBP unchanged and uses RBP plus a calculated
@@ -2034,11 +2081,11 @@ rejects unknown address, source or comparator bytes before an atomic access;
 an uninitialized input cannot become an accidental transaction with zero.
 
 Direct native APIs expose all segment controls. Normalized lifter addresses
-currently admit DS-default/DS override and FS/GS forms on i386; implicit
-SS stack bases and explicit CS/ES/SS forms are refused. x86-64 default-stack
+retain DS/FS/GS and i386 CS/ES/SS, including implicit SS for stack bases, through
+the final-byte contract described below. x86-64 default-stack
 RSP/RBP accesses with 64-bit addressing use the explicit stack-reference
 contract described above; FS/GS and address32 retain their data-reference form.
-The remaining i386 guard preserves the outstanding segment-fault distinction. Hardware atomicity,
+Concrete i386 CS/ES/SS accesses still require descriptor state. Hardware atomicity,
 write-back memory-type behavior and fault ordering remain unqualified.
 
 The standalone LLVM, NeverC and NeverC-IR-to-LLVM matrices each pass 10,080
@@ -2605,3 +2652,63 @@ The LLVM and NeverC interfaces already expose these segment controls; no new
 compiler builtin, LLVM release or production pin is needed for this change.
 NeverC's frontend remains x64-only, so its substituted recorders validate the
 exported i386 C's values and storage on x64, not an i386 executable ABI.
+## i386 RAO segment completion
+
+Legacy AADD/AAND/AOR/AXOR now retain i386 CS/ES/SS and implicit SS for SP/BP
+bases through LLVM, HighC and LLVM-to-C. The optional final control byte keeps
+`1` for long-mode stack provenance and uses `0x26`, `0x2e` or `0x36` for an i386
+segment offset. The shared shape rejects mixed segments, other modes/encoding
+families, wide operands and malformed control storage. Address arithmetic wraps
+before native segment selection; offsets stay integers beside ordinary DS
+image objects and never acquire process-pointer relocation.
+
+[Intel's RAO specification](https://cdrdv2-public.intel.com/859029/319433-058-architecture-instruction-set-extensions-programming-reference.pdf)
+admits 32-bit mode and distinguishes illegal SS addresses from faults in other
+segments. Native execution retains those checks. Concrete execution refuses
+CS/ES/SS access without descriptor state before reading or changing memory.
+The existing relaxed ordering, natural-alignment/WB restrictions and unchanged
+arithmetic flags remain instruction-owned.
+
+The register-transport regression exposed a shared HighC defect: after
+`MOV EAX,0x4000`, the native segment address printed as `&dword_4000` when an
+ordinary DS load also materialized that global. Atomic, compact and four-source
+calls now share the raw address renderer and the same representation-neutral
+segment-offset role used by type inference. Their source fixtures cover direct
+displacements, constants carried through EAX, and high-bit scalar parameters
+beside an ordinary DS result, including DS reads through the same EAX value.
+Unsupported raw expression shapes retain the
+existing explicit diagnostic. Zero/sign extensions and narrow arithmetic stay
+intact before pointer conversion. Ordinary GS loads also execute on Linux x64
+with a controlled GS base: 40 comparisons per SDK cover 16/32-bit signed and
+unsigned parameters/constants, both extension kinds, wrapping addition, byte
+extraction and narrowing casts at O0/O2. The shared constant-address evaluator
+now applies those views at their declared widths instead of stripping them.
+
+Both the pinned r6 SDK and the native LLVM fork pass 100 focused tests on
+integration `8bcd359a15`: the 95 core regressions and five XBEGIN tests. Per SDK,
+the atomic segment target covers 1,008 decode/lift combinations, 120 malformed
+contracts, 24 wrapped offsets and 12 descriptor-state refusals. Its 72 source
+profiles produce 360 objects; compact and four-source regressions add 810.
+External validation executes 1,872 Clang/NeverC source cases and 36,720
+controlled i386 completions. The final mixed-role fixtures retain byte-identical
+C, IR and external native-object inputs; COFF timestamp bytes and command
+temporary paths are the only normalized differences. The
+[qualification record](evidence/x86-atomic-segments-2026-10-27.json) identifies
+code commits `06f7628d0f` and `270a66d88b`, integrations `048f7be35f` and
+`8bcd359a15`, toolchain revisions, corpus inventories and hashed reports.
+The final integration also checks 65,540 immediate-size metadata cases against
+each rebuilt Capstone library, plus the generated full/reduced tables. XBEGIN
+adds 1,572,864 rel16 checks, 1,656 prefix/wrap cases and 120 native/C objects
+per SDK in a separate corpus. Eight additional pinned-SDK AArch64 pointer and
+raw-SP regressions cover the shared source boundary. All tests pass without
+skips; the ordinary GS checks execute 40 loads per SDK. Code publication
+`bd665c5a16` adds a reviewed upstream symbolic-window size guard; its native
+x86 and C address code is identical to the qualified snapshot.
+
+LLVM already supplies the four `.legacy.address32` intrinsic interfaces and
+segment controls. This change requires no new LLVM builtin, release or SDK
+pin. NeverC's frontend remains x64-only; its substituted host recorders check
+the exported i386 C's operand values and storage. i386 native objects and C ABI
+checks use LLVM and ordinary Clang. The independent controlled completion
+oracle does not establish descriptor faults, physical atomicity, coherence or
+WB memory behavior.

@@ -1411,6 +1411,7 @@ bool X86Lifter::isFunctionTerminator(const cs_insn *I) {
   case X86_INS_SYSRETQ:
   case X86_INS_SYSEXIT:
   case X86_INS_SYSEXITQ:
+  case X86_INS_SKINIT:
     return true;
   case X86_INS_INT:
     // Windows `int 29h` is __fastfail: it never returns (MedNoReturn agrees).

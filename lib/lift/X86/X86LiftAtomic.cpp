@@ -32,6 +32,7 @@ struct ApxAtomicEncoding {
   ApxAtomicKind Kind = ApxAtomicKind::Rao;
   uint8_t Width = 0;
   uint8_t Condition = 0;
+  uint8_t SegmentPrefix = 0;
   Intrinsic Id = Intrinsic::None;
 };
 
@@ -424,7 +425,10 @@ decodeLegacyAtomicEncoding(const cs_insn *Insn, const cs_x86 &X86, Arch A) {
       return std::nullopt;
   if (!validateAtomicMemory(Insn, X86, ModRMOffset, Segment, AddressWidth,
                             BaseExtension, IndexExtension, ModRM, Width,
-                            Mode64) ||
+                            Mode64))
+    return std::nullopt;
+  Result.SegmentPrefix = x86NativeI386Segment(A, Segment, X86.operands[0]);
+  if (!Result.SegmentPrefix &&
       !x86NativeSibAddressIsValid(A, X86, X86.operands[0]))
     return std::nullopt;
   return Result;
@@ -456,12 +460,14 @@ bool X86Lifter::liftAtomic(LiftState &S, const cs_insn *Insn,
     if (!Encoding || Encoding->Kind != ApxAtomicKind::Rao)
       return false;
     const cs_x86_op &Memory = X86.operands[0];
-    NdVar Address = S.computeEA(Memory);
+    NdVar Address = S.computeEA(Memory, true, Encoding->SegmentPrefix != 0);
     NdVar Source = operandRead(S, X86.operands[1]);
     S.emitIntrinsic(Encoding->Id, {}, {Address, Source},
                     NdMemoryOrdering::Relaxed,
                     LiftState::memoryAddressSpace(Memory));
-    if (x86NativeAddressIsStack(TargetArch, X86, Memory))
+    if (Encoding->SegmentPrefix)
+      S.Ops.back().addInput(NdVar::scalar(Encoding->SegmentPrefix, 1));
+    else if (x86NativeAddressIsStack(TargetArch, X86, Memory))
       S.Ops.back().addInput(NdVar::scalar(X86AtomicStackReference, 1));
     break;
   }

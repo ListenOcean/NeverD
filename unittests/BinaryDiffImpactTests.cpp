@@ -100,6 +100,27 @@ TEST(BinaryDiffImpact, CallersKeepShortestWitnessesTailsCyclesAndUnknownScope) {
   EXPECT_EQ(R, analyzeCallImpact(P, {2}, ImpactDirection::Callers));
 }
 
+TEST(BinaryDiffImpact, FilteredTransfersKeepTheirUnknownBoundary) {
+  for (InstructionFlow Flow :
+       {InstructionFlow::Jump, InstructionFlow::Branch}) {
+    ProgramBuilder Builder({});
+    Builder.beginFunction(0x1000, 2, "caller", NameSource::Symbol, 0);
+    Builder.addBlock(0x1000);
+    Builder.addInstruction(0x1000, {0x74, 0x10}, "transfer", 1, 1, Flow,
+                           0x2000);
+    const Program P = Builder.finish();
+    ASSERT_TRUE(P.Instructions[0].UnresolvedCallee);
+    const auto R = analyzeCallImpact(P, {0}, ImpactDirection::Callees);
+    ASSERT_EQ(R.State, ComparisonState::Complete);
+    EXPECT_EQ(functions(R), (std::set<uint32_t>{0}));
+    ASSERT_EQ(R.BoundarySites.size(), 1U);
+    const auto &Site = R.Sites[R.BoundarySites.front()];
+    EXPECT_EQ(Site.Callee, NoIndex);
+    EXPECT_EQ(Site.Instruction, 0U);
+    EXPECT_TRUE(Site.Gaps & ImpactUnresolvedCall);
+  }
+}
+
 TEST(BinaryDiffImpact, CalleesKeepImportsAndMultipleSeedsWithoutInventedEdges) {
   auto P = fixture();
   const auto R = analyzeCallImpact(P, {0}, ImpactDirection::Callees);

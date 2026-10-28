@@ -58,7 +58,7 @@ std::optional<std::string> scalarValidationNativeGap(const Program &P,
                                                      uint32_t Index) {
   const auto &ID = P.Identity;
   if (ID.Architecture != "x86-64" || ID.Bits != 64 || ID.Endian != "little" ||
-      ID.ABI.empty() || ID.Normalization != "native-x86-operands-v1")
+      ID.ABI.empty() || !isNativeX86Normalization(ID.Normalization))
     return "scalar validation requires an x64 native ABI profile";
   if (Index >= P.Functions.size())
     return "native function index is absent";
@@ -67,7 +67,8 @@ std::optional<std::string> scalarValidationNativeGap(const Program &P,
     return "native function coverage is incomplete or empty";
   for (const auto &B : P.blocks(F))
     for (const auto &I : P.instructions(B))
-      if (I.Callee != NoIndex || I.Flow == InstructionFlow::Call ||
+      if (I.Callee != NoIndex || I.UnresolvedCallee ||
+          I.Flow == InstructionFlow::Call ||
           I.Flow == InstructionFlow::IndirectCall ||
           I.Flow == InstructionFlow::IndirectJump ||
           I.Flow == InstructionFlow::Unknown)

@@ -26,6 +26,7 @@
 #include "neverd/backend/LLVMSourceUnknownValue.h"
 #include "neverd/backend/LLVMValueProvenance.h"
 #include "neverd/backend/ParameterSites.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64ReturnProtection.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -34,6 +35,7 @@
 #include "neverd/backend/llvm/X86/X86RegistrationFrame.h"
 #include "neverd/backend/llvm/X86/X86SystemStateNative.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/AArch64/AArch64AuthenticatedCall.h"
 #include "neverd/ir/med/MedMutableSource.h"
 #include "neverd/loader/X86/X86GetPcThunk.h"
 
@@ -134,6 +136,25 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     return nullptr;
 
   CurMedFunc = &Func;
+  AArch64ReturnProtectionOps.clear();
+  AArch64ReturnProtectionPhis.clear();
+  AArch64AuthenticatedCalls.clear();
+  AArch64CallAuthentications.clear();
+  if (TargetArch == Arch::AArch64)
+    for (const auto &Call : findAArch64AuthenticatedCalls(Func)) {
+      AArch64AuthenticatedCalls.try_emplace(Call.Call, Call.Authentication);
+      AArch64CallAuthentications.insert(Call.Authentication);
+    }
+  const auto ReturnProtection =
+      TargetArch == Arch::AArch64
+          ? findAArch64ReturnProtection(Func, TargetFormat)
+          : std::nullopt;
+  if (ReturnProtection) {
+    AArch64ReturnProtectionOps.insert(ReturnProtection->Operations.begin(),
+                                      ReturnProtection->Operations.end());
+    AArch64ReturnProtectionPhis.insert(ReturnProtection->Phis.begin(),
+                                       ReturnProtection->Phis.end());
+  }
   const bool RegistrationSEH =
       Func.ExceptionMetadata &&
       classifyWindowsEHNativeSource(*Func.ExceptionMetadata, TargetArch,
@@ -341,6 +362,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   collectSuppressedTableAddressOps(Func);
 
   auto *LLVMFunc = declareFunc(Func);
+  if (ReturnProtection)
+    setLLVMAArch64ReturnProtection(*LLVMFunc, ReturnProtection->Protection);
   if (Func.HasUnresolvedSEHFrame)
     LLVMFunc->addFnAttr(windows_eh_md::UnresolvedSourceFrame);
   if (Img)
@@ -737,9 +760,11 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
   };
   for (auto &Blk : Func.Blocks) {
     for (auto &Phi : Blk.Phis)
-      preCreatePhiAlloca(Phi.Output);
+      if (!AArch64ReturnProtectionPhis.contains(&Phi))
+        preCreatePhiAlloca(Phi.Output);
     for (auto &Op : Blk.Ops)
-      preCreateOpAlloca(Op.Output);
+      if (!AArch64ReturnProtectionOps.contains(&Op))
+        preCreateOpAlloca(Op.Output);
   }
   for (const MedCallClobber &Clobber : Func.CallClobbers)
     preCreatePhiAlloca(Clobber.Value);
@@ -1042,6 +1067,8 @@ llvm::Function *MedLLVMEmitter::emitFunc(const MedFunc &Func) {
     };
     for (auto &Blk : Func.Blocks) {
       for (auto &Phi : Blk.Phis) {
+        if (AArch64ReturnProtectionPhis.contains(&Phi))
+          continue;
         for (auto &[PredId, Var] : Phi.Args) {
           // A throwing call never reaches its ordinary block terminator.
           // These copies are emitted immediately before the call when it is

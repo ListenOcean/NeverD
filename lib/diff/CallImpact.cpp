@@ -159,7 +159,8 @@ CallImpact analyzeCallImpact(const Program &P, llvm::ArrayRef<uint32_t> Seeds,
                 I.Flow == InstructionFlow::IndirectCall ? ImpactIndirectCall
                 : I.Flow == InstructionFlow::IndirectJump
                     ? ImpactIndirectTransfer
-                : I.Flow == InstructionFlow::Call    ? ImpactUnresolvedCall
+                : I.UnresolvedCallee || I.Flow == InstructionFlow::Call
+                    ? ImpactUnresolvedCall
                 : I.Flow == InstructionFlow::Unknown ? ImpactNativeCoverage
                                                      : 0;
             if (Gap)

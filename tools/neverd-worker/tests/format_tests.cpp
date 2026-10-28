@@ -1,6 +1,6 @@
 // Classic x86 listing spellings: mnemonics, operand forms, size keywords,
 // immediates, displacements and frame variables; the user's number formats in
-// x86 and ARM-family operands.
+// x86, ARM-family, SBF and EVM operands.
 #include "OperandFormat.h"
 
 #include <cstdio>
@@ -512,6 +512,115 @@ int main() {
           "a register list was given one register's size");
     check(access(aarch64, "add", "x0, x0, #0x18", 2) == 0,
           "an address computation was taken for an access");
+  }
+  {
+    // SBF and EVM operands keep their decoders' spellings: SBF's signed
+    // decimal, lddw's hexadecimal and `[r10 - 8]`, EVM's padded PUSH data.
+    const auto sbf = OperandDialect::SBF, evm = OperandDialect::EVM;
+    const auto at = [](std::size_t operand, NumberFormat format) {
+      std::vector<NumberFormat> formats(operand + 1);
+      formats[operand] = std::move(format);
+      return formats;
+    };
+    const NumberFormat hexadecimal{NumberBase::Hex},
+        decimal{NumberBase::Decimal}, binary{NumberBase::Binary},
+        character{NumberBase::Char}, negate{NumberBase::Number, true},
+        invert{NumberBase::Number, false, true};
+    // A call target, a byte swap's width and a stack position are numbers,
+    // but no constants of the program.
+    check(formattableOperands("r1, 5", sbf, "mov64") ==
+              std::vector<bool>{false, true},
+          "an SBF immediate is no number");
+    check(formattableOperands("r1, 65, block_7", sbf, "jeq") ==
+              std::vector<bool>{false, true, false},
+          "a branch target is a number");
+    check(formattableOperands("12345", sbf, "call") == std::vector<bool>{false},
+          "a call target is a constant");
+    check(formattableOperands("r1, 16", sbf, "le") ==
+              std::vector<bool>{false, false},
+          "a byte swap's width is a constant");
+    check(formattableOperands("r3, [r10 - 8]", sbf, "ldxdw") ==
+              std::vector<bool>{false, false},
+          "an SBF displacement is a plain number");
+    check(structOperands("r3, [r10 - 8]", sbf, "ldxdw") ==
+              std::vector<bool>{false, true},
+          "an SBF displacement takes no structure offset");
+    check(formattableOperands("0x0004", evm, "PUSH2") ==
+              std::vector<bool>{true},
+          "PUSH data is no number");
+    check(formattableOperands("0x01", evm, "DUPN") == std::vector<bool>{false},
+          "a stack position is a constant");
+    check(structOperands("0x0004", evm, "PUSH2") == std::vector<bool>{true} &&
+              structOperands("0xfffffffffffffffffffffffffffffffffffffffffffffff"
+                             "fffffffffffffffff",
+                             evm, "PUSH32") == std::vector<bool>{false},
+          "PUSH data wider than 64 bits takes a structure offset");
+
+    // An SBF immediate counts in its operation's width, a store's in the
+    // data's, unless the encoded number needs the field's 32 bits.
+    expectFormat(
+        {"mov64", "r1, 5", "", "r1, 0x5", true, at(1, hexadecimal), sbf});
+    expectFormat({"add64", "r1, -16", "", "r1, 0xfffffffffffffff0", true,
+                  at(1, hexadecimal), sbf});
+    expectFormat({"add64", "r1, -16", "", "r1, -16", true, at(1, negate), sbf});
+    expectFormat({"mov32", "r0, -1", "", "r0, 0xffffffff", true,
+                  at(1, hexadecimal), sbf});
+    expectFormat({"jeq", "r1, 65, block_7", "", "r1, 'A', block_7", true,
+                  at(1, character), sbf});
+    expectFormat({"stb", "[r1 + 2], -1", "", "[r1 + 2], 0xff", true,
+                  at(1, hexadecimal), sbf});
+    expectFormat({"stb", "[r1 + 2], 255", "", "[r1 + 2], 0b11111111", true,
+                  at(1, binary), sbf});
+    expectFormat({"stb", "[r1 + 2], 300", "", "[r1 + 2], 0x12c", true,
+                  at(1, hexadecimal), sbf});
+    expectFormat({"lddw", "r2, 0x912345678", "", "r2, 38960125560", true,
+                  at(1, decimal), sbf});
+    expectFormat({"lddw", "r2, 0x912345678", "", "r2, ~0xfffffff6edcba987",
+                  true, at(1, invert), sbf});
+    // A structure offset names a displacement's member or an immediate's.
+    expectFormat({"ldxdw", "r3, [r1 + 24]", "", "r3, [r1 + _T.List.Blink]",
+                  true, member(1), sbf});
+    expectFormat({"stxdw", "[r1 + 548], r3", "", "[r1 + _T.Process+4], r3",
+                  true, member(0), sbf});
+    expectFormat({"ldxb", "r3, [r10 - 8]", "", "r3, [r10 + _T.Type-8]", true,
+                  member(1, 8), sbf});
+    expectFormat(
+        {"ldxdw", "r3, [r10 - 8]", "", "r3, [r10 - 8]", true, member(1), sbf});
+    expectFormat(
+        {"mov64", "r1, 24", "", "r1, _T.List.Blink", true, member(1), sbf});
+
+    // PUSH data counts in the PUSH's own width, up to the 256-bit word.
+    expectFormat({"PUSH2", "0x0004", "", "4", true, at(0, decimal), evm});
+    expectFormat({"PUSH2", "0xff00", "", "~0x00ff", true, at(0, invert), evm});
+    expectFormat({"PUSH2", "0x0004", "", "-0xfffc", true, at(0, negate), evm});
+    expectFormat(
+        {"PUSH2", "0x1234", "", "0b1001000110100", true, at(0, binary), evm});
+    expectFormat({"PUSH1", "0x41", "", "'A'", true, at(0, character), evm});
+    expectFormat(
+        {"PUSH32",
+         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+         "",
+         "115792089237316195423570985008687907853269984665640564039457"
+         "584007913129639935",
+         true, at(0, decimal), evm});
+    expectFormat(
+        {"PUSH32",
+         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+         "",
+         "~0x0000000000000000000000000000000000000000000000000000000000000000",
+         true, at(0, invert), evm});
+    expectFormat(
+        {"PUSH32",
+         "0x45524332303a207472616e7366657220616d6f756e7420657863656564732062",
+         "", "'ERC20: transfer amount exceeds b'", true, at(0, character),
+         evm});
+    expectFormat({"PUSH1", "0x18", "", "_T.List.Blink", true, member(0), evm});
+    expectFormat(
+        {"PUSH32",
+         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+         "",
+         "0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+         true, member(0), evm});
   }
   return 0;
 }

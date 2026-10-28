@@ -3659,6 +3659,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     // pointer's, whose accesses the engine reads in the function; a number
     // is an offset by itself.
     std::optional<std::size_t> operand;
+    std::optional<Json> own;
+    std::string base;
     if (p.contains("address") && p.contains("parameter"))
       throw Error("invalid_request",
                   "A fit follows an instruction's pointer or a parameter, "
@@ -3692,6 +3694,17 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
           request["accesses"] = Json::array();
         request["accesses"].push_back(
             {{"offset", *number}, {"size", 0}, {"use", "address"}});
+      } else if (const auto access = listing().ownAccess(address, *operand)) {
+        // The engine follows no SBF pointer: the instruction's own access is
+        // the one a member must hold.
+        own = Json{{"offset", access->offset},
+                   {"size", access->bytes},
+                   {"use", access->write ? "write" : "read"}};
+        if (!request.contains("accesses"))
+          request["accesses"] = Json::array();
+        request["accesses"].push_back(*own);
+        (*own)["address"] = hexAddress(address);
+        base = access->base;
       } else {
         request["function"] = hexAddress(parseAddress(stringField(
             p, "function", {},
@@ -3713,9 +3726,11 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
     }
     if (operand)
       result["operand"] = *operand;
+    if (own)
+      result["target"] = {{"base", base}, {"accesses", Json::array({*own})}};
     // How the listing writes the operand the fit would change.
-    if (listing().spellsArmOperands())
-      result["syntax"] = "arm";
+    if (const auto syntax = listing().operandSyntax(); !syntax.empty())
+      result["syntax"] = std::string(syntax);
     return result;
   }
   if (operation == "type_libraries" || operation == "type_libraries_set") {
@@ -4491,7 +4506,7 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       operation == "patch_preview" || operation == "patch_apply" ||
       operation == "patch_revert" || operation == "patches" ||
       operation == "patch_export")
-    return patchOperation(operation, p);
+    return patchOperation(operation, p, encoded);
   if (operation != "disasm" && operation != "bytes" &&
       operation != "annotation_set" && operation != "rename" &&
       operation != "function_create" && operation != "function_delete" &&
@@ -5001,8 +5016,8 @@ Json Engine::executeImpl(const std::string &operation, const Json &p,
       throw Error("unsaved_changes", "Save or reload staged annotations "
                                      "before formatting an operand");
     if (!listing().showsNumberFormats())
-      throw Error("unsupported", "Operand types are shown for x86, ARM and "
-                                 "AArch64 instructions only");
+      throw Error("unsupported", "Operand types are shown for x86, ARM, "
+                                 "AArch64, SBF and EVM instructions only");
     // Formats belong to the instruction that starts at the address, and
     // change its operands that are numbers: the one asked for if it is one,
     // else the last.  A structure offset also changes a displacement from a
