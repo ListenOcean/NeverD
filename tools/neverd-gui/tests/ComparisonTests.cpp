@@ -26,6 +26,7 @@
 #include <QApplication>
 #include <QCheckBox>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDebug>
 #include <QDir>
 #include <QElapsedTimer>
@@ -2385,10 +2386,15 @@ private slots:
     QFile ReportFile(ReportPath), WorkflowFile(WorkflowPath);
     QVERIFY(ReportFile.open(QIODevice::ReadOnly));
     QVERIFY(WorkflowFile.open(QIODevice::ReadOnly));
-    const auto Report = QJsonDocument::fromJson(ReportFile.readAll()).object();
+    const auto ReportBytes = ReportFile.readAll();
+    const auto Report = QJsonDocument::fromJson(ReportBytes).object();
     const auto Workflow =
         QJsonDocument::fromJson(WorkflowFile.readAll()).object();
     QCOMPARE(Workflow["status"].toString(), QString("passed"));
+    QCOMPARE(Workflow["report_sha256"].toString(),
+             QString::fromLatin1(QCryptographicHash::hash(
+                                     ReportBytes, QCryptographicHash::Sha256)
+                                     .toHex()));
     QCOMPARE(Report["regions"].toObject()["profile"].toString(),
              QString("native-call-runs-v1"));
     const int AnchorCount =
