@@ -120,8 +120,8 @@
         <translation>نسخ(&amp;C)</translation>
     </message>
     <message>
-        <source>Copy the selection, the highlighted word or the current line</source>
-        <translation>نسخ التحديد أو الكلمة المميزة أو السطر الحالي</translation>
+        <source>Copy the selection or the highlighted word</source>
+        <translation>نسخ التحديد أو الكلمة المميزة</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>

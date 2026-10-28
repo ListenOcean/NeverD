@@ -173,8 +173,8 @@ NEVERD_ACTION(EditRedo, QT_TRANSLATE_NOOP("Actions", "&Redo"), "Ctrl+Shift+Z",
 NEVERD_VIEW_ACTION(EditCopy, QT_TRANSLATE_NOOP("Actions", "&Copy"), "Ctrl+C",
                    "copy",
                    QT_TRANSLATE_NOOP("Actions",
-                                     "Copy the selection, the highlighted "
-                                     "word or the current line"))
+                                     "Copy the selection or the highlighted "
+                                     "word"))
 NEVERD_VIEW_ACTION(EditCopyAddress,
                    QT_TRANSLATE_NOOP("Actions", "Copy &address"), "", "copy",
                    QT_TRANSLATE_NOOP("Actions", "Copy the current address"))

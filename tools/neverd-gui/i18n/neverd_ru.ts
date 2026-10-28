@@ -120,8 +120,8 @@
         <translation>&amp;Копировать</translation>
     </message>
     <message>
-        <source>Copy the selection, the highlighted word or the current line</source>
-        <translation>Копировать выделенный фрагмент, подсвеченное слово или текущую строку</translation>
+        <source>Copy the selection or the highlighted word</source>
+        <translation>Копировать выделенный фрагмент или подсвеченное слово</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>

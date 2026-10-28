@@ -283,11 +283,7 @@ QString GraphView::currentRowText() const {
   return node.rows[cursorRow_].styled.text;
 }
 
-QString GraphView::copyText() const {
-  if (const QString word = currentToken(); !word.isEmpty())
-    return word;
-  return currentRowText();
-}
+QString GraphView::copyText() const { return currentToken(); }
 
 std::optional<Address> GraphView::operandTarget() const {
   if (cursorNode_ < 0 || cursorNode_ >= nodes_.size())

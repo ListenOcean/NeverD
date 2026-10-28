@@ -52,7 +52,7 @@ public:
   QString currentToken() const;
   QString currentRowText() const;
   /// What Copy takes: as in IDA, the word under the cursor, which the
-  /// highlight marks; else the current row.
+  /// highlight marks; nothing on blank space.
   QString copyText() const;
   bool loaded() const { return !nodes_.isEmpty(); }
   /// A layout is on its way and nothing is drawn yet.

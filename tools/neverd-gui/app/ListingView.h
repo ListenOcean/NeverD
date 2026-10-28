@@ -71,7 +71,7 @@ public:
   QString currentLineText() const;
   QString selectedText() const;
   /// What Copy takes: the selection; else, as in IDA, the word under the
-  /// cursor, which the highlight marks; else the current line.
+  /// cursor, which the highlight marks; nothing on blank space.
   QString copyText() const;
   /// Inclusive byte bounds of selected items, or the current item. Only
   /// worker-supplied extents from the current listing may define this range.

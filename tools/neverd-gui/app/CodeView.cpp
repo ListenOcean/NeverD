@@ -1657,6 +1657,7 @@ void CodeText::paintEvent(QPaintEvent *) {
   const auto cursor = std::pair{cursorLine_, cursorColumn_};
   const auto selectionFirst = anchor_ ? std::min(*anchor_, cursor) : cursor;
   const auto selectionLast = anchor_ ? std::max(*anchor_, cursor) : cursor;
+  const TokenDots dots = tokenDots();
   for (int i = first; i <= last; ++i) {
     const int y = (i - first) * lineHeight_;
     const QRect row(0, y, area.width(), lineHeight_);
@@ -1676,7 +1677,7 @@ void CodeText::paintEvent(QPaintEvent *) {
       const bool searching = !SearchHighlight.Text.isEmpty();
       const auto matches =
           searching ? SearchHighlight.matches(lines_[i].styled.text)
-                    : tokenOccurrences(lines_[i].styled.text, highlight_);
+                    : tokenOccurrences(lines_[i].styled.text, highlight_, dots);
       const int length =
           searching ? SearchHighlight.Text.size() : highlight_.size();
       for (const int at : matches) {
@@ -1837,7 +1838,7 @@ void CodeText::revealAddress(Address address) {
 QString CodeText::currentToken() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size())
     return {};
-  return lines_[cursorLine_].styled.tokenAt(cursorColumn_);
+  return lines_[cursorLine_].styled.tokenAt(cursorColumn_, tokenDots());
 }
 
 std::optional<QJsonObject> CodeText::renameTarget() const {
@@ -2096,9 +2097,12 @@ QString CodeText::cursorWord() const {
 QString CodeText::copyText() const {
   if (anchor_ && *anchor_ != std::pair{cursorLine_, cursorColumn_})
     return selectedText();
-  if (const QString word = cursorWord(); !word.isEmpty())
-    return word;
-  return selectedText();
+  // A folded summary copies the code it stands for.
+  if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
+           .isEmpty())
+    return selectedText();
+  return cursorWord();
 }
 
 QString CodeText::allText() const {
@@ -2266,7 +2270,9 @@ void CodeText::keyPressEvent(QKeyEvent *event) {
     break;
   }
   if (event->matches(QKeySequence::Copy)) {
-    QApplication::clipboard()->setText(copyText());
+    // Blank space leaves the clipboard as it was, as in IDA.
+    if (const QString text = copyText(); !text.isEmpty())
+      QApplication::clipboard()->setText(text);
     return;
   }
   if (event->matches(QKeySequence::SelectAll)) {
@@ -2490,9 +2496,15 @@ QString CodeText::tokenAt(int line, int column) const {
   if (line < 0 || line >= lines_.size())
     return {};
   if (dialectOf(representation_, pageLanguage_) != Dialect::LLVM)
-    return lines_[line].styled.tokenAt(column);
+    return lines_[line].styled.tokenAt(column, tokenDots());
   const auto token = llvmTokenAt(lines_[line].styled.text, column);
   return token ? token->text : QString();
+}
+
+TokenDots CodeText::tokenDots() const {
+  const Dialect dialect = dialectOf(representation_, pageLanguage_);
+  return dialect == Dialect::C || dialect == Dialect::Cpp ? TokenDots::Split
+                                                          : TokenDots::Join;
 }
 
 std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {
