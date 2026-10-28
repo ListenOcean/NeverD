@@ -383,6 +383,89 @@ TEST(COFFExceptionIR,
   EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
 }
 
+// MSVC maps the continuation tail of a catch funclet back to a state of the
+// try block it handles.  A handler is outside its own try block, so that tail
+// is not protected by it; a try block of another handler still protects it.
+// A try block whose states the funclet's code never holds dispatches nothing
+// from it either, though the funclet shares its parent's table.
+TEST(COFFExceptionIR, HighCCatchFuncletIsOutsideItsOwnTry) {
+  constexpr va_t ParentVA = 0x140001000;
+  constexpr va_t FuncletVA = 0x140002000;
+  for (bool OwnTry : {true, false}) {
+    SCOPED_TRACE(OwnTry);
+    MedFunc Funclet;
+    Funclet.Entry = FuncletVA;
+    Funclet.Name = "catch_funclet";
+    Funclet.ReturnType = NdType::makeVoid();
+    MedBlock Body;
+    Body.Id = 0;
+    Body.StartAddr = FuncletVA;
+    Body.EndAddr = FuncletVA + 8;
+    Body.Succs = {1};
+    MedOp Work;
+    Work.Opcode = NdOp::CALL;
+    Work.Addr = FuncletVA + 4;
+    Work.addInput(MedVar::makeConst(0x140009000, 8));
+    Body.Ops.push_back(Work);
+    MedBlock Tail;
+    Tail.Id = 1;
+    Tail.StartAddr = FuncletVA + 8;
+    Tail.EndAddr = FuncletVA + 0x10;
+    Tail.Preds = {0};
+    Work.Addr = FuncletVA + 8;
+    Work.Inputs[0] = MedVar::makeConst(0x14000A000, 8);
+    Tail.Ops.push_back(Work);
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Return.Addr = FuncletVA + 0xc;
+    Tail.Ops.push_back(Return);
+    Funclet.Blocks = {Body, Tail};
+
+    ExceptionFunction EH;
+    EH.CodeRange = {FuncletVA, FuncletVA + 0x10};
+    EH.ParseStatus = ExceptionParseStatus::Complete;
+    EH.Personality = ExceptionPersonality::CxxFrameHandler3;
+    CxxExceptionInfo Cxx;
+    Cxx.MaxState = 3;
+    Cxx.UnwindMap = {{-1, 0}, {-1, 0}, {-1, 0}};
+    Cxx.IPMap = {{ParentVA, -1},      {ParentVA + 4, 0},     {ParentVA + 8, 2},
+                 {ParentVA + 0xc, 0}, {ParentVA + 0x10, -1}, {FuncletVA, 1},
+                 {FuncletVA + 8, 0}};
+    CxxTryBlock Try;
+    Try.TryLow = 0;
+    Try.TryHigh = 0;
+    Try.CatchHigh = 1;
+    CxxCatchHandler Catch;
+    Catch.HandlerVA = OwnTry ? FuncletVA : ParentVA + 0x20;
+    Try.Handlers.push_back(Catch);
+    Cxx.TryBlocks.push_back(Try);
+    // A try block of the parent alone, at state 2.
+    Try.TryLow = Try.TryHigh = Try.CatchHigh = 2;
+    Try.Handlers.front().HandlerVA = ParentVA + 0x30;
+    Cxx.TryBlocks.push_back(Try);
+    EH.Cxx = std::move(Cxx);
+    Funclet.ExceptionMetadata = std::move(EH);
+
+    const HighFunc High = MedToHighConverter().convert(Funclet, Arch::X64);
+    bool Protected = false;
+    walkStmts(High.Body, [&](const HighStmt &S) {
+      if (S.Kind != StmtKind::CxxTry)
+        return;
+      Protected = true;
+      for (const HighEHClause &Clause : S.EHClauses)
+        EXPECT_EQ(Clause.HandlerVA, ParentVA + 0x20);
+    });
+    EXPECT_EQ(Protected, !OwnTry);
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    CEmitterOptions Options;
+    Options.EmitIncludes = false;
+    Options.StructuredExceptionSyntax = false;
+    EXPECT_TRUE(HighCEmitter().emit({High}, OS, Options)) << Source;
+    EXPECT_NE(Source.find("sub_14000A000();"), std::string::npos) << Source;
+  }
+}
+
 TEST(COFFExceptionIR, HighCCxxTryRendersCatchSyntaxInReadableListing) {
   HighFunc Function;
   Function.Name = "cxx_try_fn";

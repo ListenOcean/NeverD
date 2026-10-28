@@ -139,6 +139,11 @@ and encoding index instead of process-specific diagnostic object bytes.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
+`COFFExceptionIR.HighCCatchFuncletIsOutsideItsOwnTry` checks that a catch
+funclet whose tail maps back to its own try gets no region of it, nor of a
+parent try its states never reach, while another handler's try still protects
+it.
+
 `NeverDCOFFExceptionIRTests` executes split protected-range loops with every
 test exception mask at O0/O2, checks unprotected operations remain outside the
 range, and rejects conflicting or nested scope states. The portable harness

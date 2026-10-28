@@ -551,6 +551,32 @@ std::vector<ExceptionAddressRange> codeRangesWhereStateIsLive(
       Registration);
 }
 
+/// The states an exception leaving \p EH's own IPs can pass through: those
+/// its IP-to-state map gives them, and every state on their unwind chains.
+/// \p Held receives only the former.
+std::vector<bool> cxxStatesReachedByCode(const ExceptionFunction &EH,
+                                         const CxxExceptionInfo &Cxx,
+                                         std::vector<bool> &Held) {
+  Held.assign(Cxx.UnwindMap.size(), false);
+  codeRangesMatching(EH, Cxx, [&](int32_t State) {
+    if (State >= 0 && static_cast<size_t>(State) < Held.size())
+      Held[State] = true;
+    return false;
+  });
+  std::vector<bool> Reached(Held.size(), false);
+  for (size_t State = 0; State < Held.size(); ++State) {
+    if (!Held[State])
+      continue;
+    // Each state is marked once; a walk stops at the first marked one.
+    for (int32_t Current = static_cast<int32_t>(State);
+         Current >= 0 && static_cast<size_t>(Current) < Reached.size() &&
+         !Reached[Current];
+         Current = Cxx.UnwindMap[Current].ToState)
+      Reached[Current] = true;
+  }
+  return Reached;
+}
+
 /// A try whose IP states are interrupted by `state=-1` holes yields more than
 /// one interval. The trailing fragment is a continuation, not a second try.
 ExceptionAddressRange
@@ -650,6 +676,17 @@ void addRegistrationCandidates(const ExceptionFunction &EH,
   }
 }
 
+/// Whether \p Entry is a catch handler of \p Try. A handler is outside its
+/// own try block: a throw finds the nearest try block entered and not yet
+/// exited, and entering a handler exits its try. MSVC still maps the
+/// continuation tail of a catch funclet back to a state of that try, which
+/// does not protect the funclet's code.
+bool handlesCxxTry(const CxxTryBlock &Try, va_t Entry) {
+  return llvm::any_of(Try.Handlers, [&](const CxxCatchHandler &Catch) {
+    return Catch.HandlerVA == Entry;
+  });
+}
+
 void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
                       const BinaryImage *Img,
                       const RegistrationStateAnalysis *Registration,
@@ -660,6 +697,8 @@ void addCxxCandidates(const ExceptionFunction &EH, const MedFunc &Med,
   const CxxExceptionInfo &Cxx = *EH.Cxx;
   for (uint32_t TryIndex = 0; TryIndex < Cxx.TryBlocks.size(); ++TryIndex) {
     const CxxTryBlock &Try = Cxx.TryBlocks[TryIndex];
+    if (handlesCxxTry(Try, Med.Entry))
+      continue;
     if (EH.Registration && EH.Registration->hasCxxCallbackStack() &&
         llvm::any_of(Try.Handlers, [&](const auto &Catch) {
           return !registrationCallbackRegion(Med, Catch.HandlerVA);
@@ -2101,12 +2140,29 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     Try.EHRange = EH.CodeRange;
     Try.EHIsReducible = false;
     Try.Body = std::move(Func.Body);
+    // Catch funclets share their parent's IP-to-state table. A function's
+    // own IPs reach only the try blocks holding their states, other than one
+    // it is a handler of, and the cleanups those states run.
+    const bool ByIP = EH.Cxx && !EH.Registration;
+    std::vector<bool> Held, Reached;
+    if (ByIP)
+      Reached = cxxStatesReachedByCode(EH, *EH.Cxx, Held);
+    const auto HoldsState = [&](int32_t Low, int32_t High) {
+      for (int32_t State = std::max(Low, 0);
+           State <= High && static_cast<size_t>(State) < Held.size(); ++State)
+        if (Held[State])
+          return true;
+      return false;
+    };
     if (Try.Kind == StmtKind::CxxTry) {
       const auto *Registration =
           Med.RegistrationStates ? &*Med.RegistrationStates : nullptr;
       for (uint32_t TryIndex = 0; TryIndex < EH.Cxx->TryBlocks.size();
            ++TryIndex) {
         const auto &Block = EH.Cxx->TryBlocks[TryIndex];
+        if (ByIP && (handlesCxxTry(Block, Med.Entry) ||
+                     !HoldsState(Block.TryLow, Block.TryHigh)))
+          continue;
         for (uint32_t CatchIndex = 0; CatchIndex < Block.Handlers.size();
              ++CatchIndex) {
           Try.EHClauses.push_back(makeCxxCatchClause(Block.Handlers[CatchIndex],
@@ -2119,7 +2175,7 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         for (int32_t State = 0;
              State < static_cast<int32_t>(EH.Cxx->UnwindMap.size()); ++State) {
           const CxxUnwindAction &Action = EH.Cxx->UnwindMap[State];
-          if (Action.ActionVA == 0)
+          if (Action.ActionVA == 0 || (ByIP && !Reached[State]))
             continue;
           HighEHClause Clause;
           Clause.Kind = HighEHClauseKind::CxxCleanup;
@@ -2173,17 +2229,25 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
         }
       }
     }
-    if (Try.EHClauses.empty()) {
-      HighEHClause Clause;
-      Clause.Kind = Try.Kind == StmtKind::CxxTry ? HighEHClauseKind::CxxCatch
-                                                 : HighEHClauseKind::SEHExcept;
-      Try.EHClauses.push_back(std::move(Clause));
-      Try.EHClauseBodies.emplace_back();
+    if (ByIP && Try.EHClauses.empty() && !EH.Cxx->IsNoExcept &&
+        !EH.Cxx->hasExceptionSpecification()) {
+      // No record dispatches from this listing, and the runtime checks no
+      // exception specification of it.
+      Func.Body = std::move(Try.Body);
+    } else {
+      if (Try.EHClauses.empty()) {
+        HighEHClause Clause;
+        Clause.Kind = Try.Kind == StmtKind::CxxTry
+                          ? HighEHClauseKind::CxxCatch
+                          : HighEHClauseKind::SEHExcept;
+        Try.EHClauses.push_back(std::move(Clause));
+        Try.EHClauseBodies.emplace_back();
+      }
+      Func.Body.clear();
+      Func.Body.push_back(std::move(Try));
+      if (Func.UnstructuredExceptionRegions == 0)
+        Func.UnstructuredExceptionRegions = 1;
     }
-    Func.Body.clear();
-    Func.Body.push_back(std::move(Try));
-    if (Func.UnstructuredExceptionRegions == 0)
-      Func.UnstructuredExceptionRegions = 1;
   }
   reportUnprotectedGuardedCode(Func, "after-exceptions");
   // Invert-skip of `if (c) goto L; work; L:` inside a try body is blocked

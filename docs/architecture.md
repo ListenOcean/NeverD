@@ -4769,6 +4769,11 @@ proof is shared by structured clauses and fallback annotations before any
 native filter code moves. Side-effecting filters retain their original body.
 The COFF C renderer emits lexical SEH/C++ protection only for reducible nodes;
 fallback views preserve native dispatch annotations and original statements.
+A catch funclet is outside the try block it handles, although MSVC maps the
+funclet's continuation tail back to a state of that try. The funclet gets no
+region of it, and the fallback view of a function under an IP-to-state map
+lists only the try blocks holding its own states and the cleanups those states
+run.
 The fixed LLVM C++ prologue has its own COFF decoder. It authenticates the
 saved-register prefix, allocation, all node fields and six-byte FS publication.
 `RegistrationChainInfo` owns translation from runtime EBP to the source frame;
