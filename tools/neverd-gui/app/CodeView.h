@@ -267,7 +267,8 @@ private:
   QString tokenAt(int line, int column) const;
   /// The source name or token under the cursor; none in a folded summary.
   QString cursorWord() const;
-  /// How this page's words take dots: C and C++ split member accesses.
+  /// How this page's words take dots: pseudocode, in any of its languages,
+  /// splits member accesses; IR keeps dotted names.
   TokenDots tokenDots() const;
   /// A double-click in LLVM IR: a global goes to the image address it stands
   /// for, or else to what the binary names so; any other name goes to the

@@ -4581,11 +4581,11 @@ pseudocode views. Without a selection, Ctrl+C and Edit Copy take the clicked
 word, the word an arrow key reaches and a right-clicked word. Blank space
 leaves the clipboard as it was, and a selection still wins. Keys move the
 listing's highlight with the copied word.
-`WorkbenchTests::cPseudocodeSplitsMemberAccesses` copies each word of
-`Device->Links.Flink` in C pseudocode, and
-`WorkbenchUnitTests::cWordsSplitMemberAccessesAtTheirDot` checks the word
-bounds and whole-word highlights behind it, dotted names kept whole outside
-C. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+`WorkbenchTests::pseudocodeSplitsMemberAccesses` copies each word of
+`Device->Links.Flink` in C pseudocode and of `main.main` in Go pseudocode, and
+`WorkbenchUnitTests::pseudocodeWordsSplitMemberAccessesAtTheirDot` checks the
+word bounds and whole-word highlights behind it, dotted names kept whole
+outside pseudocode. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
@@ -12444,6 +12444,27 @@ patch-full binaries; use `check-neverd` for the complete aggregate.
 
 ## Incremental CTest workflow
 
+`AndroidParcelTest.*` covers owned-pool order and limits, raw/recycled objects,
+independent integer/UTF-16 wire bytes, unaligned overwrites, null/empty Strings,
+padding, short and malformed reads, copied byte arrays, native cursor/range
+boundaries, work/heap stops and DEX/library identity sharing. The API 28 source
+contract includes consumed string lengths and unchecked terminators; a symmetric
+round trip alone is insufficient. `AndroidJNI.Parcel*` runs ordinary/V/A calls
+at O0/O2 across relocation variants and available CPU backends.
+`ProcessPublic.AndroidParcelDataAndBoundariesMatchSDKAndCLI` compares 54 complete
+report pairs, including token/name writes, explicit null-token refusal and the
+next `BinderProxy.transact` method-resolution boundary.
+Binder/token unit cases check exact gather-bit bytes, high/sign bits, raw UTF-16,
+empty descriptors, missing services, propagated service stops, budget admission,
+partial headers and DEX/library sharing. `AndroidJNI.BinderStrictMode*` checks
+ordinary/V/A calls, native thread isolation, fresh child policies and retained
+policy across JNI detach/reattach; it writes through one globally retained
+Parcel from parent and child threads. `ProcessPublic.AndroidBinderThreadPolicyMatchesSDKAndCLI`
+compares twelve complete reports in single-thread and scheduled modes at O0/O2.
+Run full Dalvik, Android JNI, thread/callback and native/Linux Binder suites,
+plus these focused public tests after changing this owner. These are original synthetic tests;
+they establish no live Binder service or whole-MVM restoration.
+
 `AndroidServiceManagerTest.*` covers slow/statistics record bytes, strict versus
 inclusive timing, signed wrapping/division, ART strings/nulls, ignored negative
 log results, and partial field updates at resource stops. `AndroidLog.Event*`
@@ -12998,13 +13019,15 @@ widths, first/last lanes, sign extension, W-register upper clearing and XZR.
 Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
 groups and unsupported register views remain rejected.
 
-`AArch64ReductionCases.def` records 34 independently assembled baseline forms of
-CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane
+`AArch64ReductionCases.def` records 39 independently assembled baseline forms of
+CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2, UMAXV and UMINV. Integer lane
 oracles cover all admitted widths, unsigned high bits, narrowing truncation,
 upper clearing/preservation and source/destination aliases; the full vector,
 scalar and guard-memory state is checked at EL0 and EL1. Each malformed or SVE
 counterexample has a fresh CPU because a refused instruction terminates execution.
-Run the `NeverDAArch64FPTests` label after changing this admission boundary.
+Run the FP/SIMD, state, register-snapshot and execution-session targets after
+changing this admission boundary. The original O2 Binder policy/token fixture
+also exercises compiler-generated UMINV during independent wire-byte checking.
 The semantic reference is Arm's [instruction guide](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab),
 sections D6.15–16, D6.246 and D6.279–281.
 

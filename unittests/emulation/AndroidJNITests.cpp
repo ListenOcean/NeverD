@@ -66,6 +66,60 @@ TEST_P(AndroidJNI, VMThreadAttachmentAndVersions) {
   EXPECT_EQ(R.Stop, ProcessStopReason::Returned) << R.Diagnostic;
   EXPECT_EQ(R.ReturnValue, 0u);
 }
+TEST_P(AndroidJNI, ParcelDataAndPoolShareOrdinaryVAAndArrayCalls) {
+  for (unsigned form = 0; form != 3; ++form) {
+    SCOPED_TRACE(form);
+    Options.Android->Arguments = {form, 0};
+    auto result = run("jni_parcel_data");
+    EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, ParcelInterfaceTokenUsesNewNativeThreadPolicy) {
+  Options.Android->ThreadLimit = 1;
+  for (unsigned form = 0; form != 3; ++form) {
+    SCOPED_TRACE(form);
+    Options.Android->Arguments = {form, 1};
+    auto result = run("jni_parcel_data");
+    EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.ReturnValue, 0u);
+  }
+}
+TEST_P(AndroidJNI, BinderStrictModeIsNativeThreadLocalAcrossAttachments) {
+  for (unsigned threaded = 0; threaded != 2; ++threaded) {
+    Options.Android->ThreadLimit = threaded ? 3 : 1;
+    for (unsigned form = 0; form != 3; ++form) {
+      SCOPED_TRACE(threaded);
+      SCOPED_TRACE(form);
+      Options.Android->Arguments = {form, threaded};
+      auto result = run("jni_binder_strict_mode");
+      EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0u);
+    }
+  }
+}
+TEST_P(AndroidJNI, ParcelNativeStateAndUndefinedRangesRemainExplicit) {
+  const char *diagnostics[] = {"owned native state",
+                               "after recycle",
+                               "uninitialized bytes",
+                               "native abort",
+                               "native array range",
+                               "nonnull native String",
+                               "android/os/BinderProxy.transact"};
+  for (unsigned mode = 2; mode != 9; ++mode) {
+    for (unsigned form = 0; form != 3; ++form) {
+      SCOPED_TRACE(mode);
+      SCOPED_TRACE(form);
+      Options.Android->Arguments = {form, mode};
+      auto result = run("jni_parcel_data");
+      EXPECT_EQ(result.Stop, ProcessStopReason::UnsupportedService)
+          << result.Diagnostic;
+      EXPECT_NE(result.Diagnostic.find(diagnostics[mode - 2]),
+                std::string::npos)
+          << result.Diagnostic;
+    }
+  }
+}
 TEST_P(AndroidJNI, EventLogOverloadsAndTruncationShareOneWriteTranscript) {
   for (unsigned mode = 0; mode != 4; ++mode) {
     for (unsigned form = 0; form != 3; ++form) {

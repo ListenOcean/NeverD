@@ -784,10 +784,11 @@ pseudocode or IR window copy the word under the cursor, as IDA does: the name,
 register, variable or number the highlight marks. The highlight follows the
 cursor whether a click or a key moves it, so Copy takes the word it shows. On
 blank space Copy leaves the clipboard as it was, and a folded summary copies
-the code it stands for. C and C++ pseudocode splits a member access at its
-dot, so a click on `var_m8` in `stack_storage.var_m8` copies `var_m8` and a
-click on the variable highlights every use of it; a decimal number stays
-whole, and IR names such as `RSP.3` keep their dots. A click on a word in a
+the code it stands for. Pseudocode, whether it reads in C, C++, Rust or Go,
+splits a member access or qualified name at its dot, so a click on `var_m8`
+in `stack_storage.var_m8` or on `Println` in `fmt.Println` copies just that
+word and a click on the variable highlights every use of it; a decimal
+number stays whole, and IR names such as `RSP.3` keep their dots. A click on a word in a
 disassembly line's `segment:address` prefix, with either button, selects that
 word: the segment name or the address. A prefix word copies only once a click
 selects it. A drag still selects characters, and a right click inside a

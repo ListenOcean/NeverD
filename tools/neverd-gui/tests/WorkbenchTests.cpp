@@ -4726,16 +4726,31 @@ private slots:
     }
   }
 
-  void cPseudocodeSplitsMemberAccesses() {
-    // A word of a C member access copies alone.
+  void pseudocodeSplitsMemberAccesses_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<QString>("access");
+    QTest::newRow("c") << QStringLiteral("local-types.bin")
+                       << QStringLiteral("Links.Flink");
+    QTest::newRow("go") << QStringLiteral("pseudocode-go.bin")
+                        << QStringLiteral("main.main");
+  }
+
+  void pseudocodeSplitsMemberAccesses() {
+    // Each word of a member access or qualified name copies alone, whatever
+    // language the pseudocode reads in.
+    QFETCH(QString, fixture);
+    QFETCH(QString, access);
     QTemporaryDir directory;
     Workbench bench;
-    bench.window->openFile(writeFixture(directory, "local-types.bin"));
+    bench.window->openFile(writeFixture(directory, fixture));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
-    const Address entry = Base + 0x70;
-    bench.session.editFunction(
-        entry,
-        {{"type", "int64_t function_7(_DEVICE *Device, int64_t arg1)"}});
+    // function_7 reads its parameter's members once it is a _DEVICE *.
+    const bool device = fixture == QLatin1String("local-types.bin");
+    const Address entry = Base + (device ? 0x70 : 0x140);
+    if (device)
+      bench.session.editFunction(
+          entry,
+          {{"type", "int64_t function_7(_DEVICE *Device, int64_t arg1)"}});
     auto *assembly = bench.window->disassembly();
     assembly->navigate(entry);
     QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(entry));
@@ -4745,11 +4760,8 @@ private slots:
     auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
     auto *code = view->text();
-    const QString access = QStringLiteral("Links.Flink");
-    QTRY_VERIFY_WITH_TIMEOUT(
-        code->complete() &&
-            code->allText().contains(QStringLiteral("Device->") + access),
-        OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete() && code->allText().contains(access),
+                             OpenTimeoutMs);
     // Ctrl+C with the cursor in the row holding the access, at a column of
     // \p needle.
     const auto copyAt = [&](const QString &needle, int offset) {
@@ -4767,9 +4779,11 @@ private slots:
       QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
       return clipboardText();
     };
-    QCOMPARE(copyAt(access, 1), QStringLiteral("Links"));
-    QCOMPARE(copyAt(access, 7), QStringLiteral("Flink"));
-    QCOMPARE(copyAt(QStringLiteral("Device->"), 1), QStringLiteral("Device"));
+    const int dot = int(access.indexOf(QLatin1Char('.')));
+    QCOMPARE(copyAt(access, 1), access.left(dot));
+    QCOMPARE(copyAt(access, dot + 2), access.mid(dot + 1));
+    if (device)
+      QCOMPARE(copyAt(QStringLiteral("Device->"), 1), QStringLiteral("Device"));
   }
 
   void tabFromCodeUsesSelectedInstruction_data() {

@@ -15,9 +15,10 @@
 
 namespace neverd::gui {
 
-/// How a dot sits in a word: a listing's names keep theirs (`.text`,
-/// `main.cold`, `RSP.3`), while C splits a member access (`frame.var_8`)
-/// and keeps a decimal number (`1.5`) whole.
+/// How a dot sits in a word: a listing's and IR's names keep theirs
+/// (`.text`, `main.cold`, `RSP.3`), while pseudocode splits a member access
+/// or qualified name (`frame.var_8`, `fmt.Println`) and keeps a decimal
+/// number (`1.5`) whole.
 enum class TokenDots { Join, Split };
 
 /// A run of styled text: character range, role code and the location a name
