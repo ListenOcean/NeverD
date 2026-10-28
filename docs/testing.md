@@ -15596,7 +15596,16 @@ byte views, other versions and other variables of the register, call records,
 published summary operands, unsettled calls, a bounded callee's arguments and
 the positions past them, preserved registers, register-pair results, joins,
 removed loads, exceptional edges, complete and partial overwrites, and the
-proof's budget. `SourceStackSpills`
+proof's budget. Under an incomplete EH3/EH4 registration proof, a reload of
+the pushed record's SavedESP word places the CALL after it, while a second
+saved value, a narrow or atomic write of the word, a mismatched handler or
+seeded level, a saved non-stack value or a missing source refuses; a runtime
+filter's CALL at or below its stack root is separated from the parent frame,
+unlike one above the root or one without a checked root.
+`RegistrationCallStackPop.ProvenCalleeCleanupOutlivesAnIncompleteProof` in
+`NeverDWindowsRegistrationRealignedTests` checks that a direct callee's proven
+cleanup adjusts only the block's own calls, not caller-cleanup, unknown or
+import-slot calls. `SourceStackSpills`
 variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
 return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes

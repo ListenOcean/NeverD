@@ -367,6 +367,22 @@ the loads stay separated even then, it skips the costlier slot bounds
 (registration replay, offset ranges, SEH handler bounds and upper bounds),
 which can only narrow those writes. That attempt has its own allowance, so a
 refusal or exhaustion there leaves the bounded proof its whole budget.
+Where the PE32 registration-state proof stays incomplete, for example after a
+filter, handler or finally writes through a pointer parameter, the reader
+still places EH3/EH4 CALL stacks by the frame protocol
+(`X86/RegistrationCallStacks`). The prologue pushes the record (seeded level,
+scope table, handler) and saves ESP in the SavedESP word below the node FS:[0]
+links. When every exact store to that word saves one entry stack offset, each
+exact pointer-wide reload is seeded with it, which places the CALLs after a
+handler restores ESP; only a write outside every source object, corrupting the
+runtime's record, could change the word otherwise. A CALL whose stack derives
+from one runtime callback's stack root alone, at or below that root, runs on
+the dispatcher's stack below the parent frame and writes no parent byte.
+Pruning unreached arms still needs the complete proof. Low-to-Med also applies
+each direct callee's proven return cleanup
+(`RegistrationStateAnalysis::CalleeStacks`), which does not depend on the
+reaching state, so a single-function view pops a `ret imm` callee's arguments
+as a whole-image run does.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.
