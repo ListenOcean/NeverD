@@ -214,6 +214,19 @@ a finally. Both O0/O2 Windows object builds retain the nested clauses; host
 execution checks the normal paths and cleanup count. Run the complete
 `COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
 loops. Host normal-path checks do not qualify native Windows exception dispatch.
+`LLVMCFinallyWrapContainsCleanupBody` and
+`LLVMCFinallyContinuationFollowsCleanup` keep a finally's cleanup off its
+normal exit; `LLVMCFinallyReturnInsideTheTrySkipsTheCleanup` and
+`LLVMCFinallyRangeLaidOutPastItsEndUsesTheExitFlag` move a range that returns
+or leaves its layout to the block form, and
+`LLVMCFinallyJumpPastItsEndMarkerIsRefused` refuses a jump no form can render.
+`COFFExceptionIR.NativeSEHRangeMarkersFollowTheBlockLayout` (in
+`NeverDLiftTests`) frees blocks in a shuffled order before it lowers a guarded
+range with four returns, so the block pointers stop following the layout; the
+end markers must still be numbered and appended in layout order. After a
+change to marker placement, compare two runs of one library per function:
+LLVM C that differs only in `L_seh_try_*` numbers comes from a pointer-ordered
+walk.
 
 # Testing NeverD
 
@@ -941,7 +954,10 @@ Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
 jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
-zero-register index and a load overwriting its index register. Selector tests
+zero-register index and a load overwriting its index register. The C keeps
+each register-offset load and store as its encoded instruction, so these
+`AArch64_HighCExecution` cases execute only on an AArch64 host; elsewhere they
+compile the C for the kernel's target and skip the comparison. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
 Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
 explicit guarded upper-bound queries retain compound unsigned path predicates
@@ -3715,6 +3731,35 @@ Call-argument projection checks backward/forward dependencies missing from raw
 call operands, exact owner/span binding, preserved clobber inputs, absent versus
 zero-argument summaries and schema-2 round trips. The compiled CLI fixture also
 requires retained recovered argument records through the real native pipeline.
+`BinaryDiff.CallRegions*` and `ShortRepeatedCallRegionsNeedDistinctMappedTargets`
+check optional direct-call runs, duplicate destinations, reverse direction,
+unpaired/indirect targets, distinct-target support for short repeated fragments,
+cleanup tails beside changed calls without crossing those changed calls,
+strict settings and saved evidence, cancelled edits, undo and bounded work.
+`BinaryDiffSDK.CallRegionsRebindTargetsAcrossEditsAndRestore` and the CLI/Qt
+fixtures exercise real x64 call bytes, shared pages, cache invalidation,
+save/reopen and settings restoration. They qualify conditional correspondence
+evidence, not callee semantics or arbitrary region transformations. The AArch64
+SDK fixture also retains the exact native BL row across save/reopen.
+Offline lineage hypothesis and anchor pages retain the native profile and
+conditional call provenance, including after collection save/reopen. Core
+projection controls cover ordinary and call-enabled evidence; Qt
+`nativeRegionCallConditionsSurviveReopen` checks both real native profiles,
+original anchor rows and the conditional-call notice through the ordinary
+source-evidence workflow. These remain unauthenticated saved coordinates.
+Ungrouped native/SSA controls retain all anchors with zero hypotheses,
+late and out-of-range pages, exact work boundaries and cancelled queries.
+The desktop all-span tabs retain the same call conditions after reopening.
+Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
+hypothesis and raw-anchor pages in a 417-function native fixture, then checks
+the original instruction address and call-context destination after loading.
+`retainedLargeCallRegionWorkflow` accepts
+`NEVERD_DIFF_CALL_REGIONS_REPORT` and `NEVERD_DIFF_REGION_WORKFLOW` for an
+opt-in retained corpus check. It restores more than ten thousand anchors,
+selects an uncached shared body and follows its secondary call context to the
+public wrapper, comparing the original tail-transfer witness with the native
+API receipt. It exercises paging and evidence navigation; it does not turn a
+wrapper's call relationship into shared instructions or semantic equivalence.
 `BinaryDiffFlowRegions` checks split/merge/inline/outline alternatives, nested
 overlap versus actual one-to-many node mappings, origin and frequency admission,
 coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region
@@ -4431,6 +4476,11 @@ and actions with the fixture worker. `databaseRecoverySurvivesConsumedJournalAnd
 checks working-copy preservation and explicit discard when the packed state
 changes. Run these with the native Windows Qt platform when checking Windows
 file dialogs and view shortcuts.
+`searchBeforeTheListingHasACursorKeepsItsResults` starts a text search while
+the listing has no cursor and places one before the search answers. The search
+keeps its results: a search begun before the first rows arrived used to drop
+them, taking the cursor those rows bring for a move away, so searching right
+after opening a file showed nothing on a slow machine.
 
 The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
 `aLinkGoesToTheWorkbenchThatHasItsProgram` check link syntax, hash prefixes and
@@ -4925,6 +4975,12 @@ first page, and right-clicks inside the selection to keep it for Copy;
 `gotoLabelsGoToTheirBlock` double-clicks a goto's label and checks the code
 cursor, the disassembly, Back, and that the label's row maps to its block
 rather than to the statement the engine's rows give it;
+`pseudocodeFunctionLinksStayInTheirWindow` double-clicks a call in C and LLVM
+C, moves in the callee as a click does, and checks that one Back returns the
+code to the call's line and column with the view scrolled as it was, and that
+Forward returns to where the callee was left; `historyStopsFollowTheCursor`
+moves between jumps and checks that Back skips those moves and Forward returns
+to them;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -5987,6 +6043,10 @@ unaligned seeds, forced memory homes and unresolved or malformed reads.
 Long chains retain the same homes in both block orders while querying each
 eligible address at most once. Run this owner and the calling-convention
 contract tests when changing the stack-home closure algorithm.
+`MedCallingConvStackParams.SharedStackPointerPhisAreTracedOnce` traces an
+incoming stack read through thirty SP diamonds. SEH handler roots joining the
+protected range with the normal path build such webs. Each value's entry-SP
+offset is computed once.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -6367,9 +6427,11 @@ ctest --test-dir build-release \
 
 ## Owned x64 x87 context
 
-`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS tag and payload
+`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS TOP, tag and payload
 provenance contract at every TOP, three tag patterns and both strictness
-modes. FEMMS must forget all retained payloads; subsequent MMX writes and
+modes. Both instructions reset TOP to zero while preserving physical register
+identity across the FXSAVE logical-slot rotation. FEMMS must forget all retained
+payloads; subsequent MMX writes and
 x87 loads establish only their own slots. Eight consecutive FLD m80 loads
 also prove that every tag was cleared. Pending exceptions and unknown
 incoming state refuse without mutation. Native feature preflight may refuse
@@ -6389,8 +6451,10 @@ every MMX register pairing, ignored prefixes and REX order, address width,
 segments and stack-reference provenance. It rejects contradictory decoder
 detail and selectors before effects, checks feature preflight without state
 mutation, and proves that FEMMS payload invalidation survives subsequent
-unary and binary operations. Its emission test exports 960 ELF objects across
-LLVM, HighC and LLVMC, both pipeline settings and C O0/O2.
+unary and binary operations. Its 96 instruction/form emission cases export
+960 ELF objects across LLVM, HighC and LLVMC, both pipeline settings and C
+O0/O2. Each case uses the ordinary CTest timeout; the retained probe numbers
+remain stable for the guest replay.
 
 ```sh
 python3 scripts/build.py build-release --target NeverDX86ThreeDNowContextTests \
@@ -6541,6 +6605,23 @@ execute those exact original byte vectors and compare result bytes and defined
 state; relocated pointers and undefined C0/C2/C3 are excluded from that native
 comparison. Generated guest IP/DP are checked independently.
 
+`X87PortableGenerated.AllRoutesExecuteFnopEmmsAndFemms` separately compiles
+36 reset/state-operation artifacts through the same routes and optimization
+profiles. Each artifact checks 72 combinations of TOP, tags and known payloads,
+plus unknown-environment, pending-exception and invalid-control refusals.
+The integer result publishes only on success, no guest memory is required,
+and the complete owned state must match the instruction's contract. Native
+x64 references execute only FNOP and EMMS, comparing CW, defined SW, tags and
+every binary80 payload; all four undefined FNOP condition bits are excluded.
+The EMMS comparison includes TOP clearing and physical payload preservation;
+Unicorn's incorrect TOP retention is not an accepted reference for this case.
+FEMMS invalidation is a provenance check, not physical FEMMS qualification.
+Set `NEVERD_X87_GENERATED_ARTIFACT_DIR` to retain the separate `x87-resets`
+sources, commands, objects and observations. The arithmetic freeze script
+continues to select only its original leaf/branch/loop test.
+The portable x87 workflow runs the reset test separately on both native hosts
+and retains its artifacts independently from the arithmetic qualification.
+
 `scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
 6,096 observations on native Linux x64/AArch64. It requires complete coverage,
 cross-route/optimization agreement, no skips, stable source/build/compiler and
@@ -6648,6 +6729,11 @@ physical provenance, FIP/FDP, write-only output and canaries. Additional cases
 check a faulting final byte after a completed load, completed executable-store
 pop, pending/unknown/invalid input state, stale memory faults, unsupported
 operations, memory-before-stack-fault precedence and success-only scalar output.
+The reset cases check pending-exception priority without guest memory and
+preserve a completed FNOP/EMMS/FEMMS prefix when the next memory operation
+fails. Direct context and decoded-emulator tests distinguish EMMS payload
+retention from FEMMS invalidation, including all eight subsequent payload
+reestablishments and refusal without partial state updates.
 Store-preflight regression checks that a successful check neither writes nor
 increments generations and cannot authorize a later overflowing generation.
 LLVM and Unicorn are independent numerical references; the native x64 test
@@ -14321,6 +14407,10 @@ with `fninit`, whose x87 context handle the CFG builder begins at each root.
 `TheHandlerBeginsTheX87ContextBeforeUsingIt` and
 `OnlyTheX87ContextHandleIsAdmitted` refuse a handler that reads the handle
 before beginning it and a handle copied into an ordinary register.
+`MedSEHHandlerEntry.AArch64HandlerResumesWithTheProtectedRegisters` checks
+that an AArch64 `__except` body reads x19 as the protected range left it,
+through the frame its prologue set. A range that writes x19 leaves x19
+unknown.
 `MedSEHHandlerEntry.AHandlerResumingAtANopEndsTheArmThere` ends an `__except`
 arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
@@ -14336,7 +14426,23 @@ termination handler that guards its own `__try`: its second argument, the
 parent's establisher frame, keeps its name in the `__except` arm. A setjmp
 provider executes the HighC output at O0/O2, and both paths must reach the
 parent's slot; an attached C++ catch body still names the printed function's
-`var_m8`. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`var_m8`. `NeverDSEHTerminationHandlerTests`
+(`unittests/lift/eh/SEHTerminationHandlerTests.cpp`, built from decoded x64
+bytes) covers the certified `__finally` EstablisherFrame and the projected
+clause: `SEHTerminationFrame.*` proves the frame bytes from the prologue and
+unwind codes, agrees with the in-function `__except` frame, and refuses a stack
+adjustment into the scope, a frame register, unwind data the prologue
+contradicts, a handler of no scope, and an exhausted budget;
+`SEHFinallyBody.GuardsTheAbnormalWorkAndKeepsTheNormalCopy` shows bar1's `99`
+under `if (AbnormalTermination())` with the `100` copy kept,
+`FlagIndependentHandlerFillsTheClauseAndDropsTheCopy` fills a flag-independent
+clause and removes the matching copy, and `FrameRegisterHandlerKeepsTheComment`,
+`LocalUnwindInTheProtectedBodyKeepsTheComment` and
+`NestedExceptInTheProtectedBodyKeepsTheComment` keep the address comment where
+the projection is unsound. Run the Windows SEH corpus and the xcpt4
+wine check after a change here; the latter recompiles the decompiled source and
+reruns it, exercising the filled `__finally` bodies end to end.
+`StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.
@@ -15885,6 +15991,22 @@ Its serializer checks exact compact/indented bytes, every byte value, and
 hexadecimal address boundaries against an independent stream formatter. The
 address cases alternate short file offsets with high virtual addresses, cross
 every hexadecimal digit width, and round-trip complete rows at each indentation.
+Compact inventory output also matches independently constructed JSON objects
+across every patch kind, all byte values, decimal size boundaries and high
+addresses. Nested output retains its surrounding fields at indentation 0, 2
+and 4; the compact and general stream entry points share the row schema.
+Compact range JSON retains file-offset ordering across nonmonotonic virtual
+addresses and split runs. Its exact bytes are checked against independent
+objects across hexadecimal address and decimal size boundaries, including an
+empty overlay.
+
+The reader tests preserve leading zeroes, mixed-case digits, full unsigned
+64-bit values and numerically equal keys with different spellings. They reject
+signs, partial values, embedded NULs, non-hexadecimal text and overflow in each
+address field, retaining the field-versus-key diagnostic distinction. Long
+all-zero and overflowing bodies retain the same contract. Empty
+inputs with either null or non-null storage retain the legacy syntax diagnostic
+without passing a null buffer to the accelerated parser.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 

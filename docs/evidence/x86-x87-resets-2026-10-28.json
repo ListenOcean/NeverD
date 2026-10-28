@@ -1,0 +1,648 @@
+{
+  "scope": "Owned x64 portable FNOP/EMMS/FEMMS, concrete MMX TOP reset, native LLVM FNOP and NeverC builtin",
+  "goal_complete": false,
+  "validation_complete": true,
+  "artifact_set": "neverd-x87-resets-20261028",
+  "sources": {
+    "neverd_portable": "70f6fdfcd6b30df0798e0160a5f6818f24acc852",
+    "neverd_top_fix": "13e6d46015982ded23fa68c395b8373054a67ff0",
+    "neverd_integrated": "f426f0ba46f7d05efcca15803e733a6c5b98158b",
+    "llvm": "ce2ee24b501f0aad3a8291a378e016848b0727b2",
+    "neverc": "29ed2c9372030696d16ec54c313b542aa67a11c1",
+    "capstone": "3394d0f8c89fec1bfdeb2e6fc39c47a05cf9107a",
+    "production_sdk": "neverd-llvm-v23.0.0-r6",
+    "production_sdk_commit": "06788fb19109851e6a6b9f109a2b8027a606f0c6",
+    "production_llvm_gitlink": "03270359c2ed8f6806533d3832a947bf883a6f69",
+    "release_and_pins_changed": false,
+    "neverd_sharded_tests": "38088f01ec8c996b7460bea141b2151f20998ff6",
+    "neverd_publication": "710180d84eb925e6ee07fe6721774781055a0f20"
+  },
+  "host": {
+    "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
+    "cpu": "13th Gen Intel(R) Core(TM) i9-13900H"
+  },
+  "compiler_validation": {
+    "llvm": {
+      "path": "llvm-focused.xml",
+      "sha256": "d9d5b43216f1977b46dc1f908ad478168e23cd404cbe79ea504bfdec75b7d7cc",
+      "tests": 6,
+      "failed": 0,
+      "skipped": 0
+    },
+    "neverc_x86_frontend": {
+      "path": "neverc-x86-regression.xml",
+      "sha256": "9fcbc70404ec0694c8c9a38cc3835c25cb94992996edaef553af1dc3da167b8c",
+      "tests": 109,
+      "failed": 0,
+      "skipped": 0
+    },
+    "neverc_x86_backend": {
+      "path": "neverc-backend-tests.xml",
+      "sha256": "6645a17afbaf21311dd810eac59f7cfb073e34e76d42495a8196e5ded7d693f0",
+      "tests": 4,
+      "failed": 0,
+      "skipped": 0
+    },
+    "native_fnop": {
+      "path": "native-fnop-all-1/qualification.json",
+      "sha256": "866a306a1310da10e6be172ac88a51c3b6e846051152cf564fe557d631de6a3a",
+      "profiles": [
+        {
+          "profile": "llc-O0",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "d0ce7dd21f153eb335c4394b40b497374d38f207dbf3ddf7b906553398cf5201",
+          "executable_sha256": "34f1c64676aa64d48a344979d0ac7067f9795bf865212c5ccf73beb1087f6254",
+          "compiler_sha256": "8130470c2beb7f886aea03b0efdb08713c7ed6d8aab49ed0a9eca8d9f32558e1"
+        },
+        {
+          "profile": "llc-O2",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "d0ce7dd21f153eb335c4394b40b497374d38f207dbf3ddf7b906553398cf5201",
+          "executable_sha256": "34f1c64676aa64d48a344979d0ac7067f9795bf865212c5ccf73beb1087f6254",
+          "compiler_sha256": "8130470c2beb7f886aea03b0efdb08713c7ed6d8aab49ed0a9eca8d9f32558e1"
+        },
+        {
+          "profile": "neverc-O0",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "6084414d15e135e14753832fbeb9d0b1191c77a141180959008a75dd7ef1338e",
+          "executable_sha256": "6751f1cd254c25703c33776ee8407e176f6b5f73d1e1127f8173534cb0b98fba",
+          "compiler_sha256": "8314e6579310bfd37fbb3f603398c75a9f178115baeb9459c97ca15a6741627f"
+        },
+        {
+          "profile": "neverc-O2",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "43b488d4d79fb5d2e095ebb15a99a25876ffdae09fbee6f8bea9acd1992b209f",
+          "executable_sha256": "58d67e51a3131d475f85c38802ac4a0c491138d1699b9f72aa8d0b6d0d698fdd",
+          "compiler_sha256": "8314e6579310bfd37fbb3f603398c75a9f178115baeb9459c97ca15a6741627f"
+        },
+        {
+          "profile": "neverc-llvm-O0",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "8ba9cfdf282b2a3f013960716c2707d52724e6432bd93e5ca65f498740197e39",
+          "executable_sha256": "313e75679d75d4de6a7dc25225f8277cac7ea2e140c7d2d3828ca389ca0b9754",
+          "compiler_sha256": "8314e6579310bfd37fbb3f603398c75a9f178115baeb9459c97ca15a6741627f",
+          "backend_sha256": "8130470c2beb7f886aea03b0efdb08713c7ed6d8aab49ed0a9eca8d9f32558e1"
+        },
+        {
+          "profile": "neverc-llvm-O2",
+          "state_observations": 48,
+          "waiting_faults": 2,
+          "object_sha256": "ba3d4943abfead1de2fefe3421f4ec1ef50db5b3f51981be10dfeec33a7b32d9",
+          "executable_sha256": "06265924606cdad84cb5ba27043021d03c5689690602be50c4f8a0bee211a9ae",
+          "compiler_sha256": "8314e6579310bfd37fbb3f603398c75a9f178115baeb9459c97ca15a6741627f",
+          "backend_sha256": "8130470c2beb7f886aea03b0efdb08713c7ed6d8aab49ed0a9eca8d9f32558e1"
+        }
+      ],
+      "state_observations": 288,
+      "pending_mf_observations": 12
+    },
+    "neverc_generators": {
+      "tests": 13,
+      "failed": 0,
+      "path": "neverc-generators.log",
+      "sha256": "04ae463effba1defa449822f0c4f9500629daa4be4376c7d5cb21cad0935b3fd",
+      "synchronization_checks": "both generated intrinsic and backend table sync checks passed"
+    }
+  },
+  "native_emms_reference": {
+    "path": "native-emms-top-zero/qualification.json",
+    "sha256": "9a5e1626a8a5ab184efbb9cf44bd451649fd69bcb3c21f8fef1c7af18f39b028",
+    "state_observations": 96,
+    "pending_mf_observations": 4,
+    "scope": "Independent raw EMMS opcode; no compiler intrinsic claim",
+    "defined_result": "TOP becomes zero, all tags empty, physical binary80 payloads unchanged"
+  },
+  "counterexample": {
+    "before": {
+      "path": "native-emms-reference/commands.json",
+      "sha256": "3b5bf31ec321a23630981a315eae9084194de97cff72a489416f0420819acd35"
+    },
+    "diagnostic": {
+      "path": "native-emms-diagnostic/result.json",
+      "sha256": "7c92c1f0fe5c92f132120c1dc0332a1a1dc5b038354a9987b572668fbcbdc1de"
+    },
+    "observation": "Original EMMS changes SW 0x4f25 to 0x4725, clearing TOP 1 to 0. The old portable and ordinary owned models incorrectly retained TOP.",
+    "oracle_limitation": "Unicorn Haswell also retains TOP incorrectly; it is excluded for EMMS, with native original execution retained as the reference.",
+    "historical_qualification_limit": "Prior FEMMS reset tests and QEMU observations did not establish this TOP transition."
+  },
+  "neverd_validation": {
+    "pinned_top_focused": {
+      "path": "pinned-top-fix-tests.xml",
+      "sha256": "2be10d5c098bf693b50232b1b6de409167bf1a93d78cbb177212a662f3c6a8db",
+      "tests": 23,
+      "failed": 0,
+      "skipped": 0
+    },
+    "pinned_reset_generated": {
+      "path": "pinned-reset-qualified-1/record.json",
+      "sha256": "4776b5ff93d6d3fe4669ae02fb181bc40130aa65a4d19b681f6637c6f7f2913f",
+      "coverage": {
+        "artifacts": 36,
+        "observations": 2700,
+        "distinct_cases": 225,
+        "native_x64_original_comparisons": 576,
+        "statuses": {
+          "0": 2592,
+          "2": 36,
+          "6": 36,
+          "5": 36
+        },
+        "cross_route_and_optimization_agreement": true
+      },
+      "source_commit": "f426f0ba46f7d05efcca15803e733a6c5b98158b"
+    },
+    "pinned_arithmetic_generated": {
+      "path": "pinned-arithmetic-qualified-1/record.json",
+      "sha256": "18ab7ecb8adbb66d5faa07a857af561825e5a961c9b7539b06fa07866af9e990",
+      "coverage": {
+        "artifacts": 36,
+        "observations": 6096,
+        "distinct_cases": 508,
+        "statuses": {
+          "0": 5772,
+          "2": 36,
+          "6": 36,
+          "5": 36,
+          "9": 36,
+          "10": 36,
+          "12": 36,
+          "13": 36,
+          "1": 72
+        },
+        "native_x64_original_comparisons": 5760,
+        "cross_route_and_optimization_agreement": true
+      },
+      "source_commit": "f426f0ba46f7d05efcca15803e733a6c5b98158b"
+    },
+    "pinned_integrated_initial": {
+      "path": "pinned-integrated-tests.xml",
+      "sha256": "9e1d1d4cef31f8aabfa33be5c9e4c1f3f333cfadc2e21dadb16e4cd41bd09a0e",
+      "source_commit": "f426f0ba46f7d05efcca15803e733a6c5b98158b",
+      "tests": 1103,
+      "failed": 1,
+      "skipped": 49,
+      "failure": "3DNow aggregate timeout; retained as a failed run, repaired by separate instruction/form cases"
+    },
+    "native_reset_generated": {
+      "path": "native-reset-qualified-1/record.json",
+      "sha256": "c847f4a86b94ab3e0d3aa8004b178c0ff79a2a500f9b741c2e2eb26549719937",
+      "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6",
+      "coverage": {
+        "artifacts": 36,
+        "observations": 2700,
+        "distinct_cases": 225,
+        "native_x64_original_comparisons": 576,
+        "statuses": {
+          "0": 2592,
+          "2": 36,
+          "6": 36,
+          "5": 36
+        },
+        "cross_route_and_optimization_agreement": true
+      }
+    },
+    "native_arithmetic_generated": {
+      "path": "native-arithmetic-qualified-1/record.json",
+      "sha256": "4fdb4c16398055155b7a2e1f344e2ddbb9bf64bfcc10d7d43ea58f30606d9ed4",
+      "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6",
+      "coverage": {
+        "artifacts": 36,
+        "observations": 6096,
+        "distinct_cases": 508,
+        "statuses": {
+          "0": 5772,
+          "2": 36,
+          "6": 36,
+          "5": 36,
+          "9": 36,
+          "10": 36,
+          "12": 36,
+          "13": 36,
+          "1": 72
+        },
+        "native_x64_original_comparisons": 5760,
+        "cross_route_and_optimization_agreement": true
+      }
+    },
+    "pinned_3dnow_sharded": {
+      "path": "pinned-3dnow-sharded.xml",
+      "sha256": "22370ce8342caf1890454836fe858859dddbbf860e3d319f515af8673c318db2",
+      "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6",
+      "tests": 103,
+      "failed": 0,
+      "skipped": 0,
+      "objects": 960,
+      "emission_cells": 96
+    },
+    "pinned_3dnow_guest": {
+      "path": "pinned-3dnow-sharded-guest/qualification.json",
+      "sha256": "284931a91b9c10c6feabe683bdc835e1060af77d79cb0cd70614798b40218b93",
+      "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6",
+      "processor_model": "QEMU emulator version 10.2.2",
+      "results": [
+        {
+          "cpu": "max",
+          "state_comparisons": 368640,
+          "fault_comparisons": 720,
+          "unqualified_pending_mf_differentials": 1440,
+          "unqualified_stack_ss_differentials": 240,
+          "fwait_mf_control": "passed"
+        },
+        {
+          "cpu": "max,-3dnow,-3dnowext",
+          "state_comparisons": 0,
+          "fault_comparisons": 3360,
+          "unqualified_pending_mf_differentials": 0,
+          "unqualified_stack_ss_differentials": 0,
+          "fwait_mf_control": "passed"
+        }
+      ],
+      "objects": 960,
+      "scope": "QEMU processor model only; unqualified pending-MF and stack-SS differentials are not passing fault coverage."
+    },
+    "native_integrated": {
+      "path": "native-integrated-tests.xml",
+      "sha256": "811e18af928305a09c7d696bde4272db64d96a035c3cb1a0f945dc32c7402538",
+      "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6",
+      "tests": 1196,
+      "passed": 1147,
+      "failed": 0,
+      "skipped": 49,
+      "skip_reason": "Native Linux AArch64 translation/session/JIT execution on an x64 host",
+      "configuration_exclusions": [
+        "Unicorn arithmetic and x87 original-instruction tests are enabled only in the pinned SDK build."
+      ]
+    }
+  },
+  "semantic_references": [
+    {
+      "title": "Intel SDM volume 3A section 12.2, table 12-2",
+      "url": "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-vol-3a-part-1-manual.pdf#page=453"
+    },
+    {
+      "title": "AMD64 APM volume 1, 64-bit media state transitions",
+      "url": "https://docs.amd.com/api/khub/documents/sfvvekC9mDflu6vd3R0NXA/content"
+    }
+  ],
+  "unqualified": [
+    "physical FEMMS execution",
+    "new reset-specific native AArch64 translation sessions",
+    "i386 and typed/unowned FNOP/EMMS/FEMMS",
+    "privileged #NM behavior and arbitrary CPUs or operating systems",
+    "complete architectural or formal x87 equivalence"
+  ],
+  "test_repair": {
+    "symptom": "The 960-object 3DNow emission aggregate exceeded the ordinary 120-second per-test deadline.",
+    "historical_record": "neverd-x86-3dnow-owned/final-pinned-three-d-now.xml",
+    "change": "96 instruction/form test cases keep all ten compilation profiles and their stable retained probe numbers. The timeout is unchanged.",
+    "verification": "103 tests passed with all 960 retained objects and 96 stable probe numbers; the existing QEMU guest consumed the new layout and passed the qualified comparisons.",
+    "source_commit": "38088f01ec8c996b7460bea141b2151f20998ff6"
+  },
+  "validation_scope": "Completed checks for the stated batch on the recorded source commits and SDKs; later integrations need their own applicable checks.",
+  "build_receipts": [
+    {
+      "path": "pinned-top-fix-build-receipt.json",
+      "sha256": "d63e26c00dcd2e0056e4cf6607dd651be973f69c1d7d3a1c25bc50c45de4bff7",
+      "status": "success",
+      "configuration": "Release",
+      "options": [
+        "--target",
+        "NeverDX87PortableContextTests",
+        "NeverDX87PortableEmulatorTests",
+        "NeverDX87MMXStateTests",
+        "--parallel",
+        "4"
+      ],
+      "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
+    },
+    {
+      "path": "pinned-integrated-4-build-receipt.json",
+      "sha256": "9e9a0a526039204360a9a0f15517667f23da85b889d7e72842fc95cfcf741a19",
+      "status": "success",
+      "configuration": "Release",
+      "options": [
+        "--target",
+        "NeverDX87CapabilityTests",
+        "NeverDX87CapabilitiesPublicTests",
+        "NeverDX87ArithmeticTests",
+        "NeverDX87PortableContextTests",
+        "NeverDX87PortableEmulatorTests",
+        "NeverDX87PortableExecutionTests",
+        "NeverDX87PortablePreparationTests",
+        "NeverDX87PortableEmissionTests",
+        "NeverDX87PortableGeneratedTests",
+        "NeverDX87TranslationRuntimeTests",
+        "NeverDX87TranslationTests",
+        "NeverDTranslationContractTests",
+        "NeverDX87MMXStateTests",
+        "NeverDX86LegacyAdmissionTests",
+        "NeverDHighControlFlowTests",
+        "NeverDX86LegacyAtomicSemanticTests",
+        "NeverDX86LegacyEncodingSourceTests",
+        "NeverDSourceCallABITests",
+        "neverd",
+        "--parallel",
+        "4"
+      ],
+      "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
+    },
+    {
+      "path": "pinned-additional-state-build-receipt.json",
+      "sha256": "f4610c38ed7c4c69aa164e2c421d57ac3c9e348e8989e0a0d9a329cdb8d4a224",
+      "status": "success",
+      "configuration": "Release",
+      "options": [
+        "--target",
+        "NeverDX86X87ConvertStateTests",
+        "NeverDX86ThreeDNowContextTests",
+        "--parallel",
+        "4"
+      ],
+      "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
+    },
+    {
+      "path": "pinned-sharded-build-receipt.json",
+      "sha256": "74f057c1fdbbec385434d9dcd599f4eea171d069349e76ad83739df6781bdcf6",
+      "status": "success",
+      "configuration": "Release",
+      "options": [
+        "--target",
+        "NeverDX86ThreeDNowContextTests",
+        "--parallel",
+        "4"
+      ],
+      "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
+    },
+    {
+      "path": "native-integrated-5-build-receipt.json",
+      "sha256": "cf32ae6fdddeeb885ec23f1dcd1da4f824e61f90811a30e618309fd5ebd90760",
+      "status": "success",
+      "configuration": "Release",
+      "options": [
+        "--target",
+        "NeverDX87CapabilityTests",
+        "NeverDX87CapabilitiesPublicTests",
+        "NeverDX87ArithmeticTests",
+        "NeverDX87PortableContextTests",
+        "NeverDX87PortableEmulatorTests",
+        "NeverDX87PortableExecutionTests",
+        "NeverDX87PortablePreparationTests",
+        "NeverDX87PortableEmissionTests",
+        "NeverDX87PortableGeneratedTests",
+        "NeverDX87TranslationRuntimeTests",
+        "NeverDX87TranslationTests",
+        "NeverDTranslationContractTests",
+        "NeverDX87MMXStateTests",
+        "NeverDX86LegacyAdmissionTests",
+        "NeverDHighControlFlowTests",
+        "NeverDX86LegacyAtomicSemanticTests",
+        "NeverDX86LegacyEncodingSourceTests",
+        "NeverDSourceCallABITests",
+        "NeverDX86X87ConvertStateTests",
+        "NeverDX86ThreeDNowContextTests",
+        "neverd",
+        "--parallel",
+        "4"
+      ],
+      "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
+    }
+  ],
+  "publication_validation": {
+    "source_commit": "710180d84eb925e6ee07fe6721774781055a0f20",
+    "profiles": {
+      "pinned": {
+        "validation": {
+          "path": "pinned-publication-validation.json",
+          "sha256": "145f374891e08490df065a2b289c09b3f8130fc879e84b6fd51880acc7167a20"
+        },
+        "tests": {
+          "path": "pinned-publication-tests.xml",
+          "sha256": "fc28a3cc3a48dbb0802ad29b9a32c6370265a5ce08cfe91dc68a0a91fed26d04",
+          "tests": 1277,
+          "passed": 1227,
+          "failed": 0,
+          "skipped": 50,
+          "skip_reasons": {
+            "native_aarch64_on_x64_host": 49,
+            "windows_x64_single_step_observer_on_linux": 1
+          }
+        },
+        "build_receipt": {
+          "path": "pinned-publication-build-receipt.json",
+          "sha256": "bf3683ab8dce74f514e27e8b3540e155fb0f0d6d6e9bd2397af3057de47564f8"
+        },
+        "reset_generated": {
+          "path": "pinned-reset-qualified-2/record.json",
+          "sha256": "014cce32069be2aac35f173bf2f1a354f7d3db380d8e134498bad896b8fd4ea6",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 2700,
+            "distinct_cases": 225,
+            "native_x64_original_comparisons": 576,
+            "statuses": {
+              "0": 2592,
+              "2": 36,
+              "6": 36,
+              "5": 36
+            },
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "arithmetic_generated": {
+          "path": "pinned-arithmetic-qualified-2/record.json",
+          "sha256": "48fff60f98ac0dd8087a833dc1973af84ecee243faa7d406c26b0d748b044b28",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 5760,
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "reset_input_inventory": {
+          "path": "pinned-publication-reset-input-inventory.json",
+          "sha256": "2d153c2dca91ad1e160bd7ca9f7e78ff53c4adb40217b9120ebf1ed73b848256",
+          "artifacts": 36,
+          "observations": 2700,
+          "distinct_cases": 225,
+          "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+          "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+        }
+      },
+      "native": {
+        "validation": {
+          "path": "native-publication-validation.json",
+          "sha256": "f5de1169dace6460d8526cf2c87437c4e92751c452cdff0eba63164617248fdd"
+        },
+        "tests": {
+          "path": "native-publication-tests.xml",
+          "sha256": "94c3b396546ba25bdcbd2c7e85bd343c3b0242b16b8e029964b72e5b783b5cd7",
+          "tests": 1275,
+          "passed": 1225,
+          "failed": 0,
+          "skipped": 50,
+          "skip_reasons": {
+            "native_aarch64_on_x64_host": 49,
+            "windows_x64_single_step_observer_on_linux": 1
+          }
+        },
+        "build_receipt": {
+          "path": "native-publication-build-receipt.json",
+          "sha256": "6a4e27c21d74976b07e1cad68799c5ef86722d459efecff0797383ebeb5428ec"
+        },
+        "reset_generated": {
+          "path": "native-reset-qualified-2/record.json",
+          "sha256": "2362bbc11c2cc323a0ecaa97a942b03d1344b9ebd4a16a7f9c69b1bc369f0c1f",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 2700,
+            "distinct_cases": 225,
+            "native_x64_original_comparisons": 576,
+            "statuses": {
+              "0": 2592,
+              "2": 36,
+              "6": 36,
+              "5": 36
+            },
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "arithmetic_generated": {
+          "path": "native-arithmetic-qualified-2/record.json",
+          "sha256": "a8b55756be4804f15309ed5a055b86323d6c34d64f6f43d18c8aa8d0b8ff5503",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 5760,
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "reset_input_inventory": {
+          "path": "native-publication-reset-input-inventory.json",
+          "sha256": "edbf68b9096f034d39e347797d2d0fc6bc7e7adf959d305be74879fcf5163b6e",
+          "artifacts": 36,
+          "observations": 2700,
+          "distinct_cases": 225,
+          "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+          "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+        }
+      }
+    },
+    "native_sdk_configuration_exclusions": [
+      "Two Unicorn reference tests are enabled only in the pinned SDK profile."
+    ],
+    "aarch64_ci": {
+      "path": "ci-aarch64-publication-audit.json",
+      "sha256": "4abf1a1f17aa9a984066a720800ec7cdbdeb2ba0642340e91e5ce6f73d895761",
+      "run_url": "https://github.com/NeverSight/NeverD/actions/runs/40680179646",
+      "job_id": 122788624811,
+      "conclusion": "success",
+      "generated_reset": {
+        "path": "ci-aarch64-reset-input-inventory.json",
+        "sha256": "0a2b2c6ac620b9ff8f64f78e9666faa4486e43048f41252fb09abc78092838ce",
+        "architecture": "aarch64",
+        "artifacts": 36,
+        "observations": 2700,
+        "distinct_cases": 225,
+        "native_x64_original_comparisons": 0,
+        "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+        "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+      },
+      "baseline_reports": {
+        "evidence": {
+          "files_verified": 116,
+          "record_sha256": "5cc476647a4b88fade18f1cb39d224dec1fd506a6e00a14c462e879d54eb709b",
+          "passed": true,
+          "execution_completed": null,
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 0,
+            "cross_route_and_optimization_agreement": true
+          },
+          "environment": {
+            "platform": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39",
+            "machine": "aarch64",
+            "python": "3.12.15"
+          }
+        },
+        "translation-evidence": {
+          "files_verified": 1159,
+          "record_sha256": "0586756149e1391350892e4abb324212ddef4ba64ef1f4c56ebecc4963bfb16c",
+          "passed": true,
+          "execution_completed": null,
+          "coverage": {
+            "cases": 96,
+            "observations": 192,
+            "objects": 1152,
+            "session_and_block_agreement": true,
+            "optimization_agreement": true
+          },
+          "environment": {
+            "platform": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39",
+            "machine": "aarch64"
+          }
+        },
+        "arithmetic-evidence": {
+          "files_verified": 10,
+          "record_sha256": "65c0c87d11a06ed6e573f436538091e7f7de55f739c06a59f868eb0bd66f45ee",
+          "passed": null,
+          "execution_completed": true,
+          "coverage": null,
+          "environment": null
+        }
+      },
+      "reset_translation_limit": "Existing arithmetic translation fixtures passed; new reset-specific translation sessions are not certified by this run."
+    },
+    "cross_host_reset_agreement": {
+      "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+      "distinct_cases": 225,
+      "profiles": [
+        "local pinned SDK x64",
+        "local full SDK x64",
+        "native CI AArch64"
+      ],
+      "scope": "All 528 bytes of the explicitly seeded portable state; no physical FEMMS or complete architectural claim."
+    }
+  }
+}

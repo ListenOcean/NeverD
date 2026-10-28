@@ -21,9 +21,11 @@
 #endif
 
 #include <charconv>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 #include <vector>
 
 using namespace neverd::patch;
@@ -50,7 +52,68 @@ neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
   return Bytes;
 }
 
-// Only formatter-produced hexadecimal text reaches this helper. It is ASCII
+namespace {
+// This root-array writer accepts only the fixed patch inventory schema keys.
+// General string values still use LLVM's JSON escaping.
+class CompactPatchOutput {
+  llvm::raw_ostream &Stream;
+  bool FirstObject = true;
+  bool FirstAttribute = true;
+
+  void attributeBegin(llvm::StringLiteral Key) {
+    if (!FirstAttribute)
+      Stream << ',';
+    FirstAttribute = false;
+    Stream << '"' << Key << "\":";
+  }
+
+public:
+  explicit CompactPatchOutput(llvm::raw_ostream &Stream) : Stream(Stream) {}
+
+  template <typename Callback> void array(Callback Emit) {
+    Stream << '[';
+    Emit();
+    Stream << ']';
+  }
+
+  template <typename Callback> void object(Callback Emit) {
+    if (!FirstObject)
+      Stream << ',';
+    FirstObject = false;
+    FirstAttribute = true;
+    Stream << '{';
+    Emit();
+    Stream << '}';
+  }
+
+  void attribute(llvm::StringLiteral Key, llvm::StringRef Text) {
+    attributeBegin(Key);
+    Stream << llvm::json::Value(Text);
+  }
+
+  void attribute(llvm::StringLiteral Key, uint64_t Value) {
+    attributeBegin(Key);
+    Stream << Value;
+  }
+
+  void hexAttribute(llvm::StringLiteral Key, llvm::StringRef Text) {
+    attributeBegin(Key);
+    Stream << '"' << Text << '"';
+  }
+};
+
+class HexValue {
+  char Buffer[18] = {'0', 'x'}; // Prefix and up to sixteen hexadecimal digits.
+
+public:
+  llvm::StringRef format(uint64_t Value) {
+    const auto End =
+        std::to_chars(Buffer + 2, Buffer + sizeof Buffer, Value, 16).ptr;
+    return llvm::StringRef(Buffer, End - Buffer);
+  }
+};
+
+// Only formatter-produced hexadecimal text reaches these helpers. It is ASCII
 // without quotes or escapes, so generic string validation/escaping is
 // redundant.
 static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
@@ -61,20 +124,20 @@ static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
   Output.attributeEnd();
 }
 
-void neverd::patch::writePatchRows(llvm::json::OStream &Output,
-                                   const PatchOverlay &Overlay) {
+void writeHexAttribute(CompactPatchOutput &Output, llvm::StringLiteral Key,
+                       llvm::StringRef Text) {
+  Output.hexAttribute(Key, Text);
+}
+
+template <typename OutputT>
+void writeRows(OutputT &Output, const PatchOverlay &Overlay) {
   llvm::SmallString<32> Bytes;
-  char Buffer[18] = {'0', 'x'}; // Prefix and up to sixteen hexadecimal digits.
-  const auto Hex = [&](uint64_t Value) {
-    const auto End =
-        std::to_chars(Buffer + 2, Buffer + sizeof Buffer, Value, 16).ptr;
-    return llvm::StringRef(Buffer, End - Buffer);
-  };
+  HexValue Hex;
   // Each view is consumed before the next conversion reuses its storage.
   Output.array([&] {
     for (const auto &[Offset, Row] : Overlay.rows())
       Output.object([&] {
-        const auto FileOffset = Hex(Offset);
+        const auto FileOffset = Hex.format(Offset);
         writeHexAttribute(Output, "addr", FileOffset);
         llvm::toHex(Row.Current, true, Bytes);
         writeHexAttribute(Output, "current", Bytes);
@@ -83,7 +146,32 @@ void neverd::patch::writePatchRows(llvm::json::OStream &Output,
         llvm::toHex(Row.Original, true, Bytes);
         writeHexAttribute(Output, "original", Bytes);
         Output.attribute("size", Row.size());
-        writeHexAttribute(Output, "va", Hex(Row.Address));
+        writeHexAttribute(Output, "va", Hex.format(Row.Address));
+      });
+  });
+}
+} // namespace
+
+void neverd::patch::writePatchRows(llvm::json::OStream &Output,
+                                   const PatchOverlay &Overlay) {
+  writeRows(Output, Overlay);
+}
+
+void neverd::patch::writePatchRows(llvm::raw_ostream &Stream,
+                                   const PatchOverlay &Overlay) {
+  CompactPatchOutput Output(Stream);
+  writeRows(Output, Overlay);
+}
+
+void neverd::patch::writePatchRanges(llvm::raw_ostream &Stream,
+                                     const PatchOverlay &Overlay) {
+  CompactPatchOutput Output(Stream);
+  HexValue Hex;
+  Output.array([&] {
+    for (const auto &[Offset, Row] : Overlay.rows())
+      Output.object([&] {
+        writeHexAttribute(Output, "address", Hex.format(Row.Address));
+        Output.attribute("size", Row.size());
       });
   });
 }
@@ -156,8 +244,21 @@ llvm::Expected<PatchRow> readRow(const RowFields &Fields, uint64_t &Total) {
   PatchRow Row;
   const auto ReadAddress = [](std::optional<llvm::StringRef> Text,
                               uint64_t &Out) {
-    return Text && Text->consume_front("0x") && !Text->empty() &&
-           !Text->getAsInteger(16, Out);
+    if (!Text || !Text->consume_front("0x") || Text->empty())
+      return false;
+    // Preserve leading zeroes without converting excess significant digits.
+    constexpr size_t MaxDigits = std::numeric_limits<uint64_t>::digits / 4;
+    if (Text->size() > MaxDigits) {
+      *Text = Text->ltrim('0');
+      if (Text->empty()) {
+        Out = 0;
+        return true;
+      }
+      if (Text->size() > MaxDigits)
+        return false;
+    }
+    const auto Parsed = std::from_chars(Text->begin(), Text->end(), Out, 16);
+    return Parsed.ec == std::errc{} && Parsed.ptr == Text->end();
   };
   const auto Kind = Fields.Kind ? parsePatchKind(*Fields.Kind) : std::nullopt;
   if (!ReadAddress(Fields.FileOffset, Row.FileOffset) ||
@@ -210,7 +311,9 @@ neverd::patch::parsePatchRows(llvm::StringRef Text) {
   if (Text.size() > patchLimits::kMaxPatchesFileBytes)
     return invalid("patches.json exceeds its size limit");
 #if NEVERD_USE_SIMDJSON
-  {
+  // An empty StringRef may have null storage. Keep its legacy syntax error
+  // without passing that pointer to the SIMD parser's input copy.
+  if (!Text.empty()) {
     // Extract typed rows from the validated tape; no per-row JSON object tree
     // or parser storage survives this call. Borrowed strings are decoded into
     // owning byte vectors before the temporary parser is destroyed.

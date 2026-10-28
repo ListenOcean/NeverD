@@ -1701,6 +1701,9 @@ void MainWindow::navigateCodeFunction(CodeView *view, Address address,
                                       std::optional<Address> from) {
   // The shared history and background listing follow without changing the
   // originating code window or its representation, including a pinned view.
+  // Back returns the code to the place it leaves, at the stop it leaves.
+  if (const auto origin = from ? from : disassembly_->currentAddress())
+    view->text()->keepPlace(*origin);
   disassembly_->navigate(address, true, from);
   if (view->text()->function() != function)
     view->showFunction(function);
@@ -1807,6 +1810,9 @@ void MainWindow::navigateHistory(bool forward) {
   if (forward ? !disassembly_->canGoForward() : !disassembly_->canGoBack())
     return;
   if (auto *view = focusedCodeView()) {
+    // Coming back to this stop returns the code to where it is now.
+    if (const auto address = disassembly_->currentAddress())
+      view->text()->keepPlace(*address);
     const auto epoch = session_.epoch();
     connect(
         disassembly_->listing(), &ListingView::jumpSettled, view,
@@ -1814,13 +1820,22 @@ void MainWindow::navigateHistory(bool forward) {
           if (serial != codeNavigationSerial_ || epoch != session_.epoch() ||
               !view->isVisible())
             return;
+          // The listing has landed; a graph may still be laying it out.
           const auto function = disassembly_->listing()->currentFunction();
-          if (function && view->text()->function() != function)
+          const auto address = disassembly_->listing()->currentAddress();
+          if (function && view->text()->function() != function) {
             view->showFunction(*function);
+            // The code goes back to the cursor and view it left there, as
+            // Hex-Rays' Esc does; a stop it never made opens the function.
+            if (address)
+              view->text()->returnToPlace(*address);
+          }
           // Within the function the code goes back to the row it left, such
-          // as the goto whose label it went to.
-          else if (const auto address = disassembly_->currentAddress())
+          // as the goto whose label it went to, and to its place there.
+          else if (address) {
             view->text()->revealAddress(*address);
+            view->text()->returnToPlace(*address);
+          }
           view->text()->setFocus();
         },
         Qt::SingleShotConnection);
@@ -3706,11 +3721,15 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
     if (serial != searchSerial_ || epoch != session_.epoch() ||
         revision != session_.revision() || !session_.loaded())
       return;
-    const auto from = currentAddress().value_or(0);
+    // A listing still loading its first rows has no cursor yet: the search
+    // starts from the beginning, and the cursor its rows bring is not a move
+    // away from the search.
+    const auto origin = currentAddress();
+    const auto from = origin.value_or(0);
     auto request = std::make_shared<std::function<void(bool)>>();
     const std::weak_ptr<std::function<void(bool)>> weak = request;
-    *request = [this, kind, pattern, from, backward, serial, epoch, revision,
-                weak](bool wrapped) {
+    *request = [this, kind, pattern, origin, from, backward, serial, epoch,
+                revision, weak](bool wrapped) {
       auto keep = weak.lock();
       if (!keep)
         return;
@@ -3722,11 +3741,11 @@ void MainWindow::searchBinary(const QString &kind, bool again) {
         query["from"] = hexAddress(from);
       searchSubscription_ = session_.read(
           QStringLiteral("search"), query, this,
-          [this, kind, pattern, serial, epoch, revision, from, backward,
+          [this, kind, pattern, serial, epoch, revision, origin, backward,
            wrapped, keep](const QJsonObject &payload) {
             if (serial != searchSerial_ || epoch != session_.epoch() ||
                 revision != session_.revision() || !session_.loaded() ||
-                currentAddress().value_or(0) != from)
+                (origin && currentAddress() != origin))
               return;
             if (payload.value("building").toBool()) {
               QTimer::singleShot(

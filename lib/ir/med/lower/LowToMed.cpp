@@ -37,6 +37,7 @@
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/RegistrationABI.h"
+#include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
 #include "neverd/ir/low/X86/X86FourSourceShape.h"
 #include "neverd/ir/med/LowToMedError.h"
@@ -1003,6 +1004,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   Func.CxxContinuationEntries = Low.CxxContinuationEntries;
   Func.UnsafeIndirectBranchAddresses = Low.UnsafeIndirectBranchAddresses;
   Func.ExceptionMetadata = Low.ExceptionMetadata;
+  Func.SEHTerminationFrameBytes = collectLowSEHTerminationFrames(Low, TheArch);
   Func.RegistrationStates = Low.RegistrationStates;
   Func.RegistrationPhysicalFrame = PhysicalFrame;
   Func.CalleePopBytes = Low.CalleePopBytes;

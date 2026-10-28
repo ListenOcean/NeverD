@@ -25,6 +25,7 @@
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
+#include "LLVMCAtomicOrdering.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
 #include "LLVMCScalarUnary.h"
@@ -2037,6 +2038,8 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
       ValueTypes[&Inst] = Member->Type;
       // Memory may change before a use: read the slot here.
       if (!slotReadAtUses(*LI)) {
+        // A pointer member read into an integer temporary converts, as the
+        // read deferred to its uses does.
         emitIndent(Indent);
         OS << Name << " = " << memberAsAccessed(*LI, Member->Text, Member->Type)
            << ";\n";
@@ -3818,6 +3821,58 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
         Fence = "__dmb(0x" + llvm::utohexstr(*CRm) + ");" +
                 instructionComment(*FI) + "\n";
     OS << Fence;
+    HasCIntrinsics = true;
+    return;
+  }
+
+  if (auto *Exchange = llvm::dyn_cast<llvm::AtomicCmpXchgInst>(&Inst)) {
+    auto *ValueType = Exchange->getCompareOperand()->getType();
+    const auto &Layout = CurMod->getDataLayout();
+    auto *PointerType = llvm::dyn_cast<llvm::PointerType>(ValueType);
+    const unsigned Bits =
+        ValueType->isIntegerTy() ? ValueType->getIntegerBitWidth()
+        : PointerType            ? Layout.getPointerTypeSizeInBits(ValueType)
+                                 : 0;
+    const auto Success = Exchange->getSuccessOrdering();
+    const auto Failure = Exchange->getFailureOrdering();
+    // The C builtin requires native, naturally aligned objects in ordinary
+    // memory. Do not discard an address space or approximate a wider CAS.
+    if ((Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64) ||
+        Exchange->getNewValOperand()->getType() != ValueType ||
+        Exchange->getPointerAddressSpace() != 0 ||
+        (PointerType && (PointerType->getAddressSpace() != 0 ||
+                         Layout.isNonIntegralPointerType(PointerType))) ||
+        Exchange->getAlign().value() < Bits / 8 ||
+        Exchange->getSyncScopeID() != llvm::SyncScope::System)
+      throw std::runtime_error("unsupported LLVM C cmpxchg shape");
+    // LLVM allows some failure orders that the C builtin cannot express.
+    // Retain its exact pair or reject it instead of weakening an ordering.
+    if (!llvm::isAtLeastOrStrongerThan(Success,
+                                       llvm::AtomicOrdering::Monotonic) ||
+        (Failure != llvm::AtomicOrdering::Monotonic &&
+         Failure != llvm::AtomicOrdering::Acquire &&
+         Failure != llvm::AtomicOrdering::SequentiallyConsistent) ||
+        !llvm::isAtLeastOrStrongerThan(Success, Failure))
+      throw std::runtime_error("unsupported LLVM C cmpxchg ordering pair");
+    const std::string Type = typeToCLLVM(ValueType);
+    const std::string Old =
+        Name + aggregateMemberPath(Exchange->getType(), {0});
+    const std::string Succeeded =
+        Name + aggregateMemberPath(Exchange->getType(), {1});
+    // On failure the builtin replaces expected with the observed old value;
+    // on success expected already equals that value. Both LLVM result fields
+    // therefore describe this one operation, even across a later observer.
+    emitIndent(Indent);
+    OS << Old << " = (" << Type << ")("
+       << integerPointerOperandStr(Exchange->getCompareOperand()) << ");\n";
+    emitIndent(Indent);
+    OS << Succeeded << " = __atomic_compare_exchange_n((" << Type
+       << (Exchange->isVolatile() ? " volatile" : "") << " *)("
+       << valueStr(Exchange->getPointerOperand()) << "), &" << Old << ", ("
+       << Type << ")(" << integerPointerOperandStr(Exchange->getNewValOperand())
+       << "), " << (Exchange->isWeak() ? 1 : 0) << ", "
+       << llvmCAtomicOrderingToken(Success) << ", "
+       << llvmCAtomicOrderingToken(Failure) << ");\n";
     HasCIntrinsics = true;
     return;
   }
@@ -8003,6 +8058,10 @@ void LLVMCWriter::writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent) {
 }
 
 void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
+  if (!WrappedFinallyNormalExit.empty()) {
+    emitIndent(Indent);
+    OS << WrappedFinallyNormalExit << " = 1;\n";
+  }
   emitIndent(Indent);
   if (InferredVoid) {
     OS << "return;\n";

@@ -175,7 +175,7 @@ the later LLVM release/SDK/gitlink update remain separate work.
 | --- | --- |
 | LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
 | Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
-| Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
+| Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 native and explicit portable paths retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. Portable MMX data operations remain outside the admitted profile. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
@@ -2423,13 +2423,18 @@ The production LLVM release pin and submodule remain unchanged.
 ## Owned FEMMS completion
 
 The shared x87 selector contract now admits `0F 0E`. Its concrete transition
-clears all tags and all payload provenance, preserving the defined control,
-status and saved environment. Waiting exceptions and unknown incoming state
+clears TOP, all tags and all payload provenance, preserving the other control
+and status bits and saved environment. Logical FXSAVE slots rotate to retain
+physical register identity. Waiting exceptions and unknown incoming state
 refuse before mutation. MMX writes establish only the written physical slot;
 all eight must be known before exporting a complete raw snapshot. Native
 LLVM, HighC and LLVMC keep FEMMS within the existing context step. Restore and
 step constraints now name MM0–MM7 as well as ST0–ST7: LLVM does not model them
 as overlapping physical registers.
+
+The counts in the following historical records predate the
+[TOP-reset correction](#portable-owned-fnop-and-mmx-resets); they did not
+establish that transition.
 
 `NeverDX87MMXStateTests` checks all eight TOP values, three tag patterns,
 both strictness modes and both reset instructions, plus refusal, feature
@@ -2712,3 +2717,51 @@ the exported i386 C's operand values and storage. i386 native objects and C ABI
 checks use LLVM and ordinary Clang. The independent controlled completion
 oracle does not establish descriptor faults, physical atomicity, coherence or
 WB memory behavior.
+
+## Portable owned FNOP and MMX resets
+
+The explicit owned x64 portable profile now admits FNOP, EMMS and FEMMS across
+the concrete interpreter, generated LLVM/HighC/LLVM-C interface and portable
+translation selector gate. Pending waiting exceptions, invalid control words
+and unknown incoming control/status refuse before mutation. FNOP updates guest
+FIP while retaining the profile's undefined condition-code bits. EMMS and FEMMS
+clear TOP and empty the tags; FEMMS also invalidates every physical payload's
+provenance. General MMX data operations and typed/unowned or i386 state are
+still outside this profile.
+
+Original EMMS execution exposed an incorrect TOP-preservation assumption in
+both the ordinary owned interpreter and the portable path. A shared private
+state helper now resets TOP while rotating FXSAVE logical slots to preserve
+physical register identities. Physical tags and known-payload masks do not
+rotate. Unicorn's Haswell model reproduces the old incorrect TOP behavior, so
+EMMS uses the original native instruction as its reference instead.
+
+LLVM commit `ce2ee24b501f0aad3a8291a378e016848b0727b2` adds the void,
+zero-argument `llvm.x86.fnop()` intrinsic with waiting, status and scheduling
+effects. NeverC commit `29ed2c9372030696d16ec54c313b542aa67a11c1` adds
+`__builtin_ia32_fnop()` and synchronized frontend/backend tables. LLVM IR,
+NeverC and its LLVM bridge execute six O0/O2 profiles on the recorded Intel
+x64 host, covering 288 state observations and 12 pending-#MF deliveries at
+the actual FNOP instruction. This does not add a Clang frontend builtin.
+
+The [qualification ledger](evidence/x86-x87-resets-2026-10-28.json) binds all
+results to their tested commits and artifacts. Each SDK passes 36 generated
+reset artifacts with 2,700 state observations and 576 original-instruction
+comparisons; the prior arithmetic fixture separately passes 36 artifacts with
+6,096 observations and 5,760 original comparisons. Publication commit
+`710180d84eb925e6ee07fe6721774781055a0f20` passes 1,227 pinned-SDK and 1,225 full-SDK tests with no failures. Each skips 49 native
+AArch64 tests on the x64 host and one Windows-only single-step observer.
+The full SDK configuration excludes two Unicorn reference tests.
+The pinned suite's sole aggregate 3DNow timeout is repaired by giving each
+instruction/form its own ordinary CTest deadline: all 103 cases pass and keep
+all 960 objects. The existing QEMU guest consumes those exports and passes
+368,640 state and 4,080 fault comparisons, while its 1,440 pending-#MF and
+240 stack-#SS differentials remain unqualified.
+
+Native ARM64 [run 40680179646](https://github.com/NeverSight/NeverD/actions/runs/40680179646)
+executes all 36 new reset artifacts and 2,700 observations at the same publication
+commit. Its 225 distinct seeded state transitions match both local x64 SDKs.
+This is new generated-code evidence; reset-specific translation sessions,
+physical FEMMS, privileged #NM behavior and complete architectural equivalence
+remain unqualified. LLVM release, production SDK pinning and the LLVM gitlink
+remain unchanged while the global instruction gaps are open.

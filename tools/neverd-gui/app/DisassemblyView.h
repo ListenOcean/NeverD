@@ -72,6 +72,9 @@ signals:
 private:
   void updateStatus();
   void remember(Address address);
+  /// Take the current history stop to the cursor, as IDA's history does: a
+  /// move since the jump that made the stop does not add one of its own.
+  void moveStopToCursor();
   Session &session_;
   const AddressSpace &space_;
   QStackedWidget *stack_;
