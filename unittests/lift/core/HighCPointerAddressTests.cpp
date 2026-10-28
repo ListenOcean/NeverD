@@ -2679,11 +2679,13 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   llvm::Module Module("llvm-c-wide-string", Context);
   llvm::Type *I8 = llvm::Type::getInt8Ty(Context);
   llvm::Type *I64 = llvm::Type::getInt64Ty(Context);
-  llvm::FunctionType *PutsTy =
+  // As in the HighC twin, a routine without a C library prototype: puts's
+  // declared narrow parameter reads these bytes as "%".
+  llvm::FunctionType *FormatTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context),
                               {llvm::PointerType::getUnqual(I8)}, false);
-  llvm::Function *Puts = llvm::Function::Create(
-      PutsTy, llvm::GlobalValue::ExternalLinkage, "puts", Module);
+  llvm::Function *Format = llvm::Function::Create(
+      FormatTy, llvm::GlobalValue::ExternalLinkage, "Format", Module);
   llvm::FunctionType *FnTy =
       llvm::FunctionType::get(llvm::Type::getVoidTy(Context), false);
   llvm::Function *Function = llvm::Function::Create(
@@ -2693,7 +2695,7 @@ TEST(LLVMCPointerAddresses, ReadonlyWideImageStringPrintsLLiteral) {
   auto *Ptr =
       llvm::ConstantExpr::getIntToPtr(llvm::ConstantInt::get(I64, 0x140003400),
                                       llvm::PointerType::getUnqual(I8));
-  Builder.CreateCall(Puts, {Ptr});
+  Builder.CreateCall(Format, {Ptr});
   Builder.CreateRetVoid();
 
   std::string Source;

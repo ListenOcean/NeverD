@@ -409,6 +409,9 @@ private:
                               llvm::IRBuilder<> &Builder);
   llvm::Value *emitCpuidValue(const MedOp &Op, llvm::IRBuilder<> &Builder);
   llvm::Value *emitXgetbvValue(const MedOp &Op, llvm::IRBuilder<> &Builder);
+  /// The x87 control word the unit holds now, read with the owned FNSTCW
+  /// contract that X87ReadControl lowers to.
+  llvm::Value *emitX87ControlRead(llvm::IRBuilder<> &Builder);
   llvm::Value *emitRepString(const MedOp &Op, Intrinsic IC,
                              llvm::IRBuilder<> &Builder);
 

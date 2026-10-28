@@ -318,7 +318,10 @@ transport an unavailable value without observing it; a real observation still
 requires its availability. Callee-save restoration follows those uses through
 dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
-contract from these source seeds.
+contract from these source seeds. The x87 control word a function reads before
+writing it is not unavailable: it is the one the function entered with, which
+source LLVM reads at entry with the FNSTCW that X87ReadControl lowers to, as
+HighC reads it through its control-word helper.
 
 HighC prepares both declared and inferred void returns before analyzing local
 uses, retaining any effectful return evaluation. The shared source-flow graph
@@ -1683,6 +1686,21 @@ history branches and existing views. Edit status is separate from the retained
 snapshot's completeness. Worker capabilities resolve each additive progress
 export independently, and Qt consumes those capabilities. Copies, sorting and
 final publication remain indivisible; cancellation has no hard latency bound.
+
+`Regions` additionally owns opt-in `native-call-runs-v1`. Its per-search call
+context maps paired native targets to one canonical inventory, without rescanning
+callees per instruction or introducing another matcher. Shape-plus-target seeds
+remain bounded by the existing work, frequency and storage allowances; exact
+extension verifies every admitted call. Multiple distinct mapped targets or a
+paired terminal cleanup call can support a short repeated run, while clones
+remain ambiguous. Calls are
+conditional correspondence evidence, never behavioral proof. The interprocedural
+index stays coordinator-owned for deterministic cumulative budget/cancellation
+accounting. `Comparison` reruns this profile inside mapping-edit/undo transactions;
+`ComparisonJSON` binds it after validating the saved bijection. Default native
+runs remain independent of mapping edits and retain their original encoding.
+CLI/API/worker/Qt only select and present this owner and its recorded scope.
+
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,
@@ -7111,6 +7129,11 @@ passes a prologue save of a callee-saved or link register, a scratch register's
 undefined incoming value (an alignment `push rax`), a slot past a gap in its
 stack arguments, or the register that holds its own target, unless the routine
 takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
+HighIR drops the store itself when it lands in the function's own frame below
+the entry stack pointer: those bytes held no defined value before it and hold
+none after, so C does not read the register only to fail. A variadic
+function's register save area is not such a store; its registers carry what
+its callers pass.
 Recovery records where it ended the register arguments at the target
 (`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
 past it, since dead-code elimination leaves only stale earlier writes of that
@@ -7227,7 +7250,10 @@ callee-count and operation bounds; support bodies are not emitted. Conflicting
 shapes and explicit source or user declarations do not gain inferred fields.
 Integer fields occupy complete ABI words even when a caller reads a narrow view.
 Reading only X1 can nominate an X0/X1 pair, including across a split call block;
-it still needs the same callee proof. Return-field checks follow every ordinary
+it still needs the same callee proof. Such a caller observed no argument passing
+through the call, so a register the callee leaves untouched supplies no field
+then: the callee must write each one. A tail forwarder or an import, which has
+no body to prove, gains no shape from such a read. Return-field checks follow every ordinary
 predecessor through shared epilogues and loops. A single indexed SSA dependency
 closure rejects values derived from unspecified inputs, missing definitions or
 unbound call clobbers, rather than accepting an arithmetic copy of unknown bits.
@@ -7358,9 +7384,14 @@ at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
 unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
-written as they would be. Asked for alone, such a function still fails with
-that reason, and so does a unit rendered with a source map, recorded
-positions or source names.
+written as they would be. So is one whose source requirements, checked before
+any rendering, fail (`c-emission-failed; immediate original memory requires a
+runtime GPR value or a complete occurrence-bound image span`): no rendering
+reads it, and its callers call it as a function outside the unit. Asked for
+alone, such a function still fails with that reason, and so does a unit
+rendered with a source map, recorded positions or source names, or one whose
+requirements fail under structured exception syntax, which writes funclets
+inside their parents, or in a function whose body fills another's `__finally`.
 
 HighC writes a unit's headers, helpers, declarations and image objects on the
 calling thread, then its function definitions on worker threads, each with a
@@ -7799,6 +7830,17 @@ arithmetic and pure integer conversion; `X87PortableContext` applies the
 explicit masked-state slice to the existing context. It neither creates a
 parallel stack nor changes native/translation admission. Undefined CPU fields,
 unknown incoming state and unsupported effects stay explicit in that profile.
+
+The portable owner also executes FNOP, EMMS and FEMMS through the shared
+instruction table. The common preflight owns waiting exceptions and control
+validation; completion updates FNOP's guest FIP, clears EMMS/FEMMS TOP and tags,
+and applies FEMMS payload invalidation. `lib/ir/low/X86/X87ContextState.h` owns
+the logical-slot rotation that preserves physical payload identity whenever
+TOP changes in portable execution or ordinary concrete MMX transitions.
+Concrete interpretation, Step V1 and the
+portable translation selector reuse this decision. These owned-state forms
+remain a separate capability class from typed state-only operations; portable
+admission must not imply a typed lift or general MMX data support.
 
 `X87GuardedValue.h` shares the typed raw-value/control-word contract for BCD
 and the native FPTAN/FSINCOS/FXTRACT result pairs. The CFG owner proves source
@@ -9448,7 +9490,7 @@ JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
 The separately selected portable x87 profile adds only its admitted x64 owned
 instructions and authenticated extension on Linux AArch64. It does not widen
-these scalar object APIs, add a floating calling convention, or admit MMX,
+these scalar object APIs, add a floating calling convention, or admit MMX data,
 general environment operations, arbitrary memory instructions or other hosts.
 The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
 define that scope independently of complete state or formal proof.
@@ -12644,15 +12686,43 @@ Synchronous catches sample their retained throwing calls, so nonvolatile values
 come from the actual call rather than a neighbouring reindexed block. Missing
 source effects or throwing calls fail the conversion explicitly.
 
-An x64 SEH handler root gives each nonvolatile register the one SSA version it
-has on entry to every protected block when no protected operation writes it,
-and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
+A Windows x64, ARM or AArch64 SEH handler root gives each nonvolatile register
+the one SSA version it has on entry to every protected block when no protected
+operation writes it, and an unknown value otherwise (`MedSSA`). ARM and AArch64
+have no decoded-frame proof, so their handler roots take the SP of the
+protected range the same way. A termination handler's `__except`
 arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
 into the printed function's frame only in a clause body of a function without
 an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch
 and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
 for parameter, return and stored-result rendering; SEH and Itanium clause
 bodies are the function's own code.
+
+A Windows x64 `__finally` is an out-of-line termination handler the runtime
+calls with the parent's EstablisherFrame as its second argument and an
+abnormal-termination flag as its first; the handler reaches the parent's
+locals through `EstablisherFrame + k`. For a parent without a frame register
+that frame is the entry stack pointer less the prologue's fixed allocations,
+which `proveLowSEHTerminationFrame` (`lib/ir/low/SEHEstablisherFrame.cpp`)
+certifies from the normalized unwind codes cross-checked against the decoded
+prologue, refusing a frame register, a stack adjustment on any path into the
+guarded scope, or chained or incomplete unwind data. The bytes it returns ride
+`MedFunc::SEHTerminationFrameBytes` to HighIR, where `attachSEHFinallyBodies`
+(`lib/ir/high/structure/X86/X64SEHFinallyBodies.cpp`) projects the handler's
+body into the empty `__finally` clause: the establisher parameter is rebased
+onto the parent's entry stack pointer, each home-slot load becomes the
+parameter it holds, and the abnormal argument becomes `AbnormalTermination()`.
+Because a C `__finally` runs on the normal exit too, the compiler's inline
+normal-path copy must not run twice: when the handler ignores the abnormal flag
+and its statements equal that copy, the copy is removed and the clause holds
+the whole body; otherwise the copy stays and the clause holds only the abnormal
+work under `if (AbnormalTermination())`. A handler whose frame is not certified,
+whose body is unavailable or has its own exception scope, or whose `__try`
+transfers control out, nests another region or calls `_local_unwind` keeps its
+address comment: the machine runs the handler on such an exit while C would
+not, so the clause stays out of line until that call becomes a structured
+jump. The projection runs in the plain-C view as well as the C++ one, because
+SEH is C.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 

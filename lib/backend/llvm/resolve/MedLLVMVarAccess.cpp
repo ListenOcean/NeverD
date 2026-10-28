@@ -23,6 +23,7 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/X86/X87ControlWord.h"
 #include "neverd/support/Diagnostic.h"
 
 #include "llvm/ADT/StringExtras.h"
@@ -1422,11 +1423,18 @@ llvm::Value *MedLLVMEmitter::getVar(const MedVar &V,
   llvm::IRBuilder<> AllocBuilder(&Entry, Entry.begin());
   auto *Ty = sizeToType(V.Size);
   auto *Alloca = AllocBuilder.CreateAlloca(Ty, nullptr, V.display());
-  llvm::Value *Initial =
-      PreserveUnknownSourceValues
-          ? llvm_source_unknown::createEntrySeed(
-                AllocBuilder, llvm::cast<llvm::IntegerType>(Ty))
-          : llvm::ConstantInt::get(Ty, 0);
+  // The x87 control word the function entered with is still the unit's until
+  // the function writes one: source output reads it back, as HighC does,
+  // rather than leaving it unavailable.  Native output keeps its own entry
+  // contract.
+  llvm::Value *Initial = nullptr;
+  if (!PreserveUnknownSourceValues)
+    Initial = llvm::ConstantInt::get(Ty, 0);
+  else if (isX87ControlWord(TargetArch, V))
+    Initial = emitX87ControlRead(AllocBuilder);
+  else
+    Initial = llvm_source_unknown::createEntrySeed(
+        AllocBuilder, llvm::cast<llvm::IntegerType>(Ty));
   AllocBuilder.CreateStore(Initial, Alloca);
   VarAllocs[Key] = Alloca;
   return Builder.CreateLoad(Ty, Alloca, V.display() + "_v");

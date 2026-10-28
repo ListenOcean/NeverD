@@ -58,6 +58,26 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
     llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false,
     LowSEHFrameUse Use = LowSEHFrameUse::InvocationIdentity);
 
+/// Windows x64 calls a termination handler (an out-of-line `__finally`
+/// callback) with its parent's EstablisherFrame as the second argument. For a
+/// parent without a frame register that is the SP every protected instruction
+/// runs with: the entry SP less the prologue's allocations. Returns those
+/// bytes when the normalized unwind actions and the decoded prologue name the
+/// same allocations, and no operation on an ordinary path into any scope that
+/// \p Handler terminates moves SP after the prologue. A frame register,
+/// chained or incomplete unwind data, a handler inside the function, another
+/// entry into the protected code and exhausted work refuse.
+llvm::Expected<uint64_t> proveLowSEHTerminationFrame(const LowFunc &Parent,
+                                                     va_t Handler,
+                                                     const TargetRegInfo &TRI,
+                                                     size_t &WorkRemaining);
+
+/// The certified frame bytes of every termination handler of \p Parent, by
+/// handler entry. A handler whose frame is not proved is absent; each handler
+/// has its own `kMaxSEHEstablisherFrameWork` budget.
+std::map<va_t, uint64_t> collectLowSEHTerminationFrames(const LowFunc &Parent,
+                                                        Arch TargetArch);
+
 struct LowSEHFrameProof {
   /// Exact entry-relative SP at direct calls whose first Win64 argument is
   /// that same value on every reaching ordinary path. No runtime identity,

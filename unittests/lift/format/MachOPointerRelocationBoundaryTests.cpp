@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/backend/llvm/X86/X86AtomicRmw.h"
 #include "neverd/decode/Decoder.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -21,6 +22,7 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/MachO.h"
 #include "llvm/IR/Constants.h"
+#include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Object/ObjectFile.h"
@@ -21427,6 +21429,15 @@ TEST(LLVMCodePointerInvariantBoundary,
               Observed.push_back(CompareExchange->getCompareOperand());
               Observed.push_back(CompareExchange->getNewValOperand());
             }
+            // x86 keeps an exchange as its native XCHG (X86AtomicRmw.h),
+            // whose owned assembly takes the address and then the value.
+            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+              if (const auto *Assembly =
+                      llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+                  Assembly && Call->arg_size() == 2 &&
+                  llvm::StringRef(Assembly->getAsmString())
+                      .starts_with(kX86AtomicExchangeAsmMarker))
+                Observed.push_back(Call->getArgOperand(1));
           }
         ASSERT_EQ(Observed.size(),
                   Sink == ExactCodeAddressAtomicSink::Exchange ? 1u : 2u);
