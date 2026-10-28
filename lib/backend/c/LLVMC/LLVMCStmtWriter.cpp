@@ -85,17 +85,17 @@
 
 namespace neverd {
 
-namespace {
-bool needsCallSiteCType(const llvm::CallBase &Call) {
+bool LLVMCWriter::needsCallSiteCType(const llvm::CallBase &Call) {
   const auto *Declared = llvm::dyn_cast<llvm::Function>(
       Call.getCalledOperand()->stripPointerCasts());
   return Declared && (Declared->getFunctionType() != Call.getFunctionType() ||
                       Declared->getCallingConv() != Call.getCallingConv());
 }
 
+namespace {
 std::string retainCallSiteCType(const llvm::CallBase &Call,
                                 llvm::StringRef Type, std::string Cast) {
-  if (!needsCallSiteCType(Call))
+  if (!LLVMCWriter::needsCallSiteCType(Call))
     return Cast;
   // Clang can lower a directly cast function designator using its original
   // declaration's non-variadic ABI, dropping Windows x64's floating GPR copy.
@@ -1606,7 +1606,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   // Annotate only a read that emitted code. Forwarded or inlined reads must
   // not leave an orphan comment where their old instruction used to be.
   if (Load && OS.stream().tell() != Begin)
-    if (const auto Comment = imageLoadComment(*Load); !Comment.empty()) {
+    if (const auto Comment = imagePointerComment(Load->getPointerOperand());
+        !Comment.empty()) {
       emitIndent(Indent);
       OS << "/* " << Comment << " */\n";
     }
@@ -5852,8 +5853,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
         Expression += c_detail::sourceRecordValue(
             Hint->Signature.Parameters[I].Type,
             typeToCLLVM(Argument->getType()), Type, valueStr(Argument));
-      else
-        Expression += "(" + Type + ")(" + valueStr(Argument) + ")";
+      else {
+        std::string Projected = "(" + Type + ")(" + valueStr(Argument) + ")";
+        const bool Pointer =
+            Hint ? Hint->Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr
+                 : Argument->getType()->isPointerTy();
+        Expression += Pointer
+                          ? imagePointerArgument(Argument, std::move(Projected))
+                          : std::move(Projected);
+      }
     }
     Expression += ")";
     if (Hint && Hint->Signature.ReturnType->Kind == NdTypeKind::Struct)
@@ -6055,9 +6063,22 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
           Integer || PointerSpelling || Operand->getType()->isPointerTy()
               ? "(uintptr_t)"
               : "";
-      Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
-              "(" + Argument + ")";
+      std::string Projected = "(" + declarationToC(cDisplayType(Type), "") +
+                              ")" + Bridge + "(" + Argument + ")";
+      Expr += Type->Kind == NdTypeKind::Ptr
+                  ? imagePointerArgument(Operand, std::move(Projected))
+                  : std::move(Projected);
       continue;
+    }
+    if (const auto *Callee = Call.getCalledFunction();
+        Callee && !needsCallSiteCType(Call)) {
+      const auto &Parameters = definitionPointerTypes(*Callee).Parameters;
+      if (ArgIdx < Parameters.size() && Parameters[ArgIdx].Type) {
+        Expr += imagePointerArgument(Operand,
+                                     "(" + Parameters[ArgIdx].declaration() +
+                                         ")(uintptr_t)(" + Argument + ")");
+        continue;
+      }
     }
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =
@@ -6101,7 +6122,13 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
              declaredParameterIsInteger(Call, CalleeName, ArgIdx))
       Argument = "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" +
                  Argument + ")";
-    Expr += Argument;
+    const bool PointerArgument =
+        Prototype       ? libc::isPointerType(Param)
+        : HeaderInteger ? libc::isObjectPointerParameter(Library.Name, ArgIdx,
+                                                         libcVariant())
+                        : Operand->getType()->isPointerTy();
+    Expr += PointerArgument ? imagePointerArgument(Operand, std::move(Argument))
+                            : std::move(Argument);
   }
   Expr += ")";
   RenderingCalls.pop_back();

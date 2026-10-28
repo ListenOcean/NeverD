@@ -2138,6 +2138,10 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 运行 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）和 `NeverDCSourcePresentationTests`，检查字节来源、路径一致性、被覆盖或逃逸的存储、不可变镜像范围、预算、编码及元数据边界。`NeverDWorkerStackText` 编译公开的 x64/ARM64 PE 样例并通过两条 C 路径验证，包括未知覆盖写入。该测试需要 Clang 和 lld-link；Windows 原生执行需要单独验证。
 
+已验证的指针调用参数即使由 LLVM 整数承载地址，也使用相同的镜像文字注释。用例覆盖 x86/x64/ARM64 的 COFF、ELF 和 Mach-O，包括被拒绝的声明、相同数值的整数、动态地址、可写存储以及关闭或转义的注释。参数仍保留原地址；显示初始字节不代表存储不可变。
+
+返回类型分析与调用 ABI 恢复共用有界导入槽证明，跟踪导入地址和已加载目标的复制。测试覆盖 x86/x64/ARM32/ARM64 的 COFF、ELF 和 Mach-O，以及数值碰撞、动态地址、循环、段覆盖和非 void 声明。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 交互式补丁的职责
 
@@ -2194,3 +2198,17 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 `MemoryAdditionReturnsItsSnapshotThroughBothRoutes` 与交换对照在 O0/O2 和 UBSan 下执行两条 C 输出路线，覆盖四种 x64 宽度、未对齐地址、旧值和所有邻接字节。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` 还执行原始 LLVM IR、保留未使用结果的写入，并拒绝改变的汇编契约。FS/GS 形式只编译，不访问宿主 TLS；执行需要 x64 宿主。这些检查不认证并发争用或硬件故障。
 
 `X86LegacyAtomic.LockedArithmetic*` 检查 x86/x64 标量宽度、独立算术标志、源寄存器和进位保留、有符号立即数、未对齐邻接字节、只读及截断映射、FS/GS 地址和无锁对照。不支持的带锁核心运算不能发布普通存储。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` 还检查四种带锁算术的原始特化，并保留有序内存证明拒绝。
+
+## 标量跳转验证
+
+`NeverDConstantBranchTests` 覆盖 x86/x64/ARM64 与 PE、ELF、Mach-O 的直接前驱、所有前驱一致的合流和不可变读取；冲突、未定义输入、调用破坏和独立入口保留动态跳转。`NeverDConstantBranchSourceTests` 在优化开启/关闭时，编译并执行 x64/ARM64 的两条 C 路线，覆盖 O0/O2 与 UBSan。纯整数函数体使用宿主标准头文件；这不等于原生 ARM64 或 Windows 驱动验证。worker 的独立 ELF x64 机器码对拍还检查冷启动导航、引用和被跳过的 E9 字节。
+
+先验证当前基本块能独立证明的目标，避免无关前驱耗尽其工作预算。长前驱回归也验证这一边界。
+
+MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计算所得的间接调用目标保留 SSA 值身份，不能因位模式变成常量而被当作指针存储地址；直接调用和普通参数继续折叠。`NeverDImageAnalysisBoundaryTests` 检查 x86/x64/ARM32/ARM64 的转换，`NeverDIndirectCallValueSourceTests` 在三种原生格式下执行 x64/ARM64 两条 C 路线；原镜像视图只检查语法和没有凭空增加的内存读取，不能脱离镜像提供者执行。
+
+`NeverDReadOnlyProtectionSourceTests` 对 PE、ELF、Mach-O 中的 x64/ARM64 输入指令生成 HighC 和 LLVM C，并用主机 Clang 在 O0/O2 加 UBSan 下执行全局变量读写。覆盖两种流水线优化模式及容易误导判断的常量节名称。`NeverDReadOnlyBytesTests` 检查映射权限、完整 RELRO 范围和非法范围；原生指针边界套件将同一 ELF 样例分别链接为 relro 与 norelro。重建 C 的主机执行不等于原生 ARM64 或 Windows 内核执行验证。
+
+`RelroKeepsPartialPagesAndStaticStartupWritable` 检查 x86、x64、ARM、ARM64 的页边界和显式加载器保证。原生指针测试执行独立的 Linux x64 部分页 RELRO 与无加载器静态样例，验证全局变量先写后读。`NeverDDataSymbolBindingTests` 检查完整指针保护和两条 C 路径；这些检查不代表原生 ARM 页配置认证。
+
+`NeverDLowScalarConstantTests` 和 `NeverDIndirectCallValueSourceTests` 覆盖跨块调用及拒绝边界，并执行两条 C 路线。`NeverDLLVMCSourcePointerTests` 在 O0/O2 加 UBSan 下检查对象指针、回调、别名和选中函数的外部声明。原生指针套件编译公开 MinGW 样例，拒绝 MSVCRT/UCRT 布局不符；这些不等于原生内核或 ARM64 执行验证。

@@ -1357,9 +1357,10 @@ BinaryImage makeChainedImage() {
   Data.VA = DataVA;
   Data.Size = 0x100;
   Data.FileSz = Data.Size;
-  // Mach-O keeps __DATA_CONST writable while dyld applies fixups even though
-  // the segment is immutable once loading completes.
+  // Model the loader's SG_READ_ONLY guarantee while retaining fixup-time
+  // permissions. The segment name alone does not grant this protection.
   Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.ReadOnlyAfterRelocations = true;
   Data.Data.resize(Data.Size);
 
   dyld_chained_ptr_64_bind Bind{};
@@ -1716,8 +1717,10 @@ makeSpilledConstTableImage(Arch TargetArch,
     Data.Size = 0x40;
     Data.FileSz = Data.Size;
     Data.Flags = SegmentFlags::Readable;
-    if (IsMachO || Format == BinaryFormat::ELF)
+    if (IsMachO || Format == BinaryFormat::ELF) {
       Data.Flags = Data.Flags | SegmentFlags::Writable;
+      Data.ReadOnlyAfterRelocations = true;
+    }
     Data.Data.assign(Data.Size, 0);
     fillTables(Data.Data, 0);
     Image.Segments.push_back(std::move(Data));
@@ -1786,6 +1789,7 @@ BinaryImage makeWritablePointerTableImage(Arch TargetArch,
       continue;
     Seg.Name = Format == BinaryFormat::MachO ? "__DATA" : ".data";
     Seg.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Seg.ReadOnlyAfterRelocations = false;
   }
   for (Section &Sec : Image.Sections) {
     if (!Sec.contains(SpilledConstTableVA))
@@ -6751,6 +6755,7 @@ InteriorPointerFixture makeInteriorPointerFixture(Arch TargetArch) {
   Data.Size = 0x60;
   Data.FileSz = Data.Size;
   Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.ReadOnlyAfterRelocations = true;
   Data.Data.assign(Data.Size, 0);
   for (size_t I = 0; I < Fixture.InteriorTargets.size(); ++I) {
     const va_t NameSlot = TableVA + I * 16;
@@ -7876,6 +7881,7 @@ TEST(MachOInteriorCodePointerCFG, DoesNotFoldWritableOrUnprovenRelay) {
   {
     InteriorPointerFixture Fixture = makeInteriorPointerFixture(Arch::AArch64);
     Fixture.Image.Segments.back().Name = section_names::macho::DataSeg;
+    Fixture.Image.Segments.back().ReadOnlyAfterRelocations = false;
     Fixture.Image.Segments.back().Flags =
         Fixture.Image.Segments.back().Flags | SegmentFlags::Writable;
     LowFunc Func = buildInteriorPointerCFG(Fixture);
@@ -8147,6 +8153,7 @@ TEST(MachOInteriorCodePointerCFG,
         Entries.insert(RejectedTarget);
       } else if (TestCase == Writable) {
         Fixture.Image.Segments.back().Name = section_names::macho::DataSeg;
+        Fixture.Image.Segments.back().ReadOnlyAfterRelocations = false;
       } else if (TestCase == Unproven) {
         Fixture.Image.CodePtrRelocSlots.clear();
       } else {
@@ -16320,6 +16327,7 @@ TEST(LLVMDataPointerInvariantBoundary,
         append(NdOp::RETURN, {}, {Scaled});
         const bool Expected = C == Case::Direct || C == Case::Nested ||
                               C == Case::ZeroFilled || C == Case::Nonzero ||
+                              C == Case::ReadOnlySection ||
                               C == Case::ObjectFootprint;
         MedLLVMEmitter Proof;
         MedLLVMProvenanceTestPeer::prepareFreshAnalysis(Proof, F, Image, A,
@@ -21474,6 +21482,24 @@ TEST(LLVMCodePointerInvariantBoundary,
         std::vector<llvm::Value *> Observed;
         for (llvm::BasicBlock &Block : *EmittedCaller)
           for (llvm::Instruction &Instruction : Block) {
+            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
+              if (auto *Assembly = llvm::dyn_cast<llvm::InlineAsm>(
+                      Call->getCalledOperand())) {
+                ASSERT_EQ(TargetArch, Arch::X64);
+                ASSERT_EQ(Sink, ExactCodeAddressAtomicSink::Exchange);
+                const auto Plan =
+                    x86AtomicRmwPlan(TargetArch, NdOp::ATOMIC_XCHG, 8,
+                                     NdMemoryAddressSpace::Default);
+                ASSERT_TRUE(Plan);
+                EXPECT_EQ(Assembly->getAsmString(), Plan->assembly());
+                EXPECT_EQ(Assembly->getConstraintString(), Plan->constraints());
+                EXPECT_TRUE(Assembly->hasSideEffects());
+                ASSERT_EQ(Call->arg_size(), 2u);
+                EXPECT_TRUE(Call->getArgOperand(0)->getType()->isPointerTy());
+                EXPECT_TRUE(Call->getType()->isIntegerTy(64));
+                EXPECT_EQ(Call->getArgOperand(1)->getType(), Call->getType());
+                Observed.push_back(Call->getArgOperand(1));
+              }
             if (auto *RMW = llvm::dyn_cast<llvm::AtomicRMWInst>(&Instruction))
               Observed.push_back(RMW->getValOperand());
             if (auto *CompareExchange =
@@ -21481,15 +21507,6 @@ TEST(LLVMCodePointerInvariantBoundary,
               Observed.push_back(CompareExchange->getCompareOperand());
               Observed.push_back(CompareExchange->getNewValOperand());
             }
-            // x86 keeps an exchange as its native XCHG (X86AtomicRmw.h),
-            // whose owned assembly takes the address and then the value.
-            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
-              if (const auto *Assembly =
-                      llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
-                  Assembly && Call->arg_size() == 2 &&
-                  llvm::StringRef(Assembly->getAsmString())
-                      .starts_with(kX86AtomicExchangeAsmMarker))
-                Observed.push_back(Call->getArgOperand(1));
           }
         ASSERT_EQ(Observed.size(),
                   Sink == ExactCodeAddressAtomicSink::Exchange ? 1u : 2u);

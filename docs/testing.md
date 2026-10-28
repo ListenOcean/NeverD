@@ -2067,7 +2067,10 @@ known targets remain tail calls with their original instruction address.
 Immutable scalar reads extend this matrix to all three architectures and
 formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
 and unaffordable loads as runtime inputs. Revalidation shares a read cache
-throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+throughout one CFG build. Effective mapping protection owns immutability;
+section flags alone cannot make a read-only mapping writable. Writable
+mappings are checked with both read-only and writable section metadata.
+`NeverDReadOnlyBytesTests` checks scalar width,
 relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
 in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
 with concrete LowIR execution.
@@ -2076,13 +2079,33 @@ with concrete LowIR execution.
 COFF and Mach-O, and a similar nonconstant expression must retain its input
 dependence. Partial register writes, calls, opaque effects, separate memory
 reads, instruction-local temporary reuse, malformed records and exhausted
-budgets cannot publish an edge. The shared symbolic integer translator also
+budgets cannot publish an edge. Direct predecessor chains carry exact numeric
+and symbolic facts. Long irrelevant predecessor chains cannot invalidate a
+locally proved target by exhausting the work budget. A joined dispatch requires
+all incoming paths to agree;
+conflicting or undefined alternatives and independent continuation roots retain
+arbitrary incoming state. Repeated image loads participate in identities
+only with the shared immutable-byte proof; writable lookalikes stay dynamic.
+`NeverDConstantBranchSourceTests` executes x64/ARM64 PE, ELF and Mach-O source
+through HighC and LLVM C, with pipeline optimization enabled and disabled,
+O0/O2 compilation and UBSan. These host executions do not certify native ARM64
+hardware or Windows drivers. The shared symbolic integer translator also
 serves jump-table proofs; run `NeverDJumpTableTests` and
 `NeverDLowInstructionBoundaryTests` when changing it.
 
+`NeverDImageAnalysisBoundaryTests` checks that constant and copy propagation
+preserve indirect-call values, literal pointer slots and ordinary arguments,
+including Low-to-Med conversion on x86, x64, ARM32 and ARM64 across the three
+native formats. `NeverDIndirectCallValueSourceTests` compiles and executes
+x64/ARM64 HighC and LLVM C at O0/O2 with UBSan; the original-image LLVM C view
+also verifies that a code address never acquires an invented storage load.
+Those source views are syntax-checked, not executed without their image provider.
+
 `NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
 both C routes for readonly loads, NOT, NEG, sign-extended target offsets and
-four mixed Boolean/arithmetic identities over unknown scalar inputs.
+four mixed Boolean/arithmetic identities over unknown scalar inputs, direct
+predecessor state transport, unanimous joined paths and identities containing
+immutable image loads.
 Independent native ELF x64 fixtures return a known result past an overlapping
 unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
 144 independent input pairs include zero, all ones, sign and alternating bits.
@@ -5603,7 +5626,11 @@ kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
 `ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
 `AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
-read declarations. `known_routines.sys` also checks that `KeSetEvent` prints
+read declarations. Copied import addresses and callable values use the same
+bounded slot proof as call ABI recovery. The x86/x64/ARM32/ARM64 cases cover
+COFF, ELF and Mach-O, including numeric collisions, dynamic addresses, cycles,
+segment overrides and nonvoid declarations.
+`known_routines.sys` also checks that `KeSetEvent` prints
 the parameters its prototype declares and its code never reads, and that
 `neverd_decompile_all` takes the prototypes; the kernel inputs check
 `ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
@@ -6940,6 +6967,12 @@ beside ordinary and volatile reads in the function body, even when the GUI
 folds declarations. Unknown pointers have no guessed text; disabling comments
 leaves the original storage representation. It also checks
 comment escaping and that aggregate storage cannot become a scalar edit type.
+
+Checked pointer call arguments use the same image-text annotations even when LLVM
+uses an integer address carrier. The cases cover x86/x64/ARM64 with COFF, ELF
+and Mach-O, including rejected declarations, numeric collisions, dynamic
+addresses, writable storage and disabled or escaped comments. The original
+address remains the argument; displayed initial bytes do not prove immutability.
 
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
 segments, unrelated code/data relocations, exact byte values, partial overlap,
@@ -16652,3 +16685,19 @@ names a site; `HighCPointerAddresses.ThenPredChainUndefSkipArmFoldsElse`,
 Run `NeverDHighControlFlowTests`, `NeverDHighCStoreForwardingTests`,
 `NeverDWindowsEHSourceTests` and `NeverDCPointerProjectionTests`. This is a
 HighIR structuring contract; it requires no external source interface.
+
+`NeverDReadOnlyProtectionSourceTests` executes read/write globals through HighC and LLVM C on host Clang at O0/O2 with UBSan, for x64/ARM64 input instructions across PE, ELF and Mach-O. Both pipeline optimization modes and misleading constant-section names are covered. `NeverDReadOnlyBytesTests` checks mapping authority, complete RELRO extents and malformed ranges; the native pointer boundary suite links the same ELF fixture with relro and norelro. Host execution of reconstructed C does not qualify native ARM64 or Windows kernel execution.
+
+`RelroKeepsPartialPagesAndStaticStartupWritable` checks x86, x64, ARM and ARM64 page boundaries and explicit loader guarantees. The native pointer owner executes independent Linux x64 partial-RELRO and bare-static fixtures that write then read the global. `NeverDDataSymbolBindingTests` checks complete pointer protection and both C routes. These checks do not certify native ARM page configurations.
+
+`NeverDLowScalarConstantTests` checks direct-chain call-target inheritance and
+refusal at malformed boundaries, alternate entries, joins, exceptional edges,
+cycles, clobbers and exhausted budgets. `NeverDIndirectCallValueSourceTests`
+executes forwarded arguments across the edge through HighC and LLVMC, with
+selected/whole projections, both pipeline optimization modes, x64/ARM64 and
+all three native containers. `NeverDLLVMCSourcePointerTests` executes object
+pointer and callback argument/result bridges at O0/O2 with UBSan, including
+caller-before-callee order, typedefs, selected externals and preserved LLVM
+prototypes. The native pointer suite compiles a complete public MinGW toy and
+checks both matching CRT layouts and rejection of mismatched MSVCRT/UCRT
+headers or same-offset fields of a different type. These source checks do not certify native kernel or ARM64 execution.

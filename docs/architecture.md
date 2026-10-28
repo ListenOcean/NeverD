@@ -1315,21 +1315,37 @@ relocation proof. Cold reads charge the image metadata inventory against the
 existing evidence budget; repeated reads cache successes and failures within
 one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
 If ordinary constant propagation cannot resolve a target, a bounded,
-straight-block symbolic query may prove that its full-width scalar expression
+straight-path symbolic query may prove that its full-width scalar expression
 is constant for every input. `LowScalarSymbolic` shares integer semantics with
 the jump-table resolver; exact MBA derivations, register-byte identity and
-instruction-local temporary lifetime are required. Separate loads remain
-separate observations, and opaque effects clear register facts. The query
+instruction-local temporary lifetime are required. This query borrows the
+same authenticated immutable image reads as numeric propagation; other loads
+remain separate observations, and opaque effects clear register facts. The query
 charges the same function evidence budget and owns finite operation, node,
 atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
 symbolic optimization or solver synthesis by default.
-Recovery revalidates the producer's basic block after discovering new paths.
+A target proved independent of the current block's incoming state is tested
+first, so unrelated predecessors cannot consume its proof budget.
+Register facts may cross a unique decoded direct predecessor edge. At the
+first join, each direct incoming path must independently prove the same target.
+Earlier joins remain arbitrary inputs rather than recursively enumerated paths.
+Independent roots and exceptional entries stop the walk, and recovered
+indirect edges cannot supply their own proof. Only the traversed direct-edge
+control operations leave the symbolic sequence; instruction guards remain.
+Recovery revalidates the complete producer path after discovering new edges.
 Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
 disassembly remains linear. The worker uses recovered bodies for function
 listings and replaces their linear reference-scan results, so skipped bytes do
 not swallow real code targets. Analyst Undefine overrides presentation inside
 a function without deleting the function or changing the original bytes.
+
+MedIR invariant and copy propagation share `canPropagateConstantToOperand`.
+A computed indirect-call target stays an SSA value even when its producer is
+constant: the legacy literal `INDIR_CALL` operand denotes pointer storage.
+Substituting the value's bits there would introduce an extra memory read.
+Direct calls and ordinary arguments retain constant propagation; the emitter
+does not infer another load from a propagated code value.
 
 Exact scalar transfers may reach backward or discontiguous blocks beyond a
 next-entry search bound. Known independent entries retain tail-call ownership
@@ -6484,10 +6500,13 @@ ELF GOT data identities come from the exact relocation symbol snapshot through
 relocation inventory owns addend rules; whether the slot is read-only once
 relocated owns whether a slot load can become a symbolic address, as
 `BinaryImage::readOnlyAfterRelocations` decides by the address: a read-only
-segment, a segment or section of relocated constants (`.data.rel.ro`,
-`__DATA_CONST`), or complete PT_GNU_RELRO coverage. An ELF load segment keeps
-its `LOAD_n` name, since it holds sections of both kinds; no decision reads a
-linked image's segment name. Writable slots retain
+segment, an explicit normalized loader protection guarantee, or complete
+PT_GNU_RELRO coverage in a linked ELF image. Names such as `.data.rel.ro` and
+`__DATA_CONST` never prove protection: `-z norelro` and a missing Mach-O
+SG_READ_ONLY flag retain writable storage. Relocation classification, scalar
+folding and LLVM data materialization share this address-specific authority.
+An ELF load segment keeps its `LOAD_n` name because it holds sections of both
+kinds. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
@@ -6499,6 +6518,8 @@ cannot erase the symbol values needed to relocate the mapped bytes.
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
+
+RELRO proof also requires a dynamic loader: a shared object without an independent process entry, or an executable with an interpreter. Bare static executables retain runtime loads. Incomplete final pages are excluded using `maximumELFProtectionPageSize`, the largest supported target base page, never the analysis host’s page. [glibc](https://github.com/bminor/glibc/blob/master/elf/dl-reloc.c), [Arm ABI](https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst).
 
 An absolute symbol relocation (`NEVERD_ELF_ABSOLUTE_SYMBOL`: `R_386_32`,
 `R_X86_64_64`, `R_ARM_ABS32`, `R_AARCH64_ABS64`) with no addend against a strong
@@ -14207,10 +14228,17 @@ lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
 original call occurrences or exhausted work publish no constant. The outgoing
 stack-write proof independently tracks affine addresses, expires temporaries
 at instruction boundaries and discards earlier writes across opaque effects.
-No cross-block values or implicit memory contents are introduced.
+The AL query remains block-local. Register-call targets may also use a bounded
+unique direct-predecessor chain before call summaries and SSA: incomplete
+bodies, independent roots, joins, cycles, exceptional edges and malformed
+terminal boundaries stop inheritance. No implicit memory contents are introduced.
+The local proof runs first; all prefix copying and evaluation share its work cap.
 
 `MedCallTarget` observes cached callable values through the Med ABI owner's
-exact address, width and overlap proof. The machine call-summary adapter,
+exact address, width and overlap proof. Finite-width constant address arithmetic
+is proved before call-register summaries and SSA consume its parameter reads;
+only definitions preceding that query can supply the value. A numeric code
+value and a loaded pointer slot retain distinct roles. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
 An observation retains the original LOAD index, including through private SSA
 versions. HighIR names an imported call only when the same memory-reachability
@@ -14281,3 +14309,12 @@ keeps its retained words verbatim, so the deep simplifier walks them under the
 same work allowance before returning.
 
 `X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the memory operation; `INC/DEC` preserve CF. FS/GS address spaces remain attached. Other locked core arithmetic is refused until it has an ordered model. This is a LowIR lifting contract; emitted native alignment and fault behavior need their own qualification.
+
+LLVM C owns one cached pointer-type projection per emitted definition. Its
+parameter-location binding selects the same object/function pointer declarations
+for signatures and direct-call conversions, independently of module order.
+Selected external declarations and explicitly preserved call-site types keep
+their own contracts. Materialized record-member loads use the same pointer-to-
+integer bridge as inlined reads. Embedded CRT records reuse a target header
+only with size, field-offset and member-type checks; MSVCRT and UCRT sharing `_iobuf` does
+not establish layout compatibility.

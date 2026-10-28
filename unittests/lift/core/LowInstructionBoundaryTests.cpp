@@ -3009,9 +3009,9 @@ TEST(LowInstructionBoundary,
   EXPECT_NE(MaskedHighC.find("address_space(257)"), std::string::npos);
   EXPECT_TRUE(validHighC(MaskedHighC));
 
-  // Generic atomic opcodes share the same pointer-resolution owner as scalar
-  // loads/stores.  A segmented atomic must bypass image-global resolution and
-  // reach LLVM and High-C with its target address space intact.
+  // Atomic opcodes share the pointer-resolution owner with scalar accesses.
+  // Native x86 RMW uses unaligned-safe inline assembly; its segment operand
+  // must bypass image-global resolution and retain the target address space.
   auto AtomicTemp = [](int Id) {
     MedVar Var;
     Var.Kind = MedVar::Temp;
@@ -3073,6 +3073,11 @@ TEST(LowInstructionBoundary,
     const auto *Asm =
         Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
              : nullptr;
+    if (Asm && llvm::StringRef(Asm->getAsmString())
+                   .starts_with(kX86AtomicAddAsmMarker)) {
+      EXPECT_EQ(Call->arg_size(), 2u);
+      EXPECT_TRUE(Asm->hasSideEffects());
+    }
     return Asm && Call->arg_size() == 2 &&
                    llvm::StringRef(Asm->getAsmString())
                        .starts_with(kX86AtomicAddAsmMarker)
@@ -3119,6 +3124,7 @@ TEST(LowInstructionBoundary,
   EXPECT_NE(AtomicHighC.find("lock xaddq %0, %%fs:(%1)"), std::string::npos)
       << AtomicHighC;
   EXPECT_NE(AtomicHighC.find("__atomic_compare_exchange_n"), std::string::npos);
+  EXPECT_EQ(AtomicHighC.find("__atomic_fetch_add"), std::string::npos);
   EXPECT_NE(AtomicHighC.find("address_space(256)"), std::string::npos);
   EXPECT_TRUE(validHighC(AtomicHighC));
 

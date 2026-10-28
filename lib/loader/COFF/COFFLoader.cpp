@@ -550,12 +550,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
           const bool TargetReadable =
               TargetSec ? TargetSec->isReadable() : TargetSeg->isReadable();
           const bool TargetWritable =
-              TargetSec ? TargetSec->isWritable() &&
-                              !section_names::isReadOnlyAfterRelocSectionName(
-                                  TargetSec->Name) &&
-                              !section_names::isReadOnlyAfterRelocSectionName(
-                                  TargetSec->SegmentName)
-                        : TargetSeg->isWritable();
+              isRuntimeWritableAddress(Img, TargetOwnerVA);
           const bool TargetExecutable =
               Img.hasExecutableCodeOwnerAt(TargetOwnerVA);
           const va_t OwnerBegin = TargetSec ? TargetSec->VA : TargetSeg->VA;
@@ -621,12 +616,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
           if (!TargetReadable)
             return;
           const bool TargetWritable =
-              TargetSec ? TargetSec->isWritable() &&
-                              !section_names::isReadOnlyAfterRelocSectionName(
-                                  TargetSec->Name) &&
-                              !section_names::isReadOnlyAfterRelocSectionName(
-                                  TargetSec->SegmentName)
-                        : TargetSeg->isWritable();
+              isRuntimeWritableAddress(Img, TargetOwnerVA);
           if (TargetWritable)
             Img.WritableRelocDataAddrs.insert(TargetVA);
           else
