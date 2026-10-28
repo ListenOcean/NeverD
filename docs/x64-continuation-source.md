@@ -29,9 +29,13 @@ values are not inferred from a PE file. `paging_address_bits` accepts 48 or 57.
 Supply exactly one nonempty array: `entries` selects recovered CFG regions;
 `instructions` selects exact instruction addresses. Decimal integers and hex
 strings are accepted. An ordinary source rejection does not erase its native
-instruction selection: every selected instruction is relifted independently,
-and the manifest retains the ordinary disposition. Original bytes and overlapping instruction starts remain
-in the manifest. Selection does not prove whole-function or callee coverage.
+instruction selection: every selected instruction is relifted independently.
+Manifest schema 2 records each region's `lowir_disposition`,
+`lowir_unproved_returns` and `lowir_unsupported_instructions`. These describe
+the LowIR selection stage only; full ordinary ABI and call/return validation
+has not run (`ordinary_source_validation: "not-run"`). Original bytes and
+overlapping instruction starts remain in the manifest. Selection does not
+prove whole-function or callee coverage.
 
 The request can lower `max_instructions` and `max_operations` from the shared
 continuation limits. Unknown options, duplicate addresses, missing bytes,

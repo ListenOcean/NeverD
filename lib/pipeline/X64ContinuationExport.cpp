@@ -337,10 +337,10 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
       Regions.push_back(llvm::json::Object{
           {"entry", hex(Audit.Entry)},
           {"instructions", std::move(PCs)},
-          {"ordinary_disposition",
+          {"lowir_disposition",
            pipelineFunctionDispositionName(Audit.Disposition)},
-          {"unproved_ordinary_returns", uint64_t(Audit.UnprovenReturns.size())},
-          {"ordinary_unsupported_instructions",
+          {"lowir_unproved_returns", uint64_t(Audit.UnprovenReturns.size())},
+          {"lowir_unsupported_instructions",
            uint64_t(Audit.UnsupportedInstructions.size())},
           {"truncated_paths", uint64_t(Audit.TruncatedPaths.size())}});
     }
@@ -411,7 +411,7 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
   if (!Binding)
     return Binding.takeError();
   llvm::json::Object Report{
-      {"schema_version", 1},
+      {"schema_version", 2},
       {"profile", "kernel-events-v6"},
       {"interface", "explicit-machine-state"},
       {"coverage",
@@ -438,6 +438,7 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
        "instruction bytes; accessible disjoint state and budget; native "
        "bindings require the declared executing environment"},
       {"ordinary_source_abi", false},
+      {"ordinary_source_validation", "not-run"},
       {"whole_function_coverage", false}};
   llvm::raw_string_ostream(Result.Manifest)
       << llvm::formatv("{0:2}\n", llvm::json::Value(std::move(Report)));

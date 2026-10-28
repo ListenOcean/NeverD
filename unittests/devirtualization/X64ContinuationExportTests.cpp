@@ -103,9 +103,11 @@ protected:
     if (!Parsed) {
       llvm::consumeError(Parsed.takeError());
     } else if (const auto *Object = Parsed->getAsObject()) {
+      EXPECT_EQ(Object->getInteger("schema_version"), 2);
       EXPECT_EQ(Object->getInteger("state_bytes"), 2496);
       EXPECT_EQ(Object->getInteger("state_alignment"), 16);
       EXPECT_EQ(Object->getBoolean("ordinary_source_abi"), false);
+      EXPECT_EQ(Object->getString("ordinary_source_validation"), "not-run");
       EXPECT_EQ(Object->getBoolean("whole_function_coverage"), false);
       EXPECT_EQ(
           Object->getString("source_sha256"),
@@ -233,7 +235,18 @@ TEST_F(X64ContinuationExportTest,
     auto Parsed = llvm::json::parse(Manifest);
     ASSERT_TRUE(bool(Parsed));
     EXPECT_EQ(Parsed->getAsObject()->getInteger("total"), 2);
-    EXPECT_EQ(Parsed->getAsObject()->getArray("regions")->size(), 1u);
+    const auto *Regions = Parsed->getAsObject()->getArray("regions");
+    ASSERT_NE(Regions, nullptr);
+    ASSERT_EQ(Regions->size(), 1u);
+    const auto *Region = Regions->front().getAsObject();
+    ASSERT_NE(Region, nullptr);
+    EXPECT_TRUE(Region->getString("lowir_disposition").has_value());
+    EXPECT_TRUE(Region->getInteger("lowir_unproved_returns").has_value());
+    EXPECT_TRUE(
+        Region->getInteger("lowir_unsupported_instructions").has_value());
+    EXPECT_EQ(Region->get("ordinary_disposition"), nullptr);
+    EXPECT_EQ(Region->get("unproved_ordinary_returns"), nullptr);
+    EXPECT_EQ(Region->get("ordinary_unsupported_instructions"), nullptr);
     execute(Source, std::string(Seed) + R"C(
 int main(void) {
     uint64_t stack[]={0x7777},sp=(uintptr_t)stack,budget=4;
