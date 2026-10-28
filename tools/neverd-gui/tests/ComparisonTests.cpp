@@ -2257,7 +2257,7 @@ private slots:
     const auto Input = [&](const char *Base) {
       return QJsonObject{{"path", Path},
                          {"load_options", QJsonObject{{"loader", "binary"},
-                                                      {"processor", "x64"},
+                                                      {"processor", "x86_64"},
                                                       {"base", Base}}}};
     };
     // The full FFmpeg workflow needs larger allowances than the defaults.
@@ -2271,9 +2271,15 @@ private slots:
                                            {"min_instructions", 5},
                                            {"min_repeated_instructions", 9}}}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QVERIFY2(Failures.isEmpty(),
+             qPrintable(Failures.isEmpty()
+                            ? QString{}
+                            : Failures.last().first().toString()));
     QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 7, Timeout);
     auto SavedRegions =
         Session.summary()["settings"].toObject()["regions"].toObject();
+    QCOMPARE(SavedRegions["max_seeds"].toInt(), 4194304);
+    QCOMPARE(SavedRegions["min_instructions"].toInt(), 5);
     const auto Saved = Directory.filePath("call-regions.nddiff");
     Session.command("comparison_save", {{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
