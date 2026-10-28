@@ -71,7 +71,8 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
                              MedStackProjection Projection,
                              const MedCallReturnRanges *CallReturns,
-                             bool WaitForCalleeFacts) {
+                             bool WaitForCalleeFacts,
+                             bool CallFreeMachineSource) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
     return;
@@ -82,7 +83,8 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
   std::string Diagnostic;
   Func.CallReturnReads.clear();
   bool NeedsCalleeFacts = false;
-  if (!validateSourceCallReturnReads(
+  if (!CallFreeMachineSource &&
+      !validateSourceCallReturnReads(
           Func, Image, Diagnostic, limits::ir::kSourceCallReturnReadWork,
           &Source, CallReturns, &Func.CallReturnReads,
           WaitForCalleeFacts ? &NeedsCalleeFacts : nullptr))
@@ -472,7 +474,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       prepareMedStackAccesses(MF, Projected ? *Projected : Result.LowFuncs[I],
                               Img, medStackProjection(Opts),
                               CalleeFactsReady ? &CallReturns : nullptr,
-                              !CalleeFactsReady);
+                              !CalleeFactsReady,
+                              Result.InterpreterMachineSourceABI.has_value() &&
+                                  Result.LowFuncs.size() == 1);
       StackPrepared = true;
       if (medStackProjection(Opts) == MedStackProjection::Source)
         expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
