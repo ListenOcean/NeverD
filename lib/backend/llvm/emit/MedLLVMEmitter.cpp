@@ -1289,6 +1289,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   const auto Declarations = PreserveUnknownSourceValues
                                 ? SourceCalleeDeclarations
                                 : llvm::ArrayRef<MedFunc>{};
+  // Two functions can carry one name, as the local symbols of one Rust
+  // generic in two codegen units of a Mach-O. Each needs its own LLVM
+  // function, or the second's body and calls land in the first's: the first
+  // named keeps the name, and a later one takes its entry address after it,
+  // as an import's namesake does. Every shard names the same functions in
+  // the same order, so all agree.
+  std::map<std::string, va_t, std::less<>> NameOwners;
   const auto NameFunction = [&](const MedFunc &F) {
     std::string EmittedName = F.Name;
     auto Personality = NativePersonalityNames.find(F.Entry);
@@ -1324,6 +1331,13 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                                                     F.Entry, EmittedName)
                                : std::nullopt)
       EmittedName = std::move(*Shadow);
+    if (!EmittedName.empty()) {
+      const auto [Owner, Named] = NameOwners.try_emplace(EmittedName, F.Entry);
+      if (!Named && Owner->second != F.Entry) {
+        EmittedName += "_" + llvm::utohexstr(F.Entry);
+        NameOwners.try_emplace(EmittedName, F.Entry);
+      }
+    }
     EmittedFuncNames[F.Entry] = EmittedName;
     FuncNames[F.Entry] = std::move(EmittedName);
   };

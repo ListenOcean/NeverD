@@ -427,8 +427,10 @@ still fails, which the `JTE_*FailsClosed*` lift tests also hold.
 `RealShardedEmissionLeavesOutABodyItsContractRefuses` does the same for an
 AArch64 `ldapurb w8, [sp, #0x20]` with an image, which the emitter refuses
 before any module: a lift fails once, from the shard that owns the body.
-Decompile a whole x86-64 libsqlite3 or Rust binary through `--llvm` after
-changing that retry: one such body used to fail the unit.
+`ShardedEmissionKeepsBothFunctionsOfOneName` checks that two functions of one
+name keep both bodies in one module and in two shards. Decompile a whole
+x86-64 libsqlite3 or Rust binary, and an AArch64 Rust Mach-O, through `--llvm`
+after changing that retry: one such body used to fail the unit.
 
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved

@@ -7472,8 +7472,13 @@ masks partition the unit, and a retry only the bodies it keeps; a module
 that merely filters bodies out, as the SDK's view of one function, still
 checks every one (`setMaskedBodiesOwnedElsewhere`). A lift, whose IR names
 nothing it leaves out, and a patch, which rewrites every function it lifts,
-still fail at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Asked
-for alone,
+still fail at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Two
+functions that carry one name, as the local symbols of one Rust generic in
+two codegen units of a Mach-O, each keep their own LLVM function: the first
+named keeps the name and a later one takes its entry address after it
+(`write_str`, `write_str_10002F90C`). One shared function had taken the
+second body and its calls in a module, and two shards that each defined the
+name failed to link. Asked for alone,
 such a function still
 fails with that reason, and so does a unit
 rendered with a source map, recorded positions or source names, or one whose

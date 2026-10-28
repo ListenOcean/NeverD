@@ -2021,6 +2021,54 @@ TEST(PipelineOutcome, RealShardedEmissionLeavesOutABodyItsContractRefuses) {
   }
 }
 
+// Two functions with one name, as a Mach-O's local symbols of one generic in
+// two codegen units, each keep their own body, in one module or in two
+// shards: the later one takes its entry address after the name.
+TEST(PipelineOutcome, ShardedEmissionKeepsBothFunctionsOfOneName) {
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  std::vector<MedFunc> Functions;
+  for (unsigned I = 0; I < 8; ++I) {
+    MedFunc Function = sourceFunction(
+        0x1000 + I * 16,
+        I == 1 || I == 6 ? "twin" : "source_" + std::to_string(I));
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(Return);
+    Function.Blocks.push_back(std::move(Block));
+    Functions.push_back(std::move(Function));
+  }
+  const auto OriginalVA = [](const llvm::Function &Function) -> uint64_t {
+    auto Address = rewrite_source::getOriginalVA(Function);
+    if (!Address) {
+      llvm::consumeError(Address.takeError());
+      return 0;
+    }
+    return Address->value_or(0);
+  };
+  for (unsigned Threads : {1u, 2u}) {
+    SCOPED_TRACE(Threads);
+    llvm::LLVMContext Context;
+    auto Result =
+        PipelineTestPeer::emitShards(Functions, Context, Image, Threads);
+    ASSERT_NE(Result.Module, nullptr) << Result.Error;
+    EXPECT_FALSE(llvm::verifyModule(*Result.Module, &llvm::errs()));
+    const llvm::Function *First = Result.Module->getFunction("twin");
+    const llvm::Function *Second = Result.Module->getFunction("twin_1060");
+    ASSERT_NE(First, nullptr);
+    ASSERT_NE(Second, nullptr);
+    EXPECT_FALSE(First->isDeclaration());
+    EXPECT_FALSE(Second->isDeclaration());
+    EXPECT_EQ(OriginalVA(*First), 0x1010u);
+    EXPECT_EQ(OriginalVA(*Second), 0x1060u);
+  }
+}
+
 MedFunc unhandledIntrinsicFunction(Arch Architecture, uint16_t OutputSize,
                                    va_t Entry = 0x1000) {
   MedFunc Function = sourceFunction(Entry, "unsupported_intrinsic");
