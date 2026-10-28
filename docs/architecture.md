@@ -318,7 +318,10 @@ transport an unavailable value without observing it; a real observation still
 requires its availability. Callee-save restoration follows those uses through
 dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
-contract from these source seeds.
+contract from these source seeds. The x87 control word a function reads before
+writing it is not unavailable: it is the one the function entered with, which
+source LLVM reads at entry with the FNSTCW that X87ReadControl lowers to, as
+HighC reads it through its control-word helper.
 
 HighC prepares both declared and inferred void returns before analyzing local
 uses, retaining any effectful return evaluation. The shared source-flow graph
