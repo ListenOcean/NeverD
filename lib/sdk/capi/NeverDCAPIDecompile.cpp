@@ -31,7 +31,7 @@
 #include "neverd/ir/NdOps.h"
 #include "neverd/ir/high/HighIRPrint.h"
 #include "neverd/ir/high/HighVariableEdits.h"
-#include "neverd/ir/high/X64SEHFinallyBodies.h"
+#include "neverd/ir/high/SEHFinallyBodies.h"
 #include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/LanguageRuntime.h"

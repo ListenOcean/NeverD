@@ -298,6 +298,26 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   for (va_t EHEntry : Img.ExceptionMetadata.PrimaryFunctionEntries)
     if (EHEntry != 0 && Img.isFunctionEntryCandidateAt(EHEntry))
       ExceptionEntries.insert(EHEntry);
+  // A scope table's termination handler outside its owner is a function the
+  // runtime calls. An ARM leaf handler has no unwind record of its own, so
+  // only the scope names it; one inside another record's range is not an
+  // entry. A filter stays as it was: C calls it from its `__except` with the
+  // exception pointers, which a definition that never reads them would not
+  // take.
+  for (const ExceptionFunction &EH : Img.ExceptionMetadata.Functions) {
+    if (!EH.SEH)
+      continue;
+    for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+      const va_t Handler = Scope.FilterOrFinallyVA;
+      if (Scope.Kind != SEHScopeKind::Finally || !Handler ||
+          EH.ownsCode(Handler) || !Img.isFunctionEntryCandidateAt(Handler))
+        continue;
+      const ExceptionFunction *Owner =
+          Img.ExceptionMetadata.findFunction(Handler);
+      if (!Owner || Owner->CodeRange.Begin == Handler)
+        ExceptionEntries.insert(Handler);
+    }
+  }
   const std::set<va_t> ExceptionThunks =
       Img.ExceptionMetadata.registrationScopeThunks();
   const auto RegistrationPointerRoles =
