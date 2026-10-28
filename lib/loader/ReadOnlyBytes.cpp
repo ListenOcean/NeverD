@@ -16,19 +16,18 @@ namespace neverd {
 
 bool BinaryImage::readOnlyAfterRelocations(va_t Addr, uint64_t Width) const {
   const Segment *Seg = getSegmentFor(Addr);
-  if (!Seg || !Width || Width > Seg->Size - (Addr - Seg->VA))
+  if (!Seg || !Width || Seg->Size > InvalidVA - Seg->VA ||
+      Width > Seg->Size - (Addr - Seg->VA))
     return false;
-  if (!Seg->isWritable() || Seg->ReadOnlyAfterRelocations ||
-      section_names::isReadOnlyAfterRelocSectionName(Seg->Name))
+  if (!Seg->isWritable() || Seg->ReadOnlyAfterRelocations)
     return true;
-  if (const Section *Sec = getSectionFor(Addr);
-      Sec && Width <= Sec->Size - (Addr - Sec->VA) &&
-      (section_names::isReadOnlyAfterRelocSectionName(Sec->Name) ||
-       section_names::isReadOnlyAfterRelocSectionName(Sec->SegmentName)))
-    return true;
-  if (ELFMetadata)
+  // Names describe linker conventions, not runtime protection. In particular,
+  // -z norelro leaves .data.rel.ro writable and a Mach-O __DATA_CONST mapping
+  // without the loader's SG_READ_ONLY guarantee need not become immutable.
+  if (Format == BinaryFormat::ELF && !IsRelocatable && ELFMetadata)
     for (const ELFProgramHeader &Header : ELFMetadata->ProgramHeaders)
       if (Header.Type == llvm::ELF::PT_GNU_RELRO &&
+          Header.MemorySize <= InvalidVA - Header.VirtualAddress &&
           Addr >= Header.VirtualAddress &&
           Addr - Header.VirtualAddress <= Header.MemorySize &&
           Width <= Header.MemorySize - (Addr - Header.VirtualAddress))

@@ -1955,8 +1955,7 @@ TEST_F(NativePointerRelocationBoundary,
     ASSERT_NE(Table, nullptr);
     ASSERT_TRUE(Table->isReadable());
     ASSERT_FALSE(Table->isExecutable());
-    if (Table->isWritable())
-      EXPECT_TRUE(section_names::isReadOnlyAfterRelocSectionName(Table->Name));
+    EXPECT_TRUE(Img.readOnlyAfterRelocations(Table->VA, Table->Size));
 
     const va_t Slot0 = Table->VA;
     const va_t Slot1 = Slot0 + Img.getPointerSize();
@@ -2414,35 +2413,40 @@ counter:
   .quad 0
 )";
   }
-  const auto Linked =
-      exec(NEVERD_TEST_CLANG,
-           {"-nostdlib", "-pie", "-Wl,-e,neverd_test_start", "-Wl,-z,relro",
-            "-Wl,-z,now", Source.string(), "-o", Program.string()});
-  ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
-  auto Img = loadBinary(Program);
-  ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
-  ASSERT_GE(Img->Segments.size(), 2u);
-  for (const Segment &Seg : Img->Segments)
-    EXPECT_TRUE(llvm::StringRef(Seg.Name).starts_with(kLoadSegmentPrefix))
-        << Seg.Name;
-  const auto section = [&](llvm::StringRef Name) -> const Section * {
-    for (const Section &Sec : Img->Sections)
-      if (Sec.Name == Name)
-        return &Sec;
-    return nullptr;
-  };
-  const Section *Table = section(".data.rel.ro");
-  const Section *Dynamic = section(".dynamic");
-  const Section *Data = section(".data");
-  ASSERT_TRUE(Table && Dynamic && Data);
-  // The relocated constants and the dynamic table share the writable
-  // segment of .data.
-  ASSERT_EQ(Img->getSegmentFor(Table->VA), Img->getSegmentFor(Data->VA));
-  ASSERT_TRUE(Img->getSegmentFor(Data->VA)->isWritable());
-  EXPECT_TRUE(Img->readOnlyAfterRelocations(Table->VA, 8));
-  EXPECT_TRUE(Img->readOnlyAfterRelocations(Dynamic->VA, 8));
-  EXPECT_FALSE(Img->readOnlyAfterRelocations(Data->VA, 8));
-  EXPECT_TRUE(Img->readOnlyAfterRelocations(Img->Entry, 1));
+  for (bool Relro : {false, true}) {
+    SCOPED_TRACE(Relro);
+    const auto Linked =
+        exec(NEVERD_TEST_CLANG,
+             {"-nostdlib", "-pie", "-Wl,-e,neverd_test_start",
+              Relro ? "-Wl,-z,relro" : "-Wl,-z,norelro", "-Wl,-z,now",
+              Source.string(), "-o", Program.string()});
+    ASSERT_EQ(Linked.exitCode, 0) << Linked.err;
+    auto Img = loadBinary(Program);
+    ASSERT_TRUE(static_cast<bool>(Img)) << llvm::toString(Img.takeError());
+    ASSERT_GE(Img->Segments.size(), 2u);
+    for (const Segment &Seg : Img->Segments)
+      EXPECT_TRUE(llvm::StringRef(Seg.Name).starts_with(kLoadSegmentPrefix))
+          << Seg.Name;
+    const auto section = [&](llvm::StringRef Name) -> const Section * {
+      for (const Section &Sec : Img->Sections)
+        if (Sec.Name == Name)
+          return &Sec;
+      return nullptr;
+    };
+    const Section *Table = section(".data.rel.ro");
+    const Section *Dynamic = section(".dynamic");
+    const Section *Data = section(".data");
+    ASSERT_TRUE(Table && Dynamic && Data);
+    // The relocated constants and the dynamic table share the writable
+    // segment of .data.
+    ASSERT_EQ(Img->getSegmentFor(Table->VA), Img->getSegmentFor(Data->VA));
+    ASSERT_TRUE(Img->getSegmentFor(Data->VA)->isWritable());
+    EXPECT_EQ(Img->readOnlyAfterRelocations(Table->VA, 8), Relro);
+    EXPECT_EQ(isRuntimeWritableAddress(*Img, Table->VA), !Relro);
+    EXPECT_EQ(Img->readOnlyAfterRelocations(Dynamic->VA, 8), Relro);
+    EXPECT_FALSE(Img->readOnlyAfterRelocations(Data->VA, 8));
+    EXPECT_TRUE(Img->readOnlyAfterRelocations(Img->Entry, 1));
+  }
 #endif
 }
 

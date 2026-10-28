@@ -72,6 +72,11 @@ add_neverd_unittest(NeverDIndirectCallValueSourceTests
   LINK_COMPONENTS Pipeline BackendC
 )
 
+add_neverd_unittest(NeverDReadOnlyProtectionSourceTests
+  core/ReadOnlyProtectionSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
 add_neverd_unittest(NeverDResumableTrapBoundaryTests
   core/ResumableTrapBoundaryTests.cpp
   core/ResumableTrapIdentityTests.cpp

@@ -1002,10 +1002,8 @@ struct BinaryImage {
   /// Whether the \p Width bytes at \p Addr keep, once loading is done, what
   /// the loader left there: they lie in a read-only segment, in one the
   /// format makes read-only once relocated (Segment::ReadOnlyAfterRelocations),
-  /// in a segment or section of relocated constants (`.data.rel.ro`,
-  /// `__DATA_CONST`), or in a range ELF's PT_GNU_RELRO covers.  A linked
-  /// ELF's load segment holds sections of both kinds, so its name says
-  /// nothing of the bytes.
+  /// or in a range a linked ELF's PT_GNU_RELRO covers. Segment and section
+  /// names alone never establish immutability.
   bool readOnlyAfterRelocations(va_t Addr, uint64_t Width) const;
 
   /// Return the mapped format-native section that owns \p Addr.
