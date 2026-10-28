@@ -851,7 +851,8 @@ TEST(SourceABI, DarwinIntegerPairResultRequiresBothReturnRegisters) {
     ASSERT_TRUE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic));
     EXPECT_TRUE(Hint.ReturnComponents.empty());
     Hint.Parameters = {{"wide", NdType::makeInt(16)}};
-    EXPECT_FALSE(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic));
+    EXPECT_EQ(assignDarwinScalarSourceABI(Hint, Architecture, Diagnostic),
+              Architecture == Arch::AArch64);
   }
 }
 
@@ -2158,6 +2159,84 @@ TEST(SourceABI, StructReturnFieldsNeedTheirLastRealWritesOnEveryReturn) {
     EXPECT_EQ(
         returnsStructFields(Function, Fields, Arch::AArch64, BinaryFormat::ELF),
         Mode == 0 || Mode == 4);
+  }
+}
+
+TEST(SourceABI, StructReturnFieldsFollowAllPredecessorsAndUnknownInputs) {
+  const auto &TRI = getTargetRegInfo(Arch::AArch64);
+  const auto Reg = [&](unsigned Index, int Version, uint16_t Size = 8) {
+    MedVar V;
+    V.Kind = MedVar::Reg;
+    V.TheArch = Arch::AArch64;
+    V.RegOff = TRI.IntReturnRegs[Index];
+    V.Id = Index;
+    V.SSAVer = Version;
+    V.Size = Size;
+    return V;
+  };
+  const auto Copy = [&](MedVar Out, MedVar Input) {
+    MedOp Op;
+    Op.Opcode = NdOp::COPY;
+    Op.Output = Out;
+    Op.addInput(Input);
+    return Op;
+  };
+  const std::vector<MedReturnReg> Fields = {{TRI.IntReturnRegs[0], 8, false},
+                                            {TRI.IntReturnRegs[1], 8, false}};
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    MedFunc F;
+    F.Entry = 0x1000;
+    F.Blocks.resize(3);
+    for (unsigned I = 0; I != 3; ++I) {
+      F.Blocks[I].Id = I;
+      F.Blocks[I].StartAddr = F.Entry + I * 0x10;
+    }
+    F.Blocks[0].Succs = {1};
+    F.Blocks[1].Preds = {0, 1};
+    F.Blocks[1].Succs = {1, 2};
+    F.Blocks[2].Preds = {1};
+    F.Blocks[0].Ops.push_back(Copy(Reg(0, 1), MedVar::makeConst(7, 8)));
+    if (Variant != 1)
+      F.Blocks[0].Ops.push_back(Copy(Reg(1, 1), MedVar::makeConst(11, 8)));
+    else
+      F.Blocks[0].Ops.push_back(
+          Copy(Reg(1, 1), MedVar::makeUnspecified(8, Arch::AArch64)));
+    if (Variant == 2) {
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Output = Reg(0, 2);
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      F.Blocks[1].Ops.push_back(Call);
+    }
+    if (Variant == 3)
+      F.Blocks[1].Ops.push_back(Copy(Reg(1, 2, 4), MedVar::makeConst(11, 4)));
+    if (Variant == 4) {
+      MedVar Temp;
+      Temp.Kind = MedVar::Temp;
+      Temp.Id = 10;
+      Temp.Size = 8;
+      F.Blocks[1].Ops.push_back(
+          Copy(Temp, MedVar::makeUnspecified(8, Arch::AArch64)));
+      F.Blocks[1].Ops.push_back(Copy(Reg(1, 2), Temp));
+    }
+    if (Variant == 5) {
+      PhiNode Phi;
+      Phi.Output = Reg(1, 2);
+      Phi.Args = {{0, MedVar::makeConst(11, 8)}};
+      Phi.ExceptionalEntry = MedVar::makeUnspecified(8, Arch::AArch64);
+      F.Blocks[1].Phis.push_back(Phi);
+      MedVar Temp = Phi.Output;
+      Temp.Kind = MedVar::Temp;
+      Temp.Id = 10;
+      F.Blocks[1].Ops.push_back(Copy(Temp, Phi.Output));
+      F.Blocks[1].Ops.push_back(Copy(Reg(1, 3), Temp));
+    }
+    MedOp Ret;
+    Ret.Opcode = NdOp::RETURN;
+    F.Blocks[2].Ops.push_back(Ret);
+    EXPECT_EQ(returnsStructFields(F, Fields, Arch::AArch64, BinaryFormat::ELF),
+              Variant == 0);
   }
 }
 

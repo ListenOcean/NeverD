@@ -15,13 +15,24 @@
 
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/med/LowToMed.h"
 #include "neverd/lift/ARM/ARMRegs.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/Parallel.h"
 
+#include "llvm/ADT/ScopeExit.h"
+#include "llvm/IR/LLVMContext.h"
+#include "llvm/IR/Verifier.h"
+
+#include <algorithm>
+#include <cstdint>
 #include <initializer_list>
+#include <iterator>
+#include <string>
 #include <utility>
+#include <vector>
 
 namespace {
 
@@ -115,6 +126,146 @@ TEST(PipelineSourceStackAccesses, MachineRequestsKeepCallerStateOperations) {
         EXPECT_EQ(F.Blocks[0].Ops.size(), 7u);
         EXPECT_EQ(F.Blocks[0].Ops[3].Opcode, NdOp::STORE);
         EXPECT_EQ(F.Blocks[0].Ops[4].Opcode, NdOp::LOAD);
+      }
+}
+
+TEST(PipelineSourceStackAccesses, ReturnRangesDoNotDependOnFunctionScheduling) {
+  const unsigned Previous = workerThreadOverride().load();
+  const auto Reset = llvm::scope_exit([&] { setWorkerThreadCount(Previous); });
+  for (unsigned Threads : {1, 4})
+    for (bool Reverse : {false, true}) {
+      setWorkerThreadCount(Threads);
+      BinaryImage Image;
+      Image.Arch = Arch::X64;
+      Image.Format = BinaryFormat::ELF;
+      PipelineResult Result;
+      const auto &TRI = getTargetRegInfo(Image.Arch);
+      for (unsigned I = 0; I != 64; ++I) {
+        LowFunc Low;
+        Low.Entry = 0x1000 + I * 16;
+        Low.Name = "bounded";
+        Low.Blocks.resize(1);
+        auto &Block = Low.Blocks.front();
+        Block.Id = 0;
+        Block.StartAddr = Low.Entry;
+        Block.EndAddr = Low.Entry + 2;
+        LowOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Addr = Low.Entry;
+        Copy.Output = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+        Copy.addInput(NdVar::scalar(I * 3, TRI.PointerSize));
+        LowOp Return;
+        Return.Opcode = NdOp::RETURN;
+        Return.Addr = Low.Entry + 1;
+        Return.addInput(Copy.Output);
+        Block.Ops = {Copy, Return};
+        Result.MedFuncs.push_back(
+            LowToMedConverter().convert(Low, Image.Arch, Image.Format));
+        Result.LowFuncs.push_back(std::move(Low));
+      }
+      if (Reverse) {
+        std::reverse(Result.LowFuncs.begin(), Result.LowFuncs.end());
+        std::reverse(Result.MedFuncs.begin(), Result.MedFuncs.end());
+      }
+      const auto Ranges = sourceCallReturnRanges(Image, Result);
+      ASSERT_EQ(Ranges.size(), 64u);
+      for (unsigned I = 0; I != 64; ++I) {
+        const auto Found = Ranges.find(0x1000 + I * 16);
+        ASSERT_NE(Found, Ranges.end());
+        EXPECT_EQ(Found->second.Min, I * 3);
+        EXPECT_EQ(Found->second.Max, I * 3);
+      }
+      auto &Changed = Result.LowFuncs.front();
+      Changed.Blocks.front().Ops.front().Inputs[0] =
+          NdVar::reg(TRI.StackPointer, TRI.PointerSize);
+      Result.MedFuncs.front() =
+          LowToMedConverter().convert(Changed, Image.Arch, Image.Format);
+      const auto Fresh = sourceCallReturnRanges(Image, Result);
+      EXPECT_EQ(Fresh.size(), 63u);
+      EXPECT_FALSE(Fresh.count(Changed.Entry));
+    }
+}
+
+TEST(PipelineSourceStackAccesses, BoundedCalleeKeepsDynamicFrameRestores) {
+  const unsigned Previous = workerThreadOverride().load();
+  const auto Reset = llvm::scope_exit([&] { setWorkerThreadCount(Previous); });
+  for (unsigned Threads : {1, 4})
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (bool Bounded : {false, true}) {
+        SCOPED_TRACE(::testing::Message()
+                     << Threads << ':' << int(Format) << ':' << Bounded);
+        setWorkerThreadCount(Threads);
+        BinaryImage Image;
+        Image.Arch = Arch::X64;
+        Image.Bits = Bitness::Bits64;
+        Image.Format = Format;
+        Image.Entry = 0x1000;
+        Segment Text;
+        Text.Name = ".text";
+        Text.VA = Image.Entry;
+        Text.Size = Text.FileSz = 0x2006;
+        Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+        Text.Data.assign(Text.Size, 0xcc);
+        std::vector<uint8_t> Caller = {0x55, 0x53, // push rbp; push rbx
+                                       0x48, 0x83, 0xec, 0x28, // sub rsp, 40
+                                       0x48, 0x8d, 0x6c, 0x24,
+                                       0x20}; // lea rbp, [rsp+32]
+        // Keep an observable fixed-frame value across the dynamic allocation.
+        // For count -1 the second CALL overwrites exactly this eight-byte slot.
+        const uint8_t SavedArgument[] = {
+            0x48, 0x89, uint8_t(Format == BinaryFormat::COFF ? 0x4c : 0x7c),
+            0x24, 0x18}; // mov [rsp+24], rcx/rdi
+        Caller.insert(Caller.end(), std::begin(SavedArgument),
+                      std::end(SavedArgument));
+        const auto Call = [&](va_t Target) {
+          const uint32_t Offset = Target - (Image.Entry + Caller.size() + 5);
+          Caller.push_back(0xe8);
+          for (unsigned I = 0; I != 4; ++I)
+            Caller.push_back(Offset >> (I * 8));
+        };
+        Call(0x2000);
+        const uint8_t Allocation[] = {
+            0x48, 0x63, 0xc0,       // movsxd rax, eax
+            0x48, 0x6b, 0xc0, 0x28, // imul rax, rax, 40
+            0x48, 0x83, 0xc0, 0x0f, // add rax, 15
+            0x48, 0x83, 0xe0, 0xf0, // and rax, -16
+            0x48, 0x29, 0xc4};      // sub rsp, rax
+        Caller.insert(Caller.end(), std::begin(Allocation),
+                      std::end(Allocation));
+        Call(0x3000);
+        const uint8_t Restore[] = {0x48, 0x8b, 0x45, 0xf8, // mov rax, [rbp-8]
+                                   0x48, 0x8d, 0x65, 0x08, // lea rsp, [rbp+8]
+                                   0x5b, 0x5d, 0xc3}; // pop rbx; pop rbp; ret
+        Caller.insert(Caller.end(), std::begin(Restore), std::end(Restore));
+        std::copy(Caller.begin(), Caller.end(), Text.Data.begin());
+        const uint8_t Memory = Format == BinaryFormat::COFF ? 0x01 : 0x07;
+        const std::vector<uint8_t> Callee =
+            Bounded ? std::vector<uint8_t>{0x0f, 0xb7, Memory, 0xc3}
+                    : std::vector<uint8_t>{0x8b, Memory, 0xc3};
+        std::copy(Callee.begin(), Callee.end(), Text.Data.begin() + 0x1000);
+        // A memory effect keeps the second call from being replaced by a
+        // register-only leaf projection before the stack proof runs.
+        const uint8_t Sink[] = {0xc6, Memory, 0x01, 0x31, 0xc0, 0xc3};
+        std::copy(std::begin(Sink), std::end(Sink), Text.Data.begin() + 0x2000);
+        Image.Segments.push_back(std::move(Text));
+        Image.Symbols = {Symbol::makeFunc(0x1000, Caller.size()),
+                         Symbol::makeFunc(0x2000, Callee.size()),
+                         Symbol::makeFunc(0x3000, sizeof(Sink))};
+        PipelineOptions Options;
+        Options.LiftMode = Options.SourceProjection = Options.NoOpt = true;
+        Options.OnlyFunctionEntries = {0x1000, 0x2000, 0x3000};
+        llvm::LLVMContext Context;
+        const auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_EQ(Result.Success, Bounded) << Result.Error;
+        if (Bounded) {
+          ASSERT_NE(Result.LlvmModule, nullptr);
+          EXPECT_FALSE(llvm::verifyModule(*Result.LlvmModule));
+        } else {
+          EXPECT_NE(Result.Error.find("physical CALL return slot"),
+                    std::string::npos)
+              << Result.Error;
+        }
       }
 }
 

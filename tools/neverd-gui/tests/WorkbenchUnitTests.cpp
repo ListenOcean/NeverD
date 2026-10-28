@@ -529,6 +529,27 @@ private slots:
     QCOMPARE(copy.spans.size(), line.spans.size());
   }
 
+  void pseudocodeWordsSplitMemberAccessesAtTheirDot() {
+    const QString access = QStringLiteral("stack_storage.var_m8 = 1.5;");
+    // A listing's or IR's names keep their dots.
+    QCOMPARE(tokenRange(access, 3), (std::pair{0, 20}));
+    QVERIFY(tokenOccurrences(access, QStringLiteral("var_m8")).isEmpty());
+    // Pseudocode splits a member access and keeps a decimal number whole.
+    QCOMPARE(tokenRange(access, 3, TokenDots::Split), (std::pair{0, 13}));
+    QCOMPARE(tokenRange(access, 16, TokenDots::Split), (std::pair{14, 20}));
+    QCOMPARE(tokenRange(access, 24, TokenDots::Split), (std::pair{23, 26}));
+    QCOMPARE(tokenOccurrences(access, QStringLiteral("stack_storage"),
+                              TokenDots::Split),
+             (QVector<int>{0}));
+    QCOMPARE(
+        tokenOccurrences(access, QStringLiteral("var_m8"), TokenDots::Split),
+        (QVector<int>{14}));
+    StyledLine line;
+    line.text = access;
+    QCOMPARE(line.tokenAt(16), QStringLiteral("stack_storage.var_m8"));
+    QCOMPARE(line.tokenAt(16, TokenDots::Split), QStringLiteral("var_m8"));
+  }
+
   void unicodeCommentsKeepTheCodePrefixOnItsGrid() {
     // Use the same bundled fixed-width font as code views.
     QFont font = Theme::defaultCodeFont();

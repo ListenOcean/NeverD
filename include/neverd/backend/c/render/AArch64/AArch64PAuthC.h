@@ -87,6 +87,25 @@ inline std::string aarch64PAuthAuthenticateC(llvm::StringRef Pointer,
       .str();
 }
 
+/// A C function pointer uses IA/0 under arm64e. Auth-and-resign lets Clang
+/// combine that implicit authentication with the original call's key and
+/// discriminator, without exposing a raw pointer or authenticating twice.
+inline std::string
+aarch64PAuthAuthenticatedCalleeC(llvm::StringRef FunctionPointerType,
+                                 llvm::StringRef Pointer, llvm::StringRef Key,
+                                 llvm::StringRef Modifier) {
+  return llvm::formatv(kAArch64PAuthCAuthenticatedCallee, FunctionPointerType,
+                       Pointer, Key, Modifier)
+      .str();
+}
+
+/// An ordinary machine BLR consumes a raw address. A compiler using arm64e
+/// must not add its default IA/0 check to that address. Signing immediately
+/// before the implicit check retains the machine's unchecked call contract.
+inline std::string aarch64PAuthRawCalleeC(llvm::StringRef Callee) {
+  return llvm::formatv(kAArch64PAuthCRawCall, Callee).str();
+}
+
 inline std::string aarch64PAuthGenericSignC(llvm::StringRef Value,
                                             llvm::StringRef Discriminator) {
   const std::string Name =

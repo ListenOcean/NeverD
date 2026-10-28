@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Bind CR2/CR8 register moves to their architectural arbitrary flags.
+/// Bind CR2/CR3/CR8 register moves to their architectural arbitrary flags.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_LIFT_X86_X86CONTROLMOVEUNDEFINED_H
@@ -40,7 +40,8 @@ inline bool form(const cs_insn *Insn, Arch Target) {
   const unsigned ControlIndex = ((ModRM >> 3) & 7) + ((Rex & 4) ? 8 : 0);
   if ((Prefix && (Rex < 0x40 || Rex > 0x45 || (Rex & 2))) ||
       Insn->bytes[Prefix] != 0x0f || (Opcode != 0x20 && Opcode != 0x22) ||
-      (ModRM >> 6) != 3 || (ControlIndex != 2 && ControlIndex != 8) ||
+      (ModRM >> 6) != 3 ||
+      (ControlIndex != 2 && ControlIndex != 3 && ControlIndex != 8) ||
       X.op_count != 2 || X.modrm != ModRM ||
       X.encoding.modrm_offset != Prefix + 2 || X.opcode[0] != 0x0f ||
       X.opcode[1] != Opcode || X.opcode[2] || X.opcode[3] || X.rex != Rex ||

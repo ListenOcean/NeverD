@@ -219,6 +219,61 @@ def ambiguity_pages(args, root):
     run([args.neverd, "diff", "-a", str(paths[0]), "-b", str(paths[1]), "--list-search", "copy"], {1})
 
 
+def unresolved_reference_evidence(args, root):
+    paths = [root / "reference-before.bin", root / "reference-after.bin"]
+    code = bytearray(24)
+    code[:7] = bytes.fromhex("8b050a000000c3")
+    code[16] = 17
+    for index, path in enumerate(paths):
+        code[23] = index
+        path.write_bytes(code)
+        project = pathlib.Path(str(path) + ".neverd")
+        project.mkdir()
+        (project / "load.json").write_text(json.dumps({
+            "loader": "binary", "processor": "x86_64", "platform": "sysv", "base": "0x1000"}))
+    base = [args.neverd, "diff", "--structural", "-a", str(paths[0]), "-b", str(paths[1])]
+    saved = root / "reference.nddiff"
+    result = json.loads(run(base + ["--json", "--save", str(saved)], {3}).stdout)
+    assert result["counts"]["changed"] == 0, result["counts"]
+    assert result["counts"]["uncertain_without_observed_change"] == 1, result["counts"]
+    rows = json.loads(run(base + ["--list", "uncertain", "--list-side", "primary"], {3}).stdout)
+    assert rows["total"] == 1 and rows["items"][0]["evidence"]["change_state"] == "uncertain", rows
+    assert json.loads(run(base + ["--list", "changed"], {3}).stdout)["total"] == 0
+    assert json.loads(run(base + ["--reopen", str(saved), "--json"], {3}).stdout) == result
+    assert "Uncertain: 1" in run(base, {3}).stdout
+
+
+def mixed_reference_evidence(args, root):
+    # The store destination is unresolved; its relocated immediate names a
+    # string. Changing that known string must survive the other operand's gap.
+    paths = []
+    for index, data in enumerate(('.asciz "original-string"',
+                                  '.asciz "original-string"',
+                                  '.asciz "modified-string"', '.zero 16')):
+        source, binary = root / f"mixed-{index}.s", root / f"mixed-{index}.o"
+        source.write_text(".text\n.globl holder\n.type holder,@function\nholder:\n"
+                          "movq $.Lmessage, 0(%rip)\nret\n.size holder,.-holder\n"
+                          f".section .rodata\n.Lmessage:\n{data}\n.byte {index}\n")
+        run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", str(source),
+             "-o", str(binary)], {0})
+        paths.append(binary)
+    for index in (1, 2, 3):
+        for reverse in (False, True):
+            left, right = (paths[index], paths[0]) if reverse else (paths[0], paths[index])
+            base = [args.neverd, "diff", "--structural", "-a", str(left), "-b", str(right)]
+            saved = root / f"mixed-{index}-{reverse}.nddiff"
+            report = json.loads(run(base + ["--json", "--save", str(saved)], {3}).stdout)
+            assert len(report["matches"]) == 1, report["matches"]
+            evidence = report["matches"][0]
+            assert not evidence["reference_comparison_complete"], evidence
+            assert evidence["analysis_complete"], evidence
+            assert ("references" in evidence["changes"]) == (index == 2), evidence
+            assert ("operands" in evidence["changes"]) == (index == 2), evidence
+            assert "bytes" not in evidence["changes"], evidence
+            assert report["counts"]["changed"] == (index == 2), report["counts"]
+            assert json.loads(run(base + ["--reopen", str(saved), "--json"], {3}).stdout) == report
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--neverd", required=True)
@@ -242,6 +297,8 @@ def main():
     with tempfile.TemporaryDirectory(prefix="neverd-diff-cli-") as folder:
         root = pathlib.Path(folder)
         ambiguity_pages(args, root)
+        unresolved_reference_evidence(args, root)
+        mixed_reference_evidence(args, root)
         cancel_mapping_edits(args, root)
         for limit in (17, 9):
             run([args.compiler, "--target=x86_64-unknown-linux-gnu", "-c", "-O1", "-fno-asynchronous-unwind-tables",

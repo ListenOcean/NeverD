@@ -199,10 +199,9 @@ TEST(X86SystemSideeffect, SegmentRegisterMovesReadAndWriteSelectors) {
 }
 
 TEST(X86SystemSideeffect, UnmodeledSystemInstructionsStayUnlifted) {
-  // Complete machine transitions still require an explicit state contract.
+  // VMRUN needs a returning complete-machine continuation contract.
   for (const std::vector<uint8_t> &Bytes :
-       {std::vector<uint8_t>{0x0f, 0x01, 0xd8},    // VMRUN
-        std::vector<uint8_t>{0x0f, 0x01, 0xde}}) { // SKINIT
+       {std::vector<uint8_t>{0x0f, 0x01, 0xd8}}) { // VMRUN
     Decoder Dec;
     ASSERT_TRUE(Dec.init(Arch::X64));
     DecodedInsn Insn{};

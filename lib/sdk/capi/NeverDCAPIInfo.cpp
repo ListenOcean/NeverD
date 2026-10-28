@@ -1083,29 +1083,31 @@ const char *neverd_function_presentation_json(neverd_session_t Sess,
       (Img.DynInfo.PECharacteristics & llvm::COFF::IMAGE_FILE_DLL))
     Row["suggested_name"] = "DllEntryPoint";
   // Inspect only an unconditional transfer, not an adjusted-argument wrapper.
-  // No target is made into a function by this presentation query.
+  // No target is made into a function by this presentation query. An EVM or
+  // SBF function has no native instruction to decode.
   InstructionFlowScratch Scratch;
-  decodeNativeRange(
-      Img, S->Dec, Entry, 0, 1, [&](const auto &I, const auto *, int) {
-        const auto Flow = Scratch.summarize(Img, S->Dec, I);
-        const auto Target = std::lower_bound(
-            S->Functions.begin(), S->Functions.end(), Flow.Target,
-            [](const auto &Function, va_t Address) {
-              return Function.Entry < Address;
-            });
-        const bool ListedTarget =
-            Target != S->Functions.end() && Target->Entry == Flow.Target;
-        const bool OutsideRange =
-            Function->Size >= I.Size &&
-            (Flow.Target < Entry || Flow.Target - Entry >= Function->Size);
-        if (Flow.Kind == "jump" && Flow.Target != InvalidVA &&
-            Flow.Target != Entry && (ListedTarget || OutsideRange) &&
-            Img.isFunctionEntryCandidateAt(Flow.Target)) {
-          Row["thunk"] = true;
-          Row["thunk_target"] = vaHex(Flow.Target);
-        }
-        return false;
-      });
+  if (Img.Arch != Arch::EVM && Img.Arch != Arch::SBF)
+    decodeNativeRange(
+        Img, S->Dec, Entry, 0, 1, [&](const auto &I, const auto *, int) {
+          const auto Flow = Scratch.summarize(Img, S->Dec, I);
+          const auto Target = std::lower_bound(
+              S->Functions.begin(), S->Functions.end(), Flow.Target,
+              [](const auto &Function, va_t Address) {
+                return Function.Entry < Address;
+              });
+          const bool ListedTarget =
+              Target != S->Functions.end() && Target->Entry == Flow.Target;
+          const bool OutsideRange =
+              Function->Size >= I.Size &&
+              (Flow.Target < Entry || Flow.Target - Entry >= Function->Size);
+          if (Flow.Kind == "jump" && Flow.Target != InvalidVA &&
+              Flow.Target != Entry && (ListedTarget || OutsideRange) &&
+              Img.isFunctionEntryCandidateAt(Flow.Target)) {
+            Row["thunk"] = true;
+            Row["thunk_target"] = vaHex(Flow.Target);
+          }
+          return false;
+        });
   if (const auto User = S->FunctionAttributeEdits.find(Entry);
       User != S->FunctionAttributeEdits.end() && User->second.Type) {
     Row["prototype"] = *User->second.Type;

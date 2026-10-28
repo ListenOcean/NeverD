@@ -52,6 +52,7 @@ public:
   QJsonObject row(int Index) const;
   static QString functionNamesText(const QJsonObject &Function);
   static QString callEffectText(const QJsonObject &Effect);
+  static QString changeStateText(const QString &State);
   qsizetype cachedPages() const { return Pages.size(); }
 
 signals:

@@ -14,10 +14,14 @@
 
 namespace neverd {
 
-/// An optional final byte preserves long-mode SP/BP address provenance after
-/// effective-address arithmetic. Absence retains the existing data-reference
-/// form; the extension accepts only the stack bit, not a second default form.
+/// An optional final byte preserves long-mode SP/BP provenance or an i386
+/// CS/ES/SS offset after effective-address arithmetic. Absence retains the
+/// existing DS/FS/GS form. Stack and segment controls are mutually exclusive.
 inline constexpr uint8_t X86AtomicStackReference = 1;
+
+constexpr unsigned x86AtomicSegmentPrefix(uint64_t Control) {
+  return Control == 0x26 || Control == 0x2e || Control == 0x36 ? Control : 0;
+}
 
 constexpr unsigned x86AtomicAddressControlIndex(Intrinsic Id) {
   return isX86CmpccXaddIntrinsic(Id) ? 5 : 3;
@@ -50,8 +54,11 @@ struct ApxAtomicIntrinsicShape {
   uint64_t AddressControl = 0;
   uint16_t AddressControlSize = 0;
 
-  bool stackReference() const {
+  constexpr bool stackReference() const {
     return AddressControl == X86AtomicStackReference;
+  }
+  constexpr unsigned segmentPrefix() const {
+    return x86AtomicSegmentPrefix(AddressControl);
   }
 };
 
@@ -69,13 +76,17 @@ intrinsicApxAtomicShapeIsValid(Intrinsic Id,
     return false;
 
   const auto OrdinaryInputs = x86AtomicAddressControlIndex(Id);
-  if (Shape.NumInputs != OrdinaryInputs &&
-      (Shape.NumInputs != OrdinaryInputs + 1 || !Shape.AddressControlIsConst ||
-       Shape.AddressControlSize != 1 ||
-       Shape.AddressControl != X86AtomicStackReference ||
-       Shape.TargetArch == Arch::X86 ||
-       Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default))
-    return false;
+  if (Shape.NumInputs != OrdinaryInputs) {
+    if (Shape.NumInputs != OrdinaryInputs + 1 || !Shape.AddressControlIsConst ||
+        Shape.AddressControlSize != 1 ||
+        Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return false;
+    if (Shape.stackReference()) {
+      if (Shape.TargetArch == Arch::X86)
+        return false;
+    } else if (!Shape.segmentPrefix() || !I386 || Shape.TargetArch == Arch::X64)
+      return false;
+  }
 
   if (!isX86CmpccXaddIntrinsic(Id))
     return Shape.OutputSize == 0 && Shape.SourceIsScalar &&

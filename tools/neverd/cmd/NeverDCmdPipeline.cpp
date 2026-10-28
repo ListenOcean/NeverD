@@ -422,6 +422,21 @@ const char *decompileWithCallees(neverd_session_t Sess, uint64_t Root,
   return nullptr;
 }
 
+/// The note a whole unit's head gives \p Entry when the pipeline refused it
+/// (`/* neverd.not-decompiled: NAME at 0xENTRY: REASON */`), without its
+/// comment markers.
+std::optional<std::string> refusalNote(StringRef Unit, uint64_t Entry) {
+  const std::string At = " at 0x" + utohexstr(Entry) + ": ";
+  for (StringRef Rest = Unit;
+       Rest.consume_front("/* neverd.not-decompiled: ");) {
+    auto [Note, After] = Rest.split('\n');
+    if (Note.consume_back(" */") && Note.contains(At))
+      return Note.str();
+    Rest = After;
+  }
+  return std::nullopt;
+}
+
 /// The address the image exports \p Name at: a routine the function list
 /// does not hold before discovery, as a leaf without unwind data.
 std::optional<uint64_t> exportedAddress(neverd_session_t Sess, StringRef Name) {
@@ -932,6 +947,12 @@ int runDecompile(neverd_session_t Sess) {
       if (const char *Error = decompileWithCallees(Sess, Entry, Text)) {
         WithColor::error() << "decompile failed: " << Error << ": "
                            << takeLastError(Sess) << "\n";
+        return 1;
+      }
+      // The unit names a refused callee and leaves it out. The function asked
+      // for fails the request, as --func alone does.
+      if (const std::optional<std::string> Refused = refusalNote(Text, Entry)) {
+        WithColor::error() << "decompile failed: " << *Refused << "\n";
         return 1;
       }
       if (OutputFile.empty()) {

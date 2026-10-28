@@ -65,6 +65,18 @@ typedef struct neverd_byte_patch_snapshot_v1 {
   const neverd_byte_patch_row_v1 *rows;
 } neverd_byte_patch_snapshot_v1;
 
+/// Frozen v1 layout: one canonical changed range, without byte payloads.
+typedef struct neverd_byte_patch_range_v1 {
+  neverd_va_t address;
+  size_t size;
+} neverd_byte_patch_range_v1;
+
+/// Frozen v1 layout. Ranges retain file-offset order, not address order.
+typedef struct neverd_byte_patch_range_snapshot_v1 {
+  size_t range_count;
+  const neverd_byte_patch_range_v1 *ranges;
+} neverd_byte_patch_range_snapshot_v1;
+
 NEVERD_API const char *
 neverd_byte_patch_preview(neverd_session_t Sess,
                           const neverd_byte_patch_options_v1 *Options);
@@ -84,6 +96,15 @@ neverd_byte_patches_snapshot_v1(neverd_session_t Sess);
 /// Release a snapshot and all its storage. NULL is accepted.
 NEVERD_API void neverd_byte_patch_snapshot_free_v1(
     const neverd_byte_patch_snapshot_v1 *Snapshot);
+/// Owned immutable range inventory, without encoding JSON or copying original
+/// and current byte payloads. A loaded empty overlay returns a non-null empty
+/// snapshot; NULL indicates failure. Storage survives session edits, reloads
+/// and destruction. Acquire and release with the same loaded SDK.
+NEVERD_API const neverd_byte_patch_range_snapshot_v1 *
+neverd_byte_patch_ranges_snapshot_v1(neverd_session_t Sess);
+/// Release the range snapshot and its storage. NULL is accepted.
+NEVERD_API void neverd_byte_patch_range_snapshot_free_v1(
+    const neverd_byte_patch_range_snapshot_v1 *Snapshot);
 /// Canonical changed ranges as [{address,size}], without encoding byte data.
 NEVERD_API const char *neverd_byte_patch_ranges_json(neverd_session_t Sess);
 /// Applicable machine-byte actions and the current instruction, for menus.

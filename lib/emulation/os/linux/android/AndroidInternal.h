@@ -157,6 +157,11 @@ public:
   virtual BionicResult resume(Bionic &LibC) = 0;
 };
 class GuestThreads;
+/// Native libbinder TLS, independent of JNI attachments and kernel handles.
+struct BinderThreadState {
+  // API 28 IPCThreadState construction starts a new native thread at zero.
+  uint32_t StrictModePolicy = 0;
+};
 class Bionic {
 public:
   Bionic(ExecutionBackend &CPU, linux_model::LinuxServices &Kernel,
@@ -187,6 +192,8 @@ private:
   ExecutionBudget &Budget;
   const LinkedImage &Linked;
   GuestThreads *Threads;
+  BinderThreadState SingleThreadBinder;
+  BinderThreadState &binderThread();
   uint64_t tlsAddress() const;
   uint64_t threadID() const;
   bool Expired = false;
@@ -320,6 +327,8 @@ private:
   std::map<uint64_t, LogList> LogLists;
   llvm::Expected<uint64_t> logToken();
   BionicResult logCall(const NativeCallEvent &Call);
+  std::optional<uint32_t> eventLogWrite(llvm::ArrayRef<uint8_t> Payload);
+  BionicResult eventLogCall(const NativeCallEvent &Call);
   BionicResult unsupportedLog(llvm::StringRef Detail);
   struct InputStream {
     uint32_t FD;

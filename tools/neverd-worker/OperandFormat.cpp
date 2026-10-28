@@ -48,7 +48,7 @@ using operand_format_detail::Token;
 using operand_format_detail::TokenKind;
 
 struct RegisterTable {
-  std::unordered_set<std::string> x86, aarch64, arm;
+  std::unordered_set<std::string> x86, aarch64, arm, sbf;
 };
 
 void addRange(std::unordered_set<std::string> &set, std::string_view prefix,
@@ -67,6 +67,8 @@ const RegisterTable &registerTable() {
         return result.x86;
       if (name == "AArch64")
         return result.aarch64;
+      if (name == "SBF")
+        return result.sbf;
       return result.arm;
     };
 #define NEVERD_REGISTER_NAME(Family, Name) family(#Family).insert(Name);
@@ -824,33 +826,58 @@ using operand_format_detail::armShift;
 using operand_format_detail::armStructOperand;
 using operand_format_detail::ArmWidths;
 using operand_format_detail::armWidths;
+using operand_format_detail::evmImmediate;
+using operand_format_detail::evmPushData;
 using operand_format_detail::formatArmOperand;
+using operand_format_detail::formatEvmOperand;
+using operand_format_detail::formatSbfOperand;
+using operand_format_detail::sbfImmediate;
+using operand_format_detail::sbfStructOperand;
 
 bool showsNumberFormats(OperandDialect dialect) {
   // Other dialects keep the decoder's spelling.
-  return dialect == OperandDialect::X86 || armDialect(dialect);
+  return dialect != OperandDialect::Generic;
 }
 
 std::vector<bool> formattableOperands(std::string_view operands,
-                                      OperandDialect dialect) {
+                                      OperandDialect dialect,
+                                      std::string_view mnemonic) {
   std::vector<bool> result;
-  const bool arm = armDialect(dialect);
   for (const auto &operand : splitOperands(tokenize(operands)))
-    result.push_back(showsNumberFormats(dialect) &&
-                     (arm ? armImmediate(operand, ~std::uint64_t(0))
-                          : plainNumber(operand, ~std::uint64_t(0)))
-                         .has_value());
+    switch (dialect) {
+    case OperandDialect::AArch64:
+    case OperandDialect::ARM:
+      result.push_back(armImmediate(operand, ~std::uint64_t(0)).has_value());
+      break;
+    case OperandDialect::SBF:
+      result.push_back(sbfImmediate(mnemonic, operand).has_value());
+      break;
+    case OperandDialect::EVM:
+      result.push_back(evmPushData(mnemonic, operand));
+      break;
+    case OperandDialect::X86:
+      result.push_back(plainNumber(operand, ~std::uint64_t(0)).has_value());
+      break;
+    case OperandDialect::Generic:
+      result.push_back(false);
+      break;
+    }
   return result;
 }
 
 std::vector<bool> structOperands(std::string_view operands,
-                                 OperandDialect dialect) {
+                                 OperandDialect dialect,
+                                 std::string_view mnemonic) {
   std::vector<bool> result;
   const auto pieces = splitOperands(tokenize(operands));
   for (std::size_t index = 0; index < pieces.size(); ++index) {
     const auto &operand = pieces[index];
     bool fits = false;
-    if (armDialect(dialect)) {
+    if (dialect == OperandDialect::SBF) {
+      fits = sbfStructOperand(mnemonic, operand);
+    } else if (dialect == OperandDialect::EVM) {
+      fits = evmImmediate(mnemonic, operand).has_value();
+    } else if (armDialect(dialect)) {
       // A shifted immediate is a field of a larger number.
       fits = armStructOperand(operand, dialect) &&
              !(index + 1 < pieces.size() && armShift(pieces[index + 1]) &&
@@ -883,13 +910,16 @@ std::vector<bool> structOperands(std::string_view operands,
 
 std::optional<std::int64_t> operandNumber(std::string_view operands,
                                           std::size_t index,
-                                          OperandDialect dialect) {
+                                          OperandDialect dialect,
+                                          std::string_view mnemonic) {
   const auto pieces = splitOperands(tokenize(operands));
   if (index >= pieces.size())
     return std::nullopt;
-  const auto value = armDialect(dialect)
-                         ? armImmediate(pieces[index], ~std::uint64_t(0))
-                         : plainNumber(pieces[index], ~std::uint64_t(0));
+  const auto value =
+      dialect == OperandDialect::SBF   ? sbfImmediate(mnemonic, pieces[index])
+      : dialect == OperandDialect::EVM ? evmImmediate(mnemonic, pieces[index])
+      : armDialect(dialect) ? armImmediate(pieces[index], ~std::uint64_t(0))
+                            : plainNumber(pieces[index], ~std::uint64_t(0));
   if (!value)
     return std::nullopt;
   return static_cast<std::int64_t>(*value);
@@ -904,6 +934,10 @@ OperandDialect operandDialect(std::string_view architecture) {
     return OperandDialect::AArch64;
   if (name.starts_with("arm") || name.starts_with("thumb"))
     return OperandDialect::ARM;
+  if (name == "sbf")
+    return OperandDialect::SBF;
+  if (name == "evm")
+    return OperandDialect::EVM;
   return OperandDialect::Generic;
 }
 
@@ -1038,10 +1072,15 @@ StyledText formatOperands(std::string_view operands, const OperandFacts &facts,
                        facts.operandBits && index < facts.operandBits->size()
                            ? (*facts.operandBits)[index]
                            : 0);
-    else if (!arm || !format || format->isDefault() ||
-             !formatArmOperand(out, operand, facts, namer, *format, widths,
-                               index + 1 < pieces.size() &&
-                                   armShift(pieces[index + 1])))
+    else if (!format || format->isDefault() ||
+             !(arm ? formatArmOperand(out, operand, facts, namer, *format,
+                                      widths,
+                                      index + 1 < pieces.size() &&
+                                          armShift(pieces[index + 1]))
+               : facts.dialect == OperandDialect::SBF
+                   ? formatSbfOperand(out, operand, facts, namer, *format)
+                   : facts.dialect == OperandDialect::EVM &&
+                         formatEvmOperand(out, operand, facts, namer, *format)))
       formatGenericOperand(out, operand, facts, namer);
   }
   return out;
@@ -1191,6 +1230,10 @@ bool isRegisterName(OperandDialect dialect, std::string_view name) {
   }
   case OperandDialect::ARM:
     return table.arm.contains(key);
+  case OperandDialect::SBF:
+    return table.sbf.contains(key);
+  case OperandDialect::EVM:
+    return false;
   case OperandDialect::Generic:
     return !key.empty() && key.front() == '$';
   }
@@ -1251,5 +1294,16 @@ bool isPaddingMnemonic(std::string_view mnemonic) {
   };
   return padding.contains(mnemonic);
 }
+
+namespace operand_format_detail {
+std::optional<SbfAccess> sbfOperandAccess(std::string_view mnemonic,
+                                          std::string_view operands,
+                                          std::size_t operand) {
+  const auto pieces = splitOperands(tokenize(operands));
+  if (operand >= pieces.size())
+    return std::nullopt;
+  return sbfMemoryAccess(mnemonic, pieces[operand]);
+}
+} // namespace operand_format_detail
 
 } // namespace neverd::worker

@@ -42,15 +42,15 @@ inline constexpr uint64_t kMaxValidationWork = 1u << 30;
 //===----------------------------------------------------------------------===//
 
 /// Fewest instructions a function needs before its mnemonic multiset (the
-/// prime product) alone may pair it: shorter bodies share it too often.
+/// prime product) may propose it: shorter bodies share it too often.
 inline constexpr uint32_t kMinPrimeProductInstructions = 8;
-/// Fewest flow-graph edges before the flow-graph MD index alone may pair two
+/// Fewest flow-graph edges before the flow-graph MD index may propose two
 /// functions; a graph without edges has none.
 inline constexpr uint32_t kMinMDIndexEdges = 2;
-/// Fewest distinct scalar constants before their set alone may pair two
+/// Fewest distinct scalar constants before their set may propose two
 /// functions.
 inline constexpr uint32_t kMinConstantSetSize = 2;
-/// Fewest distinct imports a function calls before that set alone may pair
+/// Fewest distinct imports a function calls before that set may propose
 /// it.
 inline constexpr uint32_t kMinImportCallSetSize = 2;
 /// Fewest instructions before a function's normalized body alone may pair
@@ -66,10 +66,10 @@ inline constexpr unsigned kDefaultMaxCandidates = 16;
 /// Ceiling a caller may raise kDefaultMaxCandidates to.
 inline constexpr unsigned kMaxCandidates = 256;
 /// Most unmatched pairs the approximate stage scores all of; beyond it,
-/// only sketch buckets and neighbors propose candidates.
+/// only informative feature buckets and neighbors propose candidates.
 inline constexpr size_t kMaxExhaustiveCandidatePairs = 1u << 16;
-/// Most functions one approximate-match bucket may hold before it is dropped
-/// as uninformative (a shingle every function shares).
+/// Most functions one sketch/mnemonic-CFG bucket or matched neighborhood may
+/// hold before it is dropped as uninformative (a feature most functions share).
 inline constexpr size_t kMaxSketchBucket = 64;
 /// Least similarity an approximate pairing needs by default.
 inline constexpr double kDefaultMinimumSimilarity = 0.55;
@@ -77,9 +77,10 @@ inline constexpr double kDefaultMinimumSimilarity = 0.55;
 /// lower than the global threshold because its context already agrees.
 inline constexpr double kDefaultMinimumContextSimilarity = 0.35;
 /// How far the best candidate must lead the second before an approximate
-/// pairing is accepted; closer candidates and exact ties stay ambiguous.
+/// pairing is accepted; closer candidates without decisive call-position
+/// evidence stay ambiguous.
 inline constexpr double kDefaultAmbiguityMargin = 0.02;
-/// Rounds of caller/callee propagation after the global passes.
+/// Rounds of global refinement; call and address chains use a growing worklist.
 inline constexpr unsigned kMaxPropagationRounds = 64;
 /// Dense storage threshold for call-sequence anchor alignment. Larger ranges
 /// retain exact optimal anchors using linear score frontiers.

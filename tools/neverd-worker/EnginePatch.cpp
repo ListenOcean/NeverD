@@ -37,6 +37,8 @@ struct PatchFunctions {
   decltype(&neverd_byte_patch_ranges_json) ranges;
   decltype(&neverd_byte_patches_snapshot_v1) snapshot;
   decltype(&neverd_byte_patch_snapshot_free_v1) freeSnapshot;
+  decltype(&neverd_byte_patch_ranges_snapshot_v1) rangeSnapshot;
+  decltype(&neverd_byte_patch_range_snapshot_free_v1) freeRangeSnapshot;
   explicit operator bool() const {
     return preview && apply && revert && rows && load && exportFile && context;
   }
@@ -62,7 +64,11 @@ const PatchFunctions &patches() {
       engineSymbol<decltype(&neverd_byte_patches_snapshot_v1)>(
           "neverd_byte_patches_snapshot_v1"),
       engineSymbol<decltype(&neverd_byte_patch_snapshot_free_v1)>(
-          "neverd_byte_patch_snapshot_free_v1")};
+          "neverd_byte_patch_snapshot_free_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_ranges_snapshot_v1)>(
+          "neverd_byte_patch_ranges_snapshot_v1"),
+      engineSymbol<decltype(&neverd_byte_patch_range_snapshot_free_v1)>(
+          "neverd_byte_patch_range_snapshot_free_v1")};
   return F;
 }
 
@@ -165,7 +171,8 @@ bool Engine::reloadBytePatches(bool knownChanged) {
     functionsChanged();
   return true;
 }
-Json Engine::patchOperation(const std::string &Operation, const Json &P) {
+Json Engine::patchOperation(const std::string &Operation, const Json &P,
+                            EncodedPayload *Encoded) {
   requireLoaded();
   if (Operation == "source_patch" || Operation == "source_patch_context") {
     const auto Context =
@@ -262,6 +269,45 @@ Json Engine::patchOperation(const std::string &Operation, const Json &P) {
   if (Operation == "patches") {
     const auto &F = patches();
     if (P.value("ranges_only", false)) {
+      if (F.rangeSnapshot && F.freeRangeSnapshot) {
+        std::unique_ptr<const neverd_byte_patch_range_snapshot_v1,
+                        decltype(F.freeRangeSnapshot)>
+            Snapshot(F.rangeSnapshot(session_), F.freeRangeSnapshot);
+        if (!Snapshot)
+          throw Error("engine_error", error());
+        if (Encoded &&
+            Snapshot->range_count >=
+                ::neverd::limits::worker::kPatchMinEncodedRangeRows) {
+          // Keep the SDK owner alive while one reusable row is encoded. The
+          // envelope still supplies current request metadata and frame limits.
+          Json Item = {{"address", ""}, {"size", 0u}};
+          auto &Address = Item.at("address").get_ref<std::string &>();
+          auto &Size = Item.at("size");
+          *Encoded = std::make_shared<EncodedJson>(
+              Json::object_t{{"complete", true},
+                             {"total", Snapshot->range_count}},
+              "items", Snapshot->range_count,
+              [&](std::size_t I) -> const Json & {
+                const auto &Range = Snapshot->ranges[I];
+                Address = hexAddress(Range.address);
+                Size = Range.size;
+                return Item;
+              });
+          return Json(nullptr);
+        }
+        Json::array_t Ranges;
+        Ranges.reserve(Snapshot->range_count);
+        for (size_t I = 0; I < Snapshot->range_count; ++I) {
+          const auto &Range = Snapshot->ranges[I];
+          Json::object_t Item;
+          Item.emplace("address", hexAddress(Range.address));
+          Item.emplace("size", Range.size);
+          Ranges.emplace_back(std::move(Item));
+        }
+        return {{"items", std::move(Ranges)},
+                {"total", Snapshot->range_count},
+                {"complete", true}};
+      }
       if (F.ranges) {
         auto Ranges = backendJson(F.ranges(session_));
         const auto Total = Ranges.size();

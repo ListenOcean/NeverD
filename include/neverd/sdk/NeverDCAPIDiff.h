@@ -88,13 +88,13 @@ NEVERD_API int neverd_comparison_restore_json_with_progress(
     neverd_comparison_t Comparison, const char *Saved,
     neverd_comparison_progress_t Progress, void *Context);
 /// Page a side's inventory. Query: side (primary/secondary), kind
-/// (all/matched/changed/ambiguous/unmatched), search, offset, limit, sort and
-/// descending. Optional ambiguous_with is a function entry on the opposite
-/// side: page every retained ambiguity candidate for that source, rather than
-/// only its inventory preview. A valid source with no ambiguity has no rows.
-/// Overlapping groups contribute their deduplicated direct candidates. The
-/// returned ambiguity object identifies the source, supporting steps and total
-/// before search/paging; inventory rows expose candidate_steps. These
+/// (all/matched/changed/uncertain/ambiguous/unmatched), search, offset, limit,
+/// sort and descending. Optional ambiguous_with is a function entry on the
+/// opposite side: page every retained ambiguity candidate for that source,
+/// rather than only its inventory preview. A valid source with no ambiguity has
+/// no rows. Overlapping groups contribute their deduplicated direct candidates.
+/// The returned ambiguity object identifies the source, supporting steps and
+/// total before search/paging; inventory rows expose candidate_steps. These
 /// candidates are hypotheses, not accepted matches. Search/sort/paging apply to
 /// the target side as usual. Addresses are hexadecimal strings. Function
 /// projections use name for the captured display name and evidence_name for the

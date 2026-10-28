@@ -41,7 +41,10 @@ public:
 
   std::optional<BitValue> get(Value *V, unsigned Bit, unsigned Depth = 0) {
     auto *Type = dyn_cast<IntegerType>(V->getType());
-    if (!Type || Type->getBitWidth() > 64 || Bit >= Type->getBitWidth())
+    // The demanded slice is narrow, but its producer can be an x87 i80
+    // payload or another wide integer. Follow that bit without inspecting
+    // unrelated bits; the same query and depth allowances bound the walk.
+    if (!Type || Bit >= Type->getBitWidth())
       return std::nullopt;
     auto Key = std::make_pair(V, Bit);
     if (auto It = Cache.find(Key); It != Cache.end())
@@ -162,12 +165,17 @@ bool simplifyIntegerSlices(llvm::Function &Function, unsigned WorkLimit) {
     if (auto *Slice = dyn_cast<TruncInst>(&I);
         Slice && !Slice->hasPoisonGeneratingFlags() &&
         Slice->getType()->isIntegerTy() &&
-        Slice->getSrcTy()->getIntegerBitWidth() <= 64)
+        Slice->getType()->getIntegerBitWidth() <=
+            ::neverd::limits::backend::kLLVMCIntegerSliceMaxBits)
       Slices.push_back(Slice);
   }
   bool Changed = false;
   for (auto *Slice : Slices) {
     Value *Root = Slice->getOperand(0);
+    // An opaque whole value already has the same narrow cast. Only these
+    // producers can expose a different source or discard unobserved bits.
+    if (!isa<BinaryOperator, CastInst, SelectInst, ConstantInt>(Root))
+      continue;
     const unsigned Width = Slice->getType()->getIntegerBitWidth();
     BitProjection Project(WorkLimit);
     Value *Source = nullptr;

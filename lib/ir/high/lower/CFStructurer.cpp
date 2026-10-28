@@ -677,7 +677,8 @@ void MedToHighConverter::structureControlFlow(HighFunc &Func,
     const size_t OpEnd = CurBlock.Ops.size() - (Tree ? 1 : 0);
     for (size_t OpIdx = 0; OpIdx < OpEnd; ++OpIdx) {
       auto &CurOp = CurBlock.Ops[OpIdx];
-      if (ReturnProtectionOps.count(&CurOp))
+      if (ReturnProtectionOps.count(&CurOp) ||
+          AArch64CallAuthentications.contains(&CurOp))
         continue;
       const size_t StatementBegin = Func.Body.size();
       switch (CurOp.Opcode) {

@@ -6,12 +6,14 @@
 /// \file
 /// ServiceManager initialization and explicit Binder identities for JNI/DEX.
 //===----------------------------------------------------------------------===//
+#include "../../lib/dalvik/AndroidFramework.h"
 #include "gtest/gtest.h"
 
 #include "neverd/dalvik/Library.h"
 
 #include "llvm/Support/Endian.h"
 
+#include <algorithm>
 #include <bit>
 #include <memory>
 #include <optional>
@@ -34,14 +36,21 @@ struct State {
   Program program{{}, std::map<std::string, std::string>{}};
   std::shared_ptr<Heap> heap = std::make_shared<Heap>();
   unsigned properties = 0, clocks = 0;
+  std::optional<int32_t> slow_ms;
   unsigned uid_reads = 0, uptime_reads = 0;
   uint64_t uid = 10000, boot = 50987654321, step = 0, uptime = 2000;
   ExecutionStop uid_stop = ExecutionStop::Returned;
+  std::vector<std::vector<uint8_t>> logs;
+  uint64_t log_result = 0;
+  ExecutionStop log_stop = ExecutionStop::Returned;
+  unsigned stop_log = 0;
   RuntimeServices services;
   std::unique_ptr<Runtime> runtime;
-  explicit State(Snapshot input = emptyCache()) {
-    services.property_integer = [&](std::string_view, int32_t value) {
+  explicit State(Snapshot input = emptyCache(), bool logging = false) {
+    services.property_integer = [&](std::string_view key, int32_t value) {
       ++properties;
+      if (key == "debug.servicemanager.slow_call_ms" && slow_ms)
+        value = *slow_ms;
       return ExecutionResult{ExecutionStop::Returned, uint32_t(value)};
     };
     services.elapsed_realtime_nanoseconds = [&] {
@@ -58,6 +67,13 @@ struct State {
       ++uptime_reads;
       return ExecutionResult{ExecutionStop::Returned, uptime};
     };
+    if (logging)
+      services.event_log_write = [&](std::span<const uint8_t> payload) {
+        logs.emplace_back(payload.begin(), payload.end());
+        return ExecutionResult{
+            logs.size() == stop_log ? log_stop : ExecutionStop::Returned,
+            log_result};
+      };
     runtime = std::make_unique<Runtime>(program, heap, input, services);
   }
   ExecutionResult call(MethodRef method, bool is_static, uint64_t receiver = 0,
@@ -80,6 +96,12 @@ struct State {
     auto result = runtime->field(*entry, 0, {}, Admit, 65536);
     EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
     return result.value;
+  }
+  void set(const char *name, const char *type, uint64_t value) {
+    const auto *entry = program.findField({Manager, name, type}, true);
+    ASSERT_NE(entry, nullptr);
+    auto result = runtime->field(*entry, 0, value, Admit, 65536);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
   }
 };
 
@@ -174,7 +196,7 @@ TEST(AndroidServiceManagerTest, SharedUidSelectsCoreThresholdAndLogBoundary) {
         << result.diagnostic;
     if (core)
       EXPECT_EQ(result.diagnostic,
-                "Android ServiceManager event logging is not modeled");
+                "Android event log write service is not supplied");
     EXPECT_EQ(s.uid_reads, 1u);
     EXPECT_EQ(s.uptime_reads, 1u);
   }
@@ -229,11 +251,252 @@ TEST(AndroidServiceManagerTest, JavaIntWrappingAndStatsLogBoundaryAreRetained) {
         << result.diagnostic;
     if (logging)
       EXPECT_EQ(result.diagnostic,
-                "Android ServiceManager event logging is not modeled");
+                "Android event log write service is not supplied");
     else {
       EXPECT_EQ(s.field("sGetServiceAccumulatedCallCount", "I"), 0u);
       EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 1u);
     }
+  }
+}
+
+TEST(AndroidServiceManagerTest,
+     EventLogsCommitInOrderEvenWhenLiblogReturnsAnError) {
+  for (uint32_t returned : {0u, 21u, uint32_t(-11), uint32_t(INT32_MIN)}) {
+    State s(lookupReplies(), true);
+    s.log_result = returned;
+    s.step = 20000000;
+    s.uptime = 5000;
+    s.slow_ms = 0;
+    s.set("sGetServiceAccumulatedCallCount", "I", 199);
+    s.set("sGetServiceAccumulatedUs", "I", 500);
+    auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    ASSERT_EQ(s.logs.size(), 2u);
+    EXPECT_EQ(s.logs[0], (std::vector<uint8_t>{
+                             0x71, 0x82, 3, 0, 3, 2,   0,   20,  0,   0,  0,
+                             2,    5,    0, 0, 0, 'a', 'l', 'p', 'h', 'a'}));
+    EXPECT_EQ(s.logs[1],
+              (std::vector<uint8_t>{0x70, 0x82, 3, 0, 3, 3, 0,    200,  0, 0, 0,
+                                    0,    20,   0, 0, 0, 0, 0x88, 0x13, 0, 0}));
+    EXPECT_EQ(s.field("sLastSlowLogUptime", "J"), 5000u);
+    EXPECT_EQ(s.field("sLastSlowLogActualTime", "J"), 20000u);
+    EXPECT_EQ(s.field("sLastStatsLogUptime", "J"), 5000u);
+    EXPECT_EQ(s.field("sGetServiceAccumulatedCallCount", "I"), 0u);
+    EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 0u);
+    for (const auto &proxy :
+         s.runtime->snapshot().framework.service_manager->binder_proxies)
+      EXPECT_EQ(proxy.warn_on_blocking, false);
+  }
+}
+
+TEST(AndroidServiceManagerTest, SlowLogUsesStrictTimeOrGreaterDuration) {
+  State s(lookupReplies(), true);
+  s.step = 20000000;
+  s.slow_ms = 20;
+  const auto name = s.heap->literal("alpha")->Identity;
+  for (uint64_t uptime : {2000u, 7000u, 7001u, 7001u}) {
+    s.uptime = uptime;
+    auto result = s.lookup("getService", name);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    EXPECT_EQ(s.logs.size(), uptime > 7000 ? 2u : 1u);
+  }
+  s.step = 21000000;
+  ASSERT_EQ(s.lookup("getService", name).stop, ExecutionStop::Returned);
+  EXPECT_EQ(s.logs.size(), 3u);
+  EXPECT_EQ(s.field("sLastSlowLogActualTime", "J"), 21000u);
+  // Java long addition wraps before the signed comparison.
+  s.set("sLastSlowLogUptime", "J", INT64_MAX);
+  ASSERT_EQ(s.lookup("getService", name).stop, ExecutionStop::Returned);
+  EXPECT_EQ(s.logs.size(), 4u);
+}
+
+TEST(AndroidServiceManagerTest,
+     StatsLogUsesInclusiveTimeAndJavaSignedArithmetic) {
+  State s(lookupReplies(), true);
+  const auto name = s.heap->literal("alpha")->Identity;
+  s.uptime = 4999;
+  s.set("sGetServiceAccumulatedCallCount", "I", 199);
+  ASSERT_EQ(s.lookup("getService", name).stop, ExecutionStop::Returned);
+  EXPECT_TRUE(s.logs.empty());
+  s.uptime = (uint64_t(1) << 32) + 5000;
+  s.set("sGetServiceAccumulatedUs", "I", uint32_t(-1500));
+  ASSERT_EQ(s.lookup("getService", name).stop, ExecutionStop::Returned);
+  ASSERT_EQ(s.logs.size(), 1u);
+  EXPECT_EQ(s.logs[0], (std::vector<uint8_t>{
+                           0x70, 0x82, 3,    0,    3,    3, 0,    201,  0, 0, 0,
+                           0,    0xff, 0xff, 0xff, 0xff, 0, 0x88, 0x13, 0, 0}));
+  EXPECT_EQ(s.field("sLastStatsLogUptime", "J"), s.uptime);
+  EXPECT_EQ(s.field("sGetServiceAccumulatedCallCount", "I"), 0u);
+  EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 0u);
+  s.uptime += 5000;
+  s.set("sGetServiceAccumulatedCallCount", "I", UINT32_MAX);
+  ASSERT_EQ(s.lookup("getService", name).stop, ExecutionStop::Returned);
+  EXPECT_EQ(s.logs.size(), 1u);
+}
+
+TEST(AndroidServiceManagerTest, SlowLogKeepsNullAndARTStringBytesDistinct) {
+  const std::optional<std::string> names[] = {
+      std::nullopt, "", std::string("a\0b", 3), "\xf0\x9f\x98\x80\xed\xa0\x80"};
+  const std::vector<uint8_t> bytes[] = {
+      {'N', 'U', 'L', 'L'},
+      {},
+      {'a', 0xc0, 0x80, 'b'},
+      {0xf0, 0x9f, 0x98, 0x80, 0xed, 0xa0, 0x80}};
+  for (unsigned i = 0; i != 4; ++i) {
+    auto input = lookupReplies();
+    input.service_manager->lookup_results = {
+        {ServiceState::LookupResult::Operation::Get, 7, names[i], {}}};
+    State s(input, true);
+    s.uptime = 5001;
+    s.slow_ms = 0;
+    auto result = s.lookup("getService",
+                           names[i] ? s.heap->literal(*names[i])->Identity : 0);
+    ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    ASSERT_EQ(s.logs.size(), 1u);
+    std::vector<uint8_t> expected{
+        0x71, 0x82, 3, 0, 3, 2, 0, 0, 0, 0, 0, 2, uint8_t(bytes[i].size()),
+        0,    0,    0};
+    expected.insert(expected.end(), bytes[i].begin(), bytes[i].end());
+    EXPECT_EQ(s.logs[0], expected);
+  }
+}
+
+TEST(AndroidServiceManagerTest,
+     EventLogPayloadCapacityAndResourceStopsAreExplicit) {
+  for (unsigned size : {4052u, 4053u}) {
+    auto input = lookupReplies();
+    input.service_manager->lookup_results[0].name = std::string(size, 'x');
+    State s(input, true);
+    s.uptime = 5001;
+    s.slow_ms = 0;
+    auto result = s.lookup("getService",
+                           s.heap->literal(std::string(size, 'x'))->Identity);
+    EXPECT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+    ASSERT_EQ(s.logs.size(), 1u);
+    EXPECT_EQ(s.logs[0].size(), 4068u);
+    EXPECT_EQ(llvm::support::endian::read32le(s.logs[0].data() + 12), 4052u);
+    EXPECT_TRUE(std::all_of(s.logs[0].begin() + 16, s.logs[0].end(),
+                            [](uint8_t byte) { return byte == 'x'; }));
+  }
+  for (ExecutionStop stop :
+       {ExecutionStop::Timeout, ExecutionStop::InstructionLimit,
+        ExecutionStop::Unsupported, ExecutionStop::HeapLimit}) {
+    for (unsigned index : {1u, 2u}) {
+      State s(lookupReplies(), true);
+      s.step = 20000000;
+      s.uptime = 5000;
+      s.stop_log = index;
+      s.log_stop = stop;
+      s.slow_ms = 0;
+      s.set("sGetServiceAccumulatedCallCount", "I", 199);
+      auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+      EXPECT_EQ(result.stop, stop);
+      EXPECT_EQ(s.logs.size(), index);
+      auto state = s.runtime->snapshot();
+      EXPECT_TRUE(state.terminal);
+      ASSERT_EQ(state.framework.service_manager->binder_proxies.size(), 2u);
+      // Context allowBlocking precedes lookup; result allowBlocking follows
+      // logs.
+      EXPECT_EQ(
+          state.framework.service_manager->binder_proxies[0].warn_on_blocking,
+          false);
+      EXPECT_EQ(
+          state.framework.service_manager->binder_proxies[1].warn_on_blocking,
+          true);
+    }
+  }
+}
+
+TEST(AndroidServiceManagerTest, NegativeDurationsKeepSignedLogFields) {
+  State s(lookupReplies(), true);
+  s.slow_ms = -2;
+  s.step = ((uint64_t(1) << 32) - 1500) * 1000;
+  s.uptime = 6000;
+  s.set("sGetServiceAccumulatedCallCount", "I", 199);
+  auto result = s.lookup("getService", s.heap->literal("alpha")->Identity);
+  ASSERT_EQ(result.stop, ExecutionStop::Returned) << result.diagnostic;
+  ASSERT_EQ(s.logs.size(), 2u);
+  EXPECT_EQ(llvm::support::endian::read32le(s.logs[0].data() + 7), UINT32_MAX);
+  EXPECT_EQ(llvm::support::endian::read32le(s.logs[1].data() + 12), UINT32_MAX);
+  EXPECT_EQ(s.field("sLastSlowLogActualTime", "J"), uint64_t(-1500));
+  EXPECT_EQ(s.field("sGetServiceAccumulatedUs", "I"), 0u);
+}
+
+TEST(AndroidServiceManagerTest, LogEncodingHonorsWorkBudgetAndResultWidth) {
+  auto input = lookupReplies();
+  input.service_manager->lookup_results[0].name = std::string(4052, 'x');
+  State s(input, true);
+  s.slow_ms = 0;
+  s.uptime = 5001;
+  ASSERT_EQ(s.runtime->initialize(Manager, Admit, 65536).stop,
+            ExecutionStop::Returned);
+  const uint64_t args[] = {s.heap->literal(std::string(4052, 'x'))->Identity};
+  const auto *method = libraryMethod(
+      {Manager, "getService", {"Ljava/lang/String;"}, "Landroid/os/IBinder;"},
+      true);
+  unsigned work = 0;
+  auto result = s.runtime->library(*method, 0, args, [&] {
+    return ++work <= 100 ? ExecutionStop::Returned
+                         : ExecutionStop::InstructionLimit;
+  });
+  EXPECT_EQ(result.stop, ExecutionStop::InstructionLimit);
+  EXPECT_TRUE(s.logs.empty());
+  EXPECT_TRUE(s.runtime->snapshot().terminal);
+
+  State invalid(lookupReplies(), true);
+  invalid.slow_ms = 0;
+  invalid.uptime = 5001;
+  invalid.log_result = uint64_t(1) << 32;
+  result =
+      invalid.lookup("getService", invalid.heap->literal("alpha")->Identity);
+  EXPECT_EQ(result.stop, ExecutionStop::Unsupported);
+  EXPECT_NE(result.diagnostic.find("Java int carrier"), std::string::npos);
+  EXPECT_EQ(invalid.logs.size(), 1u);
+}
+
+TEST(AndroidServiceManagerTest, LogStopsRetainOnlyEarlierFieldAssignments) {
+  for (unsigned index : {1u, 2u}) {
+    State s(lookupReplies(), true);
+    s.slow_ms = 0;
+    s.step = 20000000;
+    s.uptime = 5000;
+    s.stop_log = index;
+    s.log_stop = ExecutionStop::Timeout;
+    // Inspect the owning framework directly after the stop; Runtime's
+    // independent terminal guard is tested above and must not be bypassed by
+    // retrying an interrupted invocation.
+    AndroidFramework framework(lookupReplies(), s.program, s.services);
+    ASSERT_EQ(framework
+                  .initializeServiceManager(*s.heap, s.program, Admit,
+                                            [](std::string_view) {
+                                              return ExecutionResult{
+                                                  ExecutionStop::Returned};
+                                            })
+                  .stop,
+              ExecutionStop::Returned);
+    auto field = [&](const char *name, const char *type,
+                     std::optional<uint64_t> write = {}) {
+      return framework.field(*s.heap,
+                             *s.program.findField({Manager, name, type}, true),
+                             0, write, Admit);
+    };
+    ASSERT_EQ(field("sGetServiceAccumulatedCallCount", "I", 199).stop,
+              ExecutionStop::Returned);
+    ASSERT_EQ(field("sGetServiceAccumulatedUs", "I", 123).stop,
+              ExecutionStop::Returned);
+    const uint64_t args[] = {s.heap->literal("alpha")->Identity};
+    const auto *method = libraryMethod(
+        {Manager, "getService", {"Ljava/lang/String;"}, "Landroid/os/IBinder;"},
+        true);
+    auto result =
+        framework.execute(*s.heap, s.program, *method, 0, args, Admit);
+    EXPECT_EQ(result.stop, ExecutionStop::Timeout);
+    EXPECT_EQ(field("sLastSlowLogUptime", "J").value, index == 2 ? 5000u : 0u);
+    EXPECT_EQ(field("sLastSlowLogActualTime", "J").value,
+              index == 2 ? 20000u : 0u);
+    EXPECT_EQ(field("sLastStatsLogUptime", "J").value, 0u);
+    EXPECT_EQ(field("sGetServiceAccumulatedCallCount", "I").value, 200u);
+    EXPECT_EQ(field("sGetServiceAccumulatedUs", "I").value, 20123u);
   }
 }
 

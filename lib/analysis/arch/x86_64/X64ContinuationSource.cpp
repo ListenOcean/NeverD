@@ -10,6 +10,7 @@
 
 #include "BinaryContinuationInstructions.h"
 #include "NativeStackControl.h"
+#include "X64ContinuationEvents.h"
 #include "X64ControlTransitions.h"
 #include "X64MachineFlags.h"
 #include "X64Recovery.h"
@@ -43,6 +44,9 @@ namespace {
 using State = X64ContinuationStateV1;
 using StateV2 = X64ContinuationStateV2;
 using StateV4 = X64ContinuationStateV4;
+using StateV5 = X64ContinuationStateV5;
+using StateV6 = X64ContinuationStateV6;
+using Segment = X64ContinuationSegment;
 using Exit = X64ContinuationExitV1;
 using Flags = detail::X64MachineFlags;
 constexpr uint64_t StatePointer = uint64_t{1} << 32;
@@ -52,7 +56,9 @@ InterpreterMachineStateProfile
 flagsProfile(const X64ContinuationSourceOptions &Options) {
   return (Options.Profile == X64ContinuationProfile::KernelSmapNoFaultV3 ||
           Options.Profile ==
-              X64ContinuationProfile::KernelFaultAddressNoFaultV4)
+              X64ContinuationProfile::KernelFaultAddressNoFaultV4 ||
+          Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+          Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6)
              ? InterpreterMachineStateProfile::KernelX64SmapNoFaultV2
              : InterpreterMachineStateProfile::KernelX64NoFaultV1;
 }
@@ -60,7 +66,10 @@ flagsProfile(const X64ContinuationSourceOptions &Options) {
 bool hasControlState(const X64ContinuationSourceOptions &Options) {
   return Options.Profile == X64ContinuationProfile::KernelControlsNoFaultV2 ||
          Options.Profile == X64ContinuationProfile::KernelSmapNoFaultV3 ||
-         Options.Profile == X64ContinuationProfile::KernelFaultAddressNoFaultV4;
+         Options.Profile ==
+             X64ContinuationProfile::KernelFaultAddressNoFaultV4 ||
+         Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+         Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
 }
 
 static_assert(std::is_standard_layout_v<State>);
@@ -81,6 +90,26 @@ static_assert(std::is_standard_layout_v<StateV4>);
 static_assert(offsetof(StateV4, Core) == 0);
 static_assert(offsetof(StateV4, CR2) == 2304);
 static_assert(sizeof(StateV4) == 2320);
+static_assert(std::is_standard_layout_v<StateV5>);
+static_assert(sizeof(Segment) == 16);
+static_assert(offsetof(StateV5, Core) == 0);
+static_assert(offsetof(StateV5, STAR) == 2320);
+static_assert(offsetof(StateV5, CS) == 2328);
+static_assert(offsetof(StateV5, SS) == 2344);
+static_assert(sizeof(StateV5) == 2368);
+static_assert(std::is_standard_layout_v<StateV6>);
+static_assert(offsetof(StateV6, Core) == 0);
+static_assert(offsetof(StateV6, GDTR) == 2368);
+static_assert(offsetof(StateV6, IDTR) == 2384);
+static_assert(offsetof(StateV6, LDTR) == 2400);
+static_assert(offsetof(StateV6, TR) == 2416);
+static_assert(offsetof(StateV6, DS) == 2432);
+static_assert(offsetof(StateV6, ES) == 2448);
+static_assert(offsetof(StateV6, FS) == 2464);
+static_assert(offsetof(StateV6, GS) == 2472);
+static_assert(offsetof(StateV6, Unusable) == 2480);
+static_assert(offsetof(StateV6, NMIBlocked) == 2481);
+static_assert(sizeof(StateV6) == 2496);
 
 llvm::Error invalid(const llvm::Twine &Text) {
   return llvm::createStringError(llvm::errc::invalid_argument, "%s",
@@ -165,7 +194,9 @@ bool controlIntrinsic(LowOp Op, const X64ContinuationSourceOptions &Options) {
 
 bool faultAddressIntrinsic(const LowOp &Op,
                            const X64ContinuationSourceOptions &Options) {
-  if (Options.Profile != X64ContinuationProfile::KernelFaultAddressNoFaultV4 ||
+  if ((Options.Profile != X64ContinuationProfile::KernelFaultAddressNoFaultV4 &&
+       Options.Profile != X64ContinuationProfile::KernelReturnNoFaultV5 &&
+       Options.Profile != X64ContinuationProfile::KernelEventsNoFaultV6) ||
       Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
       !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
       Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -174,6 +205,76 @@ bool faultAddressIntrinsic(const LowOp &Op,
   return (Id == Intrinsic::ReadCr2 && Op.NumInputs == 1 &&
           Op.Output.Size == 8) ||
          (Id == Intrinsic::WriteCr2 && Op.NumInputs == 2 && !Op.Output.Size &&
+          Op.Inputs[1].Size == 8);
+}
+
+bool sysretIntrinsic(const LowOp &Op,
+                     const X64ContinuationSourceOptions &Options) {
+  return (Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+          Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6) &&
+         Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 3 && !Op.Output.Size &&
+         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Inputs[0].Offset == uint64_t(Intrinsic::Sysretq) &&
+         Op.Inputs[1] == NdVar::reg(x86reg::RCX, 8) &&
+         Op.Inputs[2] == NdVar::reg(x86reg::R11, 8) &&
+         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         Op.MemoryOrdering == NdMemoryOrdering::None;
+}
+
+bool eventIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs) {
+  return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == Inputs &&
+         !Op.Output.Size && Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+         Op.Inputs[0].Offset == uint64_t(Id) &&
+         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         Op.MemoryOrdering == NdMemoryOrdering::None;
+}
+
+bool int3Instruction(const SpecializationInstruction &Instruction) {
+  return Instruction.NativeBytes == std::vector<uint8_t>{0xcc} &&
+         Instruction.Ops.size() == 1 &&
+         eventIntrinsic(Instruction.Ops.front(), Intrinsic::Int3, 1);
+}
+
+bool iretInstruction(const SpecializationInstruction &Instruction) {
+  if (Instruction.NativeBytes != std::vector<uint8_t>{0x48, 0xcf} ||
+      Instruction.Origin.Control != LowInstructionControl::Terminator ||
+      Instruction.Ops.size() != 10 ||
+      !eventIntrinsic(Instruction.Ops.back(), Intrinsic::Iret, 6))
+    return false;
+  const auto &Transfer = Instruction.Ops.back();
+  for (unsigned I = 0; I != 5; ++I) {
+    const auto &Read = Instruction.Ops[I ? I * 2 : 0];
+    NdVar Address = NdVar::reg(x86reg::RSP, 8);
+    if (I) {
+      const auto &Add = Instruction.Ops[I * 2 - 1];
+      if (Add.Opcode != NdOp::INT_ADD || !Add.Output.isTemp() ||
+          Add.Output.Size != 8 || Add.NumInputs != 2 ||
+          Add.Inputs[0] != Address || Add.Inputs[1] != constant(I * 8) ||
+          Add.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+          Add.MemoryOrdering != NdMemoryOrdering::None)
+        return false;
+      Address = Add.Output;
+    }
+    if (Read.Opcode != NdOp::LOAD || !Read.Output.isTemp() ||
+        Read.Output.Size != 8 || Read.NumInputs != 1 ||
+        Read.Inputs[0] != Address || Transfer.Inputs[I + 1] != Read.Output ||
+        Read.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Read.MemoryOrdering != NdMemoryOrdering::None)
+      return false;
+  }
+  return true;
+}
+
+bool pageTableIntrinsic(const LowOp &Op,
+                        const X64ContinuationSourceOptions &Options) {
+  if (!Options.NativePageTableAccess || Op.Opcode != NdOp::INTRINSIC ||
+      !Op.NumInputs || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  return (Id == Intrinsic::ReadCr3 && Op.NumInputs == 1 &&
+          Op.Output.Size == 8) ||
+         (Id == Intrinsic::WriteCr3 && Op.NumInputs == 2 && !Op.Output.Size &&
           Op.Inputs[1].Size == 8);
 }
 
@@ -193,6 +294,41 @@ bool writePrefetchIntrinsic(const LowOp &Op,
          Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == uint64_t(Intrinsic::PrefetchW) &&
          Op.Inputs[1].Size == 8;
+}
+
+bool descriptorQueryIntrinsic(const LowOp &Op,
+                              const X64ContinuationSourceOptions &Options) {
+  if (!Options.NativeDescriptorQueries || Op.Opcode != NdOp::INTRINSIC ||
+      Op.NumInputs != 2 || !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2)
+    return false;
+  switch (static_cast<Intrinsic>(Op.Inputs[0].Offset)) {
+  case Intrinsic::Sgdt:
+    return !Op.Output.Size && Op.Inputs[1].Size == 8;
+  case Intrinsic::Verw:
+    return Op.Output.Size == 1 && Op.Inputs[1].Size == 8;
+  case Intrinsic::X86LoadSegmentLimit:
+    return Op.Output.Size == 8 && Op.Inputs[1].Size == 2 &&
+           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default;
+  default:
+    return false;
+  }
+}
+
+bool msrIntrinsic(const LowOp &Op,
+                  const X64ContinuationSourceOptions &Options) {
+  if (Op.Opcode != NdOp::INTRINSIC || !Op.NumInputs ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    return false;
+  const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
+  if (Id == Intrinsic::Rdmsr)
+    return Options.SegmentBaseMSRAddressBits && Op.NumInputs == 2 &&
+           Op.Output.Size == 8 && Op.Inputs[1].Size == 4;
+  return Id == Intrinsic::Wrmsr &&
+         (Options.SegmentBaseMSRAddressBits ||
+          Options.NativeSpeculationControlMsrs) &&
+         Op.NumInputs == 3 && !Op.Output.Size && Op.Inputs[1].Size == 4 &&
+         Op.Inputs[2].Size == 8;
 }
 
 bool unsignedWideDivisionIntrinsic(const LowOp &Op) {
@@ -241,7 +377,8 @@ bool supportedOperation(const LowOp &Op,
   if (Op.MemoryAddressSpace != NdMemoryAddressSpace::Default &&
       Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE && !AtomicAdd &&
       !alignmentIntrinsic(Op) && !controlIntrinsic(Op, Options) &&
-      !writePrefetchIntrinsic(Op, Options))
+      !writePrefetchIntrinsic(Op, Options) &&
+      !descriptorQueryIntrinsic(Op, Options))
     return false;
   if (AtomicAdd)
     return true;
@@ -281,7 +418,9 @@ bool supportedOperation(const LowOp &Op,
     return flagIntrinsic(Op) || alignmentIntrinsic(Op) ||
            controlIntrinsic(Op, Options) ||
            faultAddressIntrinsic(Op, Options) || fenceIntrinsic(Op, Options) ||
-           writePrefetchIntrinsic(Op, Options);
+           writePrefetchIntrinsic(Op, Options) || msrIntrinsic(Op, Options) ||
+           descriptorQueryIntrinsic(Op, Options) ||
+           pageTableIntrinsic(Op, Options);
   default:
     // Admission and arithmetic widths use the scalar owner. The operation
     // itself is still emitted through LowToMed and the existing backends.
@@ -342,6 +481,30 @@ struct Writer {
 
   void store(uint64_t Offset, NdVar V) {
     emit(NdOp::STORE, {}, {address(Offset), V});
+  }
+
+  void storeIf(NdVar Condition, NdVar Address, NdVar Value) {
+    const int Parent = Block->Id;
+    const int WriteId = static_cast<int>(Function.Blocks.size());
+    const int JoinId = WriteId + 1;
+    for (int Id : {WriteId, JoinId}) {
+      LowBlock Child;
+      Child.Id = Id;
+      Child.StartAddr = Function.Entry + Id;
+      Child.Preds = Id == WriteId ? std::vector<int>{Parent}
+                                  : std::vector<int>{Parent, WriteId};
+      Function.Blocks.push_back(std::move(Child));
+    }
+    // Appending blocks may move the vector. Reacquire the parent before use.
+    Block = &Function.Blocks[Parent];
+    Block->Succs = {JoinId, WriteId};
+    emit(NdOp::COND_BR, {},
+         {NdVar::cst(Function.Blocks[WriteId].StartAddr, 8), Condition});
+    Block = &Function.Blocks[WriteId];
+    emit(NdOp::STORE, {}, {Address, Value});
+    Block->Succs = {JoinId};
+    emit(NdOp::BRANCH, {}, {NdVar::cst(Function.Blocks[JoinId].StartAddr, 8)});
+    Block = &Function.Blocks[JoinId];
   }
 
   NdVar read(NdVar V) {
@@ -426,6 +589,129 @@ struct Writer {
     write(Effect.Output, Result, true);
   }
 
+  void msr(LowOp Op) {
+    const bool Write = Op.Inputs[0].Offset == uint64_t(Intrinsic::Wrmsr);
+    const NdVar Selector = Op.Inputs[1];
+    NdVar Segment = constant(0, 1), Offset = constant(0);
+    if (Options.SegmentBaseMSRAddressBits) {
+      const NdVar FS = temporary(1), GS = temporary(1), KernelGS = temporary(1);
+      const NdVar EitherGS = temporary(1), GSOffset = temporary();
+      Segment = temporary(1);
+      Offset = temporary();
+      emit(NdOp::INT_EQUAL, FS, {Selector, constant(0xc0000100, 4)});
+      emit(NdOp::INT_EQUAL, GS, {Selector, constant(0xc0000101, 4)});
+      emit(NdOp::INT_EQUAL, KernelGS, {Selector, constant(0xc0000102, 4)});
+      emit(NdOp::BOOL_OR, EitherGS, {GS, KernelGS});
+      emit(NdOp::BOOL_OR, Segment, {FS, EitherGS});
+      emit(NdOp::SELECT, GSOffset,
+           {GS, constant(offsetof(State, GSBase)),
+            constant(offsetof(StateV2, KernelGSBase))});
+      emit(NdOp::SELECT, Offset,
+           {FS, constant(offsetof(State, FSBase)), GSOffset});
+    }
+    NdVar Native = constant(0, 1), Allowed = Segment;
+    if (Write && Options.NativeSpeculationControlMsrs) {
+      const NdVar Control = temporary(1), Command = temporary(1);
+      Native = temporary(1);
+      Allowed = temporary(1);
+      emit(NdOp::INT_EQUAL, Control, {Selector, constant(0x48, 4)});
+      emit(NdOp::INT_EQUAL, Command, {Selector, constant(0x49, 4)});
+      emit(NdOp::BOOL_OR, Native, {Control, Command});
+      emit(NdOp::BOOL_OR, Allowed, {Segment, Native});
+    }
+    const NdVar Unknown = temporary(1);
+    emit(NdOp::BOOL_NOT, Unknown, {Allowed});
+    rejectIf(Unknown);
+    if (Write && Options.SegmentBaseMSRAddressBits) {
+      const NdVar Shifted = temporary(), Canonical = temporary();
+      const NdVar Noncanonical = temporary(1), Bad = temporary(1);
+      const auto Shift = constant(64 - *Options.SegmentBaseMSRAddressBits);
+      emit(NdOp::INT_LEFT, Shifted, {Op.Inputs[2], Shift});
+      emit(NdOp::INT_ASHR, Canonical, {Shifted, Shift});
+      emit(NdOp::INT_NOTEQUAL, Noncanonical, {Op.Inputs[2], Canonical});
+      emit(NdOp::BOOL_AND, Bad, {Segment, Noncanonical});
+      rejectIf(Bad);
+    }
+    const auto SegmentAccess = [&] {
+      const NdVar Address = temporary();
+      emit(NdOp::INT_ADD, Address, {NdVar::reg(StatePointer, 8), Offset});
+      if (Write)
+        emit(NdOp::STORE, {}, {Address, Op.Inputs[2]});
+      else
+        emit(NdOp::LOAD, Op.Output, {Address});
+    };
+    if (!Write || !Options.NativeSpeculationControlMsrs) {
+      SegmentAccess();
+    } else if (!Options.SegmentBaseMSRAddressBits) {
+      Block->Ops.push_back(Op);
+    } else {
+      const int SegmentId = static_cast<int>(Function.Blocks.size());
+      const int NativeId = SegmentId + 1, JoinId = SegmentId + 2;
+      const int Parent = Block->Id;
+      for (int Id : {SegmentId, NativeId, JoinId}) {
+        LowBlock Child;
+        Child.Id = Id;
+        Child.StartAddr = Function.Entry + Id;
+        Child.Preds = Id == JoinId ? std::vector<int>{SegmentId, NativeId}
+                                   : std::vector<int>{Parent};
+        Function.Blocks.push_back(std::move(Child));
+      }
+      Block->Succs = {SegmentId, NativeId};
+      emit(NdOp::COND_BR, {},
+           {NdVar::cst(Function.Blocks[NativeId].StartAddr, 8), Native});
+      for (int Id : {SegmentId, NativeId}) {
+        Block = &Function.Blocks[Id];
+        if (Id == SegmentId)
+          SegmentAccess();
+        else
+          Block->Ops.push_back(Op);
+        Block->Succs = {JoinId};
+        emit(NdOp::BRANCH, {},
+             {NdVar::cst(Function.Blocks[JoinId].StartAddr, 8)});
+      }
+      Block = &Function.Blocks[JoinId];
+    }
+  }
+
+  void sysret() {
+    const NdVar PC = read(NdVar::reg(x86reg::RCX, 8));
+    const NdVar Shifted = temporary(), Canonical = temporary();
+    const NdVar Bad = temporary(1);
+    const auto Shift = constant(64 - *Options.PagingAddressBits);
+    emit(NdOp::INT_LEFT, Shifted, {PC, Shift});
+    emit(NdOp::INT_ASHR, Canonical, {Shifted, Shift});
+    emit(NdOp::INT_NOTEQUAL, Bad, {Canonical, PC});
+    rejectIf(Bad);
+    const NdVar Masked = temporary(), Packed = temporary(),
+                Selectors = temporary();
+    emit(NdOp::INT_AND, Masked,
+         {read(NdVar::reg(x86reg::R11, 8)), constant(0x3c7fd7)});
+    emit(NdOp::INT_OR, Packed, {Masked, constant(2)});
+    emit(NdOp::INT_RIGHT, Selectors,
+         {load(offsetof(StateV5, STAR)), constant(48)});
+    for (bool Code : {true, false}) {
+      const auto Offset = Code ? offsetof(StateV5, CS) : offsetof(StateV5, SS);
+      const NdVar Added = temporary(), User = temporary(),
+                  Selector = temporary(2);
+      emit(NdOp::INT_ADD, Added, {Selectors, constant(Code ? 16 : 8)});
+      emit(NdOp::INT_OR, User, {Added, constant(3)});
+      emit(NdOp::SUBBYTES, Selector, {User, constant(0)});
+      store(Offset + offsetof(Segment, Base), constant(0));
+      store(Offset + offsetof(Segment, Limit), constant(UINT32_MAX, 4));
+      store(Offset + offsetof(Segment, Selector), Selector);
+      store(Offset + offsetof(Segment, Attributes),
+            constant(Code ? 0xa0fb : 0xc0f3, 2));
+    }
+    if (Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6) {
+      const auto Usable = temporary(1);
+      emit(NdOp::INT_AND, Usable,
+           {load(offsetof(StateV6, Unusable), 1), constant(0xfc, 1)});
+      store(offsetof(StateV6, Unusable), Usable);
+    }
+    store(offsetof(State, RFlags), Packed);
+    leave(Exit::PrivilegeReturn, PC);
+  }
+
   void operation(LowOp Op) {
     const NdVar NativeOutput = Op.Output;
     const bool LowSlice =
@@ -472,6 +758,8 @@ struct Writer {
            {load(offsetof(State, RFlags)), constant(Flags::SplitMask)});
       emit(NdOp::INT_OR, Packed, {System, Split});
       store(offsetof(State, RFlags), Packed);
+    } else if (msrIntrinsic(Op, Options)) {
+      msr(Op);
     } else if (faultAddressIntrinsic(Op, Options)) {
       if (Op.Inputs[0].Offset == uint64_t(Intrinsic::ReadCr2))
         emit(NdOp::COPY, Op.Output, {load(offsetof(StateV4, CR2))});
@@ -528,7 +816,9 @@ void finishBlock(LowBlock &Block) {
   B.ControlFlags = Block.Succs.empty()
                        ? LowInstructionControlFlag::Return
                        : LowInstructionControlFlag::Branch |
-                             LowInstructionControlFlag::Conditional;
+                             (Block.Succs.size() == 2
+                                  ? LowInstructionControlFlag::Conditional
+                                  : LowInstructionControlFlag::None);
   if (!Block.Succs.empty())
     B.Immediate = Block.Ops.back().Inputs[0].Offset;
   Block.InstructionBoundaries.push_back(B);
@@ -568,15 +858,31 @@ buildInstruction(SpecializationInstruction Instruction,
   const bool Smap =
       Options.Profile == X64ContinuationProfile::KernelSmapNoFaultV3;
   const bool FaultAddress =
-      Options.Profile == X64ContinuationProfile::KernelFaultAddressNoFaultV4;
-  Result.StateVersion = FaultAddress ? 4 : Smap ? 3 : Controls ? 2 : 1;
-  Result.StateBytes = FaultAddress ? sizeof(StateV4)
-                      : Controls   ? sizeof(StateV2)
-                                   : sizeof(State);
-  Function.Name = (FaultAddress ? "neverd_step_v4_"
-                   : Smap       ? "neverd_step_v3_"
-                   : Controls   ? "neverd_step_v2_"
-                                : "neverd_step_") +
+      Options.Profile == X64ContinuationProfile::KernelFaultAddressNoFaultV4 ||
+      Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+      Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+  const bool PrivilegeReturn =
+      Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+      Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+  const bool Events =
+      Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+  Result.StateVersion = Events            ? 6
+                        : PrivilegeReturn ? 5
+                        : FaultAddress    ? 4
+                        : Smap            ? 3
+                        : Controls        ? 2
+                                          : 1;
+  Result.StateBytes = Events            ? sizeof(StateV6)
+                      : PrivilegeReturn ? sizeof(StateV5)
+                      : FaultAddress    ? sizeof(StateV4)
+                      : Controls        ? sizeof(StateV2)
+                                        : sizeof(State);
+  Function.Name = (Events            ? "neverd_step_v6_"
+                   : PrivilegeReturn ? "neverd_step_v5_"
+                   : FaultAddress    ? "neverd_step_v4_"
+                   : Smap            ? "neverd_step_v3_"
+                   : Controls        ? "neverd_step_v2_"
+                                     : "neverd_step_") +
                   llvm::utohexstr(Result.Address);
   Exit Kind = Exit::Continue;
   if (Instruction.NativeStackControl !=
@@ -601,9 +907,16 @@ buildInstruction(SpecializationInstruction Instruction,
     Result.RequiresNativeExecution = true;
     Result.Diagnostic = Reason.str();
   };
+  const bool Sysret =
+      PrivilegeReturn && Instruction.Ops.size() == 1 &&
+      sysretIntrinsic(Instruction.Ops.front(), Options) &&
+      Instruction.Origin.Control == LowInstructionControl::Terminator;
+  const bool Iret = Events && iretInstruction(Instruction);
+  const bool Int3 = Events && int3Instruction(Instruction);
   if (Instruction.ProfileProjection != InterpreterProfileProjection::None ||
       Instruction.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete ||
-      Instruction.Origin.Control == LowInstructionControl::Terminator)
+      (Instruction.Origin.Control == LowInstructionControl::Terminator &&
+       !Sysret && !Iret && !Int3))
     RequireNative("instruction requires an explicit native environment");
   if (Instruction.UndefinedEffects.Effects.size() >
       std::size(State{}.Undefined))
@@ -623,7 +936,8 @@ buildInstruction(SpecializationInstruction Instruction,
                                            NdVar::tmp(ScratchBase - 16, 16))
           : std::nullopt;
   for (const LowOp &Op : Instruction.Ops) {
-    if (!Timestamp && !supportedOperation(Op, Options, WideDivision)) {
+    if (!Timestamp && !Sysret && !Iret && !Int3 &&
+        !supportedOperation(Op, Options, WideDivision)) {
       std::string Detail = "unsupported continuation operation: ";
       Detail += ndOpName(Op.Opcode);
       if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
@@ -644,7 +958,11 @@ buildInstruction(SpecializationInstruction Instruction,
   }
   // At most one control-value guard per original operation. Reserve before
   // taking block references, and keep synthetic block addresses representable.
-  const size_t MaxBlocks = Instruction.Ops.size() + 3;
+  const size_t MaxBlocks =
+      Instruction.Ops.size() + 3 +
+      (Options.SegmentBaseMSRAddressBits && Options.NativeSpeculationControlMsrs
+           ? 3
+           : 0);
   if (MaxBlocks > Options.MaxOperations ||
       Result.Address >= InvalidVA - MaxBlocks)
     return invalid("continuation source block budget or address exhausted");
@@ -670,8 +988,9 @@ buildInstruction(SpecializationInstruction Instruction,
   Guard.emit(NdOp::INT_NOTEQUAL, PCBad,
              {Guard.load(offsetof(State, PC)), constant(Result.Address)});
   const NdVar Packed = Guard.load(offsetof(State, RFlags));
-  Guard.emit(NdOp::INT_AND, FlagBits,
-             {Packed, constant(~Flags::entryMask(flagsProfile(Options)))});
+  const uint64_t EntryFlags =
+      Int3 ? 0x3d7fd7 : Flags::entryMask(flagsProfile(Options));
+  Guard.emit(NdOp::INT_AND, FlagBits, {Packed, constant(~EntryFlags)});
   Guard.emit(NdOp::INT_NOTEQUAL, FlagsBad, {FlagBits, constant(0)});
   Guard.emit(NdOp::INT_AND, Fixed, {Packed, constant(2)});
   Guard.emit(NdOp::INT_EQUAL, FixedBad, {Fixed, constant(0)});
@@ -691,12 +1010,49 @@ buildInstruction(SpecializationInstruction Instruction,
     Guard.emit(NdOp::BOOL_OR, AllBad, {Bad, ControlsBad});
     Bad = AllBad;
   }
+  if (PrivilegeReturn) {
+    const NdVar RPL = Guard.temporary(2), SegmentBits = Guard.temporary(2);
+    const NdVar CPLBad = Guard.temporary(1), ModeBad = Guard.temporary(1);
+    const NdVar SegmentBad = Guard.temporary(1), AllBad = Guard.temporary(1);
+    Guard.emit(
+        NdOp::INT_AND, RPL,
+        {Guard.load(offsetof(StateV5, CS) + offsetof(Segment, Selector), 2),
+         constant(3, 2)});
+    Guard.emit(NdOp::INT_NOTEQUAL, CPLBad, {RPL, constant(0, 2)});
+    Guard.emit(
+        NdOp::INT_AND, SegmentBits,
+        {Guard.load(offsetof(StateV5, CS) + offsetof(Segment, Attributes), 2),
+         constant(0x60f8, 2)});
+    Guard.emit(NdOp::INT_NOTEQUAL, ModeBad, {SegmentBits, constant(0x2098, 2)});
+    Guard.emit(NdOp::BOOL_OR, SegmentBad, {CPLBad, ModeBad});
+    Guard.emit(NdOp::BOOL_OR, AllBad, {Bad, SegmentBad});
+    Bad = AllBad;
+  }
+  if (Events) {
+    const NdVar UnusableCS = Guard.temporary(1), BadNMI = Guard.temporary(1);
+    const NdVar EventBad = Guard.temporary(1), AllBad = Guard.temporary(1);
+    Guard.emit(NdOp::INT_AND, UnusableCS,
+               {Guard.load(offsetof(StateV6, Unusable), 1), constant(1, 1)});
+    Guard.emit(NdOp::INT_LESS, BadNMI,
+               {constant(1, 1), Guard.load(offsetof(StateV6, NMIBlocked), 1)});
+    Guard.emit(NdOp::BOOL_OR, EventBad, {UnusableCS, BadNMI});
+    Guard.emit(NdOp::BOOL_OR, AllBad, {Bad, EventBad});
+    Bad = AllBad;
+  }
   Guard.emit(NdOp::COND_BR, {}, {NdVar::cst(Rejected.StartAddr, 8), Bad});
   Writer Reject{Function, &Rejected, Options};
   Reject.leave(Exit::InvalidState);
   Writer W{Function, &Body, Options};
   if (Result.RequiresNativeExecution) {
     W.leave(Exit::NativeInstruction);
+  } else if (Iret || Int3) {
+    detail::X64ContinuationEvents<Writer> Event(W, *Options.PagingAddressBits);
+    if (Iret)
+      Event.iret();
+    else
+      Event.int3(Instruction.Fallthrough.Address);
+  } else if (Sysret) {
+    W.sysret();
   } else {
     Result.UndefinedEffects = Instruction.UndefinedEffects.Effects;
     NdVar NextPC = constant(Instruction.Fallthrough.Address);
@@ -730,6 +1086,9 @@ buildInstruction(SpecializationInstruction Instruction,
     }
     W.leave(Kind, NextPC);
   }
+  if (Function.Blocks.size() > Options.MaxOperations ||
+      Result.Address >= InvalidVA - Function.Blocks.size())
+    return invalid("continuation source block budget or address exhausted");
   for (auto &Block : Function.Blocks)
     finishBlock(Block);
   if (auto Error = validateLowInstructionBoundaries(
@@ -746,10 +1105,31 @@ buildX64ContinuationSource(const BinaryImage &Image,
   const bool Controls = hasControlState(Options);
   if (Options.Profile != X64ContinuationProfile::KernelNoFaultV1 && !Controls)
     return invalid("continuation source requires its explicit kernel domain");
+  const bool Returns =
+      Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+      Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+  if (Returns != Options.PagingAddressBits.has_value() ||
+      (Options.PagingAddressBits && *Options.PagingAddressBits != 48 &&
+       *Options.PagingAddressBits != 57))
+    return invalid(
+        "V5/V6 require the active 48- or 57-bit paging address width");
   if (Options.NativeTimestampReads && !Controls)
     return invalid("native timestamp source requires an x64 host profile");
   if (Options.NativeWritePrefetch && !Controls)
     return invalid("native write prefetch source requires an x64 host profile");
+  if (Options.NativePageTableAccess && !Controls)
+    return invalid("native paging requires a controls profile");
+  if (Options.NativeDescriptorQueries && !Controls)
+    return invalid("native descriptor queries require an x64 control profile");
+  if ((Options.SegmentBaseMSRAddressBits ||
+       Options.NativeSpeculationControlMsrs) &&
+      !Controls)
+    return invalid("continuation MSRs require the x64 control-state profile");
+  if (Options.SegmentBaseMSRAddressBits &&
+      *Options.SegmentBaseMSRAddressBits != 48 &&
+      *Options.SegmentBaseMSRAddressBits != 57)
+    return invalid(
+        "segment-base MSRs require 48- or 57-bit canonical addresses");
   if (Controls != Options.MXCSRMask.has_value())
     return invalid(
         "continuation control profiles require an effective MXCSR mask; v1 has "

@@ -107,8 +107,12 @@ struct DwarfCIE {
   /// address is the precise interrupted PC rather than a post-call address.
   bool IsSignalFrame = false;
   /// Compatibility spelling: 'B' selects the B signing key. Its absence
-  /// selects A; neither presence nor absence proves that an RA is signed.
+  /// selects A outside the arm64e ABI; neither presence nor absence proves
+  /// that an RA is signed.
   bool HasPointerAuth = false;
+  /// The image's arm64e ABI selects IB even without an explicit 'B'. Keep
+  /// this separate from the encoded augmentation so rewriters preserve bytes.
+  bool UsesArm64eReturnAddressABI = false;
   /// 'N': non-HINT PAuth_LR recipe, meaningful only for SP+PC signing.
   bool UsesNonHintPAuthLR = false;
   bool HasMTETaggedFrame = false;

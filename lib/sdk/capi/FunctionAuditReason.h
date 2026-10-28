@@ -39,6 +39,8 @@ inline std::string functionAuditReason(const PipelineFunctionAudit &Audit) {
   Name("return or tail transfer with unproved return-address ownership",
        Audit.UnprovenReturns);
   Name("decode failure", Audit.DecodeFailures);
+  if (!Audit.Diagnostic.empty())
+    Reason += "; " + Audit.Diagnostic;
   return Reason;
 }
 

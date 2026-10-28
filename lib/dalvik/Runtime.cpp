@@ -986,7 +986,10 @@ struct Runtime::State::Engine {
           }
           for (const auto &type : reference->parameters) {
             const bool wide = type == "J";
-            if (!integral(type) && !referenceType(type))
+            // Exact catalogued leaves consume F as an IEEE-754 bit carrier.
+            // This does not admit floating arithmetic or unknown F callees.
+            if (!integral(type) && !referenceType(type) &&
+                !(type == "F" && libraryMethod(*reference, static_call)))
               fail(ExecutionStop::Unsupported, "floating method invocation");
             if (word >= r.size() ||
                 (wide && (word + 1 >= r.size() || r[word + 1] != r[word] + 1)))
@@ -1497,7 +1500,8 @@ Program::unsupportedClass(std::string_view name) const {
     }
     for (const auto &field : klass->fields)
       if ((!integral(field.reference.type) &&
-           !referenceType(field.reference.type)) ||
+           !referenceType(field.reference.type) &&
+           !(field.reference.type == "F" && androidFrameworkField(field))) ||
           (has(field.access, "volatile") && !androidFrameworkField(field)))
         return "DEX floating or volatile field is unsupported";
     for (const auto &method : klass->methods) {

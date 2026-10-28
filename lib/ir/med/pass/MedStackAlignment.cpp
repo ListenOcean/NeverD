@@ -17,8 +17,12 @@
 #include "neverd/ArchSupport.h"
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/med/MedConstantPropagation.h"
+#include "neverd/ir/med/MedIntegerReturnRange.h"
 #include "neverd/ir/med/MedProvenStackOffsets.h"
 #include "neverd/ir/med/X86/X86RegistrationFrame.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/ScopeExit.h"
@@ -32,6 +36,7 @@
 #include <optional>
 #include <set>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 namespace neverd {
@@ -122,15 +127,18 @@ public:
                    StackEntryKind Entry, bool FollowJoins = false,
                    llvm::ArrayRef<ProvenStackOffset> Seeds = {},
                    bool OnlySeededRoots = false,
-                   llvm::ArrayRef<ProvenStackOffsetRange> RangeSeeds = {})
+                   llvm::ArrayRef<ProvenStackOffsetRange> RangeSeeds = {},
+                   const MedCallReturnRanges *CallReturns = nullptr,
+                   const BinaryImage *RangeImage = nullptr)
       : Func(Func), TRI(getTargetRegInfo(Architecture)),
         Architecture(Architecture), Format(Format), Entry(Entry),
         FollowJoins(FollowJoins), OnlySeededRoots(OnlySeededRoots),
-        Definitions(definitionCapacity(Func)) {
+        Definitions(definitionCapacity(Func)), CallReturns(CallReturns),
+        RangeImage(RangeImage) {
     for (const MedBlock &Block : Func.Blocks) {
       for (const PhiNode &Phi : Block.Phis) {
         auto &Definition = Definitions[key(Phi.Output)];
-        if (!FollowJoins || Definition.Join)
+        if (!FollowJoins || Definition.Join || Definition.Op)
           Definition.Ambiguous = true;
         else
           Definition.Join = &Phi;
@@ -241,6 +249,20 @@ public:
   /// offset, leaves no bound.
   std::optional<int64_t> upperBound(const MedVar &Value) {
     Steps = 0;
+    const auto *SavedCallReturns = CallReturns;
+    const auto RestoreCalls =
+        llvm::scope_exit([&] { CallReturns = SavedCallReturns; });
+    if (CallReturns && !CallReturns->empty()) {
+      // A nonnegative call result can still move the complete offset across
+      // the native signed boundary. Admit new callee facts only when both
+      // endpoints fit; otherwise keep the existing local one-sided proof.
+      const auto Bounded = resolveRange(Value, 0);
+      if (Steps > kMaxProofSteps)
+        return std::nullopt;
+      if (Bounded)
+        return Bounded->Max;
+      CallReturns = nullptr;
+    }
     struct Edge {
       Key From;
       int64_t Delta;
@@ -342,8 +364,7 @@ public:
       if (Delta.Size != TRI.PointerSize)
         return std::nullopt;
       const auto Displacement = scalarRange(Delta, 1);
-      if (Steps > kMaxProofSteps ||
-          Displacement.getUnsignedMax().ugt(INT64_MAX))
+      if (Steps > kMaxProofSteps || Displacement.getUnsignedMax().isNegative())
         return std::nullopt;
       const int64_t Raise =
           Subtract ? -int64_t(Displacement.getUnsignedMin().getZExtValue())
@@ -384,6 +405,12 @@ public:
     return Nodes.at(key(Value)).Bound;
   }
 
+  llvm::ConstantRange scalar(const MedVar &Value) {
+    const auto Range = scalarRange(Value, 0);
+    return Steps > kMaxProofSteps ? llvm::ConstantRange(Value.Size * 8, true)
+                                  : Range;
+  }
+
 private:
   const std::optional<CountedStackRecurrence> &recurrence(const PhiNode &Phi) {
     const auto K = key(Phi.Output);
@@ -405,8 +432,14 @@ private:
     if (++Steps > kMaxProofSteps ||
         Depth > limits::ir::kMedStackAlignmentResolveDepthLimit)
       return Full;
-    if (Value.isConst())
+    if (Value.isConst()) {
+      if (isAddressProvenance(Value.Provenance) ||
+          (RangeImage &&
+           Value.Provenance == ConstantAddressProvenance::Unknown &&
+           RangeImage->isPotentiallyRelocatableAddress(Value.ConstVal)))
+        return Full;
       return llvm::ConstantRange(llvm::APInt(Bits, Value.ConstVal));
+    }
     const auto Found = Definitions.find(key(Value));
     if (Found == Definitions.end() || Found->second.Ambiguous ||
         !RangeActive.insert(key(Value)).second)
@@ -432,12 +465,39 @@ private:
         Op->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         !Op->IntrinsicOutputs.empty())
       return Full;
+    if (CallReturns && Op->Opcode == NdOp::CALL && Op->NumInputs &&
+        Op->Inputs[0].isConst() && !Op->DoesNotReturn && !Op->SourceCallHint &&
+        !Op->ScalarCallSignature && !Op->IntegerCallSignature &&
+        Value.Kind == MedVar::Reg && Value.RegOff == TRI.IntReturnReg &&
+        Value.Size == TRI.PointerSize && Value.TheArch == Architecture) {
+      const auto It = CallReturns->find(Op->Inputs[0].ConstVal);
+      if (It != CallReturns->end()) {
+        const auto &Range = It->second;
+        if (Range.Architecture == Architecture && Range.Size == Value.Size &&
+            Range.Min <= Range.Max &&
+            (Value.Size == sizeof(uint64_t) || Range.Max <= UINT32_MAX))
+          return llvm::ConstantRange::getNonEmpty(
+              llvm::APInt(Bits, Range.Min), llvm::APInt(Bits, Range.Max) + 1);
+      }
+    }
+    if (Op->Opcode == NdOp::SUBBYTES && Op->NumInputs == 2 &&
+        Op->Inputs[0].Size >= Value.Size && Op->Inputs[0].Size <= 8 &&
+        Op->Inputs[1].isConst() &&
+        !isAddressProvenance(Op->Inputs[1].Provenance) &&
+        Op->Inputs[1].ConstVal <= Op->Inputs[0].Size - Value.Size) {
+      const auto Input = scalarRange(Op->Inputs[0], Depth + 1);
+      const llvm::ConstantRange Shift(
+          llvm::APInt(Input.getBitWidth(), Op->Inputs[1].ConstVal * 8));
+      return Input.lshr(Shift).zextOrTrunc(Bits);
+    }
     if (Op->NumInputs == 1 && Op->Inputs[0].Size &&
         Op->Inputs[0].Size <= Value.Size) {
       if (Op->Opcode == NdOp::COPY && Op->Inputs[0].Size == Value.Size)
         return scalarRange(Op->Inputs[0], Depth + 1);
       if (Op->Opcode == NdOp::INT_ZEXT)
         return scalarRange(Op->Inputs[0], Depth + 1).zeroExtend(Bits);
+      if (Op->Opcode == NdOp::INT_SEXT)
+        return scalarRange(Op->Inputs[0], Depth + 1).signExtend(Bits);
     }
     if (Op->NumInputs == 2 && Op->Inputs[0].Size == Value.Size &&
         Op->Inputs[1].Size == Value.Size) {
@@ -539,7 +599,7 @@ private:
     if (!Base || Delta.Size != TRI.PointerSize)
       return std::nullopt;
     const auto Displacement = scalarRange(Delta, Depth + 1);
-    if (Steps > kMaxProofSteps || Displacement.getUnsignedMax().ugt(INT64_MAX))
+    if (Steps > kMaxProofSteps || Displacement.getUnsignedMax().isNegative())
       return std::nullopt;
     const int64_t Min = Displacement.getUnsignedMin().getZExtValue();
     const int64_t Max = Displacement.getUnsignedMax().getZExtValue();
@@ -954,9 +1014,137 @@ private:
   static constexpr size_t kMaxProofSteps =
       ::neverd::limits::ir::kMedStackAlignmentMaxProofSteps;
   size_t Steps = 0;
+  const MedCallReturnRanges *CallReturns;
+  const BinaryImage *RangeImage;
 };
 
 } // namespace
+
+std::optional<MedIntegerReturnRange>
+integerReturnRange(const MedFunc &Func, const LowFunc &Source,
+                   const BinaryImage &Image) {
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  if (!TRI.ReturnOperandIsValue ||
+      (TRI.PointerSize != 4 && TRI.PointerSize != 8) ||
+      Func.Entry != Source.Entry || !Source.hasCompleteLiftCoverage() ||
+      !Source.UnsafeIndirectBranchAddresses.empty() ||
+      !Source.CxxContinuationEntries.empty() || Func.SkippedSSA ||
+      Func.AnalystStackFrame || Func.SourceTypeHint ||
+      !Func.MultiReturn.empty() || Func.ExplicitX87ReturnValue ||
+      Func.ReturnsVectorRegister || Source.Blocks.empty() ||
+      Func.Blocks.empty())
+    return std::nullopt;
+  for (va_t Root : Source.ModuleAnalysisRoots)
+    if (Root != Source.Entry)
+      return std::nullopt;
+  if (Source.ExceptionMetadata &&
+      (Source.ExceptionMetadata->Personality != ExceptionPersonality::None ||
+       Source.ExceptionMetadata->ParseStatus != ExceptionParseStatus::Complete))
+    return std::nullopt;
+
+  size_t Remaining = limits::ir::kMedIntegerReturnRangeMaxOps;
+  const auto Charge = [&](size_t Count) {
+    if (Count > Remaining)
+      return false;
+    Remaining -= Count;
+    return true;
+  };
+  // Inspect the machine body too: source lowering can remove calls or change
+  // a return carrier. Neither transformation establishes a leaf result proof.
+  std::set<std::pair<va_t, int>> Returns;
+  for (const LowBlock &Block : Source.Blocks) {
+    if (!Charge(1) || !Charge(Block.Ops.size()) || Block.Ops.empty() ||
+        !Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+      return std::nullopt;
+    for (const LowOp &Op : Block.Ops) {
+      switch (Op.Opcode) {
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL:
+      case NdOp::INDIR_BR:
+      case NdOp::INTRINSIC:
+        return std::nullopt;
+      case NdOp::RETURN:
+        if (&Op != &Block.Ops.back() || !Block.Succs.empty() ||
+            Op.NumInputs != 1 || !Op.Inputs[0].isReg() ||
+            Op.Inputs[0].Offset != TRI.IntReturnReg ||
+            Op.Inputs[0].Size != TRI.PointerSize ||
+            !Returns.emplace(Op.Addr, Op.Seq).second)
+          return std::nullopt;
+        break;
+      default:
+        break;
+      }
+    }
+  }
+  if (Returns.empty())
+    return std::nullopt;
+
+  std::map<int, std::set<int>> Incoming;
+  std::set<int> Blocks;
+  bool HasEntry = false;
+  for (const MedBlock &Block : Func.Blocks) {
+    if (!Charge(1) || !Charge(Block.Ops.size()) || !Charge(Block.Phis.size()) ||
+        Block.Ops.empty() || !Block.ExceptionalPreds.empty() ||
+        !Block.ExceptionalSuccs.empty() || !Blocks.insert(Block.Id).second)
+      return std::nullopt;
+    if (Block.StartAddr == Func.Entry) {
+      if (HasEntry || !Block.Preds.empty())
+        return std::nullopt;
+      HasEntry = true;
+    }
+    for (int Succ : Block.Succs)
+      if (!Incoming[Succ].insert(Block.Id).second)
+        return std::nullopt;
+  }
+  if (!HasEntry)
+    return std::nullopt;
+  std::vector<MedVar> Values;
+  for (const MedBlock &Block : Func.Blocks) {
+    for (int Succ : Block.Succs)
+      if (!Blocks.count(Succ))
+        return std::nullopt;
+    const auto &Preds = Incoming[Block.Id];
+    if (Block.Preds.size() != Preds.size() ||
+        std::set<int>(Block.Preds.begin(), Block.Preds.end()) != Preds)
+      return std::nullopt;
+    for (const PhiNode &Phi : Block.Phis)
+      if (!Charge(Phi.Args.size()) ||
+          !hasCompleteOrdinaryPhiInputs(Block, Phi, Preds))
+        return std::nullopt;
+    const auto Last = Block.Ops.back().Opcode;
+    if ((Last == NdOp::RETURN && !Block.Succs.empty()) ||
+        (Last == NdOp::BRANCH && Block.Succs.size() != 1) ||
+        (Last == NdOp::COND_BR && Block.Succs.size() != 2) ||
+        (Last != NdOp::RETURN && Last != NdOp::BRANCH && Last != NdOp::COND_BR))
+      return std::nullopt;
+    for (const MedOp &Op : Block.Ops) {
+      if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+          Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INTRINSIC)
+        return std::nullopt;
+      if (Op.Opcode != NdOp::RETURN)
+        continue;
+      if (&Op != &Block.Ops.back() || Op.Dead || Op.NumInputs != 1 ||
+          Op.HasSourceErrorResult || Op.Inputs[0].Size != TRI.PointerSize ||
+          !Returns.erase({Op.Addr, Op.OriginSeq}))
+        return std::nullopt;
+      Values.push_back(Op.Inputs[0]);
+    }
+  }
+  if (!Returns.empty())
+    return std::nullopt;
+  StackOffsetProof Proof(Func, Image.Arch, Image.abiFormat(),
+                         StackEntryKind::Call, true, {}, false, {}, nullptr,
+                         &Image);
+  llvm::ConstantRange Range(TRI.PointerSize * 8, false);
+  for (const MedVar &Value : Values)
+    Range = Range.unionWith(Proof.scalar(Value));
+  if (Range.isEmptySet() || Range.isFullSet() ||
+      (Range.getUnsignedMin().isZero() && Range.getUnsignedMax().isAllOnes()))
+    return std::nullopt;
+  return MedIntegerReturnRange{Image.Arch, TRI.PointerSize,
+                               Range.getUnsignedMin().getZExtValue(),
+                               Range.getUnsignedMax().getZExtValue()};
+}
 
 std::vector<MedVar> entryStackRealignmentRoots(const MedFunc &Func,
                                                Arch Architecture,
@@ -1029,12 +1217,14 @@ entryStackOffsets(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
 std::vector<std::optional<EntryStackOffsetRange>>
 entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                        Arch Architecture, BinaryFormat Format,
-                       StackEntryKind Entry) {
+                       StackEntryKind Entry,
+                       const MedCallReturnRanges *CallReturns) {
   std::vector<std::optional<EntryStackOffsetRange>> Ranges(Values.size());
   const auto &TRI = getTargetRegInfo(Architecture);
   if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
     return Ranges;
-  StackOffsetProof Proof(Func, Architecture, Format, Entry, true);
+  StackOffsetProof Proof(Func, Architecture, Format, Entry, true, {}, false, {},
+                         CallReturns);
   for (size_t I = 0; I < Values.size(); ++I)
     Ranges[I] = Proof.range(Values[I]);
   return Ranges;
@@ -1043,12 +1233,14 @@ entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
 std::vector<std::optional<int64_t>>
 entryStackOffsetUpperBounds(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                             Arch Architecture, BinaryFormat Format,
-                            StackEntryKind Entry) {
+                            StackEntryKind Entry,
+                            const MedCallReturnRanges *CallReturns) {
   std::vector<std::optional<int64_t>> Bounds(Values.size());
   const auto &TRI = getTargetRegInfo(Architecture);
   if ((TRI.PointerSize != 4 && TRI.PointerSize != 8) || Func.Blocks.empty())
     return Bounds;
-  StackOffsetProof Proof(Func, Architecture, Format, Entry, true);
+  StackOffsetProof Proof(Func, Architecture, Format, Entry, true, {}, false, {},
+                         CallReturns);
   for (size_t I = 0; I < Values.size(); ++I)
     Bounds[I] = Proof.upperBound(Values[I]);
   return Bounds;

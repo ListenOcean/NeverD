@@ -1628,17 +1628,24 @@ public:
         Done[Address] = true;
         return true;
       }
-      bool Uses = false;
+      bool Unresolved = false;
       for (const Block &B : G.Blocks)
         for (const Step &S : B.Steps)
           if (S.Callee) {
             const auto Callee = Visit(*S.Callee, Depth + 1);
-            if (!Callee)
-              return std::nullopt;
-            Uses |= *Callee;
+            // Ownership needs one definite witness, unlike a net TOP proof
+            // that must understand every call. An unresolved sibling cannot
+            // erase an observed requirement or decide it absent.
+            if (Callee && *Callee) {
+              Done[Address] = true;
+              return true;
+            }
+            Unresolved |= !Callee;
           }
-      Done[Address] = Uses;
-      return Uses;
+      if (Unresolved)
+        return std::nullopt;
+      Done[Address] = false;
+      return false;
     };
     return Visit(Entry, 0);
   }
@@ -1935,6 +1942,26 @@ std::optional<int> CFGBuilder::x87CallEffectForTesting(const BinaryImage &Image,
              : std::nullopt;
 }
 
+bool CFGBuilder::hasLocalFpuStackUse() const {
+  for (const auto &[Address, Rec] : Insns) {
+    if (Rec.FpuReset || Rec.FpuTopIn != Rec.FpuTopOut)
+      return true;
+    for (const LowOp &Op : Rec.Ops) {
+      if (isStReg(Op.Output))
+        return true;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        if (isStReg(Op.Inputs[I]))
+          return true;
+      if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+          Op.Inputs[0].isConst() &&
+          (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam) ||
+           isX87ContextIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset))))
+        return true;
+    }
+  }
+  return false;
+}
+
 bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
                                     va_t Entry, const std::string &Name) {
   // The callee's tail calls are judged as its calls are, at this build's
@@ -1957,26 +1984,7 @@ bool CFGBuilder::buildNoReturnProof(const BinaryImage &Img, Decoder &Dec,
   // whether a GPR-only wrapper returns must not recursively recover every
   // callee's floating return value. A local stack operation or FXAM can expose
   // that state to the rest of the CFG; retain its ordinary build unchanged.
-  bool NeedsStack = false;
-  for (const auto &[Address, Rec] : Insns) {
-    if (Rec.FpuReset || Rec.FpuTopIn != Rec.FpuTopOut) {
-      NeedsStack = true;
-      break;
-    }
-    for (const LowOp &Op : Rec.Ops) {
-      NeedsStack |= isStReg(Op.Output);
-      for (unsigned I = 0; I < Op.NumInputs; ++I)
-        NeedsStack |= isStReg(Op.Inputs[I]);
-      NeedsStack |=
-          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
-          Op.Inputs[0].isConst() &&
-          (Op.Inputs[0].Offset == static_cast<uint64_t>(Intrinsic::X87Fxam) ||
-           isX87ContextIntrinsic(static_cast<Intrinsic>(Op.Inputs[0].Offset)));
-    }
-    if (NeedsStack)
-      break;
-  }
-  if (NeedsStack)
+  if (hasLocalFpuStackUse())
     Callee = build(Img, Dec, Entry, Name);
   return lowFunctionNeverReturns(Callee, Img.Arch, TailCalleeNeverReturns);
 }
@@ -1992,6 +2000,21 @@ LowFunc CFGBuilder::buildIntegerFrameProof(const BinaryImage &Img, Decoder &Dec,
   // caller's registration index again, with a fresh budget at each level.
   llvm::SaveAndRestore<bool> RawStack(SkipX87StackFixup, true);
   return build(Img, Dec, Entry, Name);
+}
+
+LowFunc CFGBuilder::buildCallSignatureProof(const BinaryImage &Img,
+                                            Decoder &Dec, va_t Entry,
+                                            const std::string &Name) {
+  // Win64 carries scalar FP arguments/results in XMM registers. An owned
+  // x87 context transported only by calls changes none of those ABI values,
+  // so a signature read need not prove its entire descendant call graph.
+  // A local x87/MMX observer can expose that state through ordinary values;
+  // keep its full normalization, and retain other ABIs' typed ST0 returns.
+  if (Img.abiFormat() != BinaryFormat::COFF || !ownsX87Context(Img))
+    return build(Img, Dec, Entry, Name);
+  LowFunc Callee = buildIntegerFrameProof(Img, Dec, Entry, Name);
+  return hasLocalFpuStackUse() ? build(Img, Dec, Entry, Name)
+                               : std::move(Callee);
 }
 
 void CFGBuilder::recordSkippedFpuFixup(const LowFunc &Func) {
@@ -2137,8 +2160,10 @@ void CFGBuilder::fixupFpuStack(
     // instruction. Reuse the bounded raw call graph's ownership question,
     // never manufacture a scalar FP return from a partial stack projection.
     if (!HasContext)
-      for (const auto &B : Func.Blocks)
-        for (size_t I = 0; I < B.Ops.size(); ++I) {
+      for (const auto &B : Func.Blocks) {
+        if (HasContext)
+          break;
+        for (size_t I = 0; I < B.Ops.size() && !HasContext; ++I) {
           const auto &Op = B.Ops[I];
           if ((Op.Opcode != NdOp::CALL && Op.Opcode != NdOp::INDIR_CALL) ||
               !Op.NumInputs)
@@ -2152,6 +2177,7 @@ void CFGBuilder::fixupFpuStack(
             X87CallEffects = std::make_shared<X87CallEffectIndex>(*this);
           HasContext |= X87CallEffects->usesContext(*Target).value_or(false);
         }
+      }
     if (HasContext) {
       if (Prepared)
         return;

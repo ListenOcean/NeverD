@@ -18,7 +18,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
-#include "neverd/backend/llvm/X86/X86AtomicExchange.h"
+#include "neverd/backend/llvm/X86/X86AtomicRmw.h"
 #include "neverd/backend/llvm/X86/X86RegistrationFrame.h"
 #include "neverd/ir/med/MedIntrinsicOutputs.h"
 #include "neverd/ir/med/MedStackAlignment.h"
@@ -126,7 +126,9 @@ llvm::Value *MedLLVMEmitter::resolveAtomicMemoryPtr(
 
 void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
                             int BlockId, int OpIdx) {
-  if (Op.Dead || SuppressedTableAddressOps.count({BlockId, OpIdx}))
+  if (Op.Dead || SuppressedTableAddressOps.count({BlockId, OpIdx}) ||
+      AArch64ReturnProtectionOps.contains(&Op) ||
+      AArch64CallAuthentications.contains(&Op))
     return;
 
   const bool IsSyntheticX87StatusRead =
@@ -1289,10 +1291,8 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Val = Builder.CreateIntCast(Val, ValTy, false, "atomic_rmw_val");
     llvm::Value *Ptr = resolveAtomicMemoryPtr(
         Op.Inputs[0], Op.Output.Size, ValTy, Builder, Op.MemoryAddressSpace);
-    if (const auto Plan = x86AtomicRMWPlan(
-            TargetArch, Op.Output.Size, Op.MemoryAddressSpace,
-            Op.Opcode == NdOp::ATOMIC_XCHG ? X86AtomicRMWKind::Exchange
-                                           : X86AtomicRMWKind::FetchAdd)) {
+    if (const auto Plan = x86AtomicRmwPlan(
+            TargetArch, Op.Opcode, Op.Output.Size, Op.MemoryAddressSpace)) {
       // Generic atomicrmw with natural alignment would assert a fact the
       // decoded address never supplied. Its unaligned libcall expansion
       // also loses the original hardware transaction and fault behavior.

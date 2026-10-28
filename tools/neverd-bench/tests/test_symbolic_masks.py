@@ -13,6 +13,13 @@ class WordOracleTests(unittest.TestCase):
     def equivalent(self, before, after, width=32):
         bench.check_semantics([before], [{"output": after}], width)
 
+    def test_narrow_product_controls_keep_changed_factor_parity(self):
+        for width in (8, 64, 257):
+            rows = bench.narrow_product_cross_terms_corpus(width, 36)
+            for index in range(0, len(rows), 2):
+                with self.assertRaises(AssertionError):
+                    self.equivalent(rows[index], rows[index + 1], width)
+
     def test_residue_powers_keep_independent_parity_and_near_misses(self):
         for width in (8, 16, 32, 64):
             rows = bench.residue_power_corpus(width, 81)

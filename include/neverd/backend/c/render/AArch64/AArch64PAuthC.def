@@ -45,8 +45,25 @@ NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCGenericSign,
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCAuthenticate,
                         "(uint64_t){0}((void *)(uintptr_t)({1}), {2}, "
                         "(uintptr_t)({3}))")
+NEVERD_A64_PAUTH_C_TEXT(
+    kAArch64PAuthCAuthenticatedCallee,
+    "(__builtin_ptrauth_auth_and_resign(({0})(uintptr_t)({1}), "
+    "{2}, (uintptr_t)({3}), 0, 0))")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTargetDeclaration, "uint64_t {0} = {1}; ")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTarget, "__target")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCRawCall, "__neverd_aarch64_raw_call({0})")
+NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCRawCallHeader,
+                        "#ifndef __neverd_aarch64_raw_call\n"
+                        "#if defined(__clang__)\n"
+                        "#if __has_feature(ptrauth_calls)\n"
+                        "#define __neverd_aarch64_raw_call(fn) "
+                        "__builtin_ptrauth_sign_unauthenticated((fn), 0, 0)\n"
+                        "#endif\n"
+                        "#endif\n"
+                        "#ifndef __neverd_aarch64_raw_call\n"
+                        "#define __neverd_aarch64_raw_call(fn) (fn)\n"
+                        "#endif\n"
+                        "#endif\n\n")
 NEVERD_A64_PAUTH_C_TEXT(kAArch64PAuthCTargetUse,
                         "__asm__ volatile(\"{0}\" : : \"r\"({1})); ")
 NEVERD_A64_PAUTH_C_TEXT(kArm64eAuthenticatedStorageComment,

@@ -56,6 +56,10 @@ QString armListingNumber(quint64 value) {
   return QStringLiteral("0x") + QString::number(value, 16);
 }
 
+/// A number as SBF and EVM listings write a structure offset's rest: in
+/// decimal.
+QString bytecodeListingNumber(quint64 value) { return QString::number(value); }
+
 /// An offset as a member list writes it: +0x220, -0x10.
 QString offsetText(qint64 offset) {
   return (offset < 0 ? QStringLiteral("-0x") : QStringLiteral("+0x")) +
@@ -461,8 +465,11 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
     answered_ = true;
     accesses_ = payload.value(QStringLiteral("accesses")).toArray();
     target_ = payload.value(QStringLiteral("target")).toObject();
-    armSyntax_ = payload.value(QStringLiteral("syntax")).toString() ==
-                 QLatin1String("arm");
+    const QString syntax = payload.value(QStringLiteral("syntax")).toString();
+    syntax_ = syntax == QLatin1String("arm")   ? Syntax::Arm
+              : syntax == QLatin1String("sbf") ? Syntax::Sbf
+              : syntax == QLatin1String("evm") ? Syntax::Evm
+                                               : Syntax::X86;
     if (payload.contains(QStringLiteral("operand")))
       operand_ = payload.value(QStringLiteral("operand")).toInt();
     static_cast<CandidateDelegate *>(list_->itemDelegate())
@@ -491,7 +498,9 @@ void TypePickerDialog::listed(const QJsonObject &payload, bool first) {
       subject_->setText(
           tr("The number %1 as an offset into a structure or union.")
               .arg((number < 0 ? QStringLiteral("-") : QString()) +
-                   (armSyntax_ ? armListingNumber : listingNumber)(
+                   (syntax_ == Syntax::Arm   ? armListingNumber
+                    : syntax_ == Syntax::X86 ? listingNumber
+                                             : bytecodeListingNumber)(
                        quint64(number < 0 ? -number : number))));
     else
       subject_->setText(
@@ -648,24 +657,38 @@ void TypePickerDialog::preview() {
                       int(fit.value(QStringLiteral("memberSize"))
                               .toInteger()))));
       // As the listing will write the operand: `[rcx+(_T.List+8)]` in x86,
-      // `[x0, #_T.List+0x8]` in the ARM family.
+      // `[x0, #_T.List+0x8]` in the ARM family, `[r1 + _T.List+8]` in SBF.
       if (rest)
-        shown =
-            (armSyntax_ ? QStringLiteral("%1%2%3") : QStringLiteral("(%1%2%3)"))
-                .arg(shown,
-                     rest < 0 ? QStringLiteral("-") : QStringLiteral("+"),
-                     (armSyntax_ ? armListingNumber : listingNumber)(
-                         quint64(rest < 0 ? -rest : rest)));
+        shown = (syntax_ == Syntax::X86 ? QStringLiteral("(%1%2%3)")
+                                        : QStringLiteral("%1%2%3"))
+                    .arg(shown,
+                         rest < 0 ? QStringLiteral("-") : QStringLiteral("+"),
+                         (syntax_ == Syntax::Arm   ? armListingNumber
+                          : syntax_ == Syntax::X86 ? listingNumber
+                                                   : bytecodeListingNumber)(
+                             quint64(rest < 0 ? -rest : rest)));
       const QString base = target_.value(QStringLiteral("base")).toString();
       const QString reg = base.isEmpty() ? QStringLiteral("reg") : base;
-      if (armSyntax_)
+      switch (syntax_) {
+      case Syntax::Arm:
         expression_->setText(target_.isEmpty()
                                  ? QLatin1Char('#') + shown
                                  : QStringLiteral("[%1, #%2]").arg(reg, shown));
-      else
+        break;
+      case Syntax::Sbf:
+        expression_->setText(target_.isEmpty()
+                                 ? shown
+                                 : QStringLiteral("[%1 + %2]").arg(reg, shown));
+        break;
+      case Syntax::Evm:
+        expression_->setText(shown);
+        break;
+      case Syntax::X86:
         expression_->setText(target_.isEmpty()
                                  ? shown
                                  : QStringLiteral("[%1+%2]").arg(reg, shown));
+        break;
+      }
     }
   }
   if (candidate.contains(QStringLiteral("shift"))) {

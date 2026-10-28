@@ -38,6 +38,33 @@ BytecodeDecoderV1 = ctypes.CFUNCTYPE(
 )
 
 
+class NeverDMetadataFieldV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("offset", ctypes.c_ulonglong),
+        ("size", ctypes.c_ulonglong),
+        ("target", VirtualAddress),
+        ("name", ctypes.c_char_p),
+        ("role", ctypes.c_char_p),
+    ]
+
+
+class NeverDMetadataItemV1(ctypes.Structure):
+    _fields_ = [
+        ("struct_size", ctypes.c_size_t),
+        ("address", VirtualAddress),
+        ("size", ctypes.c_ulonglong),
+        ("type", ctypes.c_char_p),
+        ("fields", ctypes.POINTER(NeverDMetadataFieldV1)),
+        ("field_count", ctypes.c_size_t),
+    ]
+
+
+MetadataVisitorV1 = ctypes.CFUNCTYPE(
+    ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(NeverDMetadataItemV1),
+)
+
+
 class OutputLanguage(IntEnum):
     C = 0
     SOLIDITY = 1
@@ -828,6 +855,17 @@ class NeverDBytePatchSnapshotV1(ctypes.Structure):
     ]
 
 
+class NeverDBytePatchRangeV1(ctypes.Structure):
+    _fields_ = [("address", VirtualAddress), ("size", ctypes.c_size_t)]
+
+
+class NeverDBytePatchRangeSnapshotV1(ctypes.Structure):
+    _fields_ = [
+        ("range_count", ctypes.c_size_t),
+        ("ranges", ctypes.POINTER(NeverDBytePatchRangeV1)),
+    ]
+
+
 class NeverDAssembleOptionsV1(ctypes.Structure):
     _fields_ = [
         ("struct_size", ctypes.c_size_t), ("pc", ctypes.c_uint64),
@@ -973,6 +1011,7 @@ _C_TYPES: dict[str, object] = {
     "const void *": ctypes.c_void_p,
     "void *": ctypes.c_void_p,
     "neverd_load_progress_fn": LoadProgressCallback,
+    "neverd_metadata_visitor_fn": MetadataVisitorV1,
     "ND_BytecodeDecoderV1": BytecodeDecoderV1,
     "const neverd_simplify_options *": ctypes.POINTER(NeverDSimplifyOptions),
     "neverd_simplify_result *": ctypes.POINTER(NeverDSimplifyResult),
@@ -1000,6 +1039,7 @@ _C_TYPES: dict[str, object] = {
     "neverd_sanitize_result_v1 *": ctypes.POINTER(NeverDSanitizeResultV1),
     "const neverd_byte_patch_options_v1 *": ctypes.POINTER(NeverDBytePatchOptionsV1),
     "const neverd_byte_patch_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchSnapshotV1),
+    "const neverd_byte_patch_range_snapshot_v1 *": ctypes.POINTER(NeverDBytePatchRangeSnapshotV1),
     "const neverd_assemble_options_v1 *": ctypes.POINTER(NeverDAssembleOptionsV1),
     "const neverd_source_patch_options_v1 *": ctypes.POINTER(
         NeverDSourcePatchOptionsV1
@@ -1197,6 +1237,12 @@ _declare(
     "neverd_session_input_sha256",
     "const char *",
     ["neverd_session_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_sha256_hex",
+    "const char *",
+    ["const unsigned char *", "size_t"],
     ownership=Ownership.OWNED_STRING,
 )
 _declare(
@@ -1431,6 +1477,24 @@ _declare(
     "const char *",
     ["neverd_session_t", "int"],
     ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_function_presentation_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_metadata_items_json",
+    "const char *",
+    ["neverd_session_t", "neverd_va_t", "int"],
+    ownership=Ownership.OWNED_STRING,
+)
+_declare(
+    "neverd_visit_metadata_items",
+    "int",
+    ["neverd_session_t", "neverd_va_t", "int", "neverd_metadata_visitor_fn",
+     "void *", "neverd_va_t *"],
 )
 _declare(
     "neverd_disasm_json",
@@ -1803,6 +1867,10 @@ _declare("neverd_byte_patches_snapshot_v1", "const neverd_byte_patch_snapshot_v1
          ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
 _declare("neverd_byte_patch_snapshot_free_v1", "void",
          ["const neverd_byte_patch_snapshot_v1 *"])
+_declare("neverd_byte_patch_ranges_snapshot_v1", "const neverd_byte_patch_range_snapshot_v1 *",
+         ["neverd_session_t"], ownership=Ownership.OWNED_OBJECT)
+_declare("neverd_byte_patch_range_snapshot_free_v1", "void",
+         ["const neverd_byte_patch_range_snapshot_v1 *"])
 _declare("neverd_byte_patch_ranges_json", "const char *", ["neverd_session_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_context_json", "const char *", ["neverd_session_t", "neverd_va_t"], ownership=Ownership.OWNED_STRING)
 _declare("neverd_byte_patch_source_target_json", "const char *", ["neverd_session_t", "neverd_va_t", "const char *", "size_t", "int64_t"], ownership=Ownership.OWNED_STRING)

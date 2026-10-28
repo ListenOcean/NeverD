@@ -32,6 +32,291 @@ static Handle attach(void) {
 static int same_ref(Handle e, Ref first, Ref second) {
   return C(e, int, 24, first, second);
 }
+static U64 parcel_result_v(Handle e, unsigned slot, Ref object, Ref method,
+                           ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  U64 result = C(e, U64, slot, object, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+static U64 parcel_result(Handle e, unsigned slot, unsigned form, Ref object,
+                         Ref method) {
+  if (form == 1)
+    return parcel_result_v(e, slot + 1, object, method);
+  return form ? C(e, U64, slot + 2, object, method, (void *)0)
+              : C(e, U64, slot, object, method);
+}
+static void parcel_void_v(Handle e, Ref object, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  C(e, void, 62, object, method, args);
+  __builtin_va_end(args);
+}
+static void parcel_write(Handle e, unsigned form, Ref object, Ref method,
+                         int narrow, U64 value) {
+  if (form == 2) {
+    const U64 args[] = {value};
+    C(e, void, 63, object, method, args);
+  } else if (narrow) {
+    if (form)
+      parcel_void_v(e, object, method, (int)value);
+    else
+      C(e, void, 61, object, method, (int)value);
+  } else if (form) {
+    parcel_void_v(e, object, method, value);
+  } else {
+    C(e, void, 61, object, method, value);
+  }
+}
+static void parcel_import(Handle e, unsigned form, Ref object, Ref method,
+                          Ref array, int length) {
+  const U64 args[] = {array, 0, (unsigned)length};
+  if (form == 2)
+    C(e, void, 63, object, method, args);
+  else if (form)
+    parcel_void_v(e, object, method, array, 0, length);
+  else
+    C(e, void, 61, object, method, array, 0, length);
+}
+int jni_parcel_data(unsigned form, unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/Parcel");
+  Ref obtain = C(e, Ref, 113, type, "obtain", "()Landroid/os/Parcel;");
+  CHECK(type && obtain);
+  const char *names[] = {"recycle",     "dataSize",           "dataPosition",
+                         "dataAvail",   "setDataPosition",    "writeInt",
+                         "readInt",     "writeLong",          "readLong",
+                         "writeString", "readString",         "marshall",
+                         "unmarshall",  "writeInterfaceToken"};
+  const char *signatures[] = {"()V",
+                              "()I",
+                              "()I",
+                              "()I",
+                              "(I)V",
+                              "(I)V",
+                              "()I",
+                              "(J)V",
+                              "()J",
+                              "(Ljava/lang/String;)V",
+                              "()Ljava/lang/String;",
+                              "()[B",
+                              "([BII)V",
+                              "(Ljava/lang/String;)V"};
+  Ref m[14];
+  for (unsigned i = 0; i != 14; ++i) {
+    m[i] = C(e, Ref, 33, type, names[i], signatures[i]);
+    CHECK(m[i]);
+  }
+  Ref data = parcel_result(e, 114, form, type, obtain);
+  Ref reply = parcel_result(e, 114, form, type, obtain);
+  CHECK(data && reply && !same_ref(e, data, reply));
+  if (mode == 1 || mode == 8) {
+    Ref token = C(e, Ref, 167, "android.os.IServiceManager");
+    parcel_write(e, form, data, m[13], 0, token);
+    parcel_write(e, form, data, m[9], 0, C(e, Ref, 167, "activity"));
+    if (mode == 8) {
+      Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+      return (int)C(e, Ref, 33, proxy, "transact",
+                    "(ILandroid/os/Parcel;Landroid/os/Parcel;I)Z");
+    }
+    parcel_write(e, form, data, m[4], 1, 0);
+    CHECK(parcel_result(e, 49, form, data, m[6]) == 0x00400000);
+    Ref read = parcel_result(e, 34, form, data, m[10]);
+    CHECK(read && C(e, int, 164, read) == 26);
+    U16 text[26];
+    C(e, void, 220, read, 0, 26, text);
+    const char *expected = "android.os.IServiceManager";
+    for (unsigned i = 0; i != 26; ++i)
+      CHECK(text[i] == (U16)expected[i]);
+    read = parcel_result(e, 34, form, data, m[10]);
+    CHECK(read && C(e, int, 164, read) == 8);
+    CHECK(!parcel_result(e, 49, form, data, m[3]));
+    CHECK(!C(e, int, 228));
+    return C(vm, int, 5);
+  }
+  if (mode == 7) {
+    parcel_write(e, form, data, m[13], 0, 0);
+    return 1;
+  }
+  if (mode == 2) {
+    Ref raw = C(e, Ref, 27, type);
+    return (int)parcel_result(e, 49, form, raw, m[1]);
+  }
+  if (mode == 3) {
+    C(e, void, 61, data, m[0]);
+    return (int)parcel_result(e, 49, form, data, m[1]);
+  }
+  if (mode == 4) {
+    parcel_write(e, form, data, m[4], 1, 0x7fffffff);
+    CHECK(parcel_result(e, 49, form, data, m[1]) == 0x7fffffff);
+    return (int)parcel_result(e, 34, form, data, m[11]);
+  }
+  if (mode == 5) {
+    parcel_write(e, form, data, m[4], 1, 0xffffffff);
+    return 1;
+  }
+  if (mode == 6) {
+    parcel_import(e, form, data, m[12], 0, 4);
+    return 1;
+  }
+  const U16 units[] = {'A', 0, 0xd83d, 0xde00, 0xd800};
+  Ref string = C(e, Ref, 163, units, 5);
+  Ref empty = C(e, Ref, 167, "");
+  CHECK(string && empty);
+  parcel_write(e, form, data, m[5], 1, 0xfffffff9);
+  parcel_write(e, form, data, m[7], 0, 0x8877665544332211ULL);
+  parcel_write(e, form, data, m[9], 0, string);
+  parcel_write(e, form, data, m[9], 0, 0);
+  parcel_write(e, form, data, m[9], 0, empty);
+  CHECK(parcel_result(e, 49, form, data, m[1]) == 40);
+  CHECK(parcel_result(e, 49, form, data, m[2]) == 40);
+  CHECK(parcel_result(e, 49, form, data, m[3]) == 0);
+  Ref array = parcel_result(e, 34, form, data, m[11]);
+  CHECK(array && C(e, int, 171, array) == 40);
+  U8 bytes[40];
+  C(e, void, 200, array, 0, 40, bytes);
+  const U8 expected[] = {0xf9, 0xff, 0xff, 0xff, 0x11, 0x22, 0x33, 0x44,
+                         0x55, 0x66, 0x77, 0x88, 5,    0,    0,    0,
+                         'A',  0,    0,    0,    0x3d, 0xd8, 0,    0xde,
+                         0,    0xd8, 0,    0,    0xff, 0xff, 0xff, 0xff,
+                         0,    0,    0,    0,    0,    0,    0,    0};
+  for (unsigned i = 0; i != 40; ++i)
+    CHECK(bytes[i] == expected[i]);
+  parcel_import(e, form, reply, m[12], array, 40);
+  bytes[0] = 0;
+  C(e, void, 208, array, 0, 1, bytes);
+  Ref parcels[] = {data, reply};
+  for (unsigned i = 0; i != 2; ++i) {
+    Ref p = parcels[i];
+    parcel_write(e, form, p, m[4], 1, 0);
+    CHECK((unsigned)parcel_result(e, 49, form, p, m[6]) == 0xfffffff9);
+    CHECK(parcel_result(e, 52, form, p, m[8]) == 0x8877665544332211ULL);
+    Ref text = parcel_result(e, 34, form, p, m[10]);
+    CHECK(text && C(e, int, 164, text) == 5);
+    U16 output[5];
+    C(e, void, 220, text, 0, 5, output);
+    for (unsigned j = 0; j != 5; ++j)
+      CHECK(output[j] == units[j]);
+    CHECK(!parcel_result(e, 34, form, p, m[10]));
+    text = parcel_result(e, 34, form, p, m[10]);
+    CHECK(text && C(e, int, 164, text) == 0);
+    CHECK(!parcel_result(e, 49, form, p, m[6]));
+    CHECK(parcel_result(e, 49, form, p, m[2]) == 40);
+  }
+  Ref held[7] = {data, reply};
+  for (unsigned i = 2; i != 7; ++i)
+    held[i] = parcel_result(e, 114, form, type, obtain);
+  for (unsigned i = 0; i != 7; ++i)
+    C(e, void, 61, held[i], m[0]);
+  for (unsigned i = 0; i != 7; ++i) {
+    Ref p = parcel_result(e, 114, form, type, obtain);
+    CHECK(same_ref(e, p, held[i]) == (i < 6));
+    CHECK(!parcel_result(e, 49, form, p, m[1]));
+    CHECK(!parcel_result(e, 49, form, p, m[2]));
+  }
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
+static void binder_set_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  C(e, void, 142, type, method, args);
+  __builtin_va_end(args);
+}
+static unsigned binder_get(Handle e, unsigned form) {
+  Ref type = C(e, Ref, 6, "android/os/Binder");
+  Ref get = C(e, Ref, 113, type, "getThreadStrictModePolicy", "()I");
+  return (unsigned)parcel_result(e, 129, form, type, get);
+}
+static void binder_set(Handle e, unsigned form, unsigned policy) {
+  Ref type = C(e, Ref, 6, "android/os/Binder");
+  Ref set = C(e, Ref, 113, type, "setThreadStrictModePolicy", "(I)V");
+  const U64 args[] = {policy};
+  if (form == 2)
+    C(e, void, 143, type, set, args);
+  else if (form)
+    binder_set_v(e, type, set, (int)policy);
+  else
+    C(e, void, 141, type, set, (int)policy);
+}
+static int binder_token(Handle e, unsigned form, Ref parcel, unsigned policy) {
+  Ref type = C(e, Ref, 6, "android/os/Parcel");
+  Ref pos = C(e, Ref, 33, type, "dataPosition", "()I");
+  Ref write =
+      C(e, Ref, 33, type, "writeInterfaceToken", "(Ljava/lang/String;)V");
+  Ref marshal = C(e, Ref, 33, type, "marshall", "()[B");
+  unsigned start = (unsigned)parcel_result(e, 49, form, parcel, pos);
+  parcel_write(e, form, parcel, write, 0, C(e, Ref, 167, "T"));
+  Ref data = parcel_result(e, 34, form, parcel, marshal);
+  CHECK(data && C(e, int, 171, data) == (int)start + 12);
+  U8 bytes[12];
+  C(e, void, 200, data, start, 12, bytes);
+  const U8 expected[] = {(U8)policy,
+                         (U8)(policy >> 8),
+                         (U8)((policy >> 16) | 0x40),
+                         (U8)(policy >> 24),
+                         1,
+                         0,
+                         0,
+                         0,
+                         'T',
+                         0,
+                         0,
+                         0};
+  for (unsigned i = 0; i != 12; ++i)
+    CHECK(bytes[i] == expected[i]);
+  CHECK(binder_get(e, form) == policy);
+  return 0;
+}
+static Ref binder_shared_parcel;
+static int binder_child(unsigned form) {
+  Handle e = attach();
+  CHECK(e && binder_get(e, form) == 0);
+  binder_set(e, form, 0x02000008);
+  CHECK(!binder_token(e, form, binder_shared_parcel, 0x02000008));
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e && binder_get(e, form) == 0x02000008);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
+static void *binder_worker(void *form) {
+  return (void *)(U64)binder_child((unsigned)(U64)form);
+}
+int jni_binder_strict_mode(unsigned form, unsigned threaded) {
+  Handle e = attach();
+  CHECK(e && binder_get(e, form) == 0);
+  Ref type = C(e, Ref, 6, "android/os/Parcel");
+  Ref obtain = C(e, Ref, 113, type, "obtain", "()Landroid/os/Parcel;");
+  binder_shared_parcel =
+      C(e, Ref, 21, parcel_result(e, 114, form, type, obtain));
+  CHECK(binder_shared_parcel);
+  const unsigned policies[] = {0x80000001, 0xffffffff, 0x00400000, 0};
+  for (unsigned i = 0; i != 4; ++i) {
+    binder_set(e, form, policies[i]);
+    CHECK(binder_get(e, form) == policies[i]);
+    CHECK(!binder_token(e, form, binder_shared_parcel, policies[i]));
+  }
+  binder_set(e, form, 0x81234567);
+  CHECK(!C(vm, int, 5));
+  e = attach();
+  CHECK(e && binder_get(e, form) == 0x81234567);
+  if (threaded) {
+    for (unsigned i = 0; i != 2; ++i) {
+      U64 thread = 0;
+      void *result = (void *)1;
+      CHECK(!pthread_create(&thread, 0, binder_worker, (void *)(U64)form));
+      CHECK(!pthread_join(thread, &result) && !result);
+      CHECK(binder_get(e, form) == 0x81234567);
+    }
+  }
+  CHECK(!binder_token(e, form, binder_shared_parcel, 0x81234567));
+  C(e, void, 22, binder_shared_parcel);
+  CHECK(!C(e, int, 228));
+  return C(vm, int, 5);
+}
 static Ref stat_logger_new_v(Handle e, Ref type, Ref constructor, ...) {
   __builtin_va_list args;
   __builtin_va_start(args, constructor);
@@ -1921,6 +2206,234 @@ int jni_service_manager_rpc(void) {
   CHECK(same_ref(e, saved, C(e, Ref, 114, type, get, alpha)));
   CHECK(C(e, int, 150, type, calls) == 4);
   C(e, void, 22, saved);
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
+extern int __android_log_bwrite(int, const void *, U64);
+static int event_log_v(Handle e, Ref type, Ref method, ...) {
+  __builtin_va_list args;
+  __builtin_va_start(args, method);
+  int result = C(e, int, 130, type, method, args);
+  __builtin_va_end(args);
+  return result;
+}
+static int event_log_call(Handle e, Ref type, Ref method, unsigned form,
+                          char kind, U64 value) {
+  const int tag = 0x12345678;
+  if (form == 2) {
+    const U64 args[] = {(unsigned)tag, value};
+    return C(e, int, 131, type, method, args);
+  }
+  if (kind == 'F') {
+    union {
+      unsigned bits;
+      float number;
+    } number = {(unsigned)value};
+    return form ? event_log_v(e, type, method, tag, (double)number.number)
+                : C(e, int, 129, type, method, tag, (double)number.number);
+  }
+  if (kind == 'I')
+    return form ? event_log_v(e, type, method, tag, (int)value)
+                : C(e, int, 129, type, method, tag, (int)value);
+  return form ? event_log_v(e, type, method, tag, value)
+              : C(e, int, 129, type, method, tag, value);
+}
+int jni_event_log(unsigned form, unsigned mode) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  const char *signatures[] = {"(II)I", "(IJ)I", "(IF)I",
+                              "(ILjava/lang/String;)I",
+                              "(I[Ljava/lang/Object;)I"};
+  Ref methods[5];
+  for (unsigned i = 0; i != 5; ++i) {
+    methods[i] = C(e, Ref, 113, type, "writeEvent", signatures[i]);
+    CHECK(methods[i]);
+  }
+  Ref object = C(e, Ref, 6, "java/lang/Object");
+  Ref integer_class = C(e, Ref, 6, "java/lang/Integer");
+  Ref long_class = C(e, Ref, 6, "java/lang/Long");
+  Ref float_class = C(e, Ref, 6, "java/lang/Float");
+  CHECK(object && integer_class && long_class && float_class);
+  Ref ctor = C(e, Ref, 33, integer_class, "<init>", "(I)V");
+  Ref integer = C(e, Ref, 28, integer_class, ctor, -7);
+  ctor = C(e, Ref, 33, long_class, "<init>", "(J)V");
+  Ref wide = stat_logger_new_v(e, long_class, ctor, (U64)0x8877665544332211);
+  ctor = C(e, Ref, 33, float_class, "<init>", "(F)V");
+  const U64 float_args[] = {0xabadbeef7fc12345};
+  union {
+    unsigned bits;
+    float number;
+  } nan = {0x7fc12345};
+  Ref floating =
+      form == 0   ? C(e, Ref, 28, float_class, ctor, (double)nan.number)
+      : form == 1 ? stat_logger_new_v(e, float_class, ctor, (double)nan.number)
+                  : C(e, Ref, 30, float_class, ctor, float_args);
+  CHECK(integer && wide && floating);
+  if (mode == 5) {
+    __asm__ volatile("msr fpcr, %0" : : "r"((U64)0x00400000));
+    CHECK(event_log_call(e, type, methods[2], form, 'F', 0x3f800000) == -11);
+    return C(vm, int, 5);
+  }
+  if (mode == 4) {
+    Ref field = C(e, Ref, 94, float_class, "value", "F");
+    CHECK(field);
+    (void)C(e, float, 102, floating, field);
+    return __LINE__; // FP JNI field returns remain explicitly unsupported.
+  }
+  if (mode == 0) {
+    CHECK(event_log_call(e, type, methods[0], form, 'I', (unsigned)-7) == -11);
+    CHECK(event_log_call(e, type, methods[1], form, 'J', 0x8877665544332211) ==
+          -11);
+    CHECK(event_log_call(e, type, methods[2], form, 'F', 0x80000000) == -11);
+    const U16 units[] = {'A', 0, 0xd83d, 0xde00};
+    Ref text = C(e, Ref, 163, units, 4);
+    CHECK(text);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', text) == -11);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', 0) == -11);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', 0) == -11);
+    Ref array = C(e, Ref, 172, 0, object, (Ref)0);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    array = C(e, Ref, 172, 1, object, integer);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    array = C(e, Ref, 172, 5, object, (Ref)0);
+    const Ref values[] = {integer, wide, floating, text};
+    for (unsigned i = 0; i != 4; ++i)
+      C(e, void, 174, array, (int)i, values[i]);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+  } else if (mode == 1) {
+    U16 units[6000];
+    for (unsigned i = 0; i != 6000; ++i)
+      units[i] = 'x';
+    Ref text = C(e, Ref, 163, units, 6000);
+    CHECK(text);
+    CHECK(event_log_call(e, type, methods[3], form, 'L', text) == -11);
+    Ref array = C(e, Ref, 172, 4, object, integer);
+    C(e, void, 174, array, 1, text);
+    C(e, void, 174, array, 3, array); // Unvisited after encoding overflow.
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -5);
+    C(e, void, 174, array, 2, array); // Visited after string truncation alone.
+    (void)event_log_call(e, type, methods[4], form, 'L', array);
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref illegal = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    CHECK(exception && C(e, int, 32, exception, illegal));
+  } else if (mode == 2) {
+    Ref array = C(e, Ref, 172, 256, object, integer);
+    C(e, void, 174, array, 255, array);
+    CHECK(event_log_call(e, type, methods[4], form, 'L', array) == -11);
+    C(e, void, 174, array, 254, array);
+    (void)event_log_call(e, type, methods[4], form, 'L', array);
+    Ref exception = C(e, Ref, 15);
+    C(e, void, 17);
+    Ref illegal = C(e, Ref, 6, "java/lang/IllegalArgumentException");
+    CHECK(exception && C(e, int, 32, exception, illegal));
+  } else {
+    const unsigned bits[] = {0,          0x3f800000, 1,          0x7f7fffff,
+                             0x7f800000, 0xff800000, 0x7fc12345, 0x80000001};
+    for (unsigned i = 0; i != sizeof(bits) / sizeof(bits[0]); ++i)
+      CHECK(event_log_call(e, type, methods[2], form, 'F', bits[i]) == -11);
+  }
+  const unsigned char payload[] = {0, 42, 0, 0, 0};
+  CHECK(__android_log_bwrite(123, payload, sizeof(payload)) == -11);
+  CHECK(!C(e, U8, 228));
+  return C(vm, int, 5);
+}
+
+U64 jni_event_log_explicit_va(const void *arguments, U64 control) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  Ref method = C(e, Ref, 113, type, "writeEvent", "(IF)I");
+  CHECK(method);
+  __asm__ volatile("msr fpcr, %0\n msr fpsr, %1"
+                   :
+                   : "r"(control), "r"((U64)0x08000002)
+                   : "memory");
+  CHECK(C(e, int, 130, type, method, arguments) == -11);
+  U64 status;
+  __asm__ volatile("mrs %0, fpsr" : "=r"(status));
+  CHECK(!C(vm, int, 5));
+  return status;
+}
+
+U64 jni_event_log_float_control(unsigned form, U64 bits, U64 control,
+                                U64 initial_status, unsigned boxed) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  Ref method = C(e, Ref, 113, type, "writeEvent",
+                 boxed ? "(I[Ljava/lang/Object;)I" : "(IF)I");
+  Ref float_type = C(e, Ref, 6, "java/lang/Float");
+  Ref ctor = C(e, Ref, 33, float_type, "<init>", "(F)V");
+  CHECK(type && method && float_type && ctor);
+  union {
+    U64 bits;
+    double number;
+  } input = {bits};
+  __asm__ volatile("msr fpcr, %0\n msr fpsr, %1"
+                   :
+                   : "r"(control), "r"(initial_status)
+                   : "memory");
+  if (boxed) {
+    const U64 args[] = {bits};
+    Ref number = form == 0 ? C(e, Ref, 28, float_type, ctor, input.number)
+                 : form == 1
+                     ? stat_logger_new_v(e, float_type, ctor, input.number)
+                     : C(e, Ref, 30, float_type, ctor, args);
+    CHECK(number);
+    Ref array = C(e, Ref, 172, 1, float_type, number);
+    CHECK(event_log_call(e, type, method, form, 'L', array) == -11);
+  } else if (form == 2) {
+    CHECK(event_log_call(e, type, method, form, 'F', bits) == -11);
+  } else {
+    CHECK((form ? event_log_v(e, type, method, 0x12345678, input.number)
+                : C(e, int, 129, type, method, 0x12345678, input.number)) ==
+          -11);
+  }
+  U64 status, observed_control;
+  __asm__ volatile("mrs %0, fpsr\n mrs %1, fpcr"
+                   : "=r"(status), "=r"(observed_control));
+  CHECK(observed_control == control);
+  CHECK(!C(vm, int, 5));
+  return status;
+}
+
+int jni_service_manager_logs(unsigned form) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/os/ServiceManager");
+  Ref get = C(e, Ref, 113, type, "getService",
+              "(Ljava/lang/String;)Landroid/os/IBinder;");
+  CHECK(type && get);
+  Ref count = C(e, Ref, 144, type, "sGetServiceAccumulatedCallCount", "I");
+  Ref total = C(e, Ref, 144, type, "sGetServiceAccumulatedUs", "I");
+  Ref slow = C(e, Ref, 144, type, "sLastSlowLogUptime", "J");
+  Ref actual = C(e, Ref, 144, type, "sLastSlowLogActualTime", "J");
+  Ref stats = C(e, Ref, 144, type, "sLastStatsLogUptime", "J");
+  CHECK(count && total && slow && actual && stats);
+  C(e, void, 159, type, count, 199);
+  C(e, void, 159, type, total, 1500);
+  C(e, void, 160, type, actual, ~(U64)0);
+  Ref name = C(e, Ref, 167, "alpha");
+  U64 arguments[] = {name};
+  Ref binder = form == 0   ? C(e, Ref, 114, type, get, name)
+               : form == 1 ? service_get_v(e, type, get, name)
+                           : C(e, Ref, 116, type, get, arguments);
+  CHECK(binder);
+  CHECK(C(e, int, 150, type, count) == 0);
+  CHECK(C(e, int, 150, type, total) == 0);
+  CHECK(C(e, U64, 151, type, slow) == 5000);
+  CHECK(C(e, U64, 151, type, stats) == 5000);
+  CHECK(C(e, U64, 151, type, actual) == 0);
+  CHECK(same_ref(e, binder, C(e, Ref, 114, type, get, name)));
+  CHECK(C(e, int, 150, type, count) == 1);
+  Ref proxy = C(e, Ref, 6, "android/os/BinderProxy");
+  Ref warning = C(e, Ref, 94, proxy, "mWarnOnBlocking", "Z");
+  CHECK(warning && !C(e, U8, 96, binder, warning));
+  // This native write must consume the same transcript after both Java logs.
+  const unsigned char payload[] = {0, 42, 0, 0, 0};
+  CHECK(__android_log_bwrite(123, payload, sizeof(payload)) == -11);
   CHECK(!C(e, U8, 228));
   return C(vm, int, 5);
 }

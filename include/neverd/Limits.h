@@ -753,6 +753,11 @@ constexpr size_t kMinParallelVerify = 512;
 /// the batch (heaviest-first when weighted).
 constexpr size_t kMinParallelIRWorkItems = 32;
 
+/// Minimum function definitions before HighC writes them on worker threads,
+/// each with a copy of the writer the unit's declarations prepared.  Below
+/// this the copies cost more than the definitions take to write.
+constexpr size_t kMinParallelCFunctionDefinitions = 32;
+
 //===----------------------------------------------------------------------===//
 // C output formatting
 //===----------------------------------------------------------------------===//

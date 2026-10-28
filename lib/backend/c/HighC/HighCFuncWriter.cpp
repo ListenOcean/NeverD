@@ -21,6 +21,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
+#include "neverd/backend/c/render/AArch64/AArch64ReturnProtectionC.h"
 #include "neverd/backend/c/render/AArch64/AArch64SVEVectorState.h"
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -320,6 +321,19 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
     return NdType::makePtr(
         NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
                                 Record->Size ? Record->Size : 8));
+  }
+  if (Opts.TheArch == Arch::AArch64 && DebugFn->PlatformConvention) {
+    if (Dbg)
+      Dbg->completeType(DebugFn->ReturnType);
+    const auto Placement = placeSourceParameters(Opts.TheArch, Opts.Format,
+                                                 DebugFn->ReturnType, {});
+    if (Placement && Placement->ResultPointer &&
+        llvm::any_of(Func.Params, [&](const HighParam &Parameter) {
+          return Parameter.RegOff == Placement->ResultPointer->RegisterOffset;
+        }))
+      // The explicit result-buffer parameter carries the object. AAPCS64
+      // promises no scalar result in X0 for this return convention.
+      return NdType::makeVoid();
   }
   // A return type C cannot spell keeps the recovered machine type, as a
   // parameter's does.
@@ -4927,6 +4941,9 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
         bindDebugParams(Opts.TheArch, Opts.Format, *DebugFn, Sites, Dbg);
     ParamBindings = std::move(Bound.Params);
     ParamsPlaced = Bound.Placed;
+    for (size_t PI = 0; PI < ParamBindings.size(); ++PI)
+      if (ParamBindings[PI].Result && DebugFn->ReturnType)
+        EmittedParamTypes[PI] = NdType::makePtr(DebugFn->ReturnType);
   }
   for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
     const DebugParamBinding &B = ParamBindings[PI];
@@ -6292,11 +6309,7 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
     if (Opts.TheArch == Arch::AArch64 && Func.ReturnProtection) {
       if (!TargetFeatures.empty())
         TargetFeatures += ",";
-      TargetFeatures += "branch-protection=pac-ret";
-      if (Func.ReturnProtection->Leaf)
-        TargetFeatures += "+leaf";
-      if (Func.ReturnProtection->BKey)
-        TargetFeatures += "+b-key";
+      TargetFeatures += aarch64ReturnProtectionCTarget(*Func.ReturnProtection);
     }
     if (!TargetFeatures.empty())
       OS << "__attribute__((target(\"" << TargetFeatures << "\")))\n";
@@ -6862,9 +6875,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
-    llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
+    llvm::raw_ostream *Saved = OS.redirect(&BodyOS);
     writeStmts(Func.Body, 1);
-    Out.redirect(Saved);
+    OS.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
   if (!DeferredDecls.empty() || !MemoryTemporaries.empty() ||

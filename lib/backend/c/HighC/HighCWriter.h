@@ -67,6 +67,12 @@ public:
   explicit RedirectableStream(llvm::raw_ostream &Target) : Target(&Target) {
     SetUnbuffered();
   }
+  /// A copy, the stream of a writer copied for another thread, discards its
+  /// output until redirect() gives it a target of its own.
+  RedirectableStream(const RedirectableStream &) : Target(nullptr) {
+    SetUnbuffered();
+  }
+  RedirectableStream &operator=(const RedirectableStream &) = delete;
   /// Send output to \p Next; returns the previous target.
   llvm::raw_ostream *redirect(llvm::raw_ostream *Next) {
     flush();
@@ -76,9 +82,10 @@ public:
 
 private:
   void write_impl(const char *Ptr, size_t Size) override {
-    Target->write(Ptr, Size);
+    if (Target)
+      Target->write(Ptr, Size);
   }
-  uint64_t current_pos() const override { return Target->tell(); }
+  uint64_t current_pos() const override { return Target ? Target->tell() : 0; }
   llvm::raw_ostream *Target;
 };
 
@@ -125,14 +132,14 @@ public:
   static std::optional<std::string> sourceValue(llvm::StringRef Text,
                                                 const TypeRef &Carrier,
                                                 const TypeRef &Source);
-  HighCWriter(llvm::raw_ostream &OS, const CEmitterOptions &Opts,
+  HighCWriter(llvm::raw_ostream &Stream, const CEmitterOptions &Opts,
               DebugContext *Dbg, bool GuardAnalysisOnlyFunctions = true,
               const std::unordered_set<std::string_view> *SharedNames = nullptr,
               CSourceRecorder *Recorder = nullptr,
               const HighCImageDataObjects *SharedDataObjects = nullptr,
               const HighCImageFunctionSymbols *SharedFunctionSymbols = nullptr,
               const PreparedPortableX87Function *PortableInterface = nullptr)
-      : Out(OS), OS(Out), Opts(Opts), Dbg(Dbg),
+      : OS(Stream), Opts(Opts), Dbg(Dbg),
         GuardAnalysisOnlyFunctions(GuardAnalysisOnlyFunctions),
         SharedImageFunctionNames(SharedNames), SourceRecorder(Recorder),
         SharedDataObjects(SharedDataObjects),
@@ -141,6 +148,10 @@ public:
 
   //--- Module-level (HighCEmitter.cpp) ---
   void writeAll(const std::vector<HighFunc> &Funcs);
+  /// Writes the definitions of \p Funcs, once writeAll has written the
+  /// unit's declarations, on worker threads and in order; false, writing
+  /// nothing, where they must follow one serial pass.
+  bool writeFunctionsInParallel(const std::vector<HighFunc> &Funcs);
   /// Records the functions and objects the text names in the source map
   /// (HighCSourceNames.cpp).
   void recordSourceNames(const std::vector<HighFunc> &Funcs);
@@ -638,6 +649,8 @@ public:
   /// `*(void **)((uintptr_t)(*(void **)(obj)) + imm)`, not integer soup.
   TypeRef indirectCallFunctionType(const HighExpr &Call) const;
   TypeRef fixedCalleeFunctionType(const FunctionSym &Callee) const;
+  std::string authenticatedCalleeStr(const HighExpr &E,
+                                     llvm::StringRef FunctionPointerType);
   std::string indirectCalleeStr(const HighExpr &E,
                                 const TypeRef &ReturnType = nullptr,
                                 const TypeRef &FunctionType = nullptr);
@@ -782,6 +795,8 @@ public:
   /// Peel zext/trunc around a named scalar or field load for x86 intrinsic
   /// snippets. Keep wraps on add/sub/mul.
   std::string intrinsicOperandStr(const HighExpr &E);
+  const HighExpr &intrinsicOperandExpr(const HighExpr &E) const;
+  std::vector<std::string> x86NativeMemoryArguments(const HighExpr &E);
   /// Cast / zext / `SUBBYTES` 0 of a Var/Phi. Not add/sub/mul, Call, or Load.
   bool isIntegerViewOfScalar(const HighExpr &E) const;
   /// Where \p Bits come from, under views that keep at least the bytes of
@@ -983,6 +998,9 @@ public:
   /// x64 catch funclets receive the parent frame in rdx (`Param` id 1). After
   /// attach that param is not the parent's rdx argument.
   bool isCatchFuncletParentFrame(const MedVar &V) const;
+  /// Itanium landing pads and SEH scope bodies run in the printed function;
+  /// attached MSVC C++ funclets have their own parameters and return ABI.
+  bool exceptionClausesUseFunctionFrame() const;
   bool isRegistrationEstablisherFrame(const MedVar &V) const;
   const HighExpr *parentFrameStoredValue(const HighStmt &Stmt) const;
   std::optional<std::string> copyForwardSource(const HighExpr &E) const;
@@ -1055,8 +1073,9 @@ public:
   std::string renderBinOpOperands(const HighExpr &E, int ParentPrec);
 
   //--- State ---
-  RedirectableStream Out;
-  llvm::raw_ostream &OS;
+  /// Every member is a value or a pointer into what the writer only reads:
+  /// writeFunctionsInParallel copies a prepared writer for each thread.
+  RedirectableStream OS;
   /// Declarations skipped because copy forwarding or liveness predicted the
   /// name would not be printed.  Emitted if the rendered body names it anyway.
   /// The C text is built only then: a name that is never printed may carry a
@@ -1597,7 +1616,10 @@ public:
   /// writer's own.  Until then none, as before they were shared.
   const HighCImageDataObjects *SharedDataObjects;
   HighCImageDataObjects OwnDataObjects;
-  const HighCImageDataObjects *DataObjects = &OwnDataObjects;
+  bool ReadsSharedDataObjects = false;
+  const HighCImageDataObjects &dataObjects() const {
+    return ReadsSharedDataObjects ? *SharedDataObjects : OwnDataObjects;
+  }
   /// The image object a call argument prints as when it is a string: the
   /// array's address, or a load of a pointer to one.  The expression is the
   /// one that prints the object's name.

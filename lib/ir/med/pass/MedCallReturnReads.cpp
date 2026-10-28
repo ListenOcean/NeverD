@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedCallReturnReads.h"
 
 #include "../../../safety/StackSlotFlow.h"
+#include "../X86/RegistrationCallStacks.h"
 #include "../X86/SEHCallStackRanges.h"
 #include "../abi/MedABIPassDetail.h"
 
@@ -21,6 +22,8 @@
 #include "neverd/ir/SourceCallABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/LowIR.h"
+#include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedIR.h"
 #include "neverd/ir/med/MedProvenStackOffsets.h"
 #include "neverd/ir/med/MedStackAlignment.h"
@@ -28,8 +31,12 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionEdge.h"
 
+#include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include "llvm/ADT/STLExtras.h"
+#include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -101,9 +108,41 @@ struct RegistrationCalls {
   std::set<const MedOp *> PrivateCallbacks;
 };
 
+/// Without the complete state proof, the EH3/EH4 frame protocol still places
+/// the stacks a handler restores and those a runtime callback runs on.
+RegistrationCalls protocolCalls(
+    const MedFunc &Func, const LowFunc &Source, const BinaryImage &Image,
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
+  RegistrationCalls Result;
+  const auto Seeds = x86_registration::savedStackReloads(Func, Source, Image,
+                                                         Accesses, Remaining);
+  if (!Seeds.empty()) {
+    std::vector<MedVar> Values;
+    for (const auto &[Call, Stack] : Stacks)
+      Values.push_back(Stack);
+    if (!charge(Remaining, Values.size()))
+      return {};
+    const auto Restored = entryStackOffsetsFromProvenDefinitions(
+        Func, Values, Seeds, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    size_t I = 0;
+    for (const auto &[Call, Stack] : Stacks)
+      if (const auto Offset = Restored[I++])
+        Result.Offsets.emplace(Call, *Offset);
+  }
+  std::map<const MedOp *, MedVar> Unplaced;
+  for (const auto &[Call, Stack] : Stacks)
+    if (!Result.Offsets.count(Call))
+      Unplaced.emplace(Call, Stack);
+  Result.PrivateCallbacks =
+      x86_registration::privateCallbackCalls(Func, Image, Unplaced, Remaining);
+  return Result;
+}
+
 RegistrationCalls registrationCalls(
     const MedFunc &Func, const LowFunc *Source, const BinaryImage &Image,
-    const std::map<const MedOp *, MedVar> &Stacks, size_t &Remaining) {
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
   if (!Source || Image.Arch != Arch::X86 ||
       Image.abiFormat() != BinaryFormat::COFF || Func.AnalystStackFrame ||
       Func.SkippedSSA || Source->Entry != Func.Entry ||
@@ -111,13 +150,14 @@ RegistrationCalls registrationCalls(
     return {};
   const auto &States = *Source->RegistrationStates;
   const auto &EH = *Source->ExceptionMetadata;
-  if (!States.Complete || !States.CallbackStatesComplete ||
-      !States.RegistrationLifetimeComplete ||
-      EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
+  if (EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
       EH.Registration->RealignedFrame || Func.Entry != EH.CodeRange.Begin ||
       (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4))
     return {};
+  if (!States.Complete || !States.CallbackStatesComplete ||
+      !States.RegistrationLifetimeComplete)
+    return protocolCalls(Func, *Source, Image, Stacks, Accesses, Remaining);
   using Identity = std::pair<va_t, int>;
   using Value = std::tuple<MedVar::VarKind, int, int>;
   const auto Key = [](const MedVar &V) {
@@ -296,20 +336,25 @@ RegistrationCalls registrationCalls(
 }
 } // namespace
 
-static bool checkSourceCallReturnReads(const MedFunc &Func,
-                                       const BinaryImage &Image,
-                                       std::string &Diagnostic,
-                                       size_t &Remaining,
-                                       const LowFunc *FreshSource,
-                                       std::set<const MedOp *> *ObservedCalls) {
+static bool checkSourceCallReturnReads(
+    const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
+    size_t &Remaining, const LowFunc *FreshSource,
+    std::set<const MedOp *> *ObservedCalls,
+    const MedCallReturnRanges *CallReturns,
+    std::vector<MedCallReturnRead> *Deferred, bool *NeedsCalleeFacts) {
   Diagnostic.clear();
+  if (NeedsCalleeFacts)
+    *NeedsCalleeFacts = false;
   // Link-register targets have no implicit stack write. The current source
   // call encoding authority authenticates x86 near CALL/JMP occurrences.
   if (!getTargetRegInfo(Image.Arch).CallPushesReturnAddress ||
       Func.Blocks.empty())
     return true;
+  auto Explain = [&](const std::string &Reason) {
+    return "source frame in " + Func.Name + ": " + Reason;
+  };
   auto Refuse = [&](const std::string &Reason) {
-    Diagnostic = "source frame in " + Func.Name + ": " + Reason;
+    Diagnostic = Explain(Reason);
     return false;
   };
   auto Exhausted = [&] {
@@ -352,6 +397,8 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
   if (!Remaining)
     return Exhausted();
   const auto Width = getTargetRegInfo(Image.Arch).PointerSize;
+  const int64_t MinimumOffset = llvm::minIntN(Width * 8);
+  const int64_t MaximumOffset = llvm::maxIntN(Width * 8);
   std::vector<MedVar> Values;
   for (const auto *Op : Memory)
     Values.push_back(Op->Inputs[0]);
@@ -369,9 +416,18 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
     const auto *Op = Memory[I];
     const auto Size =
         Op->Opcode == NdOp::LOAD ? Op->Output.Size : Op->Inputs[1].Size;
-    if (!Offsets[I] || !Size ||
-        *Offsets[I] > std::numeric_limits<int64_t>::max() - Size)
+    if (!Offsets[I] || !Size)
       continue;
+    // The beginning fits the native coordinate by entryStackOffsets. Keep
+    // the whole access in that coordinate too: skipping a wrapping load
+    // would remove an observer, while a wrapping store proves no overwrite.
+    if (*Offsets[I] > MaximumOffset - Size) {
+      if (Op->Opcode == NdOp::LOAD)
+        return Refuse("load at 0x" + llvm::utohexstr(Op->Addr) +
+                      " exceeds the native stack-offset interval; refusing "
+                      "an unproved frame projection");
+      continue;
+    }
     const auto [Block, Position] = Positions.at(Op);
     Access A{Op, Block, Position, *Offsets[I], *Offsets[I] + Size};
     if (Op->Opcode == NdOp::LOAD)
@@ -423,13 +479,24 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
     }
     ++It;
   }
+  const auto CallSlotBegin =
+      [&](const EntryStackOffsetRange &End) -> std::optional<int64_t> {
+    // SP can fit while the implicit push crosses the native coordinate.
+    // Such a write has no representable interval in this proof.
+    if (End.Min < MinimumOffset + Width || End.Max > MaximumOffset ||
+        End.Min > End.Max)
+      return std::nullopt;
+    return End.Min - Width;
+  };
   // Whether every load's history reaches no CALL write in Ends, which are
-  // bounded from above by Bounds where they have no range.
+  // bounded from above by Bounds where they have no range. With Defer, a load
+  // such a write reaches is recorded there and leaves the proof instead.
   const auto Observe = [&](const std::map<const MedOp *,
                                           std::optional<EntryStackOffsetRange>>
                                &Ends,
                            const std::map<const MedOp *, int64_t> &Bounds,
-                           size_t &Budget) {
+                           size_t &Budget,
+                           std::vector<MedCallReturnRead> *Defer) {
     std::vector<std::pair<int64_t, int64_t>> Ranges;
     bool UnknownLocation = false;
     for (const auto &[Call, End] : Ends) {
@@ -439,11 +506,12 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
                               Below->second);
           continue;
         }
-      if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
+      const auto Begin = End ? CallSlotBegin(*End) : std::nullopt;
+      if (!Begin) {
         UnknownLocation = true;
         continue;
       }
-      Ranges.emplace_back(End->Min - Width, End->Max);
+      Ranges.emplace_back(*Begin, End->Max);
     }
     llvm::sort(Ranges);
     std::vector<std::pair<int64_t, int64_t>> Merged;
@@ -550,10 +618,11 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
       Cut(Store.End);
     }
     for (const auto &[Op, End] : Ends) {
-      if (End && End->Min >= std::numeric_limits<int64_t>::min() + Width) {
-        Cut(End->Min - Width);
-        Cut(End->Max);
-      }
+      if (End)
+        if (const auto Begin = CallSlotBegin(*End)) {
+          Cut(*Begin);
+          Cut(End->Max);
+        }
       if (const auto Below = Bounds.find(Op); Below != Bounds.end())
         Cut(Below->second);
     }
@@ -609,11 +678,10 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
                              ? Everything
                              : Covered(std::numeric_limits<int64_t>::min(),
                                        Below->second);
-          else if (Call->second->Min <
-                   std::numeric_limits<int64_t>::min() + Width)
-            Item.Range = Everything;
+          else if (const auto Begin = CallSlotBegin(*Call->second))
+            Item.Range = Covered(*Begin, Call->second->Max);
           else
-            Item.Range = Covered(Call->second->Min - Width, Call->second->Max);
+            Item.Range = Everything;
         }
         Row.push_back(Item);
       }
@@ -767,6 +835,9 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
         Work.push_back(Index);
       }
     };
+    // The load a CALL write reached, which Defer recorded: it leaves the
+    // observations once the pass that found it unwinds.
+    const Access *Leaving = nullptr;
     // Recompute one block backward from its successors' starts, the handlers
     // its operation prefixes raise into and its own loads.
     const auto Pass = [&](size_t Word, size_t Index) {
@@ -794,14 +865,23 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
         const Write &Item = Row[State - 1];
         if (const uint64_t Hit = Current & Mask(Item.Range, Word)) {
           if (Item.Call) {
-            if (ObservedCalls)
+            if (ObservedCalls) {
               ObservedCalls->insert(Item.Op);
-            else
-              return Refuse(Observed(Witness(Word, Index, State, Hit)) +
-                            "observes a physical CALL return slot from 0x" +
-                            llvm::utohexstr(Item.Op->Addr) +
-                            "; the ordinary C frame does not represent that "
-                            "write; refusing a stale frame value");
+            } else {
+              const Access *Load = Witness(Word, Index, State, Hit);
+              const std::string Reason =
+                  Observed(Load) +
+                  "observes a physical CALL return slot from 0x" +
+                  llvm::utohexstr(Item.Op->Addr) +
+                  "; the ordinary C frame does not represent that write; "
+                  "refusing a stale frame value";
+              if (!Defer || !Load)
+                return Refuse(Reason);
+              Defer->push_back(
+                  {Load->Op->Addr, Load->Op->OriginSeq, Explain(Reason)});
+              Leaving = Load;
+              return false;
+            }
           }
           Current &= ~Hit;
         }
@@ -823,7 +903,9 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
     };
     // Every load's intervals flow backward together, one word at a time, to a
     // fixed point; a write that a live interval meets refuses the projection.
-    for (size_t Word = 0; Word * 64 < Everything.second; ++Word) {
+    // A load Defer takes leaves, and its word reaches a fixed point again
+    // without it. A settled word met no write, and fewer loads meet none.
+    for (size_t Word = 0; Word * 64 < Everything.second;) {
       if (!charge(Budget, BlockCount))
         return Exhausted();
       llvm::fill(Words, 0);
@@ -831,13 +913,24 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
         for (const Observation &Seen : Observations[Index])
           if (Mask(Seen.Range, Word))
             Queue(Index);
-      while (!Work.empty()) {
+      while (!Work.empty() && !Leaving) {
         const size_t Next = Work.back();
         Work.pop_back();
         Queued[Next] = 0;
-        if (!Pass(Word, Next))
+        if (!Pass(Word, Next) && !Leaving)
           return false;
       }
+      if (!Leaving) {
+        ++Word;
+        continue;
+      }
+      for (const size_t Index : Work)
+        Queued[Index] = 0;
+      Work.clear();
+      llvm::erase_if(
+          Observations[IndexOf(Blocks.first(Leaving->Block))],
+          [&](const Observation &Seen) { return Seen.Load == Leaving; });
+      Leaving = nullptr;
     }
     return true;
   };
@@ -849,16 +942,28 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
     // proof its whole budget.
     size_t Allowance = Remaining;
     if (ObservedCalls) {
-      const bool Complete = Observe(CallEnds, {}, Allowance);
+      const bool Complete = Observe(CallEnds, {}, Allowance, nullptr);
       const bool HasWrites = !ObservedCalls->empty();
       ObservedCalls->clear();
       if (Complete && !HasWrites)
         return true;
-    } else if (Observe(CallEnds, {}, Allowance))
+    } else if (Observe(CallEnds, {}, Allowance, nullptr))
       return true;
     Diagnostic.clear();
-    const auto Registration =
-        registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
+    // Only a PE32 registration frame reads the exact accesses by operation.
+    const bool ByOperation = Image.Arch == Arch::X86 && FreshSource &&
+                             FreshSource->RegistrationStates;
+    std::map<const MedOp *, int64_t> Accesses;
+    if (ByOperation)
+      for (const Access &Load : Loads)
+        Accesses.emplace(Load.Op, Load.Begin);
+    for (size_t I = 0; ByOperation && I < Memory.size(); ++I)
+      if (Memory[I]->Opcode == NdOp::STORE && Offsets[I] &&
+          *Offsets[I] <=
+              std::numeric_limits<int64_t>::max() - Memory[I]->Inputs[1].Size)
+        Accesses.emplace(Memory[I], *Offsets[I]);
+    const auto Registration = registrationCalls(
+        Func, FreshSource, Image, StackPointers, Accesses, Remaining);
     if (!Remaining)
       return Exhausted();
     for (auto &[Call, End] : CallEnds)
@@ -881,10 +986,14 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
         UnboundedStacks.push_back(Found->second);
       }
   if (!UnboundedCalls.empty()) {
-    const auto Bounds = entryStackOffsetRanges(
-        Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
-    for (size_t I = 0; I < Bounds.size(); ++I)
+    const auto Bounds =
+        entryStackOffsetRanges(Func, UnboundedStacks, Image.Arch,
+                               Image.abiFormat(), Func.EntryKind, CallReturns);
+    for (size_t I = 0; I < Bounds.size(); ++I) {
       CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+      if (!Bounds[I] && !CallReturns && NeedsCalleeFacts)
+        *NeedsCalleeFacts = true;
+    }
   }
   if (FreshSource &&
       llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
@@ -915,6 +1024,9 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
     if (!Pending.empty()) {
       if (!charge(Remaining, Pending.size()))
         return Exhausted();
+      // Callee facts already served the complete range query above. The
+      // remaining values need a local one-sided proof; retrying the same
+      // failed range with callee facts cannot establish native-width bounds.
       const auto Bounds = entryStackOffsetUpperBounds(
           Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
       for (size_t I = 0; I < Pending.size(); ++I)
@@ -922,31 +1034,388 @@ static bool checkSourceCallReturnReads(const MedFunc &Func,
           CallBelow.emplace(Pending[I], *Bounds[I]);
     }
   }
-  return Observe(CallEnds, CallBelow, Remaining);
+  return Observe(CallEnds, CallBelow, Remaining, Deferred);
+}
+
+namespace {
+bool overlapsRegister(const MedVar &View, uint64_t RegOff, uint16_t Size) {
+  return View.Kind == MedVar::Reg && View.Size && Size &&
+         (View.RegOff >= RegOff ? View.RegOff - RegOff < Size
+                                : RegOff - View.RegOff < View.Size);
+}
+
+/// Whether a RETURN reads the \p Size bytes at \p RegOff: as part of the
+/// settled result, or as a register the caller expects back. The integer
+/// result register is always kept, as code generation keeps it for a void
+/// source function. A second integer return register carries a result only
+/// as a register pair, which a 64-bit target publishes as MultiReturn.
+bool returnReads(const MedFunc &Func, const TargetRegInfo &TRI,
+                 BinaryFormat Format, uint64_t RegOff, uint16_t Size) {
+  MedVar View;
+  View.Kind = MedVar::Reg;
+  View.RegOff = RegOff;
+  View.Size = Size;
+  auto Holds = [&](uint64_t Register, uint16_t Bytes) {
+    return overlapsRegister(View, Register, Bytes);
+  };
+  for (const MedReturnReg &Return : Func.MultiReturn)
+    if (Holds(Return.RegOff, Return.Size ? Return.Size : TRI.PointerSize))
+      return true;
+  if (Holds(TRI.IntReturnReg, TRI.PointerSize) ||
+      (TRI.FPReturnReg && Holds(TRI.FPReturnReg, 16)))
+    return true;
+  for (uint64_t Register : TRI.FPReturnRegs)
+    if (Holds(Register, 16))
+      return true;
+  if (TRI.isCallPreserved(RegOff, Size, Format) ||
+      (Func.CC == CallingConv::Win64 &&
+       TRI.isCallPreserved(RegOff, Size, BinaryFormat::COFF)) ||
+      TRI.isStackPointer(RegOff) || TRI.isFramePointer(RegOff) ||
+      TRI.isLinkRegister(RegOff))
+    return true;
+  for (uint64_t Register : TRI.IntReturnRegs)
+    if (Register != TRI.IntReturnReg && Holds(Register, TRI.PointerSize))
+      return TRI.PointerSize < 8;
+  return TRI.IntReturnReg2 && Holds(TRI.IntReturnReg2, TRI.PointerSize) &&
+         TRI.PointerSize < 8;
+}
+} // namespace
+
+bool validateObservedCallReturnReads(
+    const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
+    size_t WorkLimit, const std::map<va_t, unsigned> *CalleeIntegerArity) {
+  Diagnostic.clear();
+  if (Func.CallReturnReads.empty())
+    return true;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const BinaryFormat Format = Image.abiFormat();
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Image.Arch, Format);
+  const llvm::ArrayRef<uint64_t> IntegerArguments =
+      TRI.integerParamRegs(Format);
+  // The integer argument position of the register holding \p RegOff, or -1.
+  auto IntegerPosition = [&](uint64_t RegOff, uint16_t Size) {
+    MedVar View;
+    View.Kind = MedVar::Reg;
+    View.RegOff = RegOff;
+    View.Size = Size;
+    for (size_t K = 0; K < IntegerArguments.size(); ++K)
+      if (overlapsRegister(View, IntegerArguments[K], TRI.PointerSize))
+        return static_cast<int>(K);
+    return -1;
+  };
+  // How many integer arguments direct call \p Call can pass, if bounded.
+  auto CalleeArity = [&](const MedOp &Call) -> const unsigned * {
+    if (!CalleeIntegerArity || Call.Opcode != NdOp::CALL ||
+        Call.NumInputs < 1 || !Call.Inputs[0].isConst())
+      return nullptr;
+    const auto It = CalleeIntegerArity->find(Call.Inputs[0].ConstVal);
+    return It == CalleeIntegerArity->end() ? nullptr : &It->second;
+  };
+  size_t Remaining = WorkLimit;
+  using Key = std::pair<int, int>;
+  auto KeyOf = [](const MedVar &V) { return Key{V.Id, V.SSAVer}; };
+  auto Named = [](const MedVar &V) { return !V.isConst() && V.Id >= 0; };
+  auto At = [](va_t Addr) { return "0x" + llvm::utohexstr(Addr); };
+  auto RegisterName = [&](uint64_t RegOff, uint16_t Size) -> std::string {
+    const char *Name = TRI.GetRegName ? TRI.GetRegName(RegOff, Size) : nullptr;
+    return Name && Name[0] != '?' ? Name : "r0x" + llvm::utohexstr(RegOff);
+  };
+  // An operation by its block and position.
+  struct Site {
+    size_t Block = 0, Index = 0;
+  };
+  auto OpAt = [&](const Site &Where) -> const MedOp & {
+    return Func.Blocks[Where.Block].Ops[Where.Index];
+  };
+  // A reader no operation names, described only for a diagnostic.
+  struct Implicit {
+    enum class Kind : uint8_t { ExceptionalEntry, Clobber, Argument } What;
+    size_t Block = 0;
+    const MedCallInfo *Call = nullptr;
+  };
+  // Every reader of each value; the recorded loads where they are.
+  llvm::DenseMap<Key, llvm::SmallVector<Site, 2>> Readers;
+  llvm::DenseMap<Key, llvm::SmallVector<const PhiNode *, 1>> PhiReaders;
+  llvm::DenseMap<Key, Implicit> ImplicitReads;
+  llvm::DenseMap<int, size_t> BlockIndex;
+  llvm::DenseMap<std::pair<int, int>, const MedCallInfo *> CallInfos;
+  std::vector<llvm::SmallVector<Site, 1>> Recorded(Func.CallReturnReads.size());
+  bool Exhausted = false;
+  auto Charge = [&](size_t Count) {
+    Exhausted |= !charge(Remaining, Count);
+    return !Exhausted;
+  };
+  // What observes the value, once the proof finds it observed.
+  std::string Observer;
+  auto Observe = [&](std::string Why) {
+    Observer = std::move(Why);
+    return true;
+  };
+  for (size_t B = 0; B < Func.Blocks.size(); ++B) {
+    const MedBlock &Block = Func.Blocks[B];
+    // An exhausted index still finds each recorded load, which it then
+    // cannot clear.
+    const bool Indexed = Charge(1 + Block.Ops.size() + Block.Phis.size());
+    if (Indexed) {
+      BlockIndex.try_emplace(Block.Id, B);
+      for (const PhiNode &Phi : Block.Phis) {
+        for (const auto &Incoming : Phi.Args)
+          if (Named(Incoming.second))
+            PhiReaders[KeyOf(Incoming.second)].push_back(&Phi);
+        if (Phi.ExceptionalEntry && Named(*Phi.ExceptionalEntry))
+          ImplicitReads.try_emplace(
+              KeyOf(*Phi.ExceptionalEntry),
+              Implicit{Implicit::Kind::ExceptionalEntry, B});
+      }
+    }
+    for (size_t I = 0; I < Block.Ops.size(); ++I) {
+      const MedOp &Op = Block.Ops[I];
+      if (Op.Dead)
+        continue;
+      if (Indexed)
+        for (unsigned K = 0; K < Op.NumInputs; ++K)
+          if (Named(Op.Inputs[K]))
+            Readers[KeyOf(Op.Inputs[K])].push_back({B, I});
+      if (Op.Opcode == NdOp::LOAD)
+        for (size_t R = 0; R < Func.CallReturnReads.size(); ++R)
+          if (Op.Addr == Func.CallReturnReads[R].Load &&
+              Op.OriginSeq == Func.CallReturnReads[R].OriginSeq)
+            Recorded[R].push_back({B, I});
+    }
+  }
+  for (const MedCallClobber &Clobber : Func.CallClobbers)
+    if (Named(Clobber.PreservedInput))
+      ImplicitReads.try_emplace(KeyOf(Clobber.PreservedInput),
+                                Implicit{Implicit::Kind::Clobber});
+  for (const MedCallInfo &Info : Func.CallInfos) {
+    CallInfos.try_emplace(std::pair{Info.BlockId, Info.OpIdx}, &Info);
+    for (const MedVar &Argument : Info.Args)
+      if (Named(Argument))
+        ImplicitReads.try_emplace(KeyOf(Argument),
+                                  Implicit{Implicit::Kind::Argument, 0, &Info});
+  }
+  auto Describe = [&](const Implicit &Read) -> std::string {
+    switch (Read.What) {
+    case Implicit::Kind::ExceptionalEntry:
+      return "an exceptional entry into " +
+             At(Func.Blocks[Read.Block].StartAddr) + " receives the value";
+    case Implicit::Kind::Clobber:
+      return "a call clobber keeps the value as a register's preserved bytes";
+    case Implicit::Kind::Argument:
+      break;
+    }
+    const auto Block = BlockIndex.find(Read.Call->BlockId);
+    if (Block == BlockIndex.end() || Read.Call->OpIdx < 0 ||
+        static_cast<size_t>(Read.Call->OpIdx) >=
+            Func.Blocks[Block->second].Ops.size())
+      return "a settled call takes the value as an argument";
+    return "the call at " +
+           At(Func.Blocks[Block->second].Ops[Read.Call->OpIdx].Addr) +
+           " takes the value as an argument";
+  };
+
+  // A register holding the value may be read where no operation names it:
+  // a call whose arguments were not settled, a RETURN that reads it, or an
+  // exit to code outside the function. Follow every path until a complete
+  // overwrite or a clobbering call ends the register's copy of the value.
+  llvm::DenseSet<size_t> Entered;
+  auto HeldObserved = [&](const MedVar &Value, const Site &Definition) {
+    const uint64_t RegOff = Value.RegOff;
+    const uint16_t Size = Value.Size;
+    // Another variable over these bytes may view the value. The register's
+    // own variable names it only in its own version, a reader the closure
+    // judges; any other version is a different value.
+    auto Overlaps = [&](const MedVar &Other) {
+      return Other.Id != Value.Id && overlapsRegister(Other, RegOff, Size);
+    };
+    auto Held = [&] { return RegisterName(RegOff, Size); };
+    auto Over = [&](const MedVar &Other) {
+      return RegisterName(Other.RegOff, Other.Size) + " over " + Held() +
+             ", which holds the value";
+    };
+    const int Slot = IntegerPosition(RegOff, Size);
+    const bool Argument = TRI.isParamReg(RegOff);
+    const bool Returned = returnReads(Func, TRI, Format, RegOff, Size);
+    std::vector<Site> Work{{Definition.Block, Definition.Index + 1}};
+    Entered.clear();
+    while (!Work.empty()) {
+      const Site From = Work.back();
+      Work.pop_back();
+      const MedBlock &Block = Func.Blocks[From.Block];
+      // An exception can leave before any later overwrite, and a handler can
+      // see the registers it left with.
+      if (!Block.ExceptionalSuccs.empty())
+        return Observe("an exception may leave " + At(Block.StartAddr) +
+                       " with the value in " + Held());
+      bool Ends = false;
+      for (size_t I = From.Index; I < Block.Ops.size() && !Ends; ++I) {
+        if (!Charge(1))
+          return true;
+        const MedOp &Op = Block.Ops[I];
+        if (Op.Dead)
+          continue;
+        for (unsigned K = 0; K < Op.NumInputs; ++K)
+          if (Overlaps(Op.Inputs[K]))
+            return Observe("the operation at " + At(Op.Addr) + " reads " +
+                           Over(Op.Inputs[K]));
+        if (Op.Opcode == NdOp::RETURN) {
+          if (Returned)
+            return Observe("the RETURN at " + At(Op.Addr) +
+                           " reads the value in " + Held());
+          Ends = true;
+          continue;
+        }
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+          // A call's settled arguments are its call record's, where call ABI
+          // recovery made one, or else the operands a summarized callee's
+          // reads published at conversion (checked above with every input).
+          const auto Info = CallInfos.find({Block.Id, static_cast<int>(I)});
+          const bool Published =
+              Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+              Op.CalleeRegisterArgs >= 0;
+          if (Info == CallInfos.end()) {
+            // A direct call to a function of this run passes at most its
+            // emitted integer parameters; a register past them is none.
+            const unsigned *Arity =
+                Argument && !Published ? CalleeArity(Op) : nullptr;
+            if (Argument && !Published && (!Arity || Slot < 0))
+              return Observe("the call at " + At(Op.Addr) +
+                             ", whose arguments are not settled, may read "
+                             "the value in " +
+                             Held());
+            if (Arity && Slot >= 0 && static_cast<unsigned>(Slot) < *Arity)
+              return Observe("the call at " + At(Op.Addr) + " passes " +
+                             std::to_string(*Arity) +
+                             " integer arguments, the value in " + Held() +
+                             " among them");
+          } else if (const auto Passed =
+                         llvm::find_if(Info->second->Args, Overlaps);
+                     Passed != Info->second->Args.end()) {
+            return Observe("the call at " + At(Op.Addr) + " takes " +
+                           Over(*Passed));
+          }
+          if (Op.DoesNotReturn ||
+              callClobbersRegister(Op, RegOff, Size, TRI, Format)) {
+            Ends = true;
+            continue;
+          }
+        }
+        if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == RegOff &&
+            Op.Output.Size >= Size)
+          Ends = true;
+      }
+      if (Ends)
+        continue;
+      // An exit without a RETURN, such as a tail jump, keeps its own
+      // register contract.
+      if (Block.Succs.empty() && (Argument || Returned))
+        return Observe(
+            "the exit at " +
+            At(Block.Ops.empty() ? Block.StartAddr : Block.Ops.back().Addr) +
+            " leaves the value in " + Held());
+      for (int Succ : Block.Succs) {
+        const auto Next = BlockIndex.find(Succ);
+        if (Next == BlockIndex.end())
+          return Observe("a successor of " + At(Block.StartAddr) +
+                         " is missing, so the value cannot be followed in " +
+                         Held());
+        if (Entered.insert(Next->second).second)
+          Work.push_back({Next->second, 0});
+      }
+    }
+    return false;
+  };
+
+  // The loaded value and every copy, view or join of it. A copy, or a view
+  // of some of its bytes, only moves the value; any other reader uses it.
+  llvm::DenseSet<Key> Seen;
+  auto Observed = [&](const Site &Load) {
+    std::vector<std::pair<MedVar, std::optional<Site>>> Pending{
+        {OpAt(Load).Output, Load}};
+    Seen.clear();
+    while (!Pending.empty()) {
+      if (!Charge(1))
+        return true;
+      const auto [Value, Definition] = Pending.back();
+      Pending.pop_back();
+      if (!Named(Value) || !Seen.insert(KeyOf(Value)).second)
+        continue;
+      if (const auto It = ImplicitReads.find(KeyOf(Value));
+          It != ImplicitReads.end())
+        return Observe(Describe(It->second));
+      if (const auto It = Readers.find(KeyOf(Value)); It != Readers.end())
+        for (const Site &Where : It->second) {
+          const MedOp &Reader = OpAt(Where);
+          const bool Moves = Reader.Opcode == NdOp::COPY
+                                 ? Reader.NumInputs == 1
+                                 : Reader.Opcode == NdOp::SUBBYTES &&
+                                       Reader.NumInputs == 2 &&
+                                       Reader.Inputs[1].isConst();
+          if (!Moves)
+            return Observe(Reader.Opcode == NdOp::RETURN
+                               ? "the RETURN at " + At(Reader.Addr) +
+                                     " returns the value"
+                               : "the operation at " + At(Reader.Addr) +
+                                     " uses the value");
+          Pending.emplace_back(Reader.Output, Where);
+        }
+      if (const auto It = PhiReaders.find(KeyOf(Value)); It != PhiReaders.end())
+        for (const PhiNode *Phi : It->second)
+          Pending.emplace_back(Phi->Output, std::nullopt);
+      // A join's register is covered by the walk from the definition that
+      // reaches it.
+      if (Value.Kind == MedVar::Reg && Definition &&
+          HeldObserved(Value, *Definition))
+        return true;
+    }
+    return false;
+  };
+
+  for (size_t R = 0; R < Func.CallReturnReads.size(); ++R)
+    for (const Site &Load : Recorded[R]) {
+      if (!Exhausted && !Observed(Load))
+        continue;
+      Diagnostic = Func.CallReturnReads[R].Diagnostic + "; " +
+                   (Exhausted ? "the settled observation proof exceeded "
+                                "its work budget"
+                              : Observer);
+      return false;
+    }
+  return true;
 }
 
 bool validateSourceCallReturnReads(const MedFunc &Func,
                                    const BinaryImage &Image,
                                    std::string &Diagnostic, size_t WorkLimit,
-                                   const LowFunc *FreshSource) {
+                                   const LowFunc *FreshSource,
+                                   const MedCallReturnRanges *CallReturns,
+                                   std::vector<MedCallReturnRead> *Deferred,
+                                   bool *NeedsCalleeFacts) {
   size_t Remaining = WorkLimit;
   return checkSourceCallReturnReads(Func, Image, Diagnostic, Remaining,
-                                    FreshSource, nullptr);
+                                    FreshSource, nullptr, CallReturns, Deferred,
+                                    NeedsCalleeFacts);
 }
 
 bool preserveSourceCallReturnWrites(MedFunc &Func, const BinaryImage &Image,
                                     std::string &Diagnostic, size_t WorkLimit,
-                                    const LowFunc *FreshSource) {
+                                    const LowFunc *FreshSource,
+                                    const MedCallReturnRanges *CallReturns,
+                                    std::vector<MedCallReturnRead> *Deferred,
+                                    bool *NeedsCalleeFacts) {
   std::set<const MedOp *> Observed;
   size_t Remaining = WorkLimit;
   if (!checkSourceCallReturnReads(Func, Image, Diagnostic, Remaining,
-                                  FreshSource, &Observed))
+                                  FreshSource, &Observed, CallReturns, nullptr,
+                                  NeedsCalleeFacts))
     return false;
   if (Observed.empty())
     return true;
   const auto Refuse = [&] {
     return validateSourceCallReturnReads(Func, Image, Diagnostic, WorkLimit,
-                                         FreshSource);
+                                         FreshSource, CallReturns, Deferred,
+                                         NeedsCalleeFacts);
   };
   if (!Func.CallInfos.empty())
     return Refuse();

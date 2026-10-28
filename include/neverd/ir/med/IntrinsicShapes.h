@@ -680,7 +680,9 @@ constexpr bool onlyChecksForAFault(Intrinsic Id) {
 /// callee and write no argument storage, so a compiler may schedule argument
 /// setup across them (`mov edi, 2; cvtsi2sd xmm1, ebp; call f`, or the
 /// `movdqa` of a record copied to the stack after `mov %rbx, %rdi`).
-inline bool endsCallArgumentSetup(const MedOp &Op) {
+/// A validated address store preserves register setup, but may overwrite an
+/// outgoing stack argument; RegistersOnly must be false for memory queries.
+inline bool endsCallArgumentSetup(const MedOp &Op, bool RegistersOnly = false) {
   if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
     return true;
   if (Op.Opcode != NdOp::INTRINSIC)
@@ -694,7 +696,8 @@ inline bool endsCallArgumentSetup(const MedOp &Op) {
          !aarch64PAuthMedShapeIsValid(Op) &&
          !aarch64PAuthLoadMedShapeIsValid(Op) &&
          !aarch64WritebackMemoryMedShapeIsValid(Op) &&
-         !aarch64AddressLoadMedShapeIsValid(Op) &&
+         !(RegistersOnly ? aarch64AddressMemoryMedShapeIsValid(Op)
+                         : aarch64AddressLoadMedShapeIsValid(Op)) &&
          !aarch64CPAMedShapeIsValid(Op) && !aarch64SVECPAMedShapeIsValid(Op) &&
          !aarch64SVEPrefixMedShapeIsValid(Op) &&
          !x86FPStateShapeIsValid(Id, x86FPStateMedShape(Op));

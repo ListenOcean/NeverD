@@ -567,10 +567,17 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
           Hinted.push_back(medvarToExpr(Call.Inputs[++Index]));
         } else {
           std::vector<ExprPtr> Leaves;
-          for (const auto &Member : sourceAggregateMembers(P.Type))
+          for (const auto &Member : sourceABIValueMembers(P.Type))
             Leaves.push_back(
                 sourceScalarValue(Call.Inputs[++Index], Member.Type));
-          Hinted.push_back(HighExpr::makeRecord(P.Type, std::move(Leaves)));
+          if (P.Type->Kind == NdTypeKind::Int) {
+            auto Value = HighExpr::makeBinop(NdOp::CONCAT, Leaves.back(),
+                                             Leaves.front());
+            Value->Type = NdType::makeInt(P.Type->Size, false);
+            Hinted.push_back(std::move(Value));
+          } else {
+            Hinted.push_back(HighExpr::makeRecord(P.Type, std::move(Leaves)));
+          }
         }
       }
     }
@@ -613,7 +620,7 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
   bool ReachedBlockStart = true;
   for (int J = static_cast<int>(CallIdx) - 1; J >= 0; --J) {
     const MedOp &Prev = Ops[J];
-    if (call_args_detail::endsCallSetup(Prev)) {
+    if (endsCallArgumentSetup(Prev, /*RegistersOnly=*/true)) {
       ReachedBlockStart = false;
       break;
     }

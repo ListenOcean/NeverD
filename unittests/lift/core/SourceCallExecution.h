@@ -51,11 +51,9 @@ inline void compileSource(const std::string &Source,
       "-fno-inline",
       "-fblocks",
       "-Werror=implicit-function-declaration",
-      "-Werror=return-type",
-      SourcePath,
-      "-o",
-      BinaryPath};
+      "-Werror=return-type"};
   Arguments.append(ExtraArguments.begin(), ExtraArguments.end());
+  Arguments.append({SourcePath, "-o", BinaryPath});
   if (!Execute)
     Arguments.push_back("-fsyntax-only");
   std::string Error;

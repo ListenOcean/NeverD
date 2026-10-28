@@ -22,17 +22,25 @@ namespace neverd {
 llvm::Value *MedLLVMEmitter::emitX86APXAtomic(const MedOp &Op, Intrinsic Id,
                                               llvm::IRBuilder<> &B) {
   const auto S = apxAtomicMedShape(Op, TargetArch);
-  const auto Prefix = x86APXSegmentPrefix(Op.MemoryAddressSpace);
+  const auto Prefix = x86APXAtomicNativePrefix(S);
   if (!intrinsicApxAtomicShapeIsValid(Id, S) || !Prefix)
     throw std::invalid_argument("invalid APX atomic operand/output contract");
-  const auto P = *x86APXAtomicPlan(
-      Id, S.SourceSize, TargetArch == Arch::X86 ? 32 : 64,
-      *Prefix | (S.stackReference() ? X86NativeStackReference : 0),
+  const auto Plan = x86APXAtomicPlan(
+      Id, S.SourceSize, TargetArch == Arch::X86 ? 32 : 64, *Prefix,
       isX86CmpccXaddIntrinsic(Id) ? S.Condition : 0, TargetArch);
-  auto *Address = resolveAtomicMemoryPtr(
-      Op.Inputs[1], P.Bytes, sizeToType(P.Bytes), B, Op.MemoryAddressSpace);
-  std::vector<llvm::Value *> Args = {
-      B.CreatePtrToInt(Address, B.getIntNTy(P.addressBytes() * 8))};
+  if (!Plan)
+    throw std::invalid_argument("invalid APX atomic native target");
+  const auto &P = *Plan;
+  auto *Word = B.getIntNTy(P.addressBytes() * 8);
+  llvm::Value *Offset;
+  if (S.segmentPrefix())
+    Offset = B.CreateZExtOrTrunc(getRawSegmentOffset(Op.Inputs[1], B), Word);
+  else {
+    auto *Address = resolveAtomicMemoryPtr(
+        Op.Inputs[1], P.Bytes, sizeToType(P.Bytes), B, Op.MemoryAddressSpace);
+    Offset = B.CreatePtrToInt(Address, Word);
+  }
+  std::vector<llvm::Value *> Args = {Offset};
   const auto Append = [&](unsigned I) {
     auto *V = getVar(Op.Inputs[I], B);
     auto *T = sizeToType(P.Bytes);

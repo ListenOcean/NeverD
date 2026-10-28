@@ -1,5 +1,6 @@
 add_neverd_component_library(NeverDIRMed
   lower/ComputedBranchScalars.cpp
+  AArch64/AArch64AuthenticatedCall.cpp
   AArch64/AArch64ReturnProtection.cpp
   AArch64/AArch64SVEState.cpp
   X86/PortableX87Function.cpp
@@ -14,6 +15,7 @@ add_neverd_component_library(NeverDIRMed
   X86/RegistrationCatchContext.cpp
   X86/RegistrationCleanupContext.cpp
   X86/RegistrationCall.cpp
+  X86/RegistrationCallStacks.cpp
   X86/RegistrationCallResult.cpp
   X86/RegistrationSEHCall.cpp
   X86/RegistrationSEHRegisters.cpp

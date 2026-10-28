@@ -26,7 +26,7 @@
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86/X86AmxState.h"
-#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86AtomicRmw.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -52,9 +52,13 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/FloatingPointContract.h"
+#include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
+#include "neverd/backend/c/render/AArch64/AArch64ReturnProtectionC.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/c/render/LLVMC/LLVMCIntrinsicRender.h"
 #include "neverd/backend/c/render/SyscallHelpers.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64AuthenticatedCall.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64ReturnProtection.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/backend/llvm/LLVMName.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
@@ -799,6 +803,7 @@ void LLVMCWriter::recordSourceNames(const llvm::Module &Mod) {
 }
 
 void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
+  bool NeedsAArch64RawCall = false;
   bool NeedsX86SystemRegisterDispatch = false;
   bool NeedsX86ScalarSystemDispatch = false;
   bool NeedsX86DescriptorStateDispatch = false;
@@ -851,6 +856,9 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                  Inst.getOpcode() == llvm::Instruction::FMul ||
                                  Inst.getOpcode() == llvm::Instruction::FDiv;
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Inst)) {
+          NeedsAArch64RawCall |=
+              Call->isIndirectCall() && !Call->isInlineAsm() &&
+              !Call->getOperandBundle(kAArch64PAuthCallBundle);
           if (auto Shape = scalarIntegerSaturation(*Call))
             IntegerSaturations.emplace(
                 functionIdentifier(*Call->getCalledFunction()), *Shape);
@@ -1190,6 +1198,8 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
     }
   if (HasFloatingArithmetic)
     c_float::writeContractionPolicy(OS.stream());
+  if (Opts.TheArch == Arch::AArch64 && NeedsAArch64RawCall)
+    OS << kAArch64PAuthCRawCallHeader;
   // The accesses' types or assumptions are written only when an access can
   // name a type; otherwise every access keeps its portable byte copy.
   UnalignedTypesWritten = Opts.UseUnalignedPointers && NeedsUnalignedTypes;
@@ -2764,12 +2774,22 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
     unsigned ArgumentWords = 0;
     bool WordParameters = true;
     bool HFAParameters = true;
+    bool DarwinRecordParameters = Target.isAArch64() && Target.isOSDarwin();
     CheckType(Ty->getReturnType(), false);
     for (auto *Param : Ty->params()) {
       HasArray |= containsArrayValue(Param);
       HasArrayParameter |= containsArrayValue(Param);
       CheckType(Param, true);
       const bool HFA = HFAABI && isAAPCS64HFAArray(Param);
+      DarwinRecordParameters &=
+          HFA || isDarwinAArch64WordArray(Param) || Param->isFloatTy() ||
+          Param->isDoubleTy() ||
+          (Param->isIntegerTy() &&
+           (Param->getIntegerBitWidth() <=
+                llvm::Type::getInt64Ty(Param->getContext())
+                    ->getIntegerBitWidth() ||
+            Param == llvm::Type::getInt128Ty(Param->getContext()))) ||
+          (Param->isPointerTy() && Param->getPointerAddressSpace() == 0);
       HasHFA |= HFA;
       HFAParameters &=
           HFA || Param->isFloatTy() || Param->isDoubleTy() ||
@@ -2802,8 +2822,9 @@ static void validateArrayValueBoundaries(const llvm::Module &Mod,
     // the raw aggregate. Do not infer that stack-argument ABI from its type.
     const unsigned RegisterWords = Target.isAArch64() ? 8 : 6;
     const bool ParametersFit =
-        HasHFA ? HFAParameters
-               : WordParameters && ArgumentWords <= RegisterWords;
+        DarwinRecordParameters ||
+        (HasHFA ? HFAParameters
+                : WordParameters && ArgumentWords <= RegisterWords);
     if (HasArrayParameter && (!ParametersFit || Ty->isVarArg()))
       throw std::runtime_error(
           "C projection has an unsupported array argument ABI");
@@ -2876,16 +2897,23 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
     Opts.SourceMap->Variables.clear();
   // Admission precedes function filtering and source normalization. Hiding a
   // body cannot turn a malformed owned memory operation into valid source.
-  for (const auto &Function : Mod)
+  for (const auto &Function : Mod) {
+    if (getLLVMAArch64ReturnProtection(Function) &&
+        Opts.TheArch != Arch::AArch64)
+      throw std::invalid_argument(kReturnProtectionCRequiresAArch64);
     for (const auto &Block : Function)
-      for (const auto &Instruction : Block)
+      for (const auto &Instruction : Block) {
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+          (void)llvmAArch64AuthenticatedCall(*Call, Opts.TheArch);
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
           (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
           (void)x86CompactCallPlan(Opts.TheArch, *Call);
           (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
-          (void)x86AtomicRMWCallPlan(Opts.TheArch, *Call);
+          (void)x86AtomicRmwCallPlan(Opts.TheArch, *Call);
         }
+      }
+  }
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(
         "C projection references unsupported vector global storage");

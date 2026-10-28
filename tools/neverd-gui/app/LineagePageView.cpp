@@ -11,6 +11,7 @@
 #include "LineagePageView.h"
 
 #include "../ResourceLimits.h"
+#include "ComparisonModel.h"
 #include "Icons.h"
 #include "LineageSession.h"
 #include "ShrinkableRow.h"
@@ -78,6 +79,8 @@ QString cell(const QJsonValue &Value) {
   return QString::fromUtf8("—");
 }
 QString display(const QJsonObject &Row, const QString &Key) {
+  if (Key == "change_state" && Row[Key].isString())
+    return ComparisonModel::changeStateText(Row[Key].toString());
   const auto Value = singleLineDisplayText(cell(Row[Key]));
   if (Key == "name" && Value.isEmpty())
     return Row["address"].toString();

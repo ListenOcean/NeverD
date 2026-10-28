@@ -10,6 +10,7 @@
 #ifndef NEVERD_LIB_LIFT_X86_X86NATIVESTATEAUDIT_H
 #define NEVERD_LIB_LIFT_X86_X86NATIVESTATEAUDIT_H
 
+#include "X86DescriptorQueryAudit.h"
 #include "X86LegacyMemoryAudit.h"
 #include "X86LockedUnary.h"
 
@@ -53,6 +54,75 @@ inline bool cpuQueryForm(const cs_insn *Insn, Arch Target) {
          !X.encoding.imm_offset && !X.encoding.imm_size && !X.op_count &&
          !X.avx_sae && X.avx_rm == X86_AVX_RM_INVALID &&
          X.avx_cc == X86_AVX_CC_INVALID && !X.eflags;
+}
+
+inline bool legacyMsrForm(const cs_insn *Insn, Arch Target) {
+  if (!Insn || !Insn->detail || Target != Arch::X64 ||
+      (Insn->id != X86_INS_RDMSR && Insn->id != X86_INS_WRMSR))
+    return false;
+  const uint8_t Opcode = Insn->id == X86_INS_RDMSR ? 0x32 : 0x30;
+  if (Insn->size != 2 || Insn->bytes[0] != 0x0f || Insn->bytes[1] != Opcode)
+    return false;
+  const auto &X = Insn->detail->x86;
+  return !X.prefix[0] && !X.prefix[1] && !X.prefix[2] && !X.prefix[3] &&
+         X.opcode[0] == 0x0f && X.opcode[1] == Opcode && !X.opcode[2] &&
+         !X.opcode[3] && !X.rex && X.addr_size == 8 && !X.modrm && !X.sib &&
+         !X.disp && !X.encoding.modrm_offset && !X.encoding.disp_offset &&
+         !X.encoding.disp_size && !X.encoding.imm_offset &&
+         !X.encoding.imm_size && !X.op_count && !X.avx_sae &&
+         X.avx_rm == X86_AVX_RM_INVALID && X.avx_cc == X86_AVX_CC_INVALID &&
+         !X.eflags;
+}
+
+inline bool sysretqForm(const cs_insn *Insn, Arch Target) {
+  if (!Insn || !Insn->detail || Target != Arch::X64 ||
+      Insn->id != X86_INS_SYSRETQ || Insn->size != 3 ||
+      Insn->bytes[0] != 0x48 || Insn->bytes[1] != 0x0f ||
+      Insn->bytes[2] != 0x07)
+    return false;
+  const auto &X = Insn->detail->x86;
+  return !X.prefix[0] && !X.prefix[1] && !X.prefix[2] && !X.prefix[3] &&
+         X.opcode[0] == 0x0f && X.opcode[1] == 0x07 && !X.opcode[2] &&
+         !X.opcode[3] && X.rex == 0x48 && X.addr_size == 8 && !X.modrm &&
+         !X.sib && !X.disp && !X.encoding.modrm_offset &&
+         !X.encoding.disp_offset && !X.encoding.disp_size &&
+         !X.encoding.imm_offset && !X.encoding.imm_size && !X.op_count &&
+         !X.avx_sae && X.avx_rm == X86_AVX_RM_INVALID &&
+         X.avx_cc == X86_AVX_CC_INVALID &&
+         X.eflags == (X86_EFLAGS_MODIFY_AF | X86_EFLAGS_MODIFY_CF |
+                      X86_EFLAGS_MODIFY_SF | X86_EFLAGS_MODIFY_ZF |
+                      X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_OF |
+                      X86_EFLAGS_MODIFY_TF | X86_EFLAGS_MODIFY_IF |
+                      X86_EFLAGS_MODIFY_DF | X86_EFLAGS_MODIFY_NT |
+                      X86_EFLAGS_MODIFY_RF);
+}
+
+inline bool longModeEventForm(const cs_insn *Insn, Arch Target) {
+  if (!Insn || !Insn->detail || Target != Arch::X64 ||
+      (Insn->id != X86_INS_IRETQ && Insn->id != X86_INS_INT3))
+    return false;
+  const bool Return = Insn->id == X86_INS_IRETQ;
+  const uint8_t Opcode = Return ? 0xcf : 0xcc;
+  if (Insn->size != (Return ? 2 : 1) || (Return && Insn->bytes[0] != 0x48) ||
+      Insn->bytes[Return ? 1 : 0] != Opcode)
+    return false;
+  const auto &X = Insn->detail->x86;
+  const uint64_t ReturnFlags =
+      X86_EFLAGS_MODIFY_AF | X86_EFLAGS_MODIFY_CF | X86_EFLAGS_MODIFY_SF |
+      X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_OF |
+      X86_EFLAGS_MODIFY_TF | X86_EFLAGS_MODIFY_IF | X86_EFLAGS_MODIFY_DF |
+      X86_EFLAGS_MODIFY_NT | X86_EFLAGS_MODIFY_RF;
+  const uint64_t TrapFlags = X86_EFLAGS_MODIFY_IF | X86_EFLAGS_RESET_TF |
+                             X86_EFLAGS_MODIFY_NT | X86_EFLAGS_RESET_RF;
+  return !X.prefix[0] && !X.prefix[1] && !X.prefix[2] && !X.prefix[3] &&
+         X.opcode[0] == Opcode && !X.opcode[1] && !X.opcode[2] &&
+         !X.opcode[3] && X.rex == (Return ? 0x48 : 0) && X.addr_size == 8 &&
+         !X.modrm && !X.sib && !X.disp && !X.encoding.modrm_offset &&
+         !X.encoding.disp_offset && !X.encoding.disp_size &&
+         !X.encoding.imm_offset && !X.encoding.imm_size && !X.op_count &&
+         !X.avx_sae && X.avx_rm == X86_AVX_RM_INVALID &&
+         X.avx_cc == X86_AVX_CC_INVALID &&
+         X.eflags == (Return ? ReturnFlags : TrapFlags);
 }
 
 inline bool swapgsForm(const cs_insn *Insn, Arch Target) {
@@ -143,6 +213,10 @@ inline bool accessCheckForm(const cs_insn *Insn, Arch Target) {
 // preservation. Their existing semantic owners retain those separate
 // obligations.
 inline bool form(const cs_insn *Insn, Arch Target) {
+  if (sysretqForm(Insn, Target) || longModeEventForm(Insn, Target))
+    return true;
+  if (descriptorqueryaudit::form(Insn, Target))
+    return true;
   if (Insn->id == X86_INS_INC || Insn->id == X86_INS_DEC)
     return lockedunary::form(Insn, Target);
   if (Insn->id == X86_INS_LFENCE)
@@ -150,6 +224,8 @@ inline bool form(const cs_insn *Insn, Arch Target) {
   if (Insn->id == X86_INS_CPUID || Insn->id == X86_INS_RDTSC ||
       Insn->id == X86_INS_RDTSCP)
     return cpuQueryForm(Insn, Target);
+  if (Insn->id == X86_INS_RDMSR || Insn->id == X86_INS_WRMSR)
+    return legacyMsrForm(Insn, Target);
   if (Insn->id == X86_INS_SWAPGS)
     return swapgsForm(Insn, Target);
   if (Insn->id == X86_INS_PREFETCHW)

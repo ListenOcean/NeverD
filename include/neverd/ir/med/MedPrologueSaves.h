@@ -25,6 +25,12 @@ namespace neverd {
 /// its version zero, or the entry seed that copies it (`COPY RSI.1 = RSI`).
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 
+/// A bounded extent in the function's private frame or incoming ABI home
+/// storage. This classifies storage, not its initialization or capture state.
+bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
+                                BinaryFormat Format, int64_t Offset,
+                                uint16_t Bytes);
+
 /// Mark source-mode prologue saves, unobserved scratch spills and
 /// return-address reads using one frame access analysis. Complete fixed integer
 /// call operands reading private frame bytes proved never written on any
@@ -36,7 +42,8 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              StackEntryKind Entry = StackEntryKind::Call);
 
 /// After call argument recovery, omit private stores only when a complete
-/// noncapturing use proof of the frame finds no reads of their bytes. Direct
+/// noncapturing use proof of the frame finds no reads of their surviving
+/// bytes on any path. Explicit partial overwrites kill only their bytes. Direct
 /// callees contribute their actual bounded pointer reads, including negative
 /// displacements. Unknown callees, escapes and unsupported uses keep stores.
 void markUnobservedBorrowedFrameStores(

@@ -14,8 +14,11 @@
 
 #include "gtest/gtest.h"
 
+#include "../core/SourceCallExecution.h"
+
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/dialect/SourceDialect.h"
 #include "neverd/loader/ExceptionInfo.h"
 
 #include "llvm/Support/raw_ostream.h"
@@ -244,6 +247,65 @@ TEST(ItaniumHandlerBodies, OneClausePadBecomesItsCatch) {
   EXPECT_EQ(Source.find("__cxa_end_catch"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("eh_exception"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("L_401040"), std::string::npos) << Source;
+}
+
+TEST(ItaniumHandlerBodies, AHandlerKeepsTheFunctionsIncomingValues) {
+  for (unsigned Shape = 0; Shape != 3; ++Shape) {
+    SCOPED_TRACE(Shape);
+    auto Param = [](int Id) {
+      MedVar V = var(Id);
+      V.Kind = MedVar::Param;
+      return HighExpr::makeVar(V, NdType::makeInt(8, false));
+    };
+    ExprPtr Result = Param(0);
+    if (Shape == 1)
+      Result = use(9);
+    else if (Shape == 2)
+      Result = HighExpr::makeLoad(
+          HighExpr::makeBinop(NdOp::INT_ADD, Param(1), constant(8)),
+          NdType::makeInt(8, false));
+    auto Func = function({clause(1, "")},
+                         {statement(beginCatch(exception())), endCatch(),
+                          ret(Result)},
+                         {1});
+    Func.Params = {{"arg0", NdType::makeInt(8, false)},
+                   {"arg1", NdType::makeInt(8, false)}};
+    Func.Body.front().Body.front().Val =
+        call("risky", kRisky, {Param(0), Param(1)});
+    if (Shape == 1)
+      Func.Body.insert(Func.Body.begin(),
+                       assign(9, HighExpr::makeBinop(
+                                     NdOp::INT_ADD, Param(0), constant(17)),
+                              kEntry));
+    SourceDialectOptions Options;
+    Options.Dialect = SourceDialect::Cpp;
+    const auto Cpp = spellInDialect(emit(Func), Options);
+    ASSERT_TRUE(Cpp.Unread.empty());
+    const std::string &Source = Cpp.Text;
+    ASSERT_NE(Source.find("catch (...)"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("return;"), std::string::npos) << Source;
+    EXPECT_EQ(Source.find("unknown return value"), std::string::npos) << Source;
+    const unsigned Expected = Shape == 0 ? 5 : Shape == 1 ? 22 : 43;
+    const std::string Oracle = R"(
+static bool shouldThrow;
+int64_t risky(...) {
+  if (shouldThrow) throw 7;
+  return 19;
+}
+int main() {
+  uint64_t values[] = {31, 43};
+  if (guarded(0, (uintptr_t)values) != 19) return 1;
+  shouldThrow = true;
+  return guarded(5, (uintptr_t)values) != )" +
+                               std::to_string(Expected) +
+                               ";\n}\n";
+    for (llvm::StringRef Level : {"-O0", "-O2"}) {
+      SCOPED_TRACE(Level.str());
+      source_call_execution_test::compileAndRun(
+          "#include <stdint.h>\n" + Source + Oracle,
+          {"--driver-mode=g++", "-x", "c++", "-std=c++17", Level});
+    }
+  }
 }
 
 TEST(ItaniumHandlerBodies, SelectorTestsAreDecidedPerClause) {
@@ -756,7 +818,7 @@ TEST(ItaniumHandlerBodies, ABranchWhoseArmsCallThroughThePadIsOneScope) {
   EXPECT_EQ(scopeAfter(Source, S.End).Try, std::string::npos) << Source;
 }
 
-TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
+TEST(ItaniumHandlerBodies, AJumpBetweenProtectedCallsSplitsTheCleanupScope) {
   // if (v4) goto L_later;  v1 = risky();  L_later: v2 = risky2();
   // C++ jumps into no try block.
   HighStmt Jump;
@@ -771,9 +833,16 @@ TEST(ItaniumHandlerBodies, AJumpIntoACleanupScopeKeepsThePad) {
   const HighFunc Func = cleanupFunction(
       cleanupSites({{kCall, kPad}, {kLater, kPad}}), std::move(Body));
   const std::string Source = body(emit(Func));
-  EXPECT_EQ(Source.find("} catch (...) {"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("L_401040: /* landing pad"), std::string::npos)
-      << Source;
+  const Scope First = scopeAfter(Source);
+  ASSERT_NE(First.End, std::string::npos) << Source;
+  const Scope Second = scopeAfter(Source, First.End);
+  ASSERT_NE(Second.End, std::string::npos) << Source;
+  EXPECT_LT(Source.find("risky()"), First.Catch) << Source;
+  EXPECT_GT(Source.find("risky2()"), Second.Try) << Source;
+  EXPECT_LT(Source.find("risky2()"), Second.Catch) << Source;
+  EXPECT_GT(Source.find("L_401020:"), First.End) << Source;
+  EXPECT_EQ(Source.find("_Unwind_Resume"), std::string::npos) << Source;
+  EXPECT_EQ(Source.find("landing pad"), std::string::npos) << Source;
 }
 
 TEST(ItaniumHandlerBodies, ACoveredCallOnlyAJumpReachesKeepsThePad) {

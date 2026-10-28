@@ -114,9 +114,99 @@ public:
       // A call owns its home area and any storage this invocation already
       // released below SP. Neither requires an explicit pointer parameter.
       ImplicitFrameReads.emplace_back(-Func.FrameSize, End);
+      ReadSites[Call].emplace_back(-Func.FrameSize, End);
       LocatedCalls.insert(Call);
     }
     return through(Func, roots(Func, TRI.StackPointer, std::nullopt), true);
+  }
+
+  /// The complete frame-use proof above supplies every possible reader. A
+  /// partial overwrite kills only its bytes on that path; neither a callee
+  /// write nor a missing operation is assumed to initialize anything.
+  bool unreadAfter(
+      const MedFunc &Func, const MedOp &Save, int64_t Offset, uint16_t Bytes,
+      const std::map<const MedOp *, std::pair<int64_t, uint16_t>> &Stores) {
+    if (!Bytes || Bytes > sizeof(uint64_t))
+      return false;
+    std::map<int, size_t> Blocks;
+    std::optional<std::pair<size_t, size_t>> Start;
+    for (size_t B = 0; B < Func.Blocks.size(); ++B) {
+      const auto &Block = Func.Blocks[B];
+      if (Block.Ops.size() >= Budget)
+        return false;
+      Budget -= Block.Ops.size() + 1;
+      if (!Blocks.emplace(Block.Id, B).second)
+        return false;
+      for (size_t I = 0; I < Block.Ops.size(); ++I)
+        if (&Block.Ops[I] == &Save)
+          Start = {B, I + 1};
+    }
+    if (!Start)
+      return false;
+    auto overlap = [&](int64_t Begin, int64_t End) {
+      uint64_t Mask = 0;
+      for (unsigned I = 0; I < Bytes; ++I)
+        if (Offset + I >= Begin && Offset + I < End)
+          Mask |= uint64_t{1} << I;
+      return Mask;
+    };
+    using Visit = std::tuple<size_t, size_t, uint64_t>;
+    std::vector<Visit> Work{
+        {Start->first, Start->second, (uint64_t{1} << Bytes) - 1}};
+    std::map<std::pair<size_t, size_t>, uint64_t> Seen;
+    while (!Work.empty()) {
+      auto [B, First, Pending] = Work.back();
+      Work.pop_back();
+      auto &Visited = Seen[{B, First}];
+      Pending &= ~Visited;
+      if (!Pending)
+        continue;
+      Visited |= Pending;
+      const auto &Block = Func.Blocks[B];
+      bool Returned = false;
+      for (size_t I = First; Pending && I < Block.Ops.size(); ++I) {
+        if (!Budget)
+          return false;
+        --Budget;
+        const auto &Op = Block.Ops[I];
+        if (Op.Dead)
+          continue;
+        if (const auto At = ReadSites.find(&Op); At != ReadSites.end())
+          for (const auto &[Begin, End] : At->second) {
+            if (!Budget)
+              return false;
+            --Budget;
+            if (Pending & overlap(Begin, End))
+              return false;
+          }
+        if (!Op.PrologueSave)
+          if (const auto At = Stores.find(&Op); At != Stores.end()) {
+            int64_t End;
+            if (llvm::AddOverflow(At->second.first, int64_t(At->second.second),
+                                  End))
+              return false;
+            Pending &= ~overlap(At->second.first, End);
+          }
+        if (Op.Opcode == NdOp::RETURN || Op.DoesNotReturn) {
+          Returned = true;
+          break;
+        }
+      }
+      if (!Pending || Returned)
+        continue;
+      if (Block.Succs.empty())
+        return false;
+      for (int Successor : Block.Succs) {
+        if (!Budget)
+          return false;
+        --Budget;
+        const auto Next = Blocks.find(Successor);
+        if (Next == Blocks.end())
+          return false;
+        Work.emplace_back(Next->second, 0, Pending);
+      }
+    }
+    return true;
   }
 
 private:
@@ -133,6 +223,7 @@ private:
   std::set<const MedOp *> EmptyPrefixCalls;
   std::set<const MedOp *> LocatedCalls;
   Ranges ImplicitFrameReads;
+  std::map<const MedOp *, Ranges> ReadSites;
   std::map<std::pair<va_t, uint64_t>, std::optional<Ranges>> Known;
 
   std::vector<MedVar> roots(const MedFunc &Func, uint64_t Register,
@@ -364,6 +455,8 @@ private:
                 llvm::AddOverflow(Offset, End, Last))
               return std::nullopt;
             Reads.emplace_back(First, Last);
+            if (IsFrame)
+              ReadSites[By.Op].emplace_back(First, Last);
           }
           continue;
         }
@@ -378,6 +471,8 @@ private:
                 llvm::AddOverflow(Offset, int64_t(Op.Output.Size), End))
               return std::nullopt;
             Reads.emplace_back(Offset, End);
+            if (IsFrame)
+              ReadSites[By.Op].emplace_back(Offset, End);
           }
           continue;
         }
@@ -1089,6 +1184,14 @@ void replaceUnwrittenCallFrameReads(MedFunc &Func, Arch Architecture,
 
 } // namespace
 
+bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
+                                BinaryFormat Format, int64_t Offset,
+                                uint16_t Bytes) {
+  return isPrivateFrameAccess(
+      Func, getTargetRegInfo(Architecture).integerArgumentLayout(Format),
+      Offset, Bytes);
+}
+
 void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
                                  BinaryFormat Format, StackEntryKind Entry) {
   std::vector<FrameAccess> Loads, Stores;
@@ -1151,6 +1254,9 @@ void markUnobservedBorrowedFrameStores(
   const auto Reads = Proof.frame(Func);
   if (!Reads)
     return;
+  std::map<const MedOp *, std::pair<int64_t, uint16_t>> Writes;
+  for (const FrameAccess &Store : Stores)
+    Writes.emplace(Store.Op, std::pair{Store.Offset, Store.Size});
   for (const FrameAccess &Store : Stores) {
     if (!Candidate(Store))
       continue;
@@ -1158,7 +1264,8 @@ void markUnobservedBorrowedFrameStores(
         Reads->begin(), Reads->end(), [&](const FrameBorrowReads::Range &R) {
           return R.second <= Store.Offset;
         });
-    if (Read == Reads->end() || !Store.overlaps(Read->first, Read->second))
+    if (Read == Reads->end() || !Store.overlaps(Read->first, Read->second) ||
+        Proof.unreadAfter(Func, *Store.Op, Store.Offset, Store.Size, Writes))
       Store.Op->PrologueSave = true;
   }
 }

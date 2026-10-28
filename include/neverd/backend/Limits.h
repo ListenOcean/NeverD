@@ -76,6 +76,9 @@ inline constexpr unsigned kCSyntaxParserMaxNesting = 1024;
 
 // lib/backend/c/pass/LLVMC/LLVMCBitTests.cpp
 inline constexpr unsigned kLLVMCBitTestsQueryWork = 512;
+/// Project no more than a 64-bit consumer per slice, independently of the
+/// enclosing integer's width. Wider consumers retain the existing writer.
+inline constexpr unsigned kLLVMCIntegerSliceMaxBits = 64;
 
 // lib/backend/c/pass/LLVMC/LLVMCBitTests.h
 inline constexpr unsigned kLLVMCBitTestsWorkLimit = 262144;

@@ -30,7 +30,8 @@ target_include_directories(neverd_worker_protocol PUBLIC
   "${CMAKE_CURRENT_SOURCE_DIR}"
   "${CMAKE_CURRENT_SOURCE_DIR}/../../include")
 add_library(neverd_worker_graph STATIC GraphSnapshot.cpp GraphLayout.cpp)
-add_library(neverd_worker_format STATIC OperandFormat.cpp OperandFormatARM.cpp CodeEdits.cpp)
+add_library(neverd_worker_format STATIC OperandFormat.cpp OperandFormatARM.cpp
+  OperandFormatSBF.cpp OperandFormatEVM.cpp CodeEdits.cpp)
 target_link_libraries(neverd_worker_format PUBLIC neverd_worker_protocol)
 # Header-only tables shared with the engine, such as the wide characters.
 target_include_directories(neverd_worker_format PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../../include")

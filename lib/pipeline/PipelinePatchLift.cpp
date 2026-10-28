@@ -68,13 +68,61 @@ std::string functionAdmissionDiagnostic(va_t Entry,
   Message += " (" +
              std::string(pipelineFunctionDispositionName(Audit->Disposition)) +
              ")";
-  if (!Audit->DecodeFailures.empty())
+  if (!Audit->Diagnostic.empty())
+    Message += "; " + Audit->Diagnostic;
+  else if (!Audit->DecodeFailures.empty())
     Message += "; decode failure at 0x" +
                llvm::utohexstr(Audit->DecodeFailures.front());
   else if (!Audit->UnsupportedInstructions.empty())
     Message += "; unsupported instruction at 0x" +
                llvm::utohexstr(Audit->UnsupportedInstructions.front());
   return Message;
+}
+
+/// Whether every requested function reaches LLVM. Names the first that does
+/// not in \p Error.
+bool admitsRequestedFunctions(const BinaryImage &Img,
+                              const PipelineOptions &Opts,
+                              const PipelineResult &Result,
+                              const char *ModeName, std::string &Error) {
+  std::set<va_t> AdmittedEntries;
+  for (const auto &Function : Result.MedFuncs)
+    AdmittedEntries.insert(
+        normalizeCodeAddress(Function.Entry, Img.Arch, Img.Mode));
+  for (va_t Requested : Opts.OnlyFunctionEntries) {
+    const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
+    if (AdmittedEntries.count(Entry))
+      continue;
+    const auto Audit =
+        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
+                     [&](const PipelineFunctionAudit &Candidate) {
+                       return normalizeCodeAddress(Candidate.Entry, Img.Arch,
+                                                   Img.Mode) == Entry;
+                     });
+    Error = "selected " + std::string(ModeName) + " " +
+            functionAdmissionDiagnostic(
+                Requested,
+                Audit != Result.FunctionAudits.end() ? &*Audit : nullptr);
+    return false;
+  }
+  return true;
+}
+
+/// An empty module is not a successful lift of bodies every one of which was
+/// refused. Names the first such refusal in \p Error.
+bool admitsSomeFunction(const PipelineResult &Result, const char *ModeName,
+                        std::string &Error) {
+  if (!Result.MedFuncs.empty())
+    return true;
+  for (const auto &Audit : Result.FunctionAudits)
+    if (Audit.Disposition == PipelineFunctionDisposition::RejectedLowIR ||
+        Audit.Disposition == PipelineFunctionDisposition::RejectedIncomplete ||
+        Audit.Disposition == PipelineFunctionDisposition::MedIRFailed) {
+      Error = "no " + std::string(ModeName) + " functions were admitted; " +
+              functionAdmissionDiagnostic(Audit.Entry, &Audit);
+      return false;
+    }
+  return true;
 }
 
 } // namespace
@@ -115,41 +163,14 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // A selected parent may fail instruction admission while its automatically
   // included cleanup bodies survive. Emitting those bodies is not a successful
   // export of the requested entry. Analysis views retain their partial results.
-  std::set<va_t> AdmittedEntries;
-  for (const auto &Function : Result.MedFuncs)
-    AdmittedEntries.insert(
-        normalizeCodeAddress(Function.Entry, Img.Arch, Img.Mode));
-  for (va_t Requested : Opts.OnlyFunctionEntries) {
-    const va_t Entry = normalizeCodeAddress(Requested, Img.Arch, Img.Mode);
-    if (AdmittedEntries.count(Entry))
-      continue;
-    const auto Audit =
-        std::find_if(Result.FunctionAudits.begin(), Result.FunctionAudits.end(),
-                     [&](const PipelineFunctionAudit &Candidate) {
-                       return normalizeCodeAddress(Candidate.Entry, Img.Arch,
-                                                   Img.Mode) == Entry;
-                     });
-    Result.Error =
-        "selected " + std::string(ModeName) + " " +
-        functionAdmissionDiagnostic(
-            Requested,
-            Audit != Result.FunctionAudits.end() ? &*Audit : nullptr);
+  if (!admitsRequestedFunctions(Img, Opts, Result, ModeName, Result.Error))
     return false;
-  }
-  // A whole-module request can reject every body before reaching LLVM. An
-  // empty module is not a successful lift of those instructions. Intentional
-  // runtime/import skips and read-only analysis retain their existing outcome.
-  if (!Opts.MedAnalysisOnly && Result.MedFuncs.empty())
-    for (const auto &Audit : Result.FunctionAudits)
-      if (Audit.Disposition == PipelineFunctionDisposition::RejectedLowIR ||
-          Audit.Disposition ==
-              PipelineFunctionDisposition::RejectedIncomplete ||
-          Audit.Disposition == PipelineFunctionDisposition::MedIRFailed) {
-        Result.Error = "no " + std::string(ModeName) +
-                       " functions were admitted; " +
-                       functionAdmissionDiagnostic(Audit.Entry, &Audit);
-        return false;
-      }
+  // A whole-module request can reject every body before reaching LLVM.
+  // Intentional runtime/import skips and read-only analysis retain their
+  // existing outcome.
+  if (!Opts.MedAnalysisOnly &&
+      !admitsSomeFunction(Result, ModeName, Result.Error))
+    return false;
   if (Opts.PatchMode)
     for (const MedFunc &Function : Result.MedFuncs) {
       bool NeedsAdapter = Function.ConsumesX87Argument;
@@ -301,8 +322,15 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   if (Opts.MedAnalysisOnly)
     return true;
 
-  if (medStackProjection(Opts) == MedStackProjection::Source)
+  if (medStackProjection(Opts) == MedStackProjection::Source) {
     prepareRecoveredSourceStackAccesses(Img, Result);
+    // The proof can refuse a requested function, or every one.
+    if (!refuseObservedCallReturnReads(Img, Result, refusalFailsRun(Opts),
+                                       Dbg) ||
+        !admitsRequestedFunctions(Img, Opts, Result, ModeName, Result.Error) ||
+        !admitsSomeFunction(Result, ModeName, Result.Error))
+      return false;
+  }
 
   std::vector<std::pair<va_t, std::string>> ImportMap;
   for (const auto &[Addr, Name] : Img.getImportAddressNames())

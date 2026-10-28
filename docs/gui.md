@@ -371,7 +371,8 @@ complete code. Text selects as in an editor: drag with the mouse, which scrolls
 while it is held beyond an edge, extend with Shift and the arrows or a Shift
 click, or press **Ctrl+A** (also **Select all** in the context menu) for the
 whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
-right click inside the selection keeps it.
+right click inside the selection keeps it. Without a selection they copy the
+highlighted word under the cursor (see **Edit → Copy**).
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array
@@ -548,7 +549,10 @@ Strings, Ctrl+X lists the references to the selected string.
 jump (G or `g` on the command line) moves it and keeps it in front. Its
 context menu's **Text encoding** reads the text column as ASCII, UTF-8,
 UTF-16, UTF-32 or a code page; a character shows at its first byte, and wide
-characters take two columns. The choice is kept for later sessions.
+characters take two columns. The choice is kept for later sessions. A click
+on a row's address goes to the row and selects the address, which Ctrl+C or
+**Edit → Copy** then copies as shown; a click on a byte or a move with the
+keys makes Copy take bytes again.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
@@ -773,9 +777,22 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 `hx:BatchDecompile`, where 9.4 called them `EditCopy` and `hx:CreateCFile`.
 
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
-the selected lines of a disassembly, pseudocode or IR window (the current line
-when nothing is selected), the selected rows of a list with their columns
-separated by tabs, or the text selected in a field.
+the selected text of a disassembly, pseudocode or IR window, the selected rows
+of a list with their columns separated by tabs, or the text selected in a
+field. Without a selection, a disassembly window, in text or graph view, and a
+pseudocode or IR window copy the word under the cursor, as IDA does: the name,
+register, variable or number the highlight marks. The highlight follows the
+cursor whether a click or a key moves it, so Copy takes the word it shows. On
+blank space Copy leaves the clipboard as it was, and a folded summary copies
+the code it stands for. Pseudocode, whether it reads in C, C++, Rust or Go,
+splits a member access or qualified name at its dot, so a click on `var_m8`
+in `stack_storage.var_m8` or on `Println` in `fmt.Println` copies just that
+word and a click on the variable highlights every use of it; a decimal
+number stays whole, and IR names such as `RSP.3` keep their dots. A click on a word in a
+disassembly line's `segment:address` prefix, with either button, selects that
+word: the segment name or the address. A prefix word copies only once a click
+selects it. A drag still selects characters, and a right click inside a
+selection keeps it.
 
 Export previews, Find, shortcut help, calculator results, connection and tool
 schema information, and the Pathfinder, type-library and comparison counterpart
@@ -1297,11 +1314,15 @@ complement with a minus) and **Bitwise negate** (`~`); **Number** (`#`) goes
 back to the listing's own choice. Right-clicking an instruction offers the same
 forms under **Operand type**. The number under the cursor changes; with
 the cursor elsewhere on the line, the line's last number does, and a line
-without one is refused. x86, ARM, Thumb and AArch64 instructions show operand
-types; ARM-family immediates keep the decoder's `#` (`#0x1a`, `#-0x10`,
+without one is refused. x86, ARM, Thumb, AArch64, SBF and EVM instructions show
+operand types; ARM-family immediates keep the decoder's `#` (`#0x1a`, `#-0x10`,
 `#0b11010`, `#'A'`, an enumerator as `#NAME`, a structure offset as
 `[x20, #_T.Size]`) and count in their first register's width, 32 bits for a
-`w` register. SBF and EVM listings keep the decoder's numbers. A form
+`w` register. An SBF immediate counts in its operation's width, 32 bits for
+`mov32` and a store's data for `stb`, and a displacement takes a structure
+offset as `[r1 + _T.Size]`; a call target and a byte swap's width keep their
+numbers. EVM PUSH data counts in the PUSH's own width, up to the 256-bit word;
+an enumerator or a structure offset names at most 64 of its bits. A form
 the value cannot take, such as characters for unprintable bytes or an offset to
 an address with no name, leaves the listing's number. Each change is one step
 of undo history and is kept in the project folder's `operands.json`, which the command

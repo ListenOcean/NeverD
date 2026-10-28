@@ -4141,6 +4141,11 @@ void computeCallRegisterEffects(
   Result.CallPrototypeArguments.clear();
   Result.CallUserPrototypes.clear();
   if (Img.Arch != Arch::X64) {
+    // Format bindings carry explicit operands into MedIR independently of
+    // the x64-only register-effect summaries below.
+    for (const LowFunc &Function : Result.LowFuncs)
+      pipeline_detail::collectFormattedCalls(Img, Function,
+                                             Result.FormattedCalls);
     // Where an import takes every argument on the stack (i386: regparm is
     // for internal calls only), there are no register summaries, but a
     // prototyped import still reads its count of stack arguments.

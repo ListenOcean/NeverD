@@ -1599,16 +1599,20 @@ private:
       Close();
       if (!C.Covered)
         continue;
-      cover(S.Body);
-      cover(S.ElseBody);
-      for (const SwitchCase &Case : S.Cases)
-        cover(Case.Body);
-      cover(S.DefaultBody);
-      for (const auto &Clause : S.EHClauseBodies)
-        cover(Clause);
+      coverChildren(S);
     }
     if (!Failed)
       Close();
+  }
+
+  void coverChildren(const HighStmt &S) {
+    cover(S.Body);
+    cover(S.ElseBody);
+    for (const SwitchCase &Case : S.Cases)
+      cover(Case.Body);
+    cover(S.DefaultBody);
+    for (const auto &Clause : S.EHClauseBodies)
+      cover(Clause);
   }
 
   /// Make \p L's statements from \p Begin to \p End a run, unless a jump
@@ -1639,7 +1643,26 @@ private:
         continue;
       for (size_t Next : G.Nodes[N].Successors)
         if (Next != Entry && Inside.count(Next)) {
-          fail("a jump enters the scope below its first statement");
+          // A jump between protected calls can stay outside their separate
+          // try scopes. If it enters a compound statement, protect its
+          // children instead. A call in the compound's own condition cannot
+          // be separated this way and retains the original landing pad.
+          if (Begin != End) {
+            for (size_t I = Begin; I <= End && !Failed; ++I)
+              if (classify(L[I]).Covered)
+                close(L, I, I);
+            return;
+          }
+          bool OwnCall = false;
+          forEachStatementExpr(L[Begin], [&](const HighExpr *E) {
+            forEachCallSite(E, [&](va_t Site) {
+              OwnCall |= Site && padAt(LSDA, Site) == Pad;
+            });
+          });
+          if (OwnCall)
+            fail("a jump enters the scope below its first statement");
+          else
+            coverChildren(L[Begin]);
           return;
         }
     }
@@ -2033,6 +2056,59 @@ void attachItaniumHandlerBodies(HighFunc &Func) {
     for (const CleanupScopes::Run &Run : Plan.Runs)
       Opens[Run.First] = {Run.Last, &Plan};
   removeStatements(Func.Body, Gone, Opens);
+  // Only the completed C++ view may use call-point frame facts. A raw pad
+  // still represents the full machine range, including non-call faults.
+  std::set<va_t> Converted;
+  for (const Plan &P : Done)
+    Converted.insert(P.Pad);
+  for (const CleanupPlan &P : Cleanups)
+    Converted.insert(P.Pad);
+  if (!KeptPads.empty() || !CleanupPadsKept.empty() ||
+      llvm::any_of(LSDA.CallSites, [&](const ItaniumCallSite &Site) {
+        return Site.LandingPadVA && !Converted.count(Site.LandingPadVA);
+      }))
+    return;
+  const auto Key = [](const MedVar &V) {
+    return std::tuple{V.Kind, V.Id, V.SSAVer};
+  };
+  std::map<decltype(Key(MedVar{})), ExprPtr> Frames;
+  for (const auto &[Value, Address] : Func.ItaniumCallFrameOffsets)
+    Frames.emplace(Key(Value), Address);
+  if (Frames.empty())
+    return;
+  // A remaining ordinary write cannot be replaced by a PHI proof.
+  walkStmts(Func.Body, [&](const HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && !S.IsPhiCopy && isVariable(S.Dst.get()))
+      Frames.erase(Key(S.Dst->Var));
+  });
+  std::map<const HighExpr *, ExprPtr> Rewritten;
+  std::function<ExprPtr(const ExprPtr &)> Replace = [&](const ExprPtr &E) {
+    if (!E)
+      return E;
+    if (auto It = Rewritten.find(E.get()); It != Rewritten.end())
+      return It->second;
+    if (isVariable(E.get()))
+      if (auto It = Frames.find(Key(E->Var)); It != Frames.end())
+        return It->second;
+    // HighC holds a copy of the function, but expression DAGs are shared.
+    auto Copy = std::make_shared<HighExpr>(*E);
+    Rewritten.emplace(E.get(), Copy);
+    for (ExprPtr &Child : Copy->Operands)
+      Child = Replace(Child);
+    Copy->IndirectTarget = Replace(Copy->IndirectTarget);
+    return Copy;
+  };
+  walkStmts(Func.Body, [&](HighStmt &S) {
+    if (S.Kind == StmtKind::Assign && S.IsPhiCopy && isVariable(S.Dst.get()) &&
+        Frames.count(Key(S.Dst->Var))) {
+      const va_t Address = S.Addr;
+      S = HighStmt{};
+      S.Kind = StmtKind::Nop;
+      S.Addr = Address;
+      return;
+    }
+    forEachExpr(S, [&](ExprPtr &E) { E = Replace(E); });
+  });
 }
 
 } // namespace neverd

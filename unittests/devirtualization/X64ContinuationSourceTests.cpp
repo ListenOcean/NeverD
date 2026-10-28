@@ -98,6 +98,25 @@ typedef struct __attribute__((aligned(16))) {
   uint64_t cr2, reserved;
 } state_v4_t;
 _Static_assert(sizeof(state_v4_t) == 2320, "continuation v4 layout");
+typedef struct {
+  uint64_t base;
+  uint32_t limit;
+  uint16_t selector,attributes;
+} segment_t;
+typedef struct __attribute__((aligned(16))) {
+  state_v4_t core;
+  uint64_t star;
+  segment_t cs,ss;
+  uint64_t reserved;
+} state_v5_t;
+_Static_assert(sizeof(state_v5_t) == 2368, "continuation v5 layout");
+static state_v5_t seed_v5(uint64_t pc) {
+  state_v5_t s={0};s.core.core=seed_v2(pc);
+  s.cs=(segment_t){0,0xffffffff,8,0xa09b};
+  s.ss=(segment_t){0,0xffffffff,16,0xc093};
+  s.star=0x0023001000000000ULL;
+  return s;
+}
 )C";
 
 class X64ContinuationSourceTest : public NeverDLiftTest {
@@ -105,7 +124,7 @@ protected:
   void run(std::vector<uint8_t> Bytes, std::vector<va_t> Entries,
            llvm::StringRef Harness, bool NativeBoundary = false,
            X64ContinuationSourceOptions Options = options(),
-           llvm::StringRef RequiredSpelling = {}) {
+           llvm::StringRef RequiredSpelling = {}, bool NativeKernel = false) {
     auto Image = image(std::move(Bytes));
     auto Units = buildX64ContinuationSource(Image, Entries, Options);
     ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
@@ -113,17 +132,29 @@ protected:
     for (const auto &Unit : *Units) {
       EXPECT_EQ(Unit.RequiresNativeExecution, NativeBoundary)
           << Unit.Address << " " << Unit.Diagnostic;
+      const bool V6 =
+          Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
       const bool V2 =
           Options.Profile == X64ContinuationProfile::KernelControlsNoFaultV2 ||
           Options.Profile == X64ContinuationProfile::KernelSmapNoFaultV3 ||
           Options.Profile ==
-              X64ContinuationProfile::KernelFaultAddressNoFaultV4;
+              X64ContinuationProfile::KernelFaultAddressNoFaultV4 ||
+          Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5;
       const bool V3 =
           Options.Profile == X64ContinuationProfile::KernelSmapNoFaultV3;
       const bool V4 = Options.Profile ==
                       X64ContinuationProfile::KernelFaultAddressNoFaultV4;
-      EXPECT_EQ(Unit.StateVersion, V4 ? 4u : V3 ? 3u : V2 ? 2u : 1u);
-      EXPECT_EQ(Unit.StateBytes, V4   ? sizeof(X64ContinuationStateV4)
+      const bool V5 =
+          Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5;
+      EXPECT_EQ(Unit.StateVersion, V6   ? 6u
+                                   : V5 ? 5u
+                                   : V4 ? 4u
+                                   : V3 ? 3u
+                                   : V2 ? 2u
+                                        : 1u);
+      EXPECT_EQ(Unit.StateBytes, V6   ? sizeof(X64ContinuationStateV6)
+                                 : V5 ? sizeof(X64ContinuationStateV5)
+                                 : V4 ? sizeof(X64ContinuationStateV4)
                                  : V2 ? sizeof(X64ContinuationStateV2)
                                       : sizeof(X64ContinuationStateV1));
     }
@@ -168,9 +199,27 @@ protected:
       ASSERT_EQ(Source.find("unknown register"), std::string::npos) << Source;
       const auto File =
           tmpFile(LLVM ? "continuation-llvm.c" : "continuation-high.c");
-      std::ofstream(File) << StateDeclaration << Source << Harness.str();
+      std::ofstream(File) << StateDeclaration << "\n#include \""
+                          << TEST_SOURCE_DIR
+                          << "/fixtures/x64_continuation_event_state.h\"\n"
+                          << Source << Harness.str();
       for (const char *Optimization : {"-O0", "-O2"}) {
         SCOPED_TRACE(Optimization);
+        if (NativeKernel) {
+#if !defined(__linux__) || !defined(__x86_64__)
+          GTEST_SKIP() << "native supervisor fixtures require Linux x64 KVM";
+#else
+          const auto Ran = exec(
+              "python3",
+              {std::string(TEST_SOURCE_DIR) + "/run_x64_continuation_kvm.py",
+               "--clang", NEVERD_TEST_CLANG, "--source", File.string(),
+               "--optimization", Optimization + 1});
+          if (Ran.exitCode == 77)
+            GTEST_SKIP() << Ran.err;
+          ASSERT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+#endif
+          continue;
+        }
         const auto Program =
             tmpFile(std::string("continuation") + Optimization +
                     neverd::test::executableSuffix());
@@ -199,6 +248,662 @@ X64ContinuationSourceOptions smapOptions() {
   auto O = controlsOptions();
   O.Profile = X64ContinuationProfile::KernelSmapNoFaultV3;
   return O;
+}
+
+namespace {
+X64ContinuationSourceOptions eventOptions() {
+  auto O = controlsOptions();
+  O.Profile = X64ContinuationProfile::KernelEventsNoFaultV6;
+  O.PagingAddressBits = 48;
+  return O;
+}
+
+const char EventHarness[] = R"C(
+static void event_word(uint64_t address, uint64_t value) {
+  memcpy((void *)(uintptr_t)address,&value,8);
+}
+static event_state_t event_seed(uint64_t memory) {
+  event_state_t s={0};state_v5_t core=seed_v5(0x1000);
+  memcpy(&s,&core,sizeof(core));
+  s.gdt=(event_table_t){memory,63,0,0};
+  s.idt=(event_table_t){memory+0x200,63,0,0};
+  s.ldt=(event_segment_t){memory+0x100,63,40,0x82};
+  s.tr=(event_segment_t){memory+0x300,103,48,0x8b};
+  s.ds=s.es=s.ss;
+  s.fs=(event_metadata_t){s.ds.limit,s.ds.selector,s.ds.attributes};s.gs=s.fs;
+  s.fs_base=0x123456780000ULL;s.gs_base=0x123456790000ULL;
+  s.nmi_blocked=1;s.gpr[4]=memory+0x800;
+  memset((void *)(uintptr_t)memory,0xa5,4096);
+  event_word(memory+8,0x00af9b000000ffffULL);
+  event_word(memory+16,0x00cf93000000ffffULL);
+  event_word(memory+24,0x00af9a000000ffffULL);
+  event_word(memory+32,0x00cf92000000ffffULL);
+  return s;
+}
+static void event_frame(event_state_t *s,unsigned cpl,unsigned nullss,unsigned local,uint64_t flags) {
+  uint64_t table=local?s->ldt.base:s->gdt.base;
+  /* LDT entry zero is a valid non-null selector (TI=1). */
+  unsigned cs=local?4:24,ss=local?12:32;
+  event_word(table+(cs&~7),0x00af9a000000ffffULL|((uint64_t)cpl<<45));
+  event_word(table+(ss&~7),0x00cf92000000ffffULL|((uint64_t)cpl<<45));
+  uint64_t frame[]={0x1800,cs|cpl,flags,0x0800000000000000ULL,nullss?cpl:(ss|cpl)};
+  memcpy((void *)(uintptr_t)s->gpr[4],frame,sizeof(frame));
+}
+static void event_gate(event_state_t *s,unsigned type,unsigned ist) {
+  uint64_t low=0x1800|(24ULL<<16)|((uint64_t)ist<<32)|((uint64_t)(0x80|type)<<40);
+  event_word(s->idt.base+48,low);event_word(s->idt.base+56,0);
+  s->gpr[4]=s->gdt.base+0xf27;
+  if(ist)event_word(s->tr.base+28+8*ist,s->gdt.base+0xe27);
+}
+)C";
+} // namespace
+
+TEST_F(X64ContinuationSourceTest, IretMatchesNativeFramesFlagsAndSegments) {
+  run({0x48, 0xcf}, {0x1000}, std::string(EventHarness) + R"C(
+int main(void) {
+  unsigned char before[4096],after[4096];
+  for(unsigned local=0;local<2;++local) for(unsigned cpl=0;cpl<4;++cpl)
+    for(unsigned nullss=0;nullss<2;++nullss) for(unsigned bit=0;bit<64;++bit) {
+      if(cpl==3 && nullss)continue;
+      event_state_t s=event_seed(0x8000);
+      event_frame(&s,cpl,nullss,local,2|(1ULL<<bit));s.nmi_blocked=bit&1;
+      event_state_t want=s;
+      memcpy(before,(void *)0x8000,4096);
+      __asm__ volatile("outb %%al,$0xe9"::"a"(2),"D"(&want):"memory");
+      memcpy(after,(void *)0x8000,4096);memcpy((void *)0x8000,before,4096);
+      CHECK(neverd_step_v6_1000(ARG(&s))==6);
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+      CHECK(memcmp((void *)0x8000,after,4096)==0);
+    }
+  for(unsigned bank=0;bank<2;++bank)for(unsigned bit=0;bit<64;++bit) {
+    uint64_t descriptor=(bank?0x00cf92000000ffffULL:0x00af9a000000ffffULL)^(1ULL<<bit);
+    uint64_t access=descriptor>>40;
+    if(bank?((access&0xfa)!=0x92):((access&0x60f8)!=0x2098))continue;
+    event_state_t s=event_seed(0x8000);event_frame(&s,0,0,0,0x246);
+    event_word(s.gdt.base+(bank?32:24),descriptor);event_state_t want=s;
+    memcpy(before,(void *)0x8000,4096);
+    __asm__ volatile("outb %%al,$0xe9"::"a"(2),"D"(&want):"memory");
+    memcpy(after,(void *)0x8000,4096);memcpy((void *)0x8000,before,4096);
+    CHECK(neverd_step_v6_1000(ARG(&s))==6);
+    CHECK(!memcmp(&s,&want,sizeof(s)) && !memcmp((void *)0x8000,after,4096));
+  }
+  const unsigned types[]={0x91,0x93,0x95,0x97,0x9b,0x9f};
+  for(unsigned cpl=1;cpl<4;++cpl)for(unsigned dpl=0;dpl<4;++dpl)
+    for(unsigned type=0;type<6;++type) {
+      event_state_t s=event_seed(0x8000);event_frame(&s,cpl,0,0,0x246);
+      s.ds.attributes=s.es.attributes=0xc000|types[type]|(dpl<<5);
+      s.fs.attributes=s.gs.attributes=s.ds.attributes;
+      event_state_t want=s;memcpy(before,(void *)0x8000,4096);
+      __asm__ volatile("outb %%al,$0xe9"::"a"(2),"D"(&want):"memory");
+      memcpy(after,(void *)0x8000,4096);memcpy((void *)0x8000,before,4096);
+      CHECK(neverd_step_v6_1000(ARG(&s))==6);
+      CHECK(!memcmp(&s,&want,sizeof(s)) && !memcmp((void *)0x8000,after,4096));
+    }
+  for(unsigned which=0;which<3;++which) {
+    event_state_t s=event_seed(0x8000);
+    uint64_t frame[]={0x1800,8,2,which?0x00cf92000000ffffULL:0x00af9a000000ffffULL,which?16:0};
+    if(which==1)frame[2]=0x00af9b000000ffffULL;
+    s.gdt.base=s.gpr[4]+(which?8:16);s.gdt.limit=31;
+    if(which==2) {
+      frame[2]=0x209a;frame[3]=0x19123;frame[4]=0;
+      s.gdt.base=s.gpr[4]+3;s.gdt.limit=15;
+    }
+    memcpy((void *)(uintptr_t)s.gpr[4],frame,40);event_state_t want=s;
+    memcpy(before,(void *)0x8000,4096);
+    __asm__ volatile("outb %%al,$0xe9"::"a"(2),"D"(&want):"memory");
+    memcpy(after,(void *)0x8000,4096);memcpy((void *)0x8000,before,4096);
+    CHECK(neverd_step_v6_1000(ARG(&s))==6);
+    CHECK(!memcmp(&s,&want,sizeof(s)) && !memcmp((void *)0x8000,after,4096));
+  }
+  return 0;
+}
+)C",
+      false, eventOptions(), {}, true);
+}
+
+TEST_F(X64ContinuationSourceTest, Int3MatchesNativeGatesStacksAndFlags) {
+  run({0xcc}, {0x1000}, std::string(EventHarness) + R"C(
+int main(void) {
+  unsigned char before[4096],after[4096];
+  for(unsigned type=14;type<=15;++type)for(unsigned ist=0;ist<8;++ist)
+    for(unsigned nullss=0;nullss<2;++nullss)for(unsigned bit=0;bit<64;++bit) {
+      event_state_t s=event_seed(0x8000);
+      s.flags=2|((1ULL<<bit)&0x3d7fd7);s.nmi_blocked=bit&1;
+      if(nullss){s.ss.selector=0;s.unusable|=2;}
+      event_gate(&s,type,ist);event_state_t want=s;
+      memcpy(before,(void *)0x8000,4096);
+      __asm__ volatile("outb %%al,$0xe9"::"a"(3),"D"(&want):"memory");
+      memcpy(after,(void *)0x8000,4096);memcpy((void *)0x8000,before,4096);
+      CHECK(neverd_step_v6_1000(ARG(&s))==7);
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+      CHECK(memcmp((void *)0x8000,after,4096)==0);
+    }
+  return 0;
+}
+)C",
+      false, eventOptions(), {}, true);
+}
+
+TEST_F(X64ContinuationSourceTest,
+       Int3DescriptorWritesPrecedeIstReadsAndFrameStores) {
+  run({0x90, 0xcc}, {0x1001}, std::string(EventHarness) + R"C(
+int main(void) {
+  unsigned char before[4096],after[4096],stack_before[512],stack_after[512];
+  for(unsigned ist=0;ist<2;++ist) {
+    event_state_t s=event_seed(0x8000);s.pc=0x1001;event_gate(&s,14,ist);
+    uint64_t descriptor=ist?s.tr.base+32:((s.gpr[4]&~15ULL)-40)-5;
+    event_word(descriptor,ist?0x00209a0000000000ULL:0x00af9a000000ffffULL);
+    s.gdt.base=descriptor-24;s.gdt.limit=31;
+    memset((void *)0x209900,0xa5,512);
+    event_state_t want=s;memcpy(before,(void *)0x8000,4096);
+    memcpy(stack_before,(void *)0x209900,512);
+    __asm__ volatile("outb %%al,$0xe9"::"a"(3),"D"(&want):"memory");
+    memcpy(after,(void *)0x8000,4096);memcpy(stack_after,(void *)0x209900,512);
+    memcpy((void *)0x8000,before,4096);memcpy((void *)0x209900,stack_before,512);
+    CHECK(neverd_step_v6_1001(ARG(&s))==7);
+    CHECK(!memcmp(&s,&want,sizeof(s)) && !memcmp((void *)0x8000,after,4096));
+    CHECK(!memcmp((void *)0x209900,stack_after,512));
+  }
+  return 0;
+}
+)C",
+      false, eventOptions(), {}, true);
+}
+
+TEST_F(X64ContinuationSourceTest, EventsLeaveEarlierStateLayoutsUnsupported) {
+  auto V4 = controlsOptions();
+  V4.Profile = X64ContinuationProfile::KernelFaultAddressNoFaultV4;
+  auto V5 = controlsOptions();
+  V5.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+  V5.PagingAddressBits = 48;
+  for (auto O : {options(), controlsOptions(), smapOptions(), V4, V5}) {
+    auto Units = buildX64ContinuationSource(image({0x48, 0xcf, 0xcc}),
+                                            {0x1000, 0x1002}, O);
+    ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
+    for (const auto &U : *Units)
+      EXPECT_TRUE(U.RequiresNativeExecution);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, AccessedDescriptorsMayRemainReadOnly) {
+#if !defined(__linux__)
+  GTEST_SKIP() << "read-only mapping fixture requires Linux mmap";
+#else
+  run({0x48, 0xcf, 0xcc}, {0x1000, 0x1002}, std::string(EventHarness) + R"C(
+#include <sys/mman.h>
+#include <unistd.h>
+int main(void) {
+  long page=sysconf(_SC_PAGESIZE);CHECK(page>=4096);
+  void *table=mmap(0,page,PROT_READ|PROT_WRITE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
+  CHECK(table!=MAP_FAILED);
+  event_word((uintptr_t)table+24,0x00af9b000000ffffULL);
+  event_word((uintptr_t)table+32,0x00cf93000000ffffULL);
+  CHECK(mprotect(table,page,PROT_READ)==0);
+  unsigned char memory[4096];
+  event_state_t s=event_seed((uintptr_t)memory);event_frame(&s,0,0,0,0x246);
+  s.gdt.base=(uintptr_t)table;
+  CHECK(neverd_step_v6_1000(ARG(&s))==6);
+  CHECK(s.pc==0x1800 && s.gpr[4]==0x0800000000000000ULL);
+  s=event_seed((uintptr_t)memory);event_frame(&s,0,1,0,0x246);s.gdt.base=(uintptr_t)table;
+  CHECK(neverd_step_v6_1000(ARG(&s))==6 && (s.unusable&2));
+  s=event_seed((uintptr_t)memory);s.pc=0x1002;event_gate(&s,14,0);
+  s.gdt.base=(uintptr_t)table;
+  CHECK(neverd_step_v6_1002(ARG(&s))==7 && s.pc==0x1800);
+  uint64_t saved;memcpy(&saved,(void *)(uintptr_t)s.gpr[4],8);CHECK(saved==0x1003);
+  CHECK(munmap(table,page)==0);
+  return 0;
+}
+)C",
+      false, eventOptions());
+#endif
+}
+
+TEST_F(X64ContinuationSourceTest, EventRejectionLeavesStateAndRamUntouched) {
+  for (unsigned Bits : {48u, 57u}) {
+    auto O = eventOptions();
+    O.PagingAddressBits = Bits;
+    run({0x48, 0xcf, 0xcc, 0x48, 0x0f, 0x07}, {0x1000, 0x1002, 0x1003},
+        std::string(EventHarness) + R"C(
+int main(void) {
+  unsigned char memory[4096],before[4096];
+  for(unsigned bad=0;bad<16;++bad) {
+    event_state_t s=event_seed((uintptr_t)memory);
+    event_frame(&s,3,0,0,0x246);
+    uint64_t frame[5];memcpy(frame,(void *)(uintptr_t)s.gpr[4],40);
+    if(bad==0)s.flags|=0x4000;
+    if(bad==1)frame[0]=0x0100000000000000ULL;
+    if(bad==2)frame[1]=0;
+    if(bad==3)s.gdt.limit=20;
+    if(bad==4)event_word(s.gdt.base+24,0x00af7a000000ffffULL);
+    if(bad==5)event_word(s.gdt.base+24,0x00cfba000000ffffULL);
+    if(bad==6)frame[4]=3;
+    if(bad==7)frame[4]=32;
+    if(bad==8)event_word(s.gdt.base+32,0x00cf90000000ffffULL);
+    if(bad==9)s.nmi_blocked=2;
+    if(bad==10)s.unusable|=1;
+    if(bad==11){frame[1]=7;s.unusable|=64;}
+    if(bad==12)s.gdt.base=UINT64_MAX-16;
+    if(bad==13)event_word(s.gdt.base+24,0x00af9a000000ffffULL);
+    if(bad==14)s.cs.attributes|=0x4000;
+    if(bad==15)s.pc++;
+    memcpy((void *)(uintptr_t)s.gpr[4],frame,40);
+    event_state_t want=s;memcpy(before,memory,4096);
+    CHECK(neverd_step_v6_1000(ARG(&s))==5);
+    CHECK(memcmp(&s,&want,sizeof(s))==0 && !memcmp(memory,before,4096));
+  }
+  for(unsigned bad=0;bad<13;++bad) {
+    event_state_t s=event_seed((uintptr_t)memory);s.pc=0x1002;
+    event_gate(&s,14,1);
+    if(bad==0)s.idt.limit=62;
+    if(bad==1)s.idt.base=UINT64_MAX-32;
+    if(bad==2)memory[0x235]=0x80|13;
+    if(bad==3)memory[0x235]=14;
+    if(bad==4)memory[0x234]|=8;
+    if(bad==5)memory[0x23c]=1;
+    if(bad==6)memory[0x232]=0;
+    if(bad==7)event_word(s.gdt.base+24,0x00affa000000ffffULL);
+    if(bad==8)s.unusable|=128;
+    if(bad==9)s.tr.limit=40;
+    if(bad==10)s.tr.attributes=0x89;
+    if(bad==11)event_word(s.tr.base+36,0x0100000000000000ULL);
+    if(bad==12)event_word(s.tr.base+36,32);
+    event_state_t want=s;memcpy(before,memory,4096);
+    CHECK(neverd_step_v6_1002(ARG(&s))==5);
+    CHECK(memcmp(&s,&want,sizeof(s))==0 && !memcmp(memory,before,4096));
+  }
+  event_state_t s=event_seed((uintptr_t)memory);s.pc=0x1003;s.unusable|=2;
+  s.gpr[1]=0x0100000000000000ULL;event_state_t want=s;
+  CHECK(neverd_step_v6_1003(ARG(&s))==5 && !memcmp(&s,&want,sizeof(s)));
+  s.gpr[1]=0x1800;s.gpr[11]=0x246;
+  CHECK(neverd_step_v6_1003(ARG(&s))==6 && !(s.unusable&3));
+  return 0;
+}
+)C",
+        false, O);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, SysretProducesCompleteUserContext) {
+  auto O = smapOptions();
+  O.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+  for (unsigned Bits : {48u, 57u}) {
+    O.PagingAddressBits = Bits;
+    const std::string Harness =
+        "#define ADDRESS_BITS " + std::to_string(Bits) + "\n" + R"C(
+int main(void) {
+  const uint16_t selectors[]={0,1,3,4,0x23,0xffe8,0xfff0,0xfff8,0xffff};
+  const uint64_t pcs[]={0,0x7fffffffffffULL,0xffff800000000000ULL,
+                        UINT64_MAX,0x800000000000ULL,0x00ffffffffffffffULL,
+                        0xff00000000000000ULL,0x0100000000000000ULL};
+  for(unsigned i=0;i<sizeof(selectors)/sizeof(selectors[0]);++i)
+    for(unsigned bit=0;bit<65;++bit) for(unsigned pc=0;pc<8;++pc) {
+      state_v5_t s=seed_v5(0x1000), want;
+      s.core.core.core.gpr[1]=pcs[pc];
+      s.core.core.core.gpr[11]=bit==64?UINT64_MAX:1ULL<<bit;
+      s.core.core.core.flags|=0x40000;
+      s.star=((uint64_t)selectors[i]<<48)|0xabcde0123456ULL;
+      s.core.cr2=0x123456789abcdef0ULL;s.reserved=0x1234;
+      want=s;
+      uint64_t top=pcs[pc]>>(ADDRESS_BITS-1);
+      int valid=top==0 || top==(UINT64_MAX>>(ADDRESS_BITS-1));
+      if(valid) {
+        want.core.core.core.pc=pcs[pc];
+        want.core.core.core.flags=(s.core.core.core.gpr[11]&0x3c7fd7)|2;
+        want.cs=(segment_t){0,0xffffffff,(uint16_t)(selectors[i]+16)|3,0xa0fb};
+        want.ss=(segment_t){0,0xffffffff,(uint16_t)(selectors[i]+8)|3,0xc0f3};
+      }
+      CHECK(neverd_step_v5_1000(ARG(&s))==(valid?6:5));
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+    }
+  /* A returned user context may not reenter a supervisor step. */
+  for(unsigned invalid=0;invalid<4;++invalid) {
+    state_v5_t s=seed_v5(0x1000),want;
+    if(invalid==0)s.cs.selector|=3;
+    if(invalid==1)s.cs.attributes&=~0x2000;
+    if(invalid==2)s.cs.attributes|=0x4000;
+    if(invalid==3)s.cs.attributes&=~0x80;
+    want=s;
+    CHECK(neverd_step_v5_1000(ARG(&s))==5);
+    CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  return 0;
+}
+)C";
+    run({0x48, 0x0f, 0x07}, {0x1000}, Harness, false, O);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, SysretKeepsEarlierLayoutsUnsupported) {
+  auto V4 = smapOptions();
+  V4.Profile = X64ContinuationProfile::KernelFaultAddressNoFaultV4;
+  for (auto O : {options(), controlsOptions(), smapOptions(), V4}) {
+    auto Units =
+        buildX64ContinuationSource(image({0x48, 0x0f, 0x07}), {0x1000}, O);
+    ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
+    EXPECT_TRUE(Units->front().RequiresNativeExecution);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, SysretMatchesNativePrivilegeTransition) {
+  auto O = smapOptions();
+  O.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+  O.PagingAddressBits = 48;
+  run({0x48, 0x0f, 0x07}, {0x1000}, R"C(
+typedef struct {
+  uint64_t gpr[16], flags,pc,star;
+  segment_t cs,ss;
+} return_query_t;
+int main(void) {
+  const uint16_t selectors[]={0,1,3,4,0x23,0xffe8,0xfff0,0xfff8,0xffff};
+  for(unsigned i=0;i<sizeof(selectors)/sizeof(selectors[0]);++i)
+    for(unsigned bit=0;bit<65;++bit) {
+      state_v5_t s=seed_v5(0x1000),want;
+      s.star=(uint64_t)selectors[i]<<48;
+      s.core.core.core.gpr[1]=0x1800;
+      s.core.core.core.gpr[11]=bit==64?UINT64_MAX:1ULL<<bit;
+      return_query_t q={0};
+      memcpy(q.gpr,s.core.core.core.gpr,sizeof(q.gpr));
+      q.flags=s.core.core.core.flags;q.star=s.star;
+      __asm__ volatile("outb %%al,$0xe9"::"a"(1),"D"(&q):"memory");
+      want=s;memcpy(want.core.core.core.gpr,q.gpr,sizeof(q.gpr));
+      want.core.core.core.flags=q.flags;want.core.core.core.pc=q.pc;
+      want.cs=q.cs;want.ss=q.ss;
+      CHECK(neverd_step_v5_1000(ARG(&s))==6);
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+    }
+  return 0;
+}
+)C",
+      false, O, {}, true);
+}
+
+TEST_F(X64ContinuationSourceTest, SegmentBaseMsrsShareLiveGsState) {
+  for (unsigned AddressBits : {48u, 57u}) {
+    auto O = controlsOptions();
+    O.SegmentBaseMSRAddressBits = AddressBits;
+    const std::string Harness =
+        "#define ADDRESS_BITS " + std::to_string(AddressBits) + R"C(
+int main(void) {
+  const uint64_t values[]={0,1,0x7fffffffffffULL,0xffff800000000000ULL,
+                           UINT64_MAX,0x00ffffffffffffffULL};
+  const unsigned bits[]={0,2,4,6,7,11};
+  for (unsigned bank=0;bank<3;++bank)
+    for (unsigned mask=0;mask<64;++mask)
+      for (unsigned i=0;i<sizeof(values)/sizeof(values[0]);++i) {
+        state_v2_t s=seed_v2(0x1000), want;
+        s.core.fs=0x12345000; s.core.gs=0xffff800012345678ULL;
+        s.kernel_gs=0xabcdef;
+        s.core.flags=0x202;
+        for (unsigned b=0;b<6;++b) s.core.flags|=((mask>>b)&1ULL)<<bits[b];
+        s.core.gpr[1]=0x12345678c0000100ULL+bank;
+        uint64_t v=bank==0?s.core.fs:bank==1?s.core.gs:s.kernel_gs;
+        want=s; want.core.gpr[0]=(uint32_t)v;
+        want.core.gpr[2]=(uint32_t)(v>>32); want.core.pc=0x1002;
+        CHECK(neverd_step_v2_1000(ARG(&s))==0);
+        CHECK(memcmp(&s,&want,sizeof(s))==0);
+        v=values[i]; s.core.gpr[0]=0xabcdef0100000000ULL|(uint32_t)v;
+        s.core.gpr[2]=0x1234567800000000ULL|(uint32_t)(v>>32);
+        want=s;
+        const uint64_t top=v>>(ADDRESS_BITS-1);
+        const int valid=top==0 || top==(UINT64_MAX>>(ADDRESS_BITS-1));
+        if (valid) {
+          if (bank==0) want.core.fs=v;
+          if (bank==1) want.core.gs=v;
+          if (bank==2) want.kernel_gs=v;
+          want.core.pc=0x1004;
+        }
+        CHECK(neverd_step_v2_1002(ARG(&s))==(valid?0:5));
+        CHECK(memcmp(&s,&want,sizeof(s))==0);
+      }
+  state_v2_t s=seed_v2(0x1002), want;
+  s.core.gpr[1]=0xc0000101; s.core.gpr[0]=0x12345678;
+  s.core.gpr[2]=0xffff8000; s.kernel_gs=0x76543210;
+  CHECK(neverd_step_v2_1002(ARG(&s))==0);
+  want=s; want.core.pc=0x1007;
+  want.core.gs=s.kernel_gs; want.kernel_gs=s.core.gs;
+  CHECK(neverd_step_v2_1004(ARG(&s))==0);
+  CHECK(memcmp(&s,&want,sizeof(s))==0);
+  s.core.pc=0x1000; s.core.gpr[1]=0xc0000102;
+  CHECK(neverd_step_v2_1000(ARG(&s))==0);
+  CHECK(s.core.gpr[0]==0x12345678 && s.core.gpr[2]==0xffff8000);
+  const uint32_t refused[]={0,0x48,0x49,0xc0000082,0xc0000103,0xffffffff};
+  for (unsigned i=0;i<sizeof(refused)/sizeof(refused[0]);++i)
+    for (unsigned write=0;write<2;++write) {
+      s=seed_v2(write?0x1002:0x1000);s.core.gpr[1]=refused[i];want=s;
+      CHECK((write?neverd_step_v2_1002(ARG(&s)):
+                   neverd_step_v2_1000(ARG(&s)))==5);
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+    }
+  return 0;
+}
+)C";
+    run({0x0f, 0x32, 0x0f, 0x30, 0x0f, 0x01, 0xf8}, {0x1000, 0x1002, 0x1004},
+        Harness, false, O);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, NativeMsrOptInKeepsSegmentWritesInState) {
+  auto O = controlsOptions();
+  O.SegmentBaseMSRAddressBits = 48;
+  O.NativeSpeculationControlMsrs = true;
+  run({0x0f, 0x30}, {0x1000}, R"C(
+int main(void) {
+  for (unsigned bank=0;bank<3;++bank) {
+    state_v2_t s=seed_v2(0x1000), want;
+    s.core.gpr[1]=0xc0000100+bank;
+    s.core.gpr[0]=0x12345678;s.core.gpr[2]=0xffff8000;
+    want=s;want.core.pc=0x1002;
+    if(bank==0)want.core.fs=0xffff800012345678ULL;
+    if(bank==1)want.core.gs=0xffff800012345678ULL;
+    if(bank==2)want.kernel_gs=0xffff800012345678ULL;
+    CHECK(neverd_step_v2_1000(ARG(&s))==0);
+    CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  state_v2_t s=seed_v2(0x1000), want;
+  s.core.gpr[1]=0xc0000080;want=s;
+  CHECK(neverd_step_v2_1000(ARG(&s))==5);
+  CHECK(memcmp(&s,&want,sizeof(s))==0);
+  return 0;
+}
+)C",
+      false, O, "wrmsr");
+}
+
+TEST_F(X64ContinuationSourceTest, NativeSpeculationMsrsExecuteOnSupervisorCpu) {
+  auto O = controlsOptions();
+  O.SegmentBaseMSRAddressBits = 48;
+  O.NativeSpeculationControlMsrs = true;
+  run({0x0f, 0x30}, {0x1000}, R"C(
+static uint64_t native_read(uint32_t index) {
+  uint32_t low,high;
+  __asm__ volatile("rdmsr":"=a"(low),"=d"(high):"c"(index):"memory");
+  return ((uint64_t)high<<32)|low;
+}
+static void native_write(uint32_t index,uint64_t value) {
+  __asm__ volatile("wrmsr"::"c"(index),"a"((uint32_t)value),
+                   "d"((uint32_t)(value>>32)):"memory");
+}
+int main(void) {
+  uint32_t a=7,b,c=0,d;
+  __asm__ volatile("cpuid":"+a"(a),"=b"(b),"+c"(c),"=d"(d));
+  if(!(d&(1u<<26)))return 77;
+  const uint64_t original=native_read(0x48);
+  const uint64_t fs=native_read(0xc0000100),gs=native_read(0xc0000101);
+  const uint64_t kgs=native_read(0xc0000102);
+  for(unsigned command=0;command<2;++command)
+    for(unsigned value=0;value<2;++value)
+      for(unsigned repeat=0;repeat<2;++repeat) {
+        if(!repeat)native_write(0x48,0);
+        state_v2_t s=seed_v2(0x1000),want;
+        s.core.gpr[1]=0x1234567800000000ULL|(command?0x49:0x48);
+        s.core.gpr[0]=0xabcdef0100000000ULL|value;
+        s.core.gpr[2]=0x1234567800000000ULL;
+        want=s;want.core.pc=0x1002;
+        CHECK(neverd_step_v2_1000(ARG(&s))==0);
+        CHECK(memcmp(&s,&want,sizeof(s))==0);
+        CHECK(native_read(0x48)==(command?0:value));
+      }
+  native_write(0x48,original);
+  CHECK(native_read(0xc0000100)==fs && native_read(0xc0000101)==gs);
+  CHECK(native_read(0xc0000102)==kgs);
+  return 0;
+}
+)C",
+      false, O, "wrmsr", true);
+}
+
+TEST_F(X64ContinuationSourceTest, DescriptorEnvironmentRequiresOptIn) {
+  run({0x0f, 0x03, 0xc0, 0x0f, 0x00, 0x2b, 0x0f, 0x01, 0x03},
+      {0x1000, 0x1003, 0x1006}, R"C(
+int main(void) {
+  state_v2_t s=seed_v2(0x1000),before=s;
+  CHECK(neverd_step_v2_1000(ARG(&s))==4);
+  CHECK(memcmp(&s,&before,sizeof(s))==0);
+  s.core.pc=0x1003;before=s;
+  CHECK(neverd_step_v2_1003(ARG(&s))==4);
+  CHECK(memcmp(&s,&before,sizeof(s))==0);
+  s.core.pc=0x1006;before=s;
+  CHECK(neverd_step_v2_1006(ARG(&s))==4);
+  CHECK(memcmp(&s,&before,sizeof(s))==0);
+  return 0;
+}
+)C",
+      true, controlsOptions());
+}
+
+TEST_F(X64ContinuationSourceTest, NativeDescriptorQueriesUseLiveTables) {
+  auto O = controlsOptions();
+  O.NativeDescriptorQueries = true;
+  run({0x0f, 0x03, 0xc0, 0x0f, 0x00, 0x2b, 0x0f, 0x01, 0x03, 0x65, 0x0f, 0x00,
+       0x2b},
+      {0x1000, 0x1003, 0x1006, 0x1009}, R"C(
+int main(void) {
+  const uint16_t selectors[]={0,8,9,16,19,27,35,40,48,63,64,0xffff};
+  const uint64_t limits[]={0,0xffffffff,0,0xffffffff,0,0xffffffff,
+                           0xffffffff,0x1234,0x67,0,0,0};
+  const unsigned writable[]={0,0,0,1,0,0,1,1,0,0,0,0};
+  for(unsigned i=0;i<sizeof(selectors)/sizeof(selectors[0]);++i) {
+    state_v2_t s=seed_v2(0x1000), want;
+    s.core.gpr[0]=0xabcddcba00000000ULL|selectors[i];want=s;
+    want.core.pc=0x1003;
+    if(limits[i]) {want.core.gpr[0]=limits[i];want.core.flags|=64;}
+    else want.core.flags&=~64ULL;
+    CHECK(neverd_step_v2_1000(ARG(&s))==0);
+    CHECK(memcmp(&s,&want,sizeof(s))==0);
+    for(unsigned segment=0;segment<2;++segment) {
+      uint16_t selector=selectors[i];
+      s=seed_v2(segment?0x1009:0x1003);
+      s.core.gs=segment?(uintptr_t)&selector-7:0;
+      s.core.gpr[3]=segment?7:(uintptr_t)&selector;want=s;
+      want.core.pc=segment?0x100d:0x1006;
+      want.core.flags=(want.core.flags&~64ULL)|(writable[i]?64:0);
+      CHECK((segment?neverd_step_v2_1009(ARG(&s)):
+                      neverd_step_v2_1003(ARG(&s)))==0);
+      CHECK(memcmp(&s,&want,sizeof(s))==0);
+      CHECK(selector==selectors[i]);
+    }
+  }
+  unsigned char bytes[32],expected[32];memset(bytes,0xa5,sizeof(bytes));
+  memcpy(expected,bytes,sizeof(bytes));
+  const unsigned char gdtr[]={63,0,0,0x50,0,0,0,0,0,0};
+  memcpy(expected+3,gdtr,10);
+  state_v2_t s=seed_v2(0x1006),want;
+  s.core.gpr[3]=(uintptr_t)(bytes+3);want=s;want.core.pc=0x1009;
+  CHECK(neverd_step_v2_1006(ARG(&s))==0);
+  CHECK(memcmp(&s,&want,sizeof(s))==0);
+  CHECK(memcmp(bytes,expected,sizeof(bytes))==0);
+  return 0;
+}
+)C",
+      false, O, {}, true);
+}
+
+TEST_F(X64ContinuationSourceTest, NativePagingRequiresExplicitEnvironment) {
+  run({0x0f, 0x20, 0xd8, 0x0f, 0x22, 0xdc}, {0x1000, 0x1003}, R"C(
+int main(void) {
+  state_v2_t s=seed_v2(0x1000), before=s;
+  CHECK(neverd_step_v2_1000(ARG(&s))==4);
+  CHECK(memcmp(&s,&before,sizeof(s))==0);
+  s.core.pc=0x1003; before=s;
+  CHECK(neverd_step_v2_1003(ARG(&s))==4);
+  CHECK(memcmp(&s,&before,sizeof(s))==0);
+  return 0;
+}
+)C",
+      true, controlsOptions());
+}
+
+TEST_F(X64ContinuationSourceTest,
+       NativePagingChangesTranslationsAndFlushesTlb) {
+  auto O = controlsOptions();
+  O.NativePageTableAccess = true;
+  std::vector<uint8_t> Bytes;
+  std::vector<va_t> Entries;
+  std::string Calls, PCs;
+  for (unsigned Register = 0; Register != 16; ++Register)
+    for (bool Write : {false, true}) {
+      const va_t PC = 0x1000 + Bytes.size();
+      Entries.push_back(PC);
+      if (!Calls.empty()) {
+        Calls += ",";
+        PCs += ",";
+      }
+      Calls += "neverd_step_v2_" + llvm::utohexstr(PC);
+      PCs += "0x" + llvm::utohexstr(PC);
+      if (Register >= 8)
+        Bytes.push_back(0x41);
+      Bytes.insert(Bytes.end(), {0x0f, uint8_t(Write ? 0x22 : 0x20),
+                                 uint8_t(0xd8 | (Register & 7))});
+    }
+  run(Bytes, Entries,
+      "static __typeof__(&neverd_step_v2_1000) steps[]={" + Calls +
+          "};\nstatic const uint64_t pcs[]={" + PCs + "};\n" + R"C(
+static uint64_t root(void) {
+  uint64_t r; __asm__ volatile("mov %%cr3,%0":"=r"(r)::"memory");return r;
+}
+static void table(uintptr_t base,uintptr_t page) {
+  memset((void *)base,0,0x4000);
+  *(uint64_t *)base=(base+0x1000)|3;
+  *(uint64_t *)(base+0x1000)=(base+0x2000)|3;
+  *(uint64_t *)(base+0x2000)=0x83;
+  *(uint64_t *)(base+0x2008)=(base+0x3000)|3;
+  *(uint64_t *)(base+0x3000)=page|3;
+}
+int main(void) {
+  uint64_t original=root();
+  table(0x6000,0xa000);table(0xc000,0xb000);
+  *(volatile uint64_t *)0xa000=0x123456789abcdef0ULL;
+  *(volatile uint64_t *)0xb000=0xabcdef9876543210ULL;
+  const unsigned bits[]={11,7,6,4,2,0};
+  for(unsigned reg=0;reg<16;++reg) for(unsigned which=0;which<2;++which)
+    for(unsigned flags=0;flags<64;++flags) {
+      unsigned n=reg*2+1;
+      uint64_t next=which?0xc000:0x6000;
+      state_v2_t s=seed_v2(pcs[n]),want;
+      s.core.gpr[reg]=next;
+      for(unsigned i=0;i<6;++i)s.core.arbitrary[i]=(flags>>i)&1;
+      want=s;want.core.pc+=n>=16?4:3;
+      for(unsigned i=0;i<6;++i)
+        want.core.flags=(want.core.flags&~(1ULL<<bits[i]))|
+                        (((uint64_t)(flags>>i)&1)<<bits[i]);
+      CHECK(steps[n](ARG(&s))==0 && memcmp(&s,&want,sizeof(s))==0);
+      CHECK(root()==next);
+      CHECK(*(volatile uint64_t *)0x200000==*(volatile uint64_t *)(which?0xb000:0xa000));
+      /* Same CR3 value must still invalidate a cached non-global translation. */
+      *(volatile uint64_t *)(next+0x3000)=(which?0xa000:0xb000)|3;
+      s.core.pc=pcs[n];want=s;want.core.pc+=n>=16?4:3;
+      CHECK(steps[n](ARG(&s))==0 && memcmp(&s,&want,sizeof(s))==0);
+      CHECK(*(volatile uint64_t *)0x200000==*(volatile uint64_t *)(which?0xa000:0xb000));
+      *(volatile uint64_t *)(next+0x3000)=(which?0xb000:0xa000)|3;
+      --n;s.core.pc=pcs[n];want=s;want.core.gpr[reg]=next;
+      want.core.pc+=n>=16?4:3;
+      CHECK(steps[n](ARG(&s))==0 && memcmp(&s,&want,sizeof(s))==0);
+    }
+  __asm__ volatile("mov %0,%%cr3"::"r"(original):"memory");
+  return 0;
+}
+)C",
+      false, O, {}, true);
 }
 
 TEST_F(X64ContinuationSourceTest, FaultAddressReadWriteKeepsEveryOtherBank) {
@@ -1022,6 +1727,29 @@ TEST(X64ContinuationSource, RequiresExplicitDomainAndBoundedDistinctAddresses) {
   V2.MXCSRMask.reset();
   CheckError({0x1000}, V2);
   CheckError({0x1000}, controlsOptions(0x10000));
+  auto MSRs = controlsOptions();
+  MSRs.SegmentBaseMSRAddressBits = 49;
+  CheckError({0x1000}, MSRs);
+  MSRs = options();
+  MSRs.SegmentBaseMSRAddressBits = 48;
+  CheckError({0x1000}, MSRs);
+  MSRs.SegmentBaseMSRAddressBits.reset();
+  MSRs.NativeSpeculationControlMsrs = true;
+  CheckError({0x1000}, MSRs);
+  MSRs = options();
+  MSRs.NativeDescriptorQueries = true;
+  CheckError({0x1000}, MSRs);
+  MSRs = options();
+  MSRs.NativePageTableAccess = true;
+  CheckError({0x1000}, MSRs);
+  auto Returns = smapOptions();
+  Returns.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+  CheckError({0x1000}, Returns);
+  Returns.PagingAddressBits = 49;
+  CheckError({0x1000}, Returns);
+  Returns.Profile = X64ContinuationProfile::KernelSmapNoFaultV3;
+  Returns.PagingAddressBits = 48;
+  CheckError({0x1000}, Returns);
   auto V1 = options();
   V1.MXCSRMask = 0xffbf;
   CheckError({0x1000}, V1);

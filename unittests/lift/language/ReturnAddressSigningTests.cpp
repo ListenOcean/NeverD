@@ -55,6 +55,36 @@ queryImage(const BinaryImage &Image, uint64_t Offset = 0,
       Image, Image.ExceptionMetadata.Functions.front(), kText + Offset, Limits);
 }
 
+TEST(ReturnAddressSigning, Arm64eUsesTheImplicitBKeyWithoutChangingTheCIE) {
+  const auto Bytes = frame(kInitialSP);
+  for (auto Format : {BinaryFormat::ELF, BinaryFormat::MachO})
+    for (uint32_t Subtype :
+         {0u, kArm64eSubtype, kArm64eX1Subtype, kArm64eVersionedSubtype}) {
+      BinaryImage Image;
+      Image.Arch = Arch::AArch64;
+      Image.Bits = Bitness::Bits64;
+      Image.Format = Format;
+      Image.MachOCPUSubtype = Subtype;
+      auto Frames = dwarf_eh::parseEHFrame(
+          Image, {Bytes.data(), Bytes.size(), kFrame}, {});
+      ASSERT_EQ(Frames.ParseStatus, ExceptionParseStatus::Complete);
+      ASSERT_EQ(Frames.CIEs.size(), 1u);
+      EXPECT_FALSE(Frames.CIEs.front().HasPointerAuth);
+      EXPECT_EQ(Frames.CIEs.front().Augmentation, kOrdinary);
+      EXPECT_EQ(Frames.CIEs.front().UsesArm64eReturnAddressABI,
+                Image.isArm64e());
+      Image.ExceptionMetadata.CIEs = std::move(Frames.CIEs);
+      ExceptionFunction Function;
+      Function.CodeRange = {kText, kText + kRange};
+      Function.Dwarf = std::move(Frames.FDEs.front());
+      const auto Result = queryAArch64UnwindSigning(Image, Function, kText);
+      ASSERT_TRUE(Result.DwarfStateAtPC && Result.DwarfStateAtPC->State);
+      EXPECT_EQ(Result.DwarfStateAtPC->State->Kind, AArch64RASigningKind::SP);
+      EXPECT_EQ(Result.DwarfStateAtPC->State->Key,
+                Image.isArm64e() ? AArch64RAKey::B : AArch64RAKey::A);
+    }
+}
+
 TEST(ReturnAddressSigning, ExactPCStateDoesNotBorrowTheCompactRecipe) {
   auto Image = image();
   auto &Function = Image.ExceptionMetadata.Functions.front();

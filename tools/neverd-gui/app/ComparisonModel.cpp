@@ -48,6 +48,22 @@ QString names(const QJsonArray &Functions) {
 ComparisonModel::ComparisonModel(ComparisonSession &S, Kind K, QObject *Parent)
     : QAbstractTableModel(Parent), Session(S), Type(K),
       Pages(::neverd::limits::gui::kComparisonCachedPages) {}
+QString ComparisonModel::changeStateText(const QString &State) {
+  if (State == "unmeasured")
+    return tr("Unmeasured");
+  if (State == "identity_only")
+    return tr("Identity only");
+  if (State == "changed")
+    return tr("Changed");
+  if (State == "incomplete")
+    return tr("Incomplete");
+  if (State == "uncertain")
+    return tr("Uncertain");
+  if (State == "unchanged")
+    return tr("Unchanged");
+  return State;
+}
+
 QString ComparisonModel::functionNamesText(const QJsonObject &Function) {
   const auto Display = Function["name"].toString();
   const auto Analyzed = Function["evidence_name"].toString();
@@ -293,6 +309,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
       return Theme::instance().color(ColorRole::DiffAdded);
     if (K == "deleted")
       return Theme::instance().color(ColorRole::DiffRemoved);
+    if (K == "uncertain")
+      return Theme::instance().chrome(QStringLiteral("SecondaryText"));
     if (K != "identical" && K != "moved")
       return Theme::instance().color(ColorRole::DiffChanged);
   }
@@ -605,6 +623,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 4:
       return E.isEmpty() ? QString() : number(E["confidence"].toDouble());
     case 5:
+      if (const auto State = E["change_state"].toString(); !State.isEmpty())
+        return changeStateText(State);
       if (E["identity_only"].toBool())
         return tr("Identity only");
       if (!E.isEmpty() && !E["measured"].toBool())
@@ -628,6 +648,8 @@ QVariant ComparisonModel::data(const QModelIndex &Index, int Role) const {
     case 2:
       return code(A);
     case 3:
+      if (K == "uncertain")
+        return tr("Uncertain");
       return K;
     case 4:
       return code(B);

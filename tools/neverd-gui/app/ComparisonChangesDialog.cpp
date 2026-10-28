@@ -194,7 +194,7 @@ ComparisonChangesDialog::ComparisonChangesDialog(ComparisonSession &S,
             tr("%1 ↔ %2 · %3 · %4 matching / %5 retained observations\n"
                "Native rows %6 / %7; coverage %8; ambiguous associations %9. "
                "SSA: primary %10; secondary %11.\nBoundaries: primary %12; "
-               "secondary %13.")
+               "secondary %13. Reference identities: %14.")
                 .arg(PrimaryAddress, SecondaryAddress,
                      Page["state"].toString().replace('_', ' '))
                 .arg(Page["total"].toInt())
@@ -210,7 +210,10 @@ ComparisonChangesDialog::ComparisonChangesDialog(ComparisonSession &S,
                          : words(Page["primary_gaps"].toArray()),
                      Page["secondary_gaps"].toArray().isEmpty()
                          ? tr("none recorded")
-                         : words(Page["secondary_gaps"].toArray())));
+                         : words(Page["secondary_gaps"].toArray()))
+                .arg(Page["reference_comparison_complete"].toBool()
+                         ? tr("compared")
+                         : tr("unresolved")));
         if (Changes->rowCount() && !ChangeTable->currentIndex().isValid())
           ChangeTable->setCurrentIndex(ChangeTable->model()->index(0, 0));
         controls();

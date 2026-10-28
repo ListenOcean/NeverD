@@ -33,6 +33,10 @@ mutation, reload or destruction. Release it exactly once with
 `neverd_free_string`. A loaded empty overlay returns a non-null snapshot with
 zero rows; acquisition failure returns null. Null release is allowed. Existing
 JSON inventory entry points remain available for older SDK integrations.
+`neverd_byte_patch_ranges_snapshot_v1` provides just address/size metadata with
+its own frozen v1 layout and the same lifetime and file-offset ordering. It does
+not copy patch bytes. Release it with
+`neverd_byte_patch_range_snapshot_free_v1`, from the same loaded SDK.
 
 Native plugins are arbitrary in-process code. NeverD does not sandbox them,
 isolate crashes, or restrict their access to the session or host process. Load

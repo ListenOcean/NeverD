@@ -578,9 +578,16 @@ void PatchOverlay::clear(BinaryImage &Img) {
 
 llvm::Error PatchOverlay::replace(BinaryImage &Img, const InputFile &Input,
                                   std::vector<PatchRow> NewRows) {
-  llvm::sort(NewRows, [](const PatchRow &L, const PatchRow &R) {
-    return L.FileOffset < R.FileOffset;
-  });
+  // Rows written by NeverD are already in file-offset order. Duplicate offsets
+  // take the original sorting path so malformed-row diagnostics keep their
+  // existing order as well.
+  if (std::adjacent_find(NewRows.begin(), NewRows.end(),
+                         [](const PatchRow &L, const PatchRow &R) {
+                           return L.FileOffset >= R.FileOffset;
+                         }) != NewRows.end())
+    llvm::sort(NewRows, [](const PatchRow &L, const PatchRow &R) {
+      return L.FileOffset < R.FileOffset;
+    });
   if (NewRows.size() > patchLimits::kMaxPatchRows)
     return patchError(
         llvm::formatv("a project holds at most {0} separate patches",

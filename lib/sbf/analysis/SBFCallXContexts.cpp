@@ -61,11 +61,22 @@ llvm::json::Object valueJSON(const RegisterValue &Value) {
       return "rodata_address";
     case RegisterValue::Kind::InstructionDataAddress:
       return "instruction_data_address";
+    case RegisterValue::Kind::UnsignedRange:
+      return "unsigned_range";
+    case RegisterValue::Kind::SymbolicAddress:
+      return "captured_address";
     }
     llvm_unreachable("unknown register value kind");
   };
   llvm::json::Object Result{{"kind", Kind()}};
-  if (Value.ValueKind != RegisterValue::Kind::Unknown) {
+  if (Value.ValueKind == RegisterValue::Kind::UnsignedRange) {
+    const auto Range = *unsignedValueRange(Value);
+    Result["lower"] = addressText(Range.Lower);
+    Result["upper"] = addressText(Range.Upper);
+  } else if (Value.ValueKind == RegisterValue::Kind::SymbolicAddress) {
+    Result["capture"] = static_cast<int64_t>(Value.Value);
+    Result["offset"] = Value.Offset;
+  } else if (Value.ValueKind != RegisterValue::Kind::Unknown) {
     Result["base"] = addressText(Value.Value);
     Result["offset"] = Value.Offset;
   }
@@ -76,6 +87,13 @@ llvm::json::Object memoryWriteJSON(const CallXMemoryWrite &Write) {
   llvm::json::Object Row{{"offset", Write.Offset},
                          {"bytes", static_cast<int64_t>(Write.Size)}};
   switch (Write.Base) {
+  case CallXMemoryWriteBase::UnsignedRange:
+    Row["base"] = "unsigned_range";
+    Row["lower"] = addressText(Write.Address);
+    Row["upper"] = addressText(static_cast<uint64_t>(Write.Offset));
+    Row["wraps"] = Write.Address > static_cast<uint64_t>(Write.Offset);
+    Row.erase("offset");
+    break;
   case CallXMemoryWriteBase::Absolute:
     Row["base"] = "absolute";
     Row["address"] = addressText(Write.Address);
@@ -132,6 +150,8 @@ llvm::StringRef barrierName(CallXSummaryBarrier Barrier) {
     return "unknown_call_target_effects";
   case CallXSummaryBarrier::UnsupportedRawEntry:
     return "raw_target_without_decoded_block_entry";
+  case CallXSummaryBarrier::NonReturningCall:
+    return "proven_nonreturning_call";
   case CallXSummaryBarrier::SummaryBudget:
     return "summary_unavailable_after_specialization_budget";
   }
@@ -154,6 +174,8 @@ llvm::StringRef generalizationName(CallXInputGeneralization Kind) {
     return "reused_equivalent_generic_leaf_inputs";
   case CallXInputGeneralization::EquivalentSpecializedInputs:
     return "reused_proven_equivalent_specialized_inputs";
+  case CallXInputGeneralization::ReplacedRecursiveContext:
+    return "opaque_recursive_specialization_replaced";
   }
   llvm_unreachable("unknown input generalization");
 }
@@ -417,8 +439,12 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
          static_cast<int64_t>(Summary.InputScratchWords)},
         {"output_scratch_words",
          static_cast<int64_t>(Summary.OutputScratchWords)},
+        {"output_memory_copies",
+         static_cast<int64_t>(Summary.OutputMemoryCopies)},
         {"output_parameterized_words",
-         static_cast<int64_t>(Summary.OutputParameterizedWords)}};
+         static_cast<int64_t>(Summary.OutputParameterizedWords)},
+        {"output_field_value_expressions",
+         static_cast<int64_t>(Summary.OutputFieldValueExpressions)}};
     if (Summary.ReturnValueExpression)
       Row["return_value_expression"] =
           static_cast<int64_t>(*Summary.ReturnValueExpression);
@@ -435,8 +461,22 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     Row["applied_parameterized_memory_effects"] = Edge.AppliedMemoryEffects;
     Row["applied_stored_values"] =
         static_cast<int64_t>(Edge.AppliedStoredValues);
+    Row["instantiated_return_input_expression"] =
+        Edge.InstantiatedReturnInputExpression;
     Row["generalized_unknown_inputs"] = Edge.GeneralizedInputs;
     Row["input_generalization"] = generalizationName(Edge.InputGeneralization);
+    if (Edge.InstantiatedCopySlot) {
+      Row["instantiated_copy_syscall_slot"] =
+          static_cast<int64_t>(*Edge.InstantiatedCopySlot);
+      Row["instantiated_copy_bytes"] =
+          static_cast<int64_t>(Edge.InstantiatedCopyBytes);
+    }
+    if (Edge.InstantiatedMemoryPathStores) {
+      Row["instantiated_memory_path_instructions"] =
+          static_cast<int64_t>(Edge.InstantiatedMemoryPathInstructions);
+      Row["instantiated_memory_path_stores"] =
+          static_cast<int64_t>(Edge.InstantiatedMemoryPathStores);
+    }
     if (Edge.CalleeSummaryID)
       Row["callee_summary_id"] = static_cast<int64_t>(*Edge.CalleeSummaryID);
     if (Edge.CalleeEntrySlot)
@@ -462,12 +502,25 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"may_write_callee_frames", Guard.WritesCalleeFrames},
         {"may_write_intervals", std::move(Writes)}});
   }
+  llvm::json::Array Captures;
+  for (size_t ID = 0; ID < Report.CapturedAddresses.size(); ++ID) {
+    const auto Bounds = Report.CapturedAddresses[ID];
+    Captures.push_back(
+        llvm::json::Object{{"capture", static_cast<int64_t>(ID)},
+                           {"lower", addressText(Bounds.Lower)},
+                           {"upper", addressText(Bounds.Upper)}});
+  }
   const auto Translation =
       frameTranslationLimit(Program.Low.TheVersion, Program.Config);
   return llvm::json::Object{
-      {"schema", 6},
+      {"schema", 12},
+      {"captured_addresses", std::move(Captures)},
+      {"distinct_captures_prove_no_alias", false},
       {"frame_coordinates",
        llvm::json::Object{
+           {"namespace", "owning_function_summary"},
+           {"input_normalization", "known_singleton_r10"},
+           {"instantiated_proof_namespace", "caller_summary_after_frame_push"},
            {"stack_frame_bytes",
             static_cast<int64_t>(Program.Config.StackFrameSize)},
            {"max_call_depth",
@@ -521,6 +574,16 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",
        static_cast<int64_t>(Report.SkippedConstantBranchSuccessors)},
+      {"canonicalized_frame_inputs",
+       static_cast<int64_t>(Report.CanonicalizedFrameInputs)},
+      {"unblocked_recursion_retries",
+       static_cast<int64_t>(Report.UnblockedRecursionRetries)},
+      {"return_reachability_instruction_visits",
+       static_cast<int64_t>(Report.ReturnReachabilityVisits)},
+      {"instantiated_return_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedReturnInputExpressions)},
+      {"instantiated_stored_value_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedStoredValueInputExpressions)},
       {"instantiated_target_input_expressions",
        static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
       {"target_input_expressions", std::move(Expressions)},

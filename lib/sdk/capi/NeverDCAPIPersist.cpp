@@ -9,6 +9,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "BytecodeOperands.h"
 #include "JSONText.h"
 #include "LoadOptions.h"
 #include "SessionImpl.h"
@@ -1407,18 +1408,21 @@ int neverd_operand_format_set(neverd_session_t Sess, neverd_va_t Addr,
       Decoder Dec;
       DecodedInsn Insn{};
       std::optional<NativeImmediate> Selected;
-      if (Seg && Addr - Seg->VA < Seg->Data.size() && Dec.init(S->Img) &&
-          Dec.selectMode(S->Img, Addr) &&
-          Dec.decodeOne(
-              Seg->Data.data() + (Addr - Seg->VA),
-              std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)), Addr,
-              Insn) &&
-          Insn.Raw && Insn.Raw->detail)
+      std::string Unselected = "Select an actual decoded immediate operand";
+      if (S->Img.Arch == Arch::SBF || S->Img.Arch == Arch::EVM)
+        Selected = bytecodeImmediateAt(*S, Addr, unsigned(Operand), Unselected);
+      else if (Seg && Addr - Seg->VA < Seg->Data.size() && Dec.init(S->Img) &&
+               Dec.selectMode(S->Img, Addr) &&
+               Dec.decodeOne(
+                   Seg->Data.data() + (Addr - Seg->VA),
+                   std::min<size_t>(16, Seg->Data.size() - (Addr - Seg->VA)),
+                   Addr, Insn) &&
+               Insn.Raw && Insn.Raw->detail)
         Selected = nativeImmediateAt(
             describeNativeOperands(Dec, Insn, S->Img.Arch, false), Insn,
             S->Img.Arch, unsigned(Operand));
       if (!Selected) {
-        S->setError("Select an actual decoded immediate operand");
+        S->setError(Unselected);
         return -1;
       }
       const auto Value = "0x" + llvm::utohexstr(Selected->Value);

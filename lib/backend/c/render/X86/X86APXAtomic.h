@@ -13,7 +13,6 @@
 #include "neverd/backend/llvm/X86/X86APXAtomic.h"
 #include "neverd/ir/high/HighIR.h"
 
-#include <functional>
 #include <vector>
 
 namespace llvm {
@@ -53,9 +52,9 @@ inline constexpr const char X86APXAtomicCompilerDispatch[] =
 
 std::optional<X86APXAtomicPlan>
 x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call);
-std::string renderX86APXAtomicExpression(
-    Arch A, const HighExpr &E,
-    const std::function<std::string(const HighExpr &)> &Expr);
+std::string
+renderX86APXAtomicExpression(Arch A, const HighExpr &E,
+                             const std::vector<std::string> &Arguments);
 std::optional<std::string>
 renderX86APXAtomicCall(Arch A, const llvm::CallInst &Call,
                        const std::string &Result, bool ResultLive,

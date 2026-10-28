@@ -54,6 +54,8 @@ enum class RowKind : uint8_t {
   Inserted,
   /// Only in the primary function.
   Deleted,
+  /// Known operands agree, but the address identities cannot be compared.
+  Uncertain,
 };
 llvm::StringRef rowKindName(RowKind Kind);
 std::optional<RowKind> rowKindNamed(llvm::StringRef Name);
@@ -76,6 +78,8 @@ struct BlockPair {
   BlockStep Step = BlockStep::BlockBody;
   /// Whether every aligned instruction is identical or moved.
   bool Unchanged = false;
+  /// No observed instruction change, but at least one reference is unresolved.
+  bool Uncertain = false;
 };
 
 /// How an edge of one side fares in the other.
@@ -94,6 +98,7 @@ struct FunctionDelta {
   /// False when cancellation/deadline stopped measurement; never unchanged.
   bool ComputationComplete = true;
   bool AnalysisComplete = true;
+  bool ReferenceComparisonComplete = true;
   /// No code body is available on either side. Similarity is not applicable.
   bool IdentityOnly = false;
   /// Paired blocks, in primary block order.

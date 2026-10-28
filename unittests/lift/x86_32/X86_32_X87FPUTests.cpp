@@ -376,6 +376,40 @@ BinaryImage x87ExamineImage(Arch A, BinaryFormat Format,
   return Image;
 }
 
+BinaryImage x87NestedContextImage(BinaryFormat Format, bool ContextFirst,
+                                  bool ContextLeaf, bool RecursiveSibling) {
+  BinaryImage Image =
+      x87ExamineImage(Arch::X64, Format, std::vector<uint8_t>(0x400, 0xcc));
+  Image.X87ContextOverride = true;
+  Image.Symbols.clear();
+  Image.KnownCodeRanges.clear();
+  const auto Publish = [&](va_t Address, const std::vector<uint8_t> &Bytes) {
+    std::copy(Bytes.begin(), Bytes.end(),
+              Image.Segments[0].Data.begin() + Address - Image.Entry);
+    Image.Symbols.push_back(Symbol::makeFunc(Address, Bytes.size()));
+    Image.KnownCodeRanges.emplace_back(Address, Address + Bytes.size());
+  };
+  Publish(0x1000, {0xe8, 0xfb, 0, 0, 0, 0x31, 0xc0, 0xc3});
+  std::vector<uint8_t> Body;
+  for (va_t Target : ContextFirst ? std::array<va_t, 2>{0x1200, 0x1300}
+                                  : std::array<va_t, 2>{0x1300, 0x1200}) {
+    const uint32_t Displacement = uint32_t(Target - (0x1100 + Body.size() + 5));
+    Body.push_back(0xe8);
+    for (unsigned I = 0; I != 4; ++I)
+      Body.push_back(uint8_t(Displacement >> (8 * I)));
+  }
+  Body.insert(Body.end(), {0xb8, 7, 0, 0, 0, 0xc3});
+  Publish(0x1100, Body);
+  Publish(0x1200, ContextLeaf ? std::vector<uint8_t>{0xd9, 0xe8, 0xdd, 0xd8,
+                                                     0xc3} // fld1; pop; ret
+                              : std::vector<uint8_t>{0xc3});
+  Publish(0x1300, RecursiveSibling
+                      ? std::vector<uint8_t>{0xe8, 0xfb, 0xff, 0xff, 0xff, 0xc3}
+                      // call self; ret
+                      : std::vector<uint8_t>{0xff, 0xe0}); // jmp rax
+  return Image;
+}
+
 BinaryImage x87SwitchImage(Arch A) {
   // A linked PE switch with relocated pointers embedded after the code.
   // All ordinary paths enter with an empty x87 stack and define ST0.
@@ -1346,6 +1380,90 @@ TEST(X87CallStack, ProvesCrossBlockResultsBeforeExpandingLoopStates) {
         Low = Builder.build(Image, Dec, 0x1000, "x87_call_loop");
         EXPECT_FALSE(hasX87CallDefinition(Low));
       }
+}
+
+TEST(X87CallStack, KnownContextRequirementSurvivesUnresolvedSiblingCalls) {
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool ContextFirst : {false, true})
+      for (bool ContextLeaf : {false, true})
+        for (bool RecursiveSibling : {false, true})
+          for (bool SharedGraphs : {false, true}) {
+            SCOPED_TRACE(static_cast<int>(Format));
+            SCOPED_TRACE(ContextFirst);
+            SCOPED_TRACE(ContextLeaf);
+            SCOPED_TRACE(RecursiveSibling);
+            SCOPED_TRACE(SharedGraphs);
+            BinaryImage Image = x87NestedContextImage(
+                Format, ContextFirst, ContextLeaf, RecursiveSibling);
+            Decoder Dec;
+            ASSERT_TRUE(Dec.init(Image));
+            const std::set<va_t> Entries{0x1000, 0x1100, 0x1200, 0x1300};
+            const std::set<va_t> Unsafe{0x1300};
+            CFGBuilder Builder;
+            Builder.setKnownFuncEntries(&Entries);
+            Builder.setUnsafeJumpTableBranches(&Unsafe);
+            if (SharedGraphs)
+              Builder.setX87CallGraphCache(createX87CallGraphCache());
+            for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+              const LowFunc Low =
+                  Builder.build(Image, Dec, Image.Entry, "nested_context");
+              ASSERT_TRUE(Low.hasCompleteInstructionLift());
+              unsigned Captures = 0;
+              for (const LowBlock &Block : Low.Blocks)
+                for (const LowOp &Op : Block.Ops)
+                  Captures += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                              Op.Inputs[0].isConst() &&
+                              Op.Inputs[0].Offset ==
+                                  unsigned(Intrinsic::X87ContextBegin);
+              EXPECT_EQ(Captures, unsigned(ContextLeaf));
+              if (ContextLeaf)
+                expectOwnedCallTransport(Low);
+            }
+          }
+}
+
+TEST(X87CallStack, SignatureOnlyWin64WrappersKeepLocalStateObservers) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  const auto Captures = [](const LowFunc &F) {
+    unsigned Count = 0;
+    for (const auto &Block : F.Blocks)
+      for (const auto &Op : Block.Ops)
+        Count += Op.Opcode == NdOp::INTRINSIC && Op.NumInputs &&
+                 Op.Inputs[0].isConst() &&
+                 Op.Inputs[0].Offset == unsigned(Intrinsic::X87ContextBegin);
+    return Count;
+  };
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool Owned : {false, true}) {
+      SCOPED_TRACE(static_cast<int>(Format));
+      SCOPED_TRACE(Owned);
+      auto Image = x87NestedContextImage(Format, false, true, true);
+      Image.X87ContextOverride = Owned;
+      Decoder Dec;
+      ASSERT_TRUE(Dec.init(Image));
+      const std::set<va_t> Entries{0x1000, 0x1100, 0x1200, 0x1300};
+      CFGBuilder Builder;
+      Builder.setKnownFuncEntries(&Entries);
+      Builder.setX87CallGraphCache(createX87CallGraphCache());
+      for (unsigned Repeat = 0; Repeat != 2; ++Repeat) {
+        const auto Signature =
+            Builder.buildCallSignatureProof(Image, Dec, 0x1100, "signature");
+        ASSERT_TRUE(Signature.hasCompleteInstructionLift());
+        EXPECT_EQ(Captures(Signature),
+                  unsigned(Owned && Format != BinaryFormat::COFF));
+        if (Owned && Format == BinaryFormat::COFF && Repeat == 0)
+          EXPECT_EQ(Access::stats(Builder)[1], 0u);
+        const auto Local =
+            Builder.buildCallSignatureProof(Image, Dec, 0x1200, "local");
+        ASSERT_TRUE(Local.hasCompleteInstructionLift());
+        EXPECT_EQ(Captures(Local), unsigned(Owned));
+        const auto Definition = Builder.build(Image, Dec, 0x1100, "definition");
+        ASSERT_TRUE(Definition.hasCompleteInstructionLift());
+        EXPECT_EQ(Captures(Definition), unsigned(Owned));
+      }
+    }
 }
 
 TEST(X87CallStack, IncompleteCallClosureCannotAcquireAnEffect) {
@@ -3054,6 +3172,30 @@ TEST(CallRegisterBodyCache, ParallelReadersAndEvictionKeepBorrowedBodiesAlive) {
   EXPECT_LE(Access::summaryStats(Seed)[1], 32u * 1024 * 1024);
   ASSERT_EQ(First->Blocks.size(), 1u);
   EXPECT_EQ(First->Blocks.front().StartAddr, Image.Entry);
+}
+
+TEST(CompleteFunctionCache,
+     KnownContextUseCannotBeHiddenByAnUnresolvedSibling) {
+  using Access = detail::X87CallGraphCacheTestAccess;
+  for (BinaryFormat Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+    for (bool ContextFirst : {false, true})
+      for (bool ContextLeaf : {false, true}) {
+        SCOPED_TRACE(static_cast<int>(Format));
+        SCOPED_TRACE(ContextFirst);
+        SCOPED_TRACE(ContextLeaf);
+        BinaryImage Image =
+            x87NestedContextImage(Format, ContextFirst, ContextLeaf, true);
+        const std::set<va_t> Entries{0x1000, 0x1100, 0x1200, 0x1300};
+        auto Cache = createX87CallGraphCache(nullptr, nullptr, true);
+        CFGBuilder Seed;
+        Seed.setKnownFuncEntries(&Entries);
+        Seed.setX87CallGraphCache(Cache);
+        Access::query(Seed, Image, Image.Entry);
+        ASSERT_GT(Access::summaryStats(Seed)[0], 0u);
+        for (unsigned Repeat = 0; Repeat != 2; ++Repeat)
+          EXPECT_EQ(bool(cachedFunction(Cache, Image, &Entries)), !ContextLeaf);
+      }
 }
 
 TEST(X87CallGraphCache, ImmutableProjectionRejectionsReplayBudgetsExactly) {

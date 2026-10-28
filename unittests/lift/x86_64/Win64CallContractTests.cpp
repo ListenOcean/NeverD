@@ -39,6 +39,7 @@
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/pipeline/Pipeline.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Instructions.h"
@@ -46,6 +47,7 @@
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
 
+#include <algorithm>
 #include <array>
 #include <cstring>
 #include <functional>
@@ -883,6 +885,61 @@ int main(void) {
 constexpr va_t Text = 0x140001000;
 constexpr va_t Iat = 0x140003000;
 
+/// Execute the original fixture at a fresh mapping. Its observed return word
+/// must have the same instruction-relative offset as the fixed-image source.
+/// The two imported providers, when present, also check the caller's string.
+std::string nativeReturnPCOracle(llvm::ArrayRef<uint8_t> Code, va_t ReturnPC,
+                                 bool Windows, bool Imports) {
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  Out << "\n#if defined(__linux__) && defined(__x86_64__)\n"
+         "#include <sys/mman.h>\n#include <string.h>\n";
+  if (Imports) {
+    const char *ABI = Windows ? "__attribute__((ms_abi)) " : "";
+    Out << "static " << ABI
+        << "int machine_rand(void) { return spill_provider(); }\n"
+        << "static " << ABI
+        << "size_t machine_strlen(const char *p) {\n"
+           "  if (p[0] != 97 || p[1] != 0) __builtin_trap();\n"
+           "  return spill_strlen_provider(p);\n}\n";
+  }
+  Out << "static int check_native_return_pc(void) {\n"
+         "  static const uint8_t original[] = {";
+  for (uint8_t Byte : Code)
+    Out << unsigned(Byte) << ',';
+  const size_t Bytes = std::max<size_t>(Code.size(), Iat - Text + 16);
+  Out << "};\n  const size_t size = " << Bytes
+      << ";\n"
+         // UBSan probes for a compiled-function signature before an indirect
+         // target. Keep that prefix mapped for this raw machine-code entry.
+         "  uint8_t *mapping = mmap(0, size + 16, PROT_READ | PROT_WRITE | "
+         "PROT_EXEC,\n"
+         "      MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);\n"
+         "  if (mapping == MAP_FAILED) return 1;\n"
+         "  uint8_t *code = mapping + 16;\n"
+         "  memcpy(code, original, sizeof(original));\n";
+  if (Imports)
+    Out << "  uintptr_t random = (uintptr_t)machine_rand;\n"
+           "  uintptr_t reader = (uintptr_t)machine_strlen;\n"
+           "  memcpy(code + "
+        << Iat - Text << ", &random, 8);\n"
+        << "  memcpy(code + " << Iat - Text + 8
+        << ", &reader, 8);\n"
+           "  calls = 0;\n";
+  Out << "  __builtin___clear_cache((char *)code, (char *)code + size);\n"
+         "  uint64_t actual = ((uint64_t ("
+      << (Windows ? "__attribute__((ms_abi)) " : "")
+      << "*)(void))code)();\n"
+         "  int bad = actual != (uintptr_t)code + "
+      << ReturnPC - Text << (Imports ? " || calls != 2" : "") << ";\n";
+  if (Imports)
+    Out << "  calls = 0;\n";
+  Out << "  if (munmap(mapping, size + 16)) return 1;\n  return bad;\n}\n"
+         "#else\nstatic int check_native_return_pc(void) { return 0; }\n"
+         "#endif\n";
+  return Source;
+}
+
 void put(std::vector<uint8_t> &Code, va_t At, std::vector<uint8_t> Bytes) {
   std::copy(Bytes.begin(), Bytes.end(), Code.begin() + (At - Text));
 }
@@ -1062,11 +1119,13 @@ TEST(Win64CallContract, ImmutableNoReturnSlotsEndBothSourcePaths) {
       EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
       const std::string Oracle = R"(
 extern _Noreturn void _Exit(int);
-#define SYMBOL_PREFIX_(prefix) #prefix
-#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
-_Noreturn uint64_t stop_provider(void)
-    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "abort");
-_Noreturn uint64_t stop_provider(void) { _Exit(0); }
+/* A recognized libc call uses the host C name; an address-only target keeps
+   the PE symbol. Darwin needs both spellings because C names gain an _. */
+_Noreturn void abort(void) { _Exit(0); }
+#if defined(__APPLE__)
+_Noreturn void raw_stop_provider(void) __asm__("abort");
+_Noreturn void raw_stop_provider(void) { _Exit(0); }
+#endif
 int main(void) {
   if (loaded_noreturn(0) != 37) return 1;
   loaded_noreturn(1);
@@ -1284,6 +1343,8 @@ TEST(Win64CallContract, AddressOnlyCallbackConvertsToItsKnownParameterType) {
   llvm::raw_string_ostream Output(Source);
   ASSERT_TRUE(HighCEmitter().emit({Caller}, Output, Options, &Debug));
   const std::string Oracle = R"(
+/* Match the emitted PE symbol, including on hosts with a C label prefix. */
+uint64_t callback_provider(uint64_t value) __asm__("callback_provider");
 uint64_t callback_provider(uint64_t value) { return value ^ UINT64_C(0xFEDCBA9876543210); }
 uint64_t apply_callback(uint64_t (*callback)(uint64_t)) { return callback(37); }
 int main(void) { return invoke_typed_callback() != (37 ^ UINT64_C(0xFEDCBA9876543210)); }
@@ -1489,6 +1550,89 @@ int main(void) { return read_neighbor() != 37 || observed != 1; }
                 {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
         }
   }
+}
+
+TEST(Win64CallContract, PartialOverwriteBeforeBorrowDropsOnlyUnreadBytes) {
+  constexpr va_t Consumer = Text + 0x80;
+  for (bool Home : {false, true})
+    for (bool ReadsNeighbor : {false, true}) {
+      SCOPED_TRACE(Home);
+      SCOPED_TRACE(ReadsNeighbor);
+      std::vector<uint8_t> Code(0x90, 0xCC);
+      std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38};
+      const auto Random = throughSlot(Text + Caller.size(), Iat);
+      Caller.insert(Caller.end(), Random.begin(), Random.end());
+      // The call leaves RCX unavailable. Only the low byte of its spill is
+      // overwritten before this complete leaf borrow. Positive offsets use
+      // the caller's incoming home storage, outside the nested call's home.
+      const uint8_t Slot = Home ? 0x40 : 0x28;
+      Caller.insert(Caller.end(),
+                    {0x48, 0x89, 0x4C, 0x24, Slot, 0xC6, 0x44, 0x24, Slot, 37,
+                     0x48, 0x8D, 0x4C, 0x24, Slot, 0xE8});
+      const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+      Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+      Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+      put(Code, Text, Caller);
+      put(Code, Consumer,
+          ReadsNeighbor ? std::vector<uint8_t>{0x0F, 0xB6, 0x41, 1, 0xC3}
+                        : std::vector<uint8_t>{0x0F, 0xB6, 0x01, 0xC3});
+      const auto Image =
+          makeImage(Code, {{Text, "partial_borrow"}, {Consumer, "byte_reader"}},
+                    {"rand"});
+      for (bool OmitCallee : {false, true})
+        for (bool NoOpt : {false, true})
+          for (bool LLVM : {false, true}) {
+            SCOPED_TRACE(OmitCallee);
+            SCOPED_TRACE(NoOpt);
+            SCOPED_TRACE(LLVM);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {Text};
+            if (!OmitCallee)
+              Options.OnlyFunctionEntries.insert(Consumer);
+            Options.NoOpt = NoOpt;
+            Options.SourceProjection = true;
+            Options.LiftMode = LLVM;
+            auto Result = Pipeline().run(Image, Context, Options);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            std::string Source;
+            llvm::raw_string_ostream Output(Source);
+            CEmitterOptions COptions;
+            COptions.TheArch = Image.Arch;
+            COptions.Format = Image.Format;
+            COptions.Image = &Image;
+            ASSERT_TRUE(
+                LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                           nullptr, &Image)
+                     : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+            const bool Unknown =
+                Source.find("__builtin_trap") != std::string::npos;
+            EXPECT_EQ(Unknown, ReadsNeighbor) << Source;
+            if (ReadsNeighbor || Unknown)
+              continue;
+            std::string Oracle;
+            if (OmitCallee)
+              Oracle = R"(
+#define SYMBOL_PREFIX_(prefix) #prefix
+#define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
+uint64_t byte_provider(uint64_t address)
+    __asm__(SYMBOL_PREFIX(__USER_LABEL_PREFIX__) "byte_reader");
+uint64_t byte_provider(uint64_t address) {
+  return *(uint8_t *)(uintptr_t)address;
+}
+)";
+            Oracle += R"(
+static unsigned observed;
+int rand(void) { ++observed; return 17; }
+int main(void) { return partial_borrow() != 37 || observed != 1; }
+)";
+            for (llvm::StringRef Level : {"-O0", "-O2"})
+              source_call_execution_test::compileAndRun(
+                  Source + Oracle,
+                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+          }
+    }
 }
 
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {
@@ -2027,6 +2171,7 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
     std::vector<uint8_t> Code = {0x48, 0x83, 0xEC, 0x28};
     Code.insert(Code.end(), Call.begin(), Call.end());
     constexpr va_t Callee = Text + 0x80;
+    va_t ObservedReturnPC = 0;
     if ((Variant >= 3 && Variant <= 4) || Variant >= 7) {
       // PUSHF explicitly overwrites the released push slot after ADD.
       // Passing another frame member to strlen keeps the frame observable.
@@ -2047,13 +2192,14 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
                                0x24, 0x10});
       const auto Read = throughSlot(Text + Code.size(), slot(1));
       Code.insert(Code.end(), Read.begin(), Read.end());
+      ObservedReturnPC = Text + Code.size();
       if (Variant == 8)
         // A complete explicit write after CALL supplies real source bytes.
         Code.insert(Code.end(), {0x48, 0xc7, 0x44, 0x24, 0xf8, 19, 0, 0, 0});
       if (Variant == 4 || Variant >= 7)
         // The old slot can hold an unavailable register OR a known constant.
-        // Neither represents the CALL's new return address. Variant 8 alone
-        // supplies the complete later write before the observed load.
+        // Neither represents the CALL's new return address. Source preparation
+        // must materialize that exact word; variant 8 overwrites it again.
         Code.insert(Code.end(), {0x48, 0x8b, 0x44, 0x24, 0xf8});
       Code.insert(Code.end(), {0x48, 0x83, 0xc4, 0x28, 0xc3});
     } else {
@@ -2109,13 +2255,6 @@ TEST_P(OverwrittenCallClobberSpills, AreNotValueReads) {
         Options.SourceProjection = true;
         Options.NoOpt = NoOpt;
         auto Result = Pipeline().run(Image, Context, Options);
-        if (Variant == 4 || Variant == 7) {
-          EXPECT_FALSE(Result.Success);
-          EXPECT_NE(Result.Error.find("physical CALL return slot"),
-                    std::string::npos)
-              << Result.Error;
-          continue;
-        }
         ASSERT_TRUE(Result.Success) << Result.Error;
         std::string Source;
         llvm::raw_string_ostream Output(Source);
@@ -2165,13 +2304,19 @@ static size_t spill_strlen_provider(const char *p) {
 #define rand spill_provider
 #define strlen spill_strlen_provider
 )";
-        const std::string Oracle =
+        std::string Oracle =
             Variant == 3   ? "int main(void) { return reused_scratch() != 1 || "
                              "calls != 2; }"
             : Variant == 8 ? "int main(void) { return reused_scratch() != 19 "
                              "|| calls != 2; }"
                            : "int main(void) { return reused_scratch() != 19 "
                              "|| calls != 1; }";
+        if (Variant == 4 || Variant == 7)
+          Oracle = nativeReturnPCOracle(Code, ObservedReturnPC,
+                                        Format == BinaryFormat::COFF, true) +
+                   "int main(void) { if (check_native_return_pc()) return 2; "
+                   "return (uint64_t)reused_scratch() != UINT64_C(" +
+                   std::to_string(ObservedReturnPC) + ") || calls != 2; }";
         for (llvm::StringRef Level : {"-O0", "-O2"})
           source_call_execution_test::compileAndRun(
               Provider + Native + Oracle,
@@ -5132,7 +5277,7 @@ TEST(CallExitRegisters, PureRegisterLeafKeepsDynamicExtraResults) {
 #endif
   for (BinaryFormat Format :
        {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-    for (unsigned Mutation : {0u, 9u, 10u}) {
+    for (unsigned Mutation : {0u, 7u, 9u, 10u}) {
       auto Image = registerQueryImage(Mutation);
       Image.Format = Format;
       PipelineAnalysisCache Cache;
@@ -5194,6 +5339,12 @@ int main(void) {
             Oracle.replace(Oracle.find(Whole), Whole.size(),
                            "(((c ^ UINT32_C(0xFEDCBA98)) >> 8) & 255)");
           }
+          if (Mutation == 7)
+            Oracle = nativeReturnPCOracle(Image.Segments.front().Data, Text + 9,
+                                          Format == BinaryFormat::COFF, false) +
+                     "int main(void) { return check_native_return_pc() || "
+                     "(uint64_t)observe_cpu_words() != UINT64_C(" +
+                     std::to_string(Text + 9) + "); }";
           for (llvm::StringRef Level : {"-O0", "-O2"})
             source_call_execution_test::compileAndRun(
                 Source + Oracle,
@@ -5204,7 +5355,7 @@ int main(void) {
 
 TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
   constexpr va_t Producer = Text + 0x80;
-  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 7u, 8u, 12u, 13u, 14u, 15u})
+  for (unsigned Mutation : {1u, 2u, 3u, 4u, 5u, 6u, 8u, 12u, 13u, 14u, 15u})
     for (bool LLVM : {false, true})
       for (bool NoOpt : {false, true}) {
         SCOPED_TRACE(Mutation);
@@ -5219,13 +5370,6 @@ TEST(CallExitRegisters, RegisterQueryKeepsUnprovedBoundaries) {
         Options.LiftMode = LLVM;
         Options.NoOpt = NoOpt;
         auto Result = Pipeline().run(Image, Context, Options);
-        if (Mutation == 7) {
-          EXPECT_FALSE(Result.Success);
-          EXPECT_NE(Result.Error.find("physical CALL return slot"),
-                    std::string::npos)
-              << Result.Error;
-          continue;
-        }
         ASSERT_TRUE(Result.Success) << Result.Error;
         bool CallsOriginal = false;
         for (const auto &Function : Result.MedFuncs)

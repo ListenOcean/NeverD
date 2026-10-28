@@ -160,13 +160,12 @@ x86APXAtomicCallPlan(Arch A, const llvm::CallInst &Call) {
   return P;
 }
 
-std::string renderX86APXAtomicExpression(
-    Arch A, const HighExpr &E,
-    const std::function<std::string(const HighExpr &)> &Expr) {
-  const auto Prefix = x86APXSegmentPrefix(E.MemoryAddressSpace);
+std::string
+renderX86APXAtomicExpression(Arch A, const HighExpr &E,
+                             const std::vector<std::string> &Arguments) {
   if (E.Operands.size() > 5 || E.Kind != ExprKind::Call || E.IsIndirectCall ||
       E.IndirectTarget || E.SourceCallHint || E.DoesNotReturn ||
-      !E.IntrinsicOutputs.empty() || !Prefix)
+      !E.IntrinsicOutputs.empty() || Arguments.size() != E.Operands.size())
     throw std::invalid_argument("invalid HighC APX atomic call");
   ApxAtomicIntrinsicShape S;
   S.TargetArch = A;
@@ -205,16 +204,19 @@ std::string renderX86APXAtomicExpression(
     S.AddressControlSize = Control->Type->Size;
     S.AddressControl = Control->ConstVal;
   }
-  if (!intrinsicApxAtomicShapeIsValid(E.IntrinsicId, S))
+  const auto Prefix = x86APXAtomicNativePrefix(S);
+  if (!intrinsicApxAtomicShapeIsValid(E.IntrinsicId, S) || !Prefix)
     throw std::invalid_argument("invalid HighC APX atomic operands");
-  const auto P = *x86APXAtomicPlan(
-      E.IntrinsicId, S.SourceSize, A == Arch::X86 ? 32 : 64,
-      *Prefix | (S.stackReference() ? X86NativeStackReference : 0),
+  const auto Plan = x86APXAtomicPlan(
+      E.IntrinsicId, S.SourceSize, A == Arch::X86 ? 32 : 64, *Prefix,
       isX86CmpccXaddIntrinsic(E.IntrinsicId) ? S.Condition : 0, A);
-  std::vector<std::string> Args = {Expr(*E.Operands[0])};
+  if (!Plan)
+    throw std::invalid_argument("invalid HighC APX atomic target");
+  const auto &P = *Plan;
+  std::vector<std::string> Args = {Arguments[0]};
   if (P.compare())
-    Args.push_back(Expr(*E.Operands[2]));
-  Args.push_back(Expr(*E.Operands[1]));
+    Args.push_back(Arguments[2]);
+  Args.push_back(Arguments[1]);
   return expression(P, Args);
 }
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "OperandFormat.h"
+#include "OperandFormatDetail.h"
 #include "ProjectHistory.h"
 #include "Protocol.h"
 
@@ -93,9 +94,14 @@ public:
   void commentsChanged();
   /// Whether instruction lines show the user's operand formats.
   bool showsNumberFormats();
-  /// Whether operands read as the ARM family spells them (`[x0, #8]`)
-  /// rather than as x86 listings do.
-  bool spellsArmOperands();
+  /// How the listing writes the operands a structure offset changes:
+  /// "arm" (`[x0, #8]`), "sbf" (`[r1 + 8]`), "evm" (PUSH data), or empty for
+  /// x86 listings' spelling.
+  std::string_view operandSyntax();
+  /// The access the SBF memory operand \p operand of the instruction at
+  /// \p address makes by itself; none for another operand or dialect.
+  std::optional<operand_format_detail::SbfAccess>
+  ownAccess(std::uint64_t address, std::size_t operand);
   /// Which operands of the instruction that starts at \p address a number
   /// format changes, by index; none when no instruction starts there.
   std::optional<std::vector<bool>> numberOperands(std::uint64_t address);

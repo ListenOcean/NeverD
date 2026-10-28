@@ -670,8 +670,41 @@ Replies do not populate the cache, simulate latency or execute native
 Parcel/Binder transport. `getService` also updates StatLogger duration arrays
 and accumulated counters using shared boot/monotonic clocks, Linux process UID
 and API 28 core/app thresholds. `checkService` omits those statistics updates.
-Local Binder objects, native object translation, remote exceptions and EventLog
-output remain outside this subset. With `observe_java_state`, the optional
+Slow/statistics EventLog branches require the separate, ordered
+[`android.event_log_writes` contract](android-log-reader.md#event-write-contract).
+Its bytes, truncation rules and signed results are shared with the five
+`EventLog.writeEvent` overloads and native `__android_log_bwrite`;
+missing writes remain unsupported. Local Binder objects, native object
+translation and remote exceptions remain outside this subset. With
+`observe_java_state`, the optional
 `java_state.framework.service_manager` report retains cache completeness,
 entry identities, manager/logger identities and proxy warning state. Report
 heap identities use hexadecimal strings; input proxy keys remain numeric keys.
+
+The shared API 28 `Parcel` subset supports `obtain`, `recycle`, `dataSize`,
+`dataPosition`, `dataAvail`, `setDataPosition`, int/long/String reads and writes,
+`marshall` and valid-range `unmarshall`. Owned objects reuse a six-slot pool;
+recycled buffers are empty. Strings preserve UTF-16 units and native four-byte
+padding. Imported slices are padded and leave the cursor at the padded end;
+negative lengths leave the Parcel unchanged. Byte-array exports are independent
+copies. DEX and all three JNI call forms share these objects and the existing
+work/heap budgets, without requiring an application snapshot.
+
+`Binder.getThreadStrictModePolicy` and `setThreadStrictModePolicy` access the
+current native thread's 32-bit policy. New native threads start at zero; JNI
+detach/reattach preserves the policy and pthread children start independently.
+`writeInterfaceToken` writes that policy OR `0x00400000`, followed by the shared
+UTF-16 String encoding, without changing local policy. It requires a nonnull
+String. Standalone Dalvik callers must supply the native policy services; no
+application or ServiceManager snapshot is needed for Android native callers.
+This does not change the separate Java StrictMode/BlockGuard state.
+
+The next ServiceManagerProxy transport boundary is `BinderProxy.transact`.
+A supplied Java Binder key does not supply a native handle or transaction
+endpoint. `enforceInterface` still needs incoming Binder flags and the Java
+policy-change upcall. Raw allocated Parcel instances, access after recycle,
+invalid native import ranges and exporting or writing an uninitialized cursor
+gap also stop explicitly. Native borrowed Parcels, object/FD translation,
+capacity/size changes, float/double methods and custom read/write helpers are
+outside this subset. ServiceManager semantic lookup replies still do not execute
+Parcel/Binder transport.

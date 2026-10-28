@@ -61,6 +61,20 @@ struct FunctionFeatures {
   uint32_t Edges = 0;
   uint32_t Loops = 0;
   uint32_t Calls = 0;
+  struct AddressSite {
+    uint32_t Target;
+    uint32_t Instruction;
+    uint32_t Operand;
+  };
+  /// Instruction/operand-bound address-taking uses and modeled transfers.
+  /// NoIndex as operand denotes a transfer, separate from explicit operands.
+  std::vector<AddressSite> AddressSites;
+  uint32_t FunctionReferences = 0;
+  /// Raw address encodings vary with layout and cannot identify duplicate
+  /// normalized bodies, even when their referenced objects correspond.
+  bool AddressEncodings = false;
+  bool UnresolvedData = false;
+  bool UnresolvedCallee = false;
   /// Whether the sketch holds anything.
   bool Sketched = false;
   std::array<uint32_t, SketchSize> Sketch{};
@@ -82,6 +96,9 @@ struct ProgramFeatures {
   /// Distinct functions each function calls, and that call it, ascending.
   Adjacency Callees;
   Adjacency Callers;
+  /// Address-taking references, kept separate from modeled call edges.
+  Adjacency Referents;
+  Adjacency Referrers;
   /// Every call in instruction order; NoIndex retains an unresolved call.
   Adjacency CallSites;
   /// What each function's thunks lead to: the function itself, or for a

@@ -51,6 +51,8 @@ public:
   bool onData() const;
   QString currentToken() const;
   QString selectedText() const;
+  /// What Copy takes in the listing or the graph shown.
+  QString copyText() const;
   void setSyncName(const QString &name) {
     syncName_ = name;
     updateStatus();

@@ -14,6 +14,7 @@
 #include "PipelineCallAbiDetail.h"
 #include "PipelineHighIRDetail.h"
 #include "PipelineLowIRDetail.h"
+#include "PipelineSourceStackAccesses.h"
 
 #include "neverd/analysis/BinaryInterpreterSpecialization.h"
 #include "neverd/analysis/InterpreterMachineState.h"
@@ -43,6 +44,7 @@
 #include <cstdlib>
 #include <memory>
 #include <set>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -555,7 +557,8 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   // consume HighIR postpone only that projection, retaining those proofs.
   if (Opts.DeferHighIR && !Opts.DumpHigh) {
     Trace.start(NativePipelineTrace::Stage::HighIR);
-    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts),
+                          refusalFailsRun(Opts));
     Trace.finish(Result.Success);
     return Result;
   }
@@ -582,15 +585,20 @@ PipelineResult Pipeline::run(const BinaryImage &Img, llvm::LLVMContext &Ctx,
 
 void Pipeline::prepareDeferredSource(const BinaryImage &Img,
                                      PipelineResult &Result, DebugContext *Dbg,
-                                     PipelineAnalysisCache *Cache) {
+                                     PipelineAnalysisCache *Cache,
+                                     bool FailsRun) {
   try {
     prepareSourceMedIR(Img, Result, Dbg, Cache);
+    if (!refuseObservedCallReturnReads(Img, Result, FailsRun, Dbg))
+      throw std::runtime_error(Result.Error);
     Result.HighIRDeferred = true;
     Result.Success = true;
   } catch (const std::exception &Error) {
+    Result.Success = false;
     Result.Error =
         std::string("source MedIR preparation failed: ") + Error.what();
   } catch (...) {
+    Result.Success = false;
     Result.Error = "source MedIR preparation failed: unknown exception";
   }
 }
@@ -620,7 +628,8 @@ bool Pipeline::resumeMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
   recognizeLibraries(Img, Opts, Result, Dbg);
   Trace.start(NativePipelineTrace::Stage::HighIR);
   if (Opts.DeferHighIR)
-    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts));
+    prepareDeferredSource(Img, Result, Dbg, sharedAnalysisCache(Img, Opts),
+                          refusalFailsRun(Opts));
   else
     Result.Success = pipeline_detail::runHighIRStage(
         Result, [&] { buildHighIR(Img, Opts, Result, Dbg); });

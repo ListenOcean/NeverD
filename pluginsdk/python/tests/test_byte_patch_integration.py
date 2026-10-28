@@ -49,6 +49,17 @@ class BytePatchIntegrationTests(unittest.TestCase):
         self.addCleanup(host.call, "neverd_byte_patch_snapshot_free_v1", snapshot)
         return snapshot
 
+    def _range_snapshot(self, host, pointer):
+        snapshot = host.call("neverd_byte_patch_ranges_snapshot_v1", pointer)
+        self.assertTrue(snapshot, host.owned_string("neverd_last_error", pointer))
+        self.addCleanup(host.call, "neverd_byte_patch_range_snapshot_free_v1", snapshot)
+        return snapshot
+
+    @staticmethod
+    def _snapshot_ranges(snapshot):
+        return [{"address": hex(row.address), "size": row.size}
+                for row in snapshot.contents.ranges[:snapshot.contents.range_count]]
+
     @staticmethod
     def _snapshot_rows(snapshot):
         return [{"addr": hex(row.file_offset), "file_off": hex(row.file_offset),
@@ -61,16 +72,24 @@ class BytePatchIntegrationTests(unittest.TestCase):
     def test_snapshot_distinguishes_unloaded_and_empty_sessions(self) -> None:
         host = self._snapshot_host()
         host.call("neverd_byte_patch_snapshot_free_v1", None)
+        host.call("neverd_byte_patch_range_snapshot_free_v1", None)
         self.assertFalse(host.call("neverd_byte_patches_snapshot_v1", None))
+        self.assertFalse(host.call("neverd_byte_patch_ranges_snapshot_v1", None))
         pointer = host.call("neverd_session_create")
         self.addCleanup(host.call, "neverd_session_destroy", pointer)
         self.assertFalse(host.call("neverd_byte_patches_snapshot_v1", pointer))
+        self.assertIn("loaded session", host.owned_string("neverd_last_error", pointer))
+        self.assertFalse(host.call("neverd_byte_patch_ranges_snapshot_v1", pointer))
         self.assertIn("loaded session", host.owned_string("neverd_last_error", pointer))
         self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(self.binary)), 1)
         snapshot = self._snapshot(host, pointer)
         self.assertEqual(snapshot.contents.row_count, 0)
         self.assertFalse(snapshot.contents.rows)
         self.assertEqual(self._snapshot_rows(snapshot), [])
+        ranges = self._range_snapshot(host, pointer)
+        self.assertEqual(ranges.contents.range_count, 0)
+        self.assertFalse(ranges.contents.ranges)
+        self.assertEqual(self._snapshot_ranges(ranges), [])
 
     def test_snapshots_own_rows_across_edits_reloads_and_session_destruction(self) -> None:
         from neverd_plugin import Session
@@ -85,6 +104,7 @@ class BytePatchIntegrationTests(unittest.TestCase):
             session.apply_byte_patch(self.entry, kind="constant", value=42)
             session.apply_byte_patch(self.entry + 4, data=b"\xff\x00")
             first = self._snapshot(host, pointer)
+            first_ranges = self._range_snapshot(host, pointer)
             expected = [
                 {"addr": "0x79", "file_off": "0x79", "va": hex(self.entry + 1),
                  "size": 1, "original": "07", "current": "2a", "kind": "constant"},
@@ -92,11 +112,17 @@ class BytePatchIntegrationTests(unittest.TestCase):
                  "size": 2, "original": "00c3", "current": "ff00", "kind": "bytes"},
             ]
             self.assertEqual(self._snapshot_rows(first), expected)
+            expected_ranges = [{"address": row["va"], "size": row["size"]}
+                               for row in expected]
+            self.assertEqual(self._snapshot_ranges(first_ranges), expected_ranges)
+            self.assertEqual(session.byte_patch_ranges, expected_ranges)
             self.assertEqual(session.byte_patches, expected)
             session.save_byte_patches()
             session.apply_byte_patch(self.entry + 1, data=b"\x7f", allow_overlap=True)
             second = self._snapshot(host, pointer)
+            second_ranges = self._range_snapshot(host, pointer)
             second_expected = session.byte_patches
+            second_expected_ranges = session.byte_patch_ranges
             self.assertNotEqual(second_expected, expected)
             self.assertEqual(self._snapshot_rows(first), expected)
             session.load_byte_patches()
@@ -104,6 +130,10 @@ class BytePatchIntegrationTests(unittest.TestCase):
             session.revert_byte_patch(self.entry, 6)
             self.assertEqual(session.byte_patches, [])
             empty = self._snapshot(host, pointer)
+            empty_ranges = self._range_snapshot(host, pointer)
+        self.assertEqual(self._snapshot_ranges(first_ranges), expected_ranges)
+        self.assertEqual(self._snapshot_ranges(second_ranges), second_expected_ranges)
+        self.assertEqual(self._snapshot_ranges(empty_ranges), [])
         self.assertEqual(self._snapshot_rows(first), expected)
         self.assertEqual(self._snapshot_rows(second), second_expected)
         self.assertEqual(self._snapshot_rows(empty), [])
@@ -134,8 +164,45 @@ class BytePatchIntegrationTests(unittest.TestCase):
                      "current": current[start:end].hex(), "kind": "bytes"}
                     for start, end in ((0, 128), (129, 256))]
         self.assertEqual(self._snapshot_rows(snapshot), expected)
+        self.assertEqual(self._snapshot_ranges(self._range_snapshot(host, pointer)),
+                         [{"address": row["va"], "size": row["size"]} for row in expected])
         self.assertEqual(session.byte_patches, expected)
         self.assertEqual(raw.read_bytes(), original)
+
+    def test_range_snapshots_keep_file_order_with_reverse_virtual_addresses(self) -> None:
+        from neverd_plugin import Session
+
+        host = self._snapshot_host()
+        base = 0xffff800012340000
+        segments = ((4096, base + 8192), (8192, base + 4096))
+        original = bytearray(8448)
+        ident = b"\x7fELF\x02\x01\x01" + bytes(9)
+        original[:64] = struct.pack("<16sHHIQQQIHHHHHH", ident, 2, 62, 1,
+                                   segments[0][1], 64, 0, 0, 64, 56, 2, 64, 0, 0)
+        for index, (offset, address) in enumerate(segments):
+            original[64 + index * 56:64 + (index + 1) * 56] = struct.pack(
+                "<IIQQQQQQ", 1, 5, offset, address, address, 256, 256, 4096)
+            original[offset:offset + 256] = b"\xcc" * 256
+        binary = self.root / "reverse.elf"
+        binary.write_bytes(original)
+        with ExitStack() as sessions:
+            pointer = host.call("neverd_session_create")
+            sessions.callback(host.call, "neverd_session_destroy", pointer)
+            self.assertEqual(host.call("neverd_session_load", pointer, os.fsencode(binary)), 1)
+            session = Session(pointer, _host=host,
+                              _native=SimpleNamespace(session_address=lambda handle: handle))
+            session.apply_byte_patch(segments[1][1] + 3, data=b"\x91\x92\x93")
+            session.apply_byte_patch(segments[0][1] + 1, data=b"\x90")
+            expected = [{"address": hex(segments[0][1] + 1), "size": 1},
+                        {"address": hex(segments[1][1] + 3), "size": 3}]
+            snapshot = self._range_snapshot(host, pointer)
+            self.assertEqual(session.byte_patch_ranges, expected)
+            self.assertEqual(self._snapshot_ranges(snapshot), expected)
+            session.revert_byte_patch(segments[0][1] + 1, 1)
+            self.assertEqual(self._snapshot_ranges(self._range_snapshot(host, pointer)),
+                             expected[1:])
+        self.assertEqual(self._snapshot_ranges(snapshot), expected)
+        self.assertEqual(binary.read_bytes(), original)
 
     def test_json_results_keep_complete_owned_text_across_queries_and_edits(self) -> None:
         from neverd_plugin import Session
@@ -177,6 +244,8 @@ class BytePatchIntegrationTests(unittest.TestCase):
             saved = (json.dumps(expected, indent=2, sort_keys=True) + "\n").encode()
             sidecar.write_bytes(saved)
             session.load_byte_patches()
+            range_snapshot = self._range_snapshot(host, pointer)
+            self.assertEqual(self._snapshot_ranges(range_snapshot), ranges)
             for function, values in zip(functions, (expected, ranges)):
                 text = encode(values).encode()
                 result = host.call(function, pointer)
@@ -195,6 +264,7 @@ class BytePatchIntegrationTests(unittest.TestCase):
             self.assertEqual(host.owned_string(functions[1], pointer),
                              encode([{"address": hex(base + 1), "size": 1}]))
             self.assertEqual(sidecar.read_bytes(), saved)
+        self.assertEqual(self._snapshot_ranges(range_snapshot), ranges)
         for result, text in retained:
             self.assertEqual(ctypes.string_at(result), text)
         self.assertEqual(raw.read_bytes(), original)

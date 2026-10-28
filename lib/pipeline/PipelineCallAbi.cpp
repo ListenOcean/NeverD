@@ -26,6 +26,7 @@
 #include "neverd/ir/med/LowToMedError.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallConvention.h"
+#include "neverd/ir/med/MedPrologueSaves.h"
 #include "neverd/ir/med/MedReturnArguments.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/ir/med/MedTypePass.h"
@@ -391,8 +392,7 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
   // even when that summary already proves that there are no stack arguments.
   std::set<const MedOp *> FrameBorrows;
   if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF &&
-      F.CC == CallingConv::Win64 && F.EntryKind == StackEntryKind::Call &&
-      F.FrameSize > 0) {
+      F.CC == CallingConv::Win64 && F.EntryKind == StackEntryKind::Call) {
     std::vector<MedVar> Arguments;
     std::vector<const MedOp *> Calls;
     for (const MedBlock &Block : F.Blocks)
@@ -407,7 +407,8 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
     const auto Offsets =
         entryStackOffsets(F, Arguments, Img.Arch, Img.abiFormat(), F.EntryKind);
     for (size_t I = 0; I < Offsets.size(); ++I)
-      if (Offsets[I] && *Offsets[I] >= -F.FrameSize && *Offsets[I] < 0)
+      if (Offsets[I] && isSourcePrivateFrameAccess(F, Img.Arch, Img.abiFormat(),
+                                                   *Offsets[I], 1))
         FrameBorrows.insert(Calls[I]);
   }
   // A call through a function-pointer variable passes the arguments of the
@@ -521,8 +522,8 @@ public:
                  : &RelocationRoots.emplace(Img));
         OwnersLent = true;
       }
-      Low.emplace(
-          Builder.build(Img, Dec, Target, Img.getFunctionNameAt(Target)));
+      Low.emplace(Builder.buildCallSignatureProof(
+          Img, Dec, Target, Img.getFunctionNameAt(Target)));
     }
     return *Low;
   }

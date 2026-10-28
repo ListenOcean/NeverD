@@ -111,6 +111,10 @@ their original field coverage; newer project metadata is not retroactively added
 to that journal format. `native_authenticated` remains false. Complete traversal
 means all admitted associations were traversed, not semantic equivalence, patch
 presence or vulnerability elimination. Incomplete source reports stay explicit.
+The **Direct evidence** table also shows each pair's change state. An empty
+observed-change list with unresolved reference identities is **Uncertain**;
+it is not presented as unchanged. Copied edge evidence retains the separate
+decoded-body and reference-comparison coverage fields through save and reopen.
 
 ## Queries and limits
 

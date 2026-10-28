@@ -205,6 +205,7 @@ TEST_F(X86FourSourceSegmentSource, AllSixKindsKeepSegmentsAndRawOffsets) {
                        << Kind << '/' << NoOpt);
           const auto C = *x86FourSourceControl(Kind);
           const bool Parameter = Kind & 1;
+          const bool RegisterAddress = Parameter || NoOpt;
           std::vector<uint8_t> Bytes{0xba, 5, 0, 0, 0, 0xc5, 0xf8, 0x92, 0xd2};
           // VEX.128 zeroes the complete destination and source registers.
           for (unsigned Reg : {1u, 4u, 5u, 6u, 7u})
@@ -212,18 +213,28 @@ TEST_F(X86FourSourceSegmentSource, AllSixKindsKeepSegmentsAndRawOffsets) {
                                        0xef, uint8_t(0xc0 | (Reg << 3) | Reg)});
           if (Parameter)
             Bytes.insert(Bytes.end(), {0x8b, 0x44, 0x24, 4});
+          else if (RegisterAddress)
+            Bytes.insert(Bytes.end(), {0xb8, 0, 0x40, 0, 0});
           Bytes.insert(
               Bytes.end(),
               {Prefix, 0x62, 0xf2, 0x5f,
                uint8_t(0x0a | (C.scalar() ? 0 : 0x40) | (Parameter ? 0x80 : 0)),
-               Opcodes[Kind], uint8_t(Parameter ? 0x08 : 0x0d)});
-          if (!Parameter)
+               Opcodes[Kind], uint8_t(RegisterAddress ? 0x08 : 0x0d)});
+          if (!RegisterAddress)
             Bytes.insert(Bytes.end(), {0, 0x40, 0, 0});
-          Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
+          if (RegisterAddress && !Parameter)
+            Bytes.insert(Bytes.end(), {0x8b, 0x00, 0xc3});
+          else
+            Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
           auto Image = segmentImage(Bytes, Format, "four_segment");
-          ASSERT_NO_FATAL_FAILURE(checkPipelines(Image, NoOpt, Prefix,
-                                                 Ids[Kind], !Parameter,
-                                                 x86FourSourceCallPlan));
+          ASSERT_NO_FATAL_FAILURE(checkPipelines(
+              Image, NoOpt, Prefix, Ids[Kind], !Parameter,
+              [](Arch A,
+                 const llvm::CallInst &Call) -> std::optional<unsigned> {
+                if (const auto P = x86FourSourceCallPlan(A, Call))
+                  return P->Prefix;
+                return std::nullopt;
+              }));
         }
   EXPECT_EQ(Objects, 540u);
   RecordProperty("native_objects", Objects);

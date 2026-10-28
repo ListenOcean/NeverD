@@ -16,7 +16,7 @@
 #include "../UnalignedMemory.h"
 #include "../render/X86/X86APXAtomic.h"
 #include "../render/X86/X86AmxState.h"
-#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86AtomicRmw.h"
 #include "../render/X86/X86BoundedLeaf.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -39,7 +39,9 @@
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X86/X87ContextRender.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
+#include "neverd/backend/llvm/AArch64/LLVMAArch64AuthenticatedCall.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceCallValue.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
@@ -5368,11 +5370,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << *Atomic;
     return true;
   }
-  if (const auto Plan = x86AtomicRMWCallPlan(Opts.TheArch, Call)) {
+  if (const auto Plan = x86AtomicRmwCallPlan(Opts.TheArch, Call)) {
     emitIndent(Indent);
     if (ResultLive)
       OS << Name << " = ";
-    OS << renderX86AtomicRMW(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
+    OS << renderX86AtomicRmw(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
     return true;
   }
   if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,
@@ -5702,12 +5704,21 @@ LLVMCWriter::analystCallHint(const llvm::CallBase &Call) const {
   if (!Found || Call.arg_size() != Found->Signature.Parameters.size())
     throw std::runtime_error(
         "The call-site source declaration lost its complete operands");
-  if ((Call.getType()->isVoidTy() ? 0 : llvmAccessSize(Call.getType())) !=
-      Found->Signature.ReturnType->Size)
+  std::string Diagnostic;
+  if (!validateSourceABI(Found->Signature, Diagnostic) ||
+      hasIndirectSourceParameters(Found->Signature) ||
+      Found->Signature.ReturnLocation.Kind ==
+          SourceABICarrierKind::IndirectResultPointer)
+    throw std::runtime_error(c_detail::kInvalidSourceRecordABI);
+  if (Call.getType() != llvmSourceCallValueType(Call.getContext(),
+                                                Found->Signature.ReturnType,
+                                                /*Parameter=*/false))
     throw std::runtime_error("The call-site source result carrier changed");
   for (unsigned I = 0; I < Call.arg_size(); ++I)
-    if (llvmAccessSize(Call.getArgOperand(I)->getType()) !=
-        Found->Signature.Parameters[I].Type->Size)
+    if (Call.getArgOperand(I)->getType() !=
+        llvmSourceCallValueType(Call.getContext(),
+                                Found->Signature.Parameters[I].Type,
+                                /*Parameter=*/true))
       throw std::runtime_error("A call-site source argument carrier changed");
   return Found;
 }
@@ -5738,9 +5749,18 @@ LLVMCWriter::preservedIndirectCalleeStr(const llvm::CallBase &Call) {
     Type = declarationToC(cDisplayType(Hint->Signature.ReturnType),
                           "(" + Convention + "*)(" + Params + ")");
   }
-  return retainCallSiteCType(Call, Type,
-                             "((" + Type + ")(" +
-                                 valueStr(Call.getCalledOperand()) + "))");
+  if (const auto Authentication =
+          llvmAArch64AuthenticatedCall(Call, Opts.TheArch))
+    return retainCallSiteCType(Call, Type,
+                               aarch64PAuthAuthenticatedCalleeC(
+                                   Type, valueStr(Call.getCalledOperand()),
+                                   std::to_string(Authentication->Key),
+                                   valueStr(Authentication->Modifier)));
+  std::string Callee =
+      "((" + Type + ")(" + valueStr(Call.getCalledOperand()) + "))";
+  if (Opts.TheArch == Arch::AArch64 && Call.isIndirectCall())
+    Callee = aarch64PAuthRawCalleeC(Callee);
+  return retainCallSiteCType(Call, Type, Callee);
 }
 
 std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
@@ -5764,10 +5784,23 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
                : sourceScalarType(Call.getArgOperand(I)->getType(),
                                   Call.getAttributes().hasParamAttr(
                                       I, LLVMSourceSignedParameter));
-      Expression += "(" + Type + ")(" + valueStr(Call.getArgOperand(I)) + ")";
+      const auto *Argument = Call.getArgOperand(I);
+      if (Hint &&
+          Hint->Signature.Parameters[I].Type->Kind == NdTypeKind::Struct)
+        Expression += c_detail::sourceRecordValue(
+            Hint->Signature.Parameters[I].Type,
+            typeToCLLVM(Argument->getType()), Type, valueStr(Argument));
+      else
+        Expression += "(" + Type + ")(" + valueStr(Argument) + ")";
     }
+    Expression += ")";
+    if (Hint && Hint->Signature.ReturnType->Kind == NdTypeKind::Struct)
+      Expression = c_detail::sourceRecordValue(
+          Hint->Signature.ReturnType,
+          declarationToC(cDisplayType(Hint->Signature.ReturnType), ""),
+          typeToCLLVM(Call.getType()), Expression);
     RenderingCalls.pop_back();
-    return Expression + ")";
+    return Expression;
   }
 
   if (scalarUnary(Call)) {
@@ -5822,7 +5855,17 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
   }
 
   std::string CalleeName;
-  if (needsCallSiteCType(Call)) {
+  if (const auto Authentication =
+          llvmAArch64AuthenticatedCall(Call, Opts.TheArch)) {
+    if (Opts.PreserveLLVMFunctionTypes || needsCallSiteCType(Call))
+      CalleeName = preservedIndirectCalleeStr(Call);
+    else
+      CalleeName = aarch64PAuthAuthenticatedCalleeC(
+          indirectCalleeType(Call, /*Strict=*/false),
+          valueStr(Call.getCalledOperand()),
+          std::to_string(Authentication->Key),
+          valueStr(Authentication->Modifier));
+  } else if (needsCallSiteCType(Call)) {
     CalleeName = preservedIndirectCalleeStr(Call);
   } else if (auto *Callee = Call.getCalledFunction()) {
     const std::string RawCalleeName = Callee->getName().str();
@@ -5849,6 +5892,8 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
       const auto Type = indirectCalleeType(Call, /*Strict=*/false);
       CalleeName =
           retainCallSiteCType(Call, Type, "((" + Type + ")" + Target + ")");
+      if (Opts.TheArch == Arch::AArch64)
+        CalleeName = aarch64PAuthRawCalleeC(CalleeName);
     }
   }
   if (Call.getCalledFunction() &&

@@ -186,24 +186,35 @@ TEST_F(X86CompactSegmentSource, NativeAndBothCRoutesKeepSegmentsAndRawOffsets) {
           SCOPED_TRACE(testing::Message()
                        << unsigned(Format) << '/' << unsigned(Prefix) << '/'
                        << Mode << '/' << NoOpt);
-          // Merge loads use a scalar stack parameter. Absolute stores/zeroing
-          // loads deliberately alias a DS object which the last MOV returns.
+          // Merge loads use a scalar stack parameter. Other offsets alias a
+          // DS object, directly or after MOV into EAX, beside an ordinary load.
+          const bool RegisterAddress = Mode == 1 || NoOpt == (Mode == 0);
           std::vector<uint8_t> Bytes = {
               0xba, 5, 0, 0, 0, 0xc5, 0xf8, 0x92, 0xd2, 0xc5, 0xf1, 0xef, 0xc9};
           if (Mode == 1)
             Bytes.insert(Bytes.end(), {0x8b, 0x44, 0x24, 4});
+          else if (RegisterAddress)
+            Bytes.insert(Bytes.end(), {0xb8, 0, 0x40, 0, 0});
           Bytes.insert(Bytes.end(), {Prefix, 0x62, 0xf2, 0x7d,
                                      uint8_t(Mode == 2 ? 0x8a : 0x0a),
                                      uint8_t(Mode ? 0x89 : 0x8b),
-                                     uint8_t(Mode == 1 ? 0x08 : 0x0d)});
-          if (Mode != 1)
+                                     uint8_t(RegisterAddress ? 0x08 : 0x0d)});
+          if (!RegisterAddress)
             Bytes.insert(Bytes.end(), {0, 0x40, 0, 0});
-          Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
+          if (RegisterAddress && Mode != 1)
+            Bytes.insert(Bytes.end(), {0x8b, 0x00, 0xc3});
+          else
+            Bytes.insert(Bytes.end(), {0xa1, 0, 0x40, 0, 0, 0xc3});
           auto Image = segmentImage(Bytes, Format, "compact_segment");
-          ASSERT_NO_FATAL_FAILURE(
-              checkPipelines(Image, NoOpt, Prefix,
-                             Mode ? X86_INS_VPEXPANDD : X86_INS_VPCOMPRESSD,
-                             Mode != 1, x86CompactCallPlan));
+          ASSERT_NO_FATAL_FAILURE(checkPipelines(
+              Image, NoOpt, Prefix,
+              Mode ? X86_INS_VPEXPANDD : X86_INS_VPCOMPRESSD, Mode != 1,
+              [](Arch A,
+                 const llvm::CallInst &Call) -> std::optional<unsigned> {
+                if (const auto P = x86CompactCallPlan(A, Call))
+                  return P->Prefix;
+                return std::nullopt;
+              }));
         }
   EXPECT_EQ(Objects, 270u);
   RecordProperty("native_objects", Objects);

@@ -45,7 +45,8 @@ def run(args: argparse.Namespace) -> int:
                       ("diaphora.py", "diaphora_ida.py", "diaphora_config.py")), "Diaphora source directory is incomplete")
     script = Path(__file__).resolve().parents[1] / "tools/neverd-bench/run_diaphora.py"
     tools = [args.ida.absolute(), args.python.absolute(), script, Path(__file__).resolve(),
-             Path(bench.__file__).resolve(), Path(external.__file__).resolve()]
+             Path(bench.__file__).resolve(), Path(bench.binexport.__file__).resolve(),
+             Path(external.__file__).resolve()]
     identities = {path: bench.digest(path) for path in tools}
     output = args.output_dir.resolve()
     bench.require(not output.is_relative_to(source), "output must be outside the Diaphora source directory")

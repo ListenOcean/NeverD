@@ -1,4 +1,4 @@
-//===- X86AtomicExchange.h - Memory XCHG C projection ---------*- C++ -*-===//
+//===- X86AtomicRmw.h - Scalar atomic RMW C projection ---------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -7,10 +7,10 @@
 /// Preserve the native transaction without promising pointer alignment.
 //===----------------------------------------------------------------------===//
 
-#ifndef NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICEXCHANGE_H
-#define NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICEXCHANGE_H
+#ifndef NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICRMW_H
+#define NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICRMW_H
 
-#include "neverd/backend/llvm/X86/X86AtomicExchange.h"
+#include "neverd/backend/llvm/X86/X86AtomicRmw.h"
 
 #include <optional>
 #include <string>
@@ -21,12 +21,12 @@ class CallInst;
 
 namespace neverd {
 
-std::string renderX86AtomicRMW(const X86AtomicRMWPlan &Plan,
+std::string renderX86AtomicRmw(const X86AtomicRmwPlan &Plan,
                                const std::string &Address,
                                const std::string &Value);
-std::optional<X86AtomicRMWPlan>
-x86AtomicRMWCallPlan(Arch Architecture, const llvm::CallInst &Call);
+std::optional<X86AtomicRmwPlan>
+x86AtomicRmwCallPlan(Arch Architecture, const llvm::CallInst &Call);
 
 } // namespace neverd
 
-#endif // NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICEXCHANGE_H
+#endif // NEVERD_LIB_BACKEND_C_RENDER_X86_X86ATOMICRMW_H

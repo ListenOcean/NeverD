@@ -16,8 +16,17 @@ signatures through both C routes at O0/O2. A generic exported routine's actual
 body reads beyond a user prototype remain observable.
 
 Explicit x64 kernel continuation source carries GPRs, flags, vector bytes,
-segment bases, the physical stack and native-boundary requests. Its V3 SMAP
-profile adds a live AC bit and audited STAC/CLAC transitions under an explicit
+segment bases, the physical stack and native-boundary requests. Its V4 layout
+adds CR2 with all other banks preserved. Explicit opt-ins bind segment-base
+MSRs to the same live FS/GS cells and retain native speculation-control MSR
+writes and descriptor queries; public CPL0 KVM fixtures execute both C routes.
+A native CR3 binding preserves real mapping changes and repeated-write TLB
+invalidation. V5 records SYSRETQ's complete return RIP, flags, STAR-derived
+selectors and hidden CS/SS caches; it exits before user execution. Native
+instruction comparisons cover 585 return inputs through both C routes at O0/O2.
+V6 adds successful 64-bit IRETQ and CPL0 INT3 transitions with live descriptor tables, IST selection, segment invalidation and NMI state. Both C routes match native instructions, including descriptor/frame aliases and read-only accessed descriptors. Fault delivery, compatibility returns and ordinary kernel entry ABI recovery remain open.
+Native x64 LOCK AND/OR/XOR now retain one ordered memory transaction and its defined flags in both C routes. This restores callee summaries previously lost at these instructions; it does not supply an ordinary ABI for physical kernel continuations.
+Native timestamp and PREFETCHW bindings are also explicit opt-ins. Its V3 SMAP profile adds a live AC bit and audited STAC/CLAC transitions under an explicit
 nonfaulting supervisor domain. Earlier profiles retain their AC restriction.
 Source execution checks compare the complete state, including refusal paths;
 refinement checks require final AC equality even without a return-value
@@ -25,6 +34,16 @@ observer. This interface still requires a native environment for unsupported
 system effects. Ordinary source recovery still needs a proof connecting a
 service selector and its physical transfer frame to a source call contract;
 the shared dispatcher's union of machine-register reads cannot provide it.
+x87 context propagation retains a definite nested use across unresolved or
+recursive sibling calls. Complete-function cache admission uses the same
+requirement, and both call orders have public cross-format regressions.
+This repairs context transport; it does not resolve a VM's incoming register
+bank, dynamic dispatch target or return-address ownership.
+Signature-only Win64 wrappers now avoid proving unused descendant x87 context
+transport. Local observers, other ABIs and actual definitions keep their normal
+state contracts. LLVM C's narrow-bit projection also follows 80/128-bit
+producers, retaining demanded unknowns while removing unobserved enclosing
+register fragments; FILD and sign-state NoOpt regressions cover that boundary.
 
 Shared MedIR flag folding preserves both subtraction operands even when they
 are equal. Treating `A-A` as `A-0` changes branch results and invents incoming
@@ -176,23 +195,27 @@ trap that LLVMC's later cleanup already removed; both routes execute the public
 preserving-callee case. Opaque calls and unmodeled entry observers retain state.
 Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
 complete explicit scratch overwrite proof; trapping operations still do.
-Physical CALL return-slot writes remain barriers: they are absent from the C
-frame projection. Discarding an old save solely because CALL overwrites its
-bytes can turn a later return-slot read into an uninitialized C value. A full
-source projection of the new return-address value is required before admitting
-that optimization; runtime code-address relocation remains a separate proof.
-Shared source preparation now rejects exact x86/x64 loads reached by those
-unrepresented physical CALL writes, including when the old frame content is a
-known constant. Complete later stores permit the read; partial writes, joins,
-loops and unknown call positions retain the diagnostic. Both source routes use
-the same bounded check. This closes stale-value success, not the missing
-machine-state/continuation source ABI, unresolved aliases or native proof.
+Physical CALL return-slot writes are materialized only when their exact
+entry-relative slots lie in the bounded reconstructed frame. The original
+instruction supplies its complete return word; partial later writes retain
+its other bytes. Planning is transactional, and validation rechecks the current
+bytes, stack coordinate and immediately preceding store. This supplies no
+relocated code identity or callee-preservation proof. Unrepresented writes
+retain the shared deferred observation check after call and return recovery;
+unknown stack positions, unresolved aliases and observed stale bytes remain
+refused. Physical stack switches still require the explicit continuation ABI.
 The shared stack-address owner also recognizes canonical zero-extended
 32-bit memory-address containers. This closes the i386 observation gap without
 treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Post-recovery Win64 scalar leaf borrows now have a shared complete-use proof.
+The read intervals also retain their operation positions, so a partial overwrite
+before every borrow or local read can remove an older spill without erasing its
+unwritten neighbors. Dead or omitted stores do not kill bytes. Omitted callee
+body requests include positive incoming-home addresses through the same checked
+private extent owner. Nested callees and physical machine-state captures still
+need separate evidence; the public leaf tests do not close those original gaps.
 Only unread private bytes can lose their stores; negative offsets, implicit
 register inputs and source call home areas retain observations. SSA version
 zero alone is not an incoming register. Nested callees, incoming pointer stack

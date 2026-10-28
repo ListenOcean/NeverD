@@ -28,6 +28,8 @@
 #include <algorithm>
 #include <fstream>
 #include <iterator>
+#include <limits>
+#include <sstream>
 #include <utility>
 
 using namespace neverd;
@@ -283,6 +285,62 @@ TEST_F(BytePatch, SerializedHexKeepsEveryByteAcrossLargeAndSmallRows) {
     EXPECT_EQ((*Rows)[1].Address, 0x1100u);
     EXPECT_EQ((*Rows)[1].FileOffset, 256u);
     EXPECT_EQ((*Rows)[1].Kind, PatchKind::Nop);
+  }
+}
+
+TEST_F(BytePatch, SerializedAddressesKeepEveryHexadecimalDigit) {
+  std::vector<uint64_t> Bases{0, 0xffff800012340000,
+                              std::numeric_limits<uint64_t>::max() - 65536};
+  for (unsigned Bits = 4; Bits <= 60; Bits += 4) {
+    const uint64_t Boundary = uint64_t{1} << Bits;
+    Bases.insert(Bases.end(), {Boundary - 1, Boundary, Boundary + 1});
+  }
+  const auto Hex = [](uint64_t Value) {
+    std::ostringstream Stream;
+    Stream << "0x" << std::hex << Value;
+    return Stream.str();
+  };
+  for (uint64_t Base : Bases) {
+    SCOPED_TRACE(Hex(Base));
+    reset(std::vector<uint8_t>(8192, 0xcc));
+    Img.Segments[0].VA = Base;
+    Img.Sections[0].VA = Base;
+    auto Opened = InputFile::open(Path, Img);
+    ASSERT_TRUE(bool(Opened)) << llvm::toString(Opened.takeError());
+    Input = std::move(*Opened);
+    std::vector<PatchRow> Expected;
+    for (uint64_t Offset : {0u, 15u, 16u, 255u, 256u, 4095u, 4096u}) {
+      PatchRow Row;
+      Row.Address = Base + Offset;
+      Row.FileOffset = Offset;
+      Row.Original = {0xcc};
+      Row.Current = {0x90};
+      Row.Kind = Expected.size() % 2 ? PatchKind::Nop : PatchKind::Bytes;
+      Expected.push_back(std::move(Row));
+    }
+    ASSERT_FALSE(Overlay.replace(Img, *Input, Expected));
+    for (unsigned Indent : {0u, 2u, 4u}) {
+      SCOPED_TRACE(Indent);
+      std::string Text;
+      llvm::raw_string_ostream Stream(Text);
+      llvm::json::OStream Output(Stream, Indent);
+      writePatchRows(Output, Overlay);
+      auto Parsed = llvm::json::parse(Text);
+      ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
+      const auto *Array = Parsed->getAsArray();
+      ASSERT_NE(Array, nullptr);
+      ASSERT_EQ(Array->size(), Expected.size());
+      for (size_t I = 0; I < Expected.size(); ++I) {
+        const auto *Object = (*Array)[I].getAsObject();
+        ASSERT_NE(Object, nullptr);
+        EXPECT_EQ(Object->getString("addr"), Hex(Expected[I].FileOffset));
+        EXPECT_EQ(Object->getString("file_off"), Hex(Expected[I].FileOffset));
+        EXPECT_EQ(Object->getString("va"), Hex(Expected[I].Address));
+      }
+      auto Rows = parsePatchRows(Text);
+      ASSERT_TRUE(bool(Rows)) << llvm::toString(Rows.takeError());
+      EXPECT_EQ(*Rows, Expected);
+    }
   }
 }
 
@@ -723,6 +781,37 @@ TEST_F(BytePatch, LateInvalidReplayPreservesEveryLiveImageCopy) {
     auto Error = Overlay.replace(Img, *Input, std::move(Rows));
     ASSERT_TRUE(bool(Error));
     llvm::consumeError(std::move(Error));
+    EXPECT_EQ(Overlay.rows(), BeforeRows);
+    EXPECT_EQ(Overlay.bytes(), 1u);
+    EXPECT_EQ(Img.Segments[0].Data, BeforeSegment);
+    EXPECT_EQ(Img.Sections[0].Data, BeforeSections);
+    EXPECT_EQ(Img.BytePatchOriginal, BeforeOriginal);
+  }
+}
+
+TEST_F(BytePatch, DuplicateReplayOffsetsPreserveLiveStateInEveryInputOrder) {
+  reset(std::vector<uint8_t>(128, 0xcc));
+  ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1001, {0x91}, PatchKind::Bytes));
+  const auto BeforeRows = Overlay.rows();
+  const auto BeforeSegment = Img.Segments[0].Data;
+  const auto BeforeSections = Img.Sections[0].Data;
+  const auto BeforeOriginal = Img.BytePatchOriginal;
+  std::vector<PatchRow> InputRows;
+  for (uint64_t I = 0; I < 32; ++I)
+    InputRows.push_back(
+        {I * 2, 0x1000 + I * 2, {0xcc}, {0x90}, PatchKind::Bytes});
+  InputRows.back() = InputRows[InputRows.size() - 2];
+  for (unsigned Order = 0; Order < 3; ++Order) {
+    SCOPED_TRACE(Order);
+    auto Rows = InputRows;
+    if (Order == 1)
+      std::reverse(Rows.begin(), Rows.end());
+    else if (Order == 2)
+      std::rotate(Rows.begin(), Rows.begin() + 11, Rows.end());
+    auto Error = Overlay.replace(Img, *Input, std::move(Rows));
+    ASSERT_TRUE(bool(Error));
+    EXPECT_EQ(llvm::toString(std::move(Error)),
+              "patch rows overlap (row at 0x103c)");
     EXPECT_EQ(Overlay.rows(), BeforeRows);
     EXPECT_EQ(Overlay.bytes(), 1u);
     EXPECT_EQ(Img.Segments[0].Data, BeforeSegment);

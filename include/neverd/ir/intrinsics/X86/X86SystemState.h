@@ -97,6 +97,10 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
   case K::HistoryReset:
     // Intel specifies that imm8 is ignored. Only EAX controls the reset.
     return X86SystemStateLayout{0, 1, {4}};
+  case K::SecureLaunch:
+    // EAX is a physical SLB address in every code mode. Native admission
+    // precedes the processor's alignment and reset; preserve all 32 bits.
+    return X86SystemStateLayout{0, 1, {4}};
   case K::InvalidateBroadcast:
     if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4))
       return std::nullopt;
@@ -124,6 +128,13 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
     if (C.MemoryArgument == 0)
       return X86SystemStateLayout{1, 2, {8, 2}, 0, true};
     return X86SystemStateLayout{4, 2, {2, 2}, 2, true};
+  case K::LockedLogic:
+    if ((Width != 1 && Width != 2 && Width != 4 && Width != 8) ||
+        (TargetArch == Arch::X86 && Width == 8))
+      return std::nullopt;
+    // PF and ZF occupy separate bytes of a word; SF is the upper flag byte.
+    // No unlocked read is used to reconstruct the transaction's result.
+    return X86SystemStateLayout{4, 2, {8, Width}, 2, true};
   case K::ShadowWrite:
   case K::DirectStore:
     if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4))
@@ -154,6 +165,7 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
 inline uint16_t x86SystemStateWidth(Intrinsic Id,
                                     const X86SystemStateShape &Shape) {
   switch (x86SystemStateContract(Id).Kind) {
+  case X86SystemStateKind::LockedLogic:
   case X86SystemStateKind::ShadowWrite:
   case X86SystemStateKind::DirectStore:
     return Shape.InputSizes[1];
@@ -175,6 +187,7 @@ inline uint16_t x86SystemStateMemoryBytes(Intrinsic Id, uint16_t Width) {
     // carrier must not cause an eager load, an alignment guard or a fixed-size
     // software clear of bytes starting at the possibly unaligned address.
     return 1;
+  case X86SystemStateKind::LockedLogic:
   case X86SystemStateKind::ShadowWrite:
   case X86SystemStateKind::DirectStore:
     return Width;
@@ -196,7 +209,10 @@ inline bool x86SystemStateShapeIsValid(Intrinsic Id,
   const auto L =
       x86SystemStateLayout(Id, Shape.TargetArch, x86SystemStateWidth(Id, Shape),
                            Shape.SegmentedBlockSelector);
-  if (!L || !Shape.ValidId || Shape.MemoryOrdering != NdMemoryOrdering::None ||
+  const auto Ordering = C.Kind == X86SystemStateKind::LockedLogic
+                            ? NdMemoryOrdering::SequentiallyConsistent
+                            : NdMemoryOrdering::None;
+  if (!L || !Shape.ValidId || Shape.MemoryOrdering != Ordering ||
       !isKnownMemoryAddressSpace(Shape.MemoryAddressSpace) ||
       ((C.MemoryArgument < 0 || C.Kind == X86SystemStateKind::MsrList) &&
        Shape.MemoryAddressSpace != NdMemoryAddressSpace::Default) ||

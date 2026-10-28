@@ -60,6 +60,14 @@ struct RuntimeServices {
   std::function<ExecutionResult(std::string_view, int32_t)> property_integer;
   // Process.myUid Java int bits from the shared OS identity owner.
   std::function<ExecutionResult()> process_uid;
+  // Exact LOG_ID_EVENTS bytes, including the little-endian int32 tag.
+  // Returned values are liblog's Java int bits; negative values are not
+  // exceptions. Missing transport state must return an explicit stop.
+  std::function<ExecutionResult(std::span<const uint8_t>)> event_log_write;
+  // Native IPCThreadState policy, selected by the current guest thread. These
+  // Java int bits survive JNI detach/reattach; Java BlockGuard is separate.
+  std::function<ExecutionResult()> binder_thread_policy;
+  std::function<ExecutionResult(uint32_t)> set_binder_thread_policy;
 };
 class Program {
 public:

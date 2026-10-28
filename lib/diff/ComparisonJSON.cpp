@@ -337,9 +337,12 @@ void writeComparison(llvm::raw_ostream &OS, const ComparisonResult &R,
     });
     J.attributeObject("counts", [&] {
       uint64_t Changed = 0, Unchanged = 0, Unmeasured = 0, Incomplete = 0,
-               IdentityOnly = 0, IncompletePairs = 0;
+               IdentityOnly = 0, IncompletePairs = 0, Uncertain = 0,
+               ReferenceGaps = 0;
       for (const auto &M : R.Matches) {
         IncompletePairs += M.Measured && !M.IdentityOnly && !M.AnalysisComplete;
+        ReferenceGaps +=
+            M.Measured && !M.IdentityOnly && !M.ReferenceComparisonComplete;
         if (!M.Measured)
           ++Unmeasured;
         else if (M.IdentityOnly)
@@ -348,8 +351,10 @@ void writeComparison(llvm::raw_ostream &OS, const ComparisonResult &R,
           ++Changed;
         else if (M.identical())
           ++Unchanged;
-        else
+        else if (!M.AnalysisComplete)
           ++Incomplete;
+        else
+          ++Uncertain;
       }
       J.attribute("matches", uint64_t(R.Matches.size()));
       J.attribute("changed", Changed);
@@ -358,6 +363,8 @@ void writeComparison(llvm::raw_ostream &OS, const ComparisonResult &R,
       J.attribute("identity_only", IdentityOnly);
       J.attribute("incomplete_pairs", IncompletePairs);
       J.attribute("incomplete_without_observed_change", Incomplete);
+      J.attribute("reference_gap_pairs", ReferenceGaps);
+      J.attribute("uncertain_without_observed_change", Uncertain);
       J.attribute("ambiguities", uint64_t(R.Ambiguities.size()));
       J.attribute("overrides", uint64_t(R.Overrides.size()));
       J.attribute("review_records", uint64_t(R.Reviews.Records.size()));
@@ -381,6 +388,8 @@ void writeComparison(llvm::raw_ostream &OS, const ComparisonResult &R,
             J.attribute("measured", M.Measured);
             J.attribute("identity_only", M.IdentityOnly);
             J.attribute("analysis_complete", M.AnalysisComplete);
+            J.attribute("reference_comparison_complete",
+                        M.ReferenceComparisonComplete);
             J.attribute("similarity", M.Similarity);
             J.attribute("confidence", M.Confidence);
             J.attributeArray("changes", [&] {
@@ -607,6 +616,10 @@ readComparison(llvm::StringRef Text, std::string &Error,
       M.Match.Measured = In.boolean(*O, "measured");
       M.Match.IdentityOnly = In.boolean(*O, "identity_only");
       M.Match.AnalysisComplete = In.boolean(*O, "analysis_complete");
+      // Older schemas did not distinguish unknown references from changes.
+      M.Match.ReferenceComparisonComplete =
+          Version >= ReferenceEvidenceSchemaVersion &&
+          In.boolean(*O, "reference_comparison_complete");
       M.Match.Similarity = In.unit(*O, "similarity");
       M.Match.Confidence = In.unit(*O, "confidence");
       if (const llvm::json::Array *Changes = In.array(*O, "changes"))
@@ -986,15 +999,16 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
         WorkerControl.check();
         measure(Actual, Delta);
       }
-      Invalid[I] = Actual.Measured != M.Measured ||
-                   Actual.IdentityOnly != M.IdentityOnly ||
-                   Actual.AnalysisComplete != M.AnalysisComplete ||
-                   Actual.Similarity != M.Similarity ||
-                   Actual.Changes != M.Changes ||
-                   Actual.MatchedBlocks != M.MatchedBlocks ||
-                   Actual.MatchedEdges != M.MatchedEdges ||
-                   Actual.EqualInstructions != M.EqualInstructions ||
-                   (!M.Measured && Out.State == ComparisonState::Complete);
+      Invalid[I] =
+          Actual.Measured != M.Measured ||
+          Actual.IdentityOnly != M.IdentityOnly ||
+          Actual.AnalysisComplete != M.AnalysisComplete ||
+          Actual.ReferenceComparisonComplete != M.ReferenceComparisonComplete ||
+          Actual.Similarity != M.Similarity || Actual.Changes != M.Changes ||
+          Actual.MatchedBlocks != M.MatchedBlocks ||
+          Actual.MatchedEdges != M.MatchedEdges ||
+          Actual.EqualInstructions != M.EqualInstructions ||
+          (!M.Measured && Out.State == ComparisonState::Complete);
     }
   });
   Control.report("measure", Out.Matches.size(), Out.Matches.size());

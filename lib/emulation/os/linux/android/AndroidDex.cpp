@@ -120,6 +120,24 @@ llvm::Error Bionic::initializeDex() {
           (uint64_t(Now->Seconds) * 1000000000 + Now->Nanoseconds) / Divisor};
     };
     mobile::dalvik::RuntimeServices Services;
+    Services.binder_thread_policy = [this] {
+      return mobile::dalvik::ExecutionResult{
+          mobile::dalvik::ExecutionStop::Returned,
+          binderThread().StrictModePolicy};
+    };
+    Services.set_binder_thread_policy = [this](uint32_t Policy) {
+      binderThread().StrictModePolicy = Policy;
+      return mobile::dalvik::ExecutionResult{};
+    };
+    Services.event_log_write = [this](std::span<const uint8_t> Payload) {
+      using mobile::dalvik::ExecutionResult;
+      using mobile::dalvik::ExecutionStop;
+      auto Written = eventLogWrite({Payload.data(), Payload.size()});
+      return Written
+                 ? ExecutionResult{ExecutionStop::Returned, *Written}
+                 : ExecutionResult{
+                       ExecutionStop::Unsupported, 0, {}, Result.Diagnostic};
+    };
     Services.uptime_milliseconds = [ReadClock] {
       return ReadClock(linux_model::ClockMonotonic, 1000000,
                        "Android monotonic time exceeds its range");

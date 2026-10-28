@@ -86,7 +86,9 @@ evaluateAArch64ReturnAddressState(Arch Architecture, const DwarfCIE &CIE,
     return fail(Status::Malformed, kMixedRules);
 
   AArch64ReturnAddressState Empty;
-  Empty.Key = CIE.HasPointerAuth ? AArch64RAKey::B : AArch64RAKey::A;
+  Empty.Key = CIE.HasPointerAuth || CIE.UsesArm64eReturnAddressABI
+                  ? AArch64RAKey::B
+                  : AArch64RAKey::A;
   Empty.Recipe = CIE.UsesNonHintPAuthLR ? AArch64RARecipe::NonHintPAuthLR
                                         : AArch64RARecipe::HintPACM;
   std::optional<AArch64ReturnAddressState> State = Empty;

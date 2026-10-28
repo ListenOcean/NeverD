@@ -324,7 +324,20 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
   ExprPtr TargetExpr = (CurOp.NumInputs >= 1) ? medvarToExpr(CurOp.Inputs[0])
                                               : HighExpr::makeConst(0, 8);
 
-  auto Target = resolveCallIndTarget(CurBlock, CurOp, TargetExpr);
+  const MedOp *Authentication = AArch64AuthenticatedCalls.lookup(&CurOp);
+  CallIndTarget Target;
+  if (Authentication) {
+    std::vector<ExprPtr> Operands;
+    for (unsigned I = 1; I < Authentication->NumInputs; ++I)
+      Operands.push_back(medvarToExpr(Authentication->Inputs[I]));
+    TargetExpr =
+        HighExpr::makeCall({}, Authentication->Addr, std::move(Operands));
+    TargetExpr->IntrinsicId = Intrinsic::A64_AuthBranch;
+    TargetExpr->Type = NdType::makeInt(Authentication->Output.Size);
+    Target.IsIndirect = true;
+  } else {
+    Target = resolveCallIndTarget(CurBlock, CurOp, TargetExpr);
+  }
 
   size_t CI = 0;
   for (size_t K = 0; K < CurBlock.Ops.size(); ++K)
@@ -341,11 +354,14 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
   Call->IndirectParamIdx = Target.IndirectParam;
   Call->DoesNotReturn = CurOp.DoesNotReturn;
   if (Target.IsIndirect) {
-    // A bound Swift virtual call must use the target loaded before the
-    // intervening retain/release effects; reloading its table slot here can
-    // change both dispatch and the order of observable memory operations.
-    if (CurOp.SourceCallHint && CurOp.SourceCallHint->CallKind ==
-                                    SourceCallTypeHint::Kind::SwiftVirtual) {
+    if (Authentication) {
+      Call->IndirectTarget = TargetExpr;
+    } else if (CurOp.SourceCallHint &&
+               CurOp.SourceCallHint->CallKind ==
+                   SourceCallTypeHint::Kind::SwiftVirtual) {
+      // A bound Swift virtual call must use the target loaded before the
+      // intervening retain/release effects; reloading its table slot here can
+      // change both dispatch and the order of observable memory operations.
       Call->IndirectTarget = TargetExpr;
     } else if (Target.ThroughSlot) {
       const uint16_t PointerBytes = CurOp.Inputs[0].Size;
@@ -386,7 +402,8 @@ void MedToHighConverter::lowerCallInd(HighFunc &Func, const MedBlock &CurBlock,
     // A bound void call has no output SSA value, but its expression still
     // carries the authenticated result type rather than a guessed X0 value.
     Call->Type = sourceCallResultType(CurOp);
-    if (isImmutableNativeCallHint(*CurOp.SourceCallHint, Func.Entry,
+    if (!Authentication &&
+        isImmutableNativeCallHint(*CurOp.SourceCallHint, Func.Entry,
                                   TargetArch) &&
         CurOp.SourceCallHint->ImmutableNativeCall->Site.Instruction ==
             CurOp.Addr &&

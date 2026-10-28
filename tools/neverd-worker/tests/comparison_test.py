@@ -311,7 +311,7 @@ def aarch64_profiles(client, args, root, fixture):
         for side in ("primary", "secondary"):
             assert summary[side]["architecture"] == "aarch64", summary
             assert summary[side]["bits"] == 64 and summary[side]["format"] == format_name
-            assert summary[side]["normalization"] == "native-aarch64-operands-v1"
+            assert summary[side]["normalization"] == "native-aarch64-operands-v3"
         inventory = ok(client, "comparison_functions")
         address = next(row["address"] for row in inventory["items"]
                        if row["name"].lstrip("_") == "checked")

@@ -445,6 +445,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Kind->setAccessibleName(tr("Function state"));
   for (const auto &[Name, Key] : {std::pair{tr("All functions"), "all"},
                                   {tr("Changed"), "changed"},
+                                  {tr("Uncertain"), "uncertain"},
                                   {tr("Matched"), "matched"},
                                   {tr("Ambiguous"), "ambiguous"},
                                   {tr("Unmatched"), "unmatched"}})
@@ -453,6 +454,7 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
   Filters->addWidget(Kind, 1);
   InventoryLayout->addLayout(Filters);
   Search = new QLineEdit(Inventory);
+  Search->setObjectName("comparisonSearch");
   Search->setPlaceholderText(tr("Filter by name or address"));
   Search->setAccessibleName(tr("Filter functions"));
   InventoryLayout->addWidget(Search);
@@ -852,15 +854,17 @@ void ComparisonDialog::update() {
     const auto Coverage = S["coverage"].toObject();
     const auto A = Coverage["primary"].toObject(),
                B = Coverage["secondary"].toObject();
-    Summary->setText(tr("%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / "
-                        "%5 unmatched  ·  %6 / %7 incomplete")
-                         .arg(Counts["matches"].toInt())
-                         .arg(Counts["changed"].toInt())
-                         .arg(A["ambiguous"].toInt() + B["ambiguous"].toInt())
-                         .arg(A["unmatched"].toInt())
-                         .arg(B["unmatched"].toInt())
-                         .arg(A["incomplete"].toInt())
-                         .arg(B["incomplete"].toInt()));
+    Summary->setText(
+        tr("%1 matched  ·  %2 changed  ·  %3 ambiguous  ·  %4 / "
+           "%5 unmatched  ·  %6 / %7 incomplete  ·  %8 uncertain")
+            .arg(Counts["matches"].toInt())
+            .arg(Counts["changed"].toInt())
+            .arg(A["ambiguous"].toInt() + B["ambiguous"].toInt())
+            .arg(A["unmatched"].toInt())
+            .arg(B["unmatched"].toInt())
+            .arg(A["incomplete"].toInt())
+            .arg(B["incomplete"].toInt())
+            .arg(Counts["uncertain_without_observed_change"].toInt()));
     QString Text =
         S["stale"].toBool()
             ? tr("Inputs changed. Reload before continuing review.")
@@ -953,6 +957,10 @@ void ComparisonDialog::showPage(const QJsonObject &Page) {
                      : E["analysis_complete"].toBool()
                          ? tr("decoded bodies complete")
                          : tr("incomplete"));
+  if (!E.isEmpty() && E["measured"].toBool() && !E["identity_only"].toBool() &&
+      !E["reference_comparison_complete"].toBool())
+    Text += tr("\nReference identities: unresolved. Some call or data targets "
+               "cannot be compared. This alone does not establish a change.");
   const auto PrimaryNames = ComparisonModel::functionNamesText(A);
   const auto SecondaryNames = ComparisonModel::functionNamesText(B);
   if (PrimaryNames != A["name"].toString() ||

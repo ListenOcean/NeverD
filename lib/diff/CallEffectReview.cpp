@@ -31,7 +31,7 @@ struct CallIndex {
 // Raw images may carry an explicitly selected ABI through the same identity.
 std::optional<std::pair<BinaryFormat, Arch>> environment(const Program &P) {
   const auto &I = P.Identity;
-  if (I.Normalization != "native-x86-operands-v1" || I.Endian != "little")
+  if (!isNativeX86Normalization(I.Normalization) || I.Endian != "little")
     return {};
   const auto Architecture =
       I.Architecture == "x86-64" && I.Bits == 64 ? Arch::X64

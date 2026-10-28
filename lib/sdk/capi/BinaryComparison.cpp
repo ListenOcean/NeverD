@@ -42,10 +42,13 @@ struct ReadInstruction {
   std::string Operands;
   uint64_t Shape = 0;
   uint64_t Skeleton = 0;
+  uint64_t AddressIndependentShape = 0;
+  bool HasUnresolvedData = false;
   diff::InstructionFlow Flow = diff::InstructionFlow::None;
   std::optional<uint64_t> Target;
   std::optional<uint64_t> Callee;
   std::vector<std::pair<ReferenceKind, uint64_t>> References;
+  std::vector<AddressReference> AddressReferences;
 };
 
 struct AddressKeys {
@@ -53,9 +56,11 @@ struct AddressKeys {
   std::map<va_t, const Import *> Imports;
   std::map<va_t, const Symbol *> Data;
   std::set<va_t> Functions;
+  uint64_t InputIdentity;
 
-  AddressKeys(const BinaryImage &Image, llvm::ArrayRef<FuncInfo> Functions)
-      : Image(Image) {
+  AddressKeys(const BinaryImage &Image, llvm::ArrayRef<FuncInfo> Functions,
+              uint64_t InputIdentity)
+      : Image(Image), InputIdentity(InputIdentity) {
     for (const auto &I : Image.Imports)
       if (I.IATAddr)
         Imports.emplace(I.IATAddr, &I);
@@ -66,23 +71,36 @@ struct AddressKeys {
       this->Functions.insert(F.Entry);
   }
 
-  uint64_t data(va_t Address) const {
+  std::pair<ReferenceKind, uint64_t> reference(va_t Address) const {
     StableHash H;
     if (const auto It = Imports.find(Address); It != Imports.end())
-      return H.add("import")
-          .add(It->second->Module)
-          .add(It->second->Name)
-          .add(It->second->Ordinal)
-          .value();
+      return {ReferenceKind::Data, H.add("import")
+                                       .add(It->second->Module)
+                                       .add(It->second->Name)
+                                       .add(It->second->Ordinal)
+                                       .value()};
+    if (Functions.contains(Address))
+      return {ReferenceKind::Function, Address};
+    if (const auto String = string(Address))
+      return {ReferenceKind::String, *String};
     if (auto It = Data.upper_bound(Address); It != Data.begin()) {
       --It;
       const auto &S = *It->second;
       if (Address == S.Addr || Address - S.Addr < S.Size)
-        return H.add("data").add(S.Name).add(Address - S.Addr).value();
+        return {ReferenceKind::Data,
+                H.add("data").add(S.Name).add(Address - S.Addr).value()};
     }
-    // Unknown data keeps its image-relative location. No guessed object
-    // identity may turn a different referenced object into relocation noise.
-    return H.add("unresolved_address").add(Address - Image.Base).value();
+    return {ReferenceKind::UnresolvedData, unresolved(Address)};
+  }
+
+  uint64_t unresolved(va_t Address) const {
+    // An RVA is meaningful within one input. Layout changes can reuse it
+    // for a different object, even when every instruction byte stayed equal.
+    return StableHash()
+        .add("unresolved_address")
+        .add(InputIdentity)
+        .add(Address - Image.Base)
+        .value();
   }
 
   std::optional<uint64_t> string(va_t Address) const {
@@ -106,11 +124,12 @@ struct AddressKeys {
 // decide address roles. All control-flow and literal-read targets come from
 // the ordinary lift; in particular, literal operands can carry lossy addresses
 // in decoder detail, while the lift retains their full signed PC displacement.
-bool readAArch64Operands(const BinaryImage &Image, const DecodedInsn &I,
-                         const neverd::sdk::InstructionFlow &Flow,
-                         llvm::function_ref<void(uint64_t)> Both,
-                         llvm::function_ref<void(uint64_t)> Scalar,
-                         llvm::function_ref<void(uint64_t, bool)> Address) {
+bool readAArch64Operands(
+    const DecodedInsn &I, const neverd::sdk::InstructionFlow &Flow,
+    llvm::function_ref<void(uint64_t)> Both,
+    llvm::function_ref<void(uint64_t)> Scalar,
+    llvm::function_ref<void(uint64_t, bool, unsigned)> Address,
+    llvm::function_ref<void(uint64_t, unsigned)> AddressFragment) {
   const cs_aarch64 &A = I.Raw->detail->aarch64;
   Both(A.cc);
   Both(A.update_flags);
@@ -140,16 +159,13 @@ bool readAArch64Operands(const BinaryImage &Image, const DecodedInsn &I,
       // agree.
       if (N + 1 == A.op_count && Flow.Target != InvalidVA &&
           static_cast<uint64_t>(O.imm) == Flow.Target)
-        Address(Flow.Target, true);
+        Address(Flow.Target, true, N);
       else if (I.Id == AARCH64_INS_ADR && N == 1 && A.op_count == 2)
-        Address(static_cast<uint64_t>(O.imm), false);
+        Address(static_cast<uint64_t>(O.imm), false, N);
       else if (I.Id == AARCH64_INS_ADRP && N == 1 && A.op_count == 2) {
         // ADRP materializes an address fragment. Keep the actual image page;
         // no object identity or ADRP+ADD pairing follows from this operand.
-        Both(hashText("aarch64_image_page"));
-        // Preserve the base's low bits too: moving by a partial page can
-        // change the fragment relative to the rest of the image.
-        Both(static_cast<uint64_t>(O.imm) - Image.Base);
+        AddressFragment(static_cast<uint64_t>(O.imm), N);
       } else
         Scalar(static_cast<uint64_t>(O.imm));
       break;
@@ -163,7 +179,7 @@ bool readAArch64Operands(const BinaryImage &Image, const DecodedInsn &I,
       if (N == 1 && A.op_count == 2 && O.mem.base == AARCH64_REG_INVALID &&
           O.mem.index == AARCH64_REG_INVALID && Flow.Refs.size() == 1 &&
           Flow.Refs.front().Kind == "read")
-        Address(Flow.Refs.front().To, false);
+        Address(Flow.Refs.front().To, false, N);
       else
         Scalar(static_cast<uint64_t>(O.mem.disp));
       break;
@@ -232,13 +248,12 @@ ReadInstruction readInstruction(const BinaryImage &Image,
     R.Callee = R.Target;
   } else if (Flow.Kind == "icall") {
     R.Flow = diff::InstructionFlow::IndirectCall;
-  } else if (Flow.Kind == "jump") {
-    R.Flow = diff::InstructionFlow::Jump;
+  } else if (Flow.Kind == "jump" || Flow.Kind == "cjump") {
+    R.Flow = Flow.Kind == "jump" ? diff::InstructionFlow::Jump
+                                 : diff::InstructionFlow::Branch;
     if (R.Target && *R.Target != FunctionEntry &&
         Keys.Functions.contains(*R.Target))
       R.Callee = R.Target;
-  } else if (Flow.Kind == "cjump") {
-    R.Flow = diff::InstructionFlow::Branch;
   } else if (Flow.Kind == "ijump") {
     R.Flow = diff::InstructionFlow::IndirectJump;
   } else if (Flow.Kind == "ret") {
@@ -252,19 +267,21 @@ ReadInstruction readInstruction(const BinaryImage &Image,
       R.Callee = Ref.To;
       R.Target = Ref.To;
     }
-    if (const auto String = Keys.string(Ref.To))
-      R.References.emplace_back(ReferenceKind::String, *String);
-    else
-      R.References.emplace_back(ReferenceKind::Data, Keys.data(Ref.To));
+    const auto Key = Keys.reference(Ref.To);
+    if (Key.first != ReferenceKind::Function)
+      R.References.push_back(Key);
   }
-  StableHash Shape, Skeleton;
+  StableHash Shape, Skeleton, AddressIndependentShape;
   Shape.add(R.Mnemonic);
   Skeleton.add(R.Mnemonic);
+  AddressIndependentShape.add(R.Mnemonic);
   const auto Both = [&](uint64_t Value) {
     Shape.add(Value);
     Skeleton.add(Value);
+    AddressIndependentShape.add(Value);
   };
-  const auto Address = [&](uint64_t Value, bool Transfer) {
+  const auto Address = [&](uint64_t Value, bool Transfer, unsigned Operand) {
+    AddressIndependentShape.add(hashText("address_operand")).add(Transfer);
     uint64_t Key = 0;
     if (Transfer && R.Callee && Keys.Functions.contains(Value))
       Key = hashText("callee");
@@ -274,15 +291,31 @@ ReadInstruction readInstruction(const BinaryImage &Image,
           hashText("cfg_target"); // Destination is compared through CFG edges.
     else if (Transfer && Keys.Functions.contains(Value))
       Key = hashText("callee"); // Compared through function correspondence.
-    else if (const auto String = Keys.string(Value))
-      Key = StableHash().add("string").add(*String).value();
-    else
-      Key = Keys.data(Value);
-    Both(Key);
+    else {
+      const auto Ref = Keys.reference(Value);
+      R.AddressReferences.push_back({Ref.second, Operand, Ref.first});
+      Shape.add(static_cast<uint64_t>(Ref.first));
+      Skeleton.add(static_cast<uint64_t>(Ref.first));
+      if (Ref.first == ReferenceKind::Function) {
+        Key = hashText("function_address"); // Compared through correspondence.
+      } else if (Ref.first == ReferenceKind::UnresolvedData) {
+        R.References.push_back(Ref);
+        Shape.add(Ref.second);
+        Skeleton.add(hashText("unresolved_address"));
+        R.HasUnresolvedData = true;
+        return;
+      } else {
+        R.References.push_back(Ref);
+        Key = Ref.second;
+      }
+    }
+    Shape.add(Key);
+    Skeleton.add(Key);
   };
   const auto Scalar = [&](uint64_t Value) {
     Shape.add(Value);
     Skeleton.add(0);
+    AddressIndependentShape.add(Value);
     R.References.emplace_back(ReferenceKind::Constant, Value);
   };
   const auto Relocs = instructionRelocations(Image, I);
@@ -294,7 +327,17 @@ ReadInstruction readInstruction(const BinaryImage &Image,
     return {};
   };
   if (Image.Arch == Arch::AArch64) {
-    if (!readAArch64Operands(Image, I, Flow, Both, Scalar, Address))
+    const auto AddressFragment = [&](uint64_t Value, unsigned Operand) {
+      Both(hashText("aarch64_image_page"));
+      Shape.add(Keys.unresolved(Value));
+      Skeleton.add(0);
+      R.References.emplace_back(ReferenceKind::UnresolvedData,
+                                Keys.unresolved(Value));
+      R.AddressReferences.push_back(
+          {Keys.unresolved(Value), Operand, ReferenceKind::UnresolvedData});
+      R.HasUnresolvedData = true;
+    };
+    if (!readAArch64Operands(I, Flow, Both, Scalar, Address, AddressFragment))
       R.Flow = diff::InstructionFlow::Unknown;
   } else {
     const cs_x86 &X = I.Raw->detail->x86;
@@ -322,9 +365,9 @@ ReadInstruction readInstruction(const BinaryImage &Image,
       case X86_OP_IMM:
         if (R.Target && Flow.Target != InvalidVA &&
             static_cast<uint64_t>(O.imm) == Flow.Target)
-          Address(Flow.Target, true);
+          Address(Flow.Target, true, N);
         else if (auto A = Relocated(X.encoding.imm_offset, X.encoding.imm_size))
-          Address(*A, false);
+          Address(*A, false, N);
         else
           Scalar(static_cast<uint64_t>(O.imm));
         break;
@@ -337,10 +380,10 @@ ReadInstruction readInstruction(const BinaryImage &Image,
           uint64_t A = I.Addr + I.Size + O.mem.disp;
           if (O.mem.base == X86_REG_EIP)
             A = static_cast<uint32_t>(A);
-          Address(A, false);
+          Address(A, false, N);
         } else if (auto A =
                        Relocated(X.encoding.disp_offset, X.encoding.disp_size))
-          Address(*A, false);
+          Address(*A, false, N);
         else
           Scalar(static_cast<uint64_t>(O.mem.disp));
         break;
@@ -350,6 +393,7 @@ ReadInstruction readInstruction(const BinaryImage &Image,
         R.Flow = diff::InstructionFlow::Unknown;
         Shape.add(R.Bytes);
         Skeleton.add(R.Bytes);
+        AddressIndependentShape.add(R.Bytes);
         break;
       }
     }
@@ -357,9 +401,11 @@ ReadInstruction readInstruction(const BinaryImage &Image,
   if (R.Flow == diff::InstructionFlow::Unknown) {
     Shape.add(R.Bytes);
     Skeleton.add(R.Bytes);
+    AddressIndependentShape.add(R.Bytes);
   }
   R.Shape = Shape.value();
   R.Skeleton = Skeleton.value();
+  R.AddressIndependentShape = AddressIndependentShape.value();
   return R;
 }
 
@@ -418,7 +464,9 @@ void appendFunction(ProgramBuilder &Builder, const FuncInfo &F,
       BlockAt.emplace(R.Address, Block);
     }
     Builder.addInstruction(R.Address, R.Bytes, R.Mnemonic, R.Shape, R.Skeleton,
-                           R.Flow, R.Callee, R.Operands, R.Target);
+                           R.Flow, R.Callee, R.Operands, R.Target,
+                           R.AddressReferences, R.AddressIndependentShape,
+                           R.HasUnresolvedData);
     for (const auto &[Kind, Key] : R.References)
       Builder.addReference(Kind, Key, Block);
   }
@@ -543,7 +591,16 @@ std::string revision(const Program &P) {
         Word(I.Address);
         Word(I.Shape);
         Word(I.Skeleton);
+        Word(I.AddressIndependentShape);
+        Word(I.HasUnresolvedData);
         Word(I.Callee);
+        Word(I.UnresolvedCallee);
+        Word(I.AddressReferenceCount);
+        for (const auto &Address : P.addressReferences(I)) {
+          Word(Address.Key);
+          Word(Address.Operand);
+          Word(static_cast<unsigned>(Address.Kind));
+        }
         Word(static_cast<unsigned>(I.Flow));
         Text(P.mnemonic(I));
         Text(I.Operands);
@@ -614,6 +671,17 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.ProjectStateSHA256 = S.PackedProject->StateSHA256;
   }
   Identity.SHA256 = inputSha256(S);
+  StableHash AddressInputIdentity;
+  AddressInputIdentity.add(Identity.SHA256);
+  // The same file can supply different raw slices or image projections.
+  // Bind the effective mapping, while allowing a pure image-base relocation.
+  AddressInputIdentity.add("native-mapping-v1").add(S.Img.Segments.size());
+  for (const auto &Segment : S.Img.Segments)
+    AddressInputIdentity.add(Segment.VA - S.Img.Base)
+        .add(Segment.Size)
+        .add(Segment.FileOff)
+        .add(Segment.FileSz)
+        .add(static_cast<uint64_t>(Segment.Flags));
   Identity.Format = S.Img.isELF()     ? "elf"
                     : S.Img.isCOFF()  ? "coff"
                     : S.Img.isMachO() ? "macho"
@@ -628,8 +696,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
   if (AArch64 && S.Img.isMachO())
     Identity.ABI += ":macho-subtype:" + llvm::utohexstr(S.Img.MachOCPUSubtype);
   Identity.Normalization =
-      AArch64 ? "native-aarch64-operands-v1" : "native-x86-operands-v1";
-  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v2:" +
+      (AArch64 ? NativeAArch64Normalization : NativeX86Normalization).str();
+  Identity.Analysis = std::string(VersionString) + ":sdk-native-decode-v4:" +
                       (Options.Discover ? "discover" : "known-functions");
   if (S.PackedProject)
     Identity.Analysis += ":nddb-v1:" + S.PackedProject->StateSHA256;
@@ -638,13 +706,21 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Identity.Analysis += ":" + std::string(LoadOptions);
     neverd_free_string(LoadOptions);
   }
-  if (S.Img.MachOSharedCache)
-    Identity.Analysis += ":" + jsonToString(sharedCacheIdentity(S.Img));
-  if (!S.BytePatches.empty())
-    Identity.Analysis +=
-        ":byte-overlay-v1:" + byteOverlayIdentity(S.BytePatches);
-  if (!S.AnalysisSections.empty())
-    Identity.Analysis += ":analysis-sections-v1:" + analysisSectionIdentity(S);
+  if (S.Img.MachOSharedCache) {
+    const auto Cache = jsonToString(sharedCacheIdentity(S.Img));
+    Identity.Analysis += ":" + Cache;
+    AddressInputIdentity.add("shared-cache-v1").add(Cache);
+  }
+  if (!S.BytePatches.empty()) {
+    const auto Overlay = byteOverlayIdentity(S.BytePatches);
+    Identity.Analysis += ":byte-overlay-v1:" + Overlay;
+    AddressInputIdentity.add("byte-overlay-v1").add(Overlay);
+  }
+  if (!S.AnalysisSections.empty()) {
+    const auto Sections = analysisSectionIdentity(S);
+    Identity.Analysis += ":analysis-sections-v1:" + Sections;
+    AddressInputIdentity.add("analysis-sections-v1").add(Sections);
+  }
   Identity.ImageBase = S.Img.Base;
   Identity.EntryPoint = S.Img.Entry;
   Identity.DiscoveryComplete = S.DiscoveredFunctions.has_value() &&
@@ -666,7 +742,7 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
     Result.Program.Identity.Revision = revision(Result.Program);
     return Result;
   }
-  const AddressKeys Keys(S.Img, S.Functions);
+  const AddressKeys Keys(S.Img, S.Functions, AddressInputIdentity.value());
   std::map<va_t, const FuncInfo *> Functions;
   for (const auto &F : S.Functions)
     if ((!Options.Begin || F.Entry >= *Options.Begin) &&
@@ -718,6 +794,8 @@ readComparisonInputImpl(Session &S, const ComparisonInputOptions &Options,
                   sizeof(ReadInstruction) + sizeof(Instruction) +
                   R.Bytes.size() * 2 + R.Mnemonic.size() +
                   R.Operands.size() * 2 +
+                  R.AddressReferences.size() *
+                      (sizeof(AddressReference) * 2 + sizeof(Reference)) +
                   R.References.size() *
                       (sizeof(Reference) +
                        sizeof(std::pair<ReferenceKind, uint64_t>));

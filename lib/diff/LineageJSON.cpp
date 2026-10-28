@@ -109,19 +109,22 @@ llvm::json::Object edge(const Lineage &L, uint32_t I) {
   llvm::json::Array Changes;
   for (const auto C : changeNames(M.Changes))
     Changes.push_back(C);
-  return llvm::json::Object{{"edge", I},
-                            {"primary", E.Primary},
-                            {"secondary", E.Secondary},
-                            {"report", R.Evidence->ID},
-                            {"match", E.Match},
-                            {"step", stepName(M.Step)},
-                            {"similarity", M.Similarity},
-                            {"confidence", M.Confidence},
-                            {"confirmed", M.Confirmed},
-                            {"measured", M.Measured},
-                            {"identity_only", M.IdentityOnly},
-                            {"analysis_complete", M.AnalysisComplete},
-                            {"changes", std::move(Changes)}};
+  return llvm::json::Object{
+      {"edge", I},
+      {"primary", E.Primary},
+      {"secondary", E.Secondary},
+      {"report", R.Evidence->ID},
+      {"match", E.Match},
+      {"step", stepName(M.Step)},
+      {"similarity", M.Similarity},
+      {"confidence", M.Confidence},
+      {"confirmed", M.Confirmed},
+      {"measured", M.Measured},
+      {"identity_only", M.IdentityOnly},
+      {"analysis_complete", M.AnalysisComplete},
+      {"reference_comparison_complete", M.ReferenceComparisonComplete},
+      {"change_state", changeState(M)},
+      {"changes", std::move(Changes)}};
 }
 
 llvm::json::Object conflict(const Lineage &L, uint32_t I) {

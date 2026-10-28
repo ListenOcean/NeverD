@@ -287,6 +287,14 @@ std::optional<uint64_t> execute(const HighFunc &F, uint64_t Condition,
         return A | B;
       case NdOp::INT_XOR:
         return A ^ B;
+      case NdOp::INT_RIGHT:
+        return llvm::APInt(E->Operands[0]->Type->Size * 8, A)
+            .lshr(B)
+            .getZExtValue();
+      case NdOp::INT_ASHR:
+        return llvm::APInt(E->Operands[0]->Type->Size * 8, A)
+            .ashr(B)
+            .getZExtValue();
       case NdOp::INT_EQUAL:
         return uint64_t(A == B);
       case NdOp::INT_NOTEQUAL:
@@ -473,6 +481,121 @@ TEST(HighControlFlowSemantics, DeadGuardedPhiReadIsRemovedBeforeExecution) {
   for (uint64_t Condition :
        {uint64_t{0}, uint64_t{1}, uint64_t{2}, ~uint64_t{0}})
     EXPECT_EQ(execute(F, Condition), Condition ? 42u : 7u);
+}
+
+TEST(HighControlFlowSemantics, RepeatedBitGuardsKeepOnlyObservedPhiInputs) {
+  for (bool Shifted : {false, true}) {
+    auto F = guardedPhiCopy();
+    F.Body[0].Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+    auto Bits = Shifted ? HighExpr::makeBinop(NdOp::INT_RIGHT, local(0),
+                                              HighExpr::makeConst(1, 8))
+                        : local(0);
+    F.Body[1].Cond = HighExpr::makeBinop(
+        NdOp::INT_AND, Bits, HighExpr::makeConst(Shifted ? 1 : 2, 8));
+    HighStmt Loop;
+    Loop.Kind = StmtKind::While;
+    Loop.Cond = local(3);
+    Loop.Body = {assign(0x100C, 3, 0)};
+    F.Body.insert(F.Body.begin() + 1, {assign(0x100A, 3, 1), Loop});
+    ASSERT_TRUE(eliminateHighDeadPhiCopies(F));
+    for (uint64_t Input :
+         {0ULL, 1ULL, 2ULL, 3ULL, 4ULL, 6ULL, 0xffffffffffffffffULL})
+      EXPECT_EQ(execute(F, Input), Input & 2 ? 42u : 7u);
+  }
+}
+
+TEST(HighControlFlowSemantics, BitGuardsDoNotBorrowDifferentOrChangedBits) {
+  for (unsigned Variant = 0; Variant != 6; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedPhiCopy();
+    F.Body[0].Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+    F.Body[1].Cond =
+        HighExpr::makeBinop(NdOp::INT_AND, local(0), HighExpr::makeConst(2, 8));
+    switch (Variant) {
+    case 0:
+      F.Body[1].Cond->Operands[1] = HighExpr::makeConst(4, 8);
+      break;
+    case 1:
+      F.Body.insert(F.Body.begin() + 1, assign(0x100C, 0, 2));
+      break;
+    case 2: {
+      auto Address = std::make_shared<HighExpr>();
+      Address->Kind = ExprKind::Addr;
+      Address->Type = NdType::makePtr();
+      Address->Operands = {local(0)};
+      HighStmt Escape;
+      Escape.Kind = StmtKind::Call;
+      Escape.CallExpr = HighExpr::makeCall("mutate", 0x5000, {Address});
+      F.Body.insert(F.Body.begin() + 1, Escape);
+      break;
+    }
+    case 3:
+      F.Body[1].Cond->Type = NdType::makeInt(1);
+      break;
+    case 4:
+      F.Body[1].Cond->Operands[0] = HighExpr::makeBinop(
+          NdOp::INT_ASHR, local(0), HighExpr::makeConst(63, 8));
+      break;
+    case 5:
+      F.Body[1].Cond->Operands[1] = HighExpr::makeConst(3, 8);
+      break;
+    }
+    EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
+  }
+}
+
+TEST(HighControlFlowSemantics, TerminalCatchKeepsAllItsObservedDefinitions) {
+  for (unsigned Variant = 0; Variant != 5; ++Variant) {
+    SCOPED_TRACE(Variant);
+    auto F = guardedPhiCopy();
+    HighStmt Handler;
+    Handler.Kind = StmtKind::Call;
+    Handler.CallExpr = HighExpr::makeCall("terminate", 0x5000, {});
+    Handler.CallExpr->Type = NdType::makeVoid();
+    Handler.CallExpr->DoesNotReturn = true;
+    if (Variant < 3) {
+      auto Hint = std::make_shared<SourceCallTypeHint>();
+      Hint->DoesNotReturn = Variant != 2;
+      Handler.CallExpr->SourceCallHint = Hint;
+    } else if (Variant == 4) {
+      Handler.CallExpr->CallTarget = "_ZSt9terminatev";
+    }
+    if (Variant == 1)
+      Handler.CallExpr->Operands = {local(1)};
+    HighStmt Try;
+    Try.Kind = StmtKind::ItaniumTry;
+    Try.Body = {F.Body[0], F.Body[1]};
+    HighEHClause Clause;
+    Clause.Kind = HighEHClauseKind::ItaniumCatch;
+    Try.EHClauses = {Clause};
+    Try.EHClauseBodies = {{Handler}};
+    F.Body = {Try, F.Body[2]};
+    const bool Removable = Variant == 0 || Variant == 4;
+    EXPECT_EQ(eliminateHighDeadPhiCopies(F), Removable);
+    // The method/export validator still refuses an exception-dependent proof.
+    EXPECT_FALSE(analyzeHighSourceFlow(F, true).Complete);
+    if (Removable) {
+      F.Body[0].Kind = StmtKind::Block;
+      F.Body[0].EHClauses.clear();
+      F.Body[0].EHClauseBodies.clear();
+      for (uint64_t Input : {0ULL, 1ULL, 2ULL})
+        EXPECT_EQ(execute(F, Input), Input ? 42u : 7u);
+    }
+  }
+}
+
+TEST(HighControlFlowSemantics, OutOfLinePadsKeepTheirImplicitEntryValues) {
+  auto F = guardedPhiCopy();
+  F.Body.push_back(result(0x2000, local(1)));
+  F.ExceptionMetadata.emplace();
+  F.ExceptionMetadata->Itanium.emplace();
+  ItaniumCallSite Site;
+  Site.GuardedRange = {0x1000, 0x1020};
+  Site.LandingPadVA = 0x2000;
+  F.ExceptionMetadata->Itanium->CallSites = {Site};
+  EXPECT_FALSE(eliminateHighDeadPhiCopies(F));
 }
 
 TEST(HighControlFlowSemantics, DeadIntegerViewPhiCopiesPreserveEffectBarriers) {

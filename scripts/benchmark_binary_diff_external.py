@@ -20,11 +20,21 @@ DEFAULT_STAGE_TIMEOUT_SECONDS = 600.0
 def stage(folder: Path, name: str, command: list[str], env: dict,
           timeout: float) -> dict:
     start = time.monotonic()
-    record = {"command": command, "exit": None, "error": None}
+    record = {"command": command, "exit": None, "error": None, "resources": None,
+              "timeout_seconds": timeout}
+    timer = Path("/usr/bin/time")
+    resource_path = folder / (name + ".resources")
+    measured_command = command
+    executable = command[0]
+    if os.sep in executable and not Path(executable).is_absolute():
+        executable = str(folder / executable)
+    if timer.is_file() and shutil.which(executable, path=env.get("PATH")):
+        record["measurement_tool"] = {"path": str(timer), "sha256": bench.digest(timer)}
+        measured_command = [str(timer), "--quiet", "--format=%U %S %M %e", "--output=" + str(resource_path), *command]
     cancelled = False
     with (folder / (name + ".log")).open("x") as log:
         try:
-            process = subprocess.Popen(command, cwd=folder, env=env, stdout=log,
+            process = subprocess.Popen(measured_command, cwd=folder, env=dict(env, DEBUGINFOD_URLS=""), stdout=log,
                                        stderr=subprocess.STDOUT, start_new_session=True)
             try:
                 record["exit"] = process.wait(timeout=timeout)
@@ -40,6 +50,12 @@ def stage(folder: Path, name: str, command: list[str], env: dict,
         except OSError as error:
             record["error"] = str(error)
     record["wall_seconds"] = time.monotonic() - start
+    if record["error"] is None and resource_path.is_file():
+        values = resource_path.read_text().splitlines()[-1].split()
+        bench.require(len(values) == 4, "invalid GNU time resource receipt")
+        record["resources"] = {"profile": "gnu-time-child-maxrss-v1",
+                               "user_seconds": float(values[0]), "system_seconds": float(values[1]),
+                               "max_rss_kib": int(values[2]), "elapsed_seconds": float(values[3])}
     bench.save(folder / (name + ".json"), record)
     if cancelled:
         raise KeyboardInterrupt
@@ -74,7 +90,7 @@ def complete_case(corpus: Path, folder: Path, record: dict, runtime: list[Path])
         result = {"case": record["case"], "error": str(error),
                   "run_sha256": bench.digest(run_path)}
     bench.save(folder / "evaluation.json", result)
-    print(record["case"], result["metrics"] if "metrics" in result else record.get("error") or result["error"], flush=True)
+    print(record["case"], bench.metric_summary(result) if "metrics" in result else record.get("error") or result["error"], flush=True)
     return result
 
 
@@ -83,4 +99,4 @@ def finish(output: Path, results: list[dict]) -> int:
                                        "track": "end-to-end", "cases": results})
     if any("metrics" not in result for result in results):
         return 2
-    return 0 if all(result["metrics"]["exact_mapping"] for result in results) else 1
+    return 0 if all(bench.mapping_passed(result) for result in results) else 1

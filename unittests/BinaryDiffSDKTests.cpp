@@ -411,6 +411,433 @@ TEST_F(BinaryDiffSDK, FunctionNameProvenanceSurvivesReorderingAndRenames) {
     }
 }
 
+TEST_F(BinaryDiffSDK, RelativeCallBytesKeepDuplicateWrappersAmbiguous) {
+  std::vector<uint8_t> Bytes(64, 0xcc);
+  const auto Target = body(7);
+  std::copy(Target.begin(), Target.end(), Bytes.begin());
+  for (const unsigned Entry : {16U, 32U}) {
+    Bytes[Entry] = 0xe8;
+    const uint32_t Displacement = uint32_t(-int32_t(Entry + 5));
+    for (unsigned I = 0; I != 4; ++I)
+      Bytes[Entry + 1 + I] = uint8_t(Displacement >> (I * 8));
+    Bytes[Entry + 5] = 0xc3;
+  }
+  const auto A = input(Bytes);
+  Bytes.back() = 0;
+  const auto B = input(Bytes, 0x8000);
+  for (const auto &[Session, Base] :
+       {std::pair{A, 0x1000U}, std::pair{B, 0x8000U}})
+    for (unsigned Offset : {16U, 32U})
+      ASSERT_EQ(neverd_func_create(Session, Base + Offset), 0);
+  for (bool Reverse : {false, true}) {
+    const auto C = compare(Reverse ? B : A, Reverse ? A : B,
+                           R"({"discover":false,"use_names":false})");
+    const auto Saved = take(neverd_comparison_export_json(C));
+    auto Report = llvm::json::parse(Saved);
+    ASSERT_TRUE(bool(Report));
+    const auto *Root = Report->getAsObject();
+    ASSERT_TRUE(Root);
+    const auto *Matches = Root->getArray("matches");
+    ASSERT_TRUE(Matches);
+    ASSERT_EQ(Matches->size(), 1U) << Saved;
+    const auto *Coverage = Root->getObject("coverage");
+    ASSERT_TRUE(Coverage);
+    for (const auto *Side : {"primary", "secondary"}) {
+      ASSERT_TRUE(Coverage->getObject(Side));
+      EXPECT_EQ(Coverage->getObject(Side)->getInteger("ambiguous"), 2);
+    }
+    ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  }
+}
+
+TEST_F(BinaryDiffSDK,
+       FunctionPointersUseCorrespondenceInsteadOfReusedAddresses) {
+  const auto Image = [&](bool Reordered, bool Retarget) {
+    std::vector<uint8_t> Bytes(96, 0xcc);
+    const auto Displacement = [&](unsigned At, int32_t Value) {
+      for (unsigned I = 0; I < 4; ++I)
+        Bytes[At + I] = uint32_t(Value) >> (I * 8);
+    };
+    const unsigned A = Reordered ? 48 : 32, B = Reordered ? 32 : 48;
+    unsigned At = 0;
+    for (unsigned Target : {A, B, 64U, 80U}) {
+      Bytes[At] = 0xe8;
+      Displacement(At + 1, int32_t(Target) - int32_t(At + 5));
+      At += 5;
+    }
+    Bytes[At] = 0xc3;
+    const auto First = body(7), Second = body(19);
+    std::copy(First.begin(), First.end(), Bytes.begin() + A);
+    std::copy(Second.begin(), Second.end(), Bytes.begin() + B);
+    for (const auto &[Entry, Target] :
+         {std::pair{64U, Retarget ? B : A}, {80U, B}}) {
+      Bytes[Entry] = 0x48;
+      Bytes[Entry + 1] = 0x8d;
+      Bytes[Entry + 2] = 0x05; // lea rax, [rip+disp32]; ret
+      Displacement(Entry + 3, int32_t(Target) - int32_t(Entry + 7));
+      Bytes[Entry + 7] = 0xc3;
+    }
+    return Bytes;
+  };
+  const auto A = input(Image(false, false)), B = input(Image(true, false));
+  for (bool Reverse : {false, true}) {
+    const auto C = compare(Reverse ? B : A, Reverse ? A : B,
+                           R"({"discover":true,"use_names":false})");
+    const auto Report = parsed(neverd_comparison_export_json(C));
+    const auto *Matches = Report.getAsObject()->getArray("matches");
+    ASSERT_TRUE(Matches);
+    ASSERT_EQ(Matches->size(), 5U) << render(Report);
+    const std::map<std::string, std::string> Expected{{"0x1000", "0x1000"},
+                                                      {"0x1020", "0x1030"},
+                                                      {"0x1030", "0x1020"},
+                                                      {"0x1040", "0x1040"},
+                                                      {"0x1050", "0x1050"}};
+    for (const auto &M : *Matches) {
+      const auto *Row = M.getAsObject();
+      ASSERT_TRUE(Row);
+      EXPECT_EQ(Row->getString("secondary"),
+                Expected.at(Row->getString("primary")->str()));
+    }
+    const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1040));
+    EXPECT_EQ(Detail.getAsObject()
+                  ->getObject("evidence")
+                  ->getBoolean("normalized_unchanged"),
+              true);
+    const auto Decision = render(
+        llvm::json::Object{{"kind", "unmatch"},
+                           {"primary", Reverse ? "0x1030" : "0x1020"},
+                           {"secondary", Reverse ? "0x1020" : "0x1030"}});
+    ASSERT_EQ(neverd_comparison_override_json(C, Decision.c_str()), 1);
+    const auto CheckHolder = [&](bool Uncertain) {
+      const auto Page = parsed(neverd_comparison_function_json(C, 0, 0x1040));
+      const auto *E = Page.getAsObject()->getObject("evidence");
+      EXPECT_EQ(E->getBoolean("reference_comparison_complete"), !Uncertain);
+      EXPECT_EQ(E->getBoolean("normalized_unchanged"), !Uncertain);
+      EXPECT_EQ(E->getString("change_state"),
+                Uncertain ? "uncertain" : "unchanged");
+    };
+    CheckHolder(true);
+    const auto Saved = take(neverd_comparison_export_json(C));
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    CheckHolder(false);
+    ASSERT_EQ(neverd_comparison_redo(C), 1);
+    CheckHolder(true);
+    ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+    CheckHolder(true);
+  }
+  const auto Changed = input(Image(true, true));
+  const auto C = compare(
+      A, Changed,
+      R"({"discover":true,"use_names":false,"overrides":[{"kind":"match","primary":"0x1040","secondary":"0x1040"}]})");
+  const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1040));
+  EXPECT_EQ(Detail.getAsObject()
+                ->getObject("evidence")
+                ->getBoolean("normalized_unchanged"),
+            false);
+}
+
+TEST_F(BinaryDiffSDK, DirectCallTargetsArePartOfStrongFunctionIdentity) {
+  const auto Image = [&](bool Reordered) {
+    std::vector<uint8_t> Bytes(128, 0xcc);
+    const unsigned A = Reordered ? 48 : 32, B = Reordered ? 32 : 48;
+    const unsigned X = Reordered ? 96 : 64, Y = Reordered ? 64 : 96;
+    const auto Call = [&](unsigned At, unsigned Target) {
+      Bytes[At] = 0xe8;
+      const uint32_t Displacement = Target - (At + 5);
+      for (unsigned I = 0; I < 4; ++I)
+        Bytes[At + 1 + I] = Displacement >> (I * 8);
+    };
+    unsigned At = 0;
+    for (unsigned Target : {A, B, X, Y}) {
+      Call(At, Target);
+      At += 5;
+    }
+    Bytes[At] = 0xc3;
+    const auto First = body(7), Second = body(19);
+    std::copy(First.begin(), First.end(), Bytes.begin() + A);
+    std::copy(Second.begin(), Second.end(), Bytes.begin() + B);
+    Call(X, A);
+    Call(Y, B);
+    Bytes[X + 5] = Bytes[Y + 5] = 0xc3;
+    return Bytes;
+  };
+  // Each wrapper retains the other wrapper's exact bytes after this layout
+  // change. Pairing those bytes before resolving callees swaps their
+  // identities.
+  const auto A = input(Image(false)), B = input(Image(true));
+  const std::map<std::string, std::string> Expected{{"0x1000", "0x1000"},
+                                                    {"0x1020", "0x1030"},
+                                                    {"0x1030", "0x1020"},
+                                                    {"0x1040", "0x1060"},
+                                                    {"0x1060", "0x1040"}};
+  for (bool Reverse : {false, true}) {
+    const auto C = compare(Reverse ? B : A, Reverse ? A : B,
+                           R"({"discover":true,"use_names":false})");
+    const auto Report = parsed(neverd_comparison_export_json(C));
+    const auto *Matches = Report.getAsObject()->getArray("matches");
+    ASSERT_TRUE(Matches);
+    ASSERT_EQ(Matches->size(), Expected.size()) << render(Report);
+    for (const auto &M : *Matches) {
+      const auto *Row = M.getAsObject();
+      EXPECT_EQ(Row->getString("secondary"),
+                Expected.at(Row->getString("primary")->str()));
+    }
+  }
+}
+
+TEST_F(BinaryDiffSDK, ConditionalExternalTransfersRetainTheirTargets) {
+  for (bool AArch64 : {false, true}) {
+    SCOPED_TRACE(AArch64);
+    const auto Image = [&](uint8_t Target) {
+      std::vector<uint8_t> Bytes(64, 0xcc);
+      // cmp w0,#0; b.eq +28/+44; ret, independently assembled with LLVM.
+      const auto Code =
+          AArch64 ? words({0x7100001f, Target == 32 ? 0x540000e0U : 0x54000160U,
+                           0xd65f03c0})
+                  : std::vector<uint8_t>{0x85, 0xff, 0x74, uint8_t(Target - 4),
+                                         0xc3};
+      std::copy(Code.begin(), Code.end(), Bytes.begin());
+      const auto A = AArch64 ? words({0x528000e0, 0xd65f03c0}) : body(7);
+      const auto B = AArch64 ? words({0x52800260, 0xd65f03c0}) : body(19);
+      std::copy(A.begin(), A.end(), Bytes.begin() + 32);
+      std::copy(B.begin(), B.end(), Bytes.begin() + 48);
+      return Bytes;
+    };
+    const char *Processor = AArch64 ? "aarch64" : "x86_64";
+    const auto A = input(Image(32), 0x1000, Processor);
+    for (unsigned Offset : {32U, 48U}) {
+      const auto B = input(Image(Offset), 0x2000, Processor);
+      for (const auto &[Session, Base] :
+           {std::pair{A, 0x1000U}, std::pair{B, 0x2000U}}) {
+        // Establish known function entries before comparison; their generated
+        // names cannot supply correspondence because use_names is disabled.
+        for (uint64_t Entry : {Base + 32U, Base + 48U}) {
+          const char *Attributes = neverd_func_attributes_json(Session, Entry);
+          if (!Attributes) {
+            ASSERT_EQ(neverd_func_create(Session, Entry), 0);
+            Attributes = neverd_func_attributes_json(Session, Entry);
+          }
+          const auto Parsed = parsed(Attributes);
+          ASSERT_TRUE(Parsed.getAsObject());
+          ASSERT_TRUE(Parsed.getAsObject()->get("start"));
+        }
+      }
+      for (bool Filtered : {false, true})
+        for (bool Reverse : {false, true}) {
+          const uint64_t Before = Reverse ? 0x2000 : 0x1000;
+          const uint64_t After = Reverse ? 0x1000 : 0x2000;
+          llvm::json::Object Options{
+              {"discover", false},
+              {"use_names", false},
+              {"overrides",
+               llvm::json::Array{llvm::json::Object{
+                   {"kind", "match"},
+                   {"primary", "0x" + llvm::utohexstr(Before, true)},
+                   {"secondary", "0x" + llvm::utohexstr(After, true)}}}}};
+          if (Filtered) {
+            Options["primary"] = llvm::json::Object{
+                {"begin", std::to_string(Before)},
+                {"end", std::to_string(Before + (AArch64 ? 12 : 5))}};
+            Options["secondary"] = llvm::json::Object{
+                {"begin", std::to_string(After)},
+                {"end", std::to_string(After + (AArch64 ? 12 : 5))}};
+          }
+          const auto Text = render(std::move(Options));
+          const auto C =
+              compare(Reverse ? B : A, Reverse ? A : B, Text.c_str());
+          const auto Detail =
+              parsed(neverd_comparison_function_json(C, 0, Before));
+          ASSERT_TRUE(Detail.getAsObject()) << render(Detail);
+          const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+          ASSERT_TRUE(Evidence) << render(Detail);
+          EXPECT_EQ(Evidence->getBoolean("normalized_unchanged"),
+                    Offset == 32 && !Filtered)
+              << render(Detail);
+        }
+    }
+  }
+}
+
+TEST_F(BinaryDiffSDK, FunctionAddressUsesRetainOperandsOrderAndMultiplicity) {
+  const auto Image = [&](std::array<unsigned, 3> Targets) {
+    std::vector<uint8_t> Bytes(96, 0xcc);
+    const auto Displacement = [&](unsigned At, int32_t Value) {
+      for (unsigned I = 0; I < 4; ++I)
+        Bytes[At + I] = uint32_t(Value) >> (I * 8);
+    };
+    unsigned At = 0;
+    for (unsigned Target : {32U, 48U, 64U}) {
+      Bytes[At] = 0xe8;
+      Displacement(At + 1, int32_t(Target) - int32_t(At + 5));
+      At += 5;
+    }
+    Bytes[At] = 0xc3;
+    const auto A = body(7), B = body(19);
+    std::copy(A.begin(), A.end(), Bytes.begin() + 32);
+    std::copy(B.begin(), B.end(), Bytes.begin() + 48);
+    const std::array<uint8_t, 3> Registers{0x05, 0x15, 0x0d};
+    for (unsigned I = 0; I < Targets.size(); ++I) {
+      At = 64 + I * 7;
+      Bytes[At] = 0x48;
+      Bytes[At + 1] = 0x8d;
+      Bytes[At + 2] = Registers[I]; // lea rax/rdx/rcx, [rip+disp32]
+      Displacement(At + 3, int32_t(Targets[I]) - int32_t(At + 7));
+    }
+    Bytes[85] = 0xc3;
+    return Bytes;
+  };
+  const auto A = input(Image({32, 48, 32}));
+  for (const auto Targets : {std::array<unsigned, 3>{48, 32, 32},
+                             std::array<unsigned, 3>{32, 48, 48}}) {
+    const auto B = input(Image(Targets));
+    for (bool Reverse : {false, true}) {
+      const auto C = compare(
+          Reverse ? B : A, Reverse ? A : B,
+          R"({"discover":true,"use_names":false,"overrides":[{"kind":"match","primary":"0x1040","secondary":"0x1040"}]})");
+      const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1040));
+      ASSERT_TRUE(Detail.getAsObject()) << render(Detail);
+      EXPECT_EQ(Detail.getAsObject()
+                    ->getObject("evidence")
+                    ->getBoolean("normalized_unchanged"),
+                false)
+          << render(Detail);
+    }
+  }
+}
+
+TEST_F(BinaryDiffSDK, FilteredCalleesCannotEstablishUnchangedCalls) {
+  const auto Image = [&](uint8_t Target) {
+    std::vector<uint8_t> Bytes(64, 0xcc);
+    const uint8_t Caller[]{0xe8, uint8_t(Target - 5), 0, 0, 0, 0xc3};
+    std::copy(std::begin(Caller), std::end(Caller), Bytes.begin());
+    const auto A = body(7), B = body(19);
+    std::copy(A.begin(), A.end(), Bytes.begin() + 32);
+    std::copy(B.begin(), B.end(), Bytes.begin() + 48);
+    return Bytes;
+  };
+  const auto A = input(Image(32)), B = input(Image(48));
+  for (bool Reverse : {false, true}) {
+    const auto C = compare(
+        Reverse ? B : A, Reverse ? A : B,
+        R"({"discover":true,"primary":{"begin":"0x1000","end":"0x1006"},"secondary":{"begin":"0x1000","end":"0x1006"},"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x1000"}]})");
+    const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+    ASSERT_TRUE(Detail.getAsObject()) << render(Detail);
+    EXPECT_EQ(Detail.getAsObject()
+                  ->getObject("evidence")
+                  ->getBoolean("normalized_unchanged"),
+              false)
+        << render(Detail);
+  }
+}
+
+TEST_F(BinaryDiffSDK, UnknownDataIdentityIncludesTheEffectiveRawSlice) {
+  std::array<uint8_t, 128> Bytes{};
+  const uint8_t Code[]{0x8b, 0x05, 0x0a, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Code), std::end(Code), Bytes.begin());
+  std::copy(std::begin(Code), std::end(Code), Bytes.begin() + 64);
+  Bytes[16] = 17;
+  Bytes[80] = 29;
+  const auto Path = Directory / "two-slices.raw";
+  {
+    std::ofstream File(Path, std::ios::binary);
+    File.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+  }
+  for (unsigned Offset : {0U, 64U}) {
+    auto Session = neverd_session_create();
+    Sessions.push_back(Session);
+    const auto Options = render(llvm::json::Object{{"loader", "binary"},
+                                                   {"processor", "x86_64"},
+                                                   {"base", 0x1000},
+                                                   {"offset", Offset},
+                                                   {"size", 64},
+                                                   {"platform", "sysv"}});
+    ASSERT_EQ(neverd_session_set_load_options(Session, Options.c_str()), 0);
+    ASSERT_EQ(neverd_session_load(Session, Path.string().c_str()), 1)
+        << take(neverd_last_error(Session));
+  }
+  const auto C = compare(
+      Sessions[0], Sessions[1],
+      R"({"discover":false,"overrides":[{"kind":"match","primary":"0x1000","secondary":"0x1000"}]})");
+  const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  EXPECT_EQ(Detail.getAsObject()
+                ->getObject("evidence")
+                ->getBoolean("normalized_unchanged"),
+            false)
+      << render(Detail);
+}
+
+TEST_F(BinaryDiffSDK, UnknownDataAtTheSameRVAIsNotCrossInputIdentity) {
+  std::vector<uint8_t> Code(24, 0);
+  const uint8_t Load[] = {0x8b, 0x05, 0x0a, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Load), std::end(Load), Code.begin());
+  Code[16] = 17;
+  const auto A = input(Code), Same = input(Code, 0x8000);
+  const auto Check = [&](neverd_session_t B, bool Unchanged) {
+    const auto C = compare(A, B);
+    const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+    ASSERT_TRUE(Detail.getAsObject()->getObject("evidence")) << render(Detail);
+    EXPECT_EQ(Detail.getAsObject()
+                  ->getObject("evidence")
+                  ->getBoolean("normalized_unchanged"),
+              Unchanged);
+  };
+  Check(Same, true);
+  Code[16] = 29;
+  Check(input(Code), false);
+  neverd_byte_patch_options_v1 Patch{};
+  Patch.struct_size = sizeof(Patch);
+  Patch.address = 0x8010;
+  Patch.kind = "bytes";
+  Patch.bytes = "1d";
+  ASSERT_FALSE(take(neverd_byte_patch_apply(Same, &Patch)).empty());
+  Check(Same, false);
+}
+
+TEST_F(BinaryDiffSDK,
+       ReferenceGapsRemainUncertainThroughFiltersAndPersistence) {
+  std::vector<uint8_t> Bytes(24, 0);
+  const uint8_t Load[]{0x8b, 0x05, 0x0a, 0, 0, 0, 0xc3};
+  std::copy(std::begin(Load), std::end(Load), Bytes.begin());
+  Bytes[16] = 17;
+  const auto A = input(Bytes);
+  Bytes[23] = 29; // Unrelated input data changes the identity scope, not code.
+  const auto B = input(Bytes);
+  const auto C = compare(A, B);
+  const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+  const auto *E = Detail.getAsObject()->getObject("evidence");
+  ASSERT_TRUE(E) << render(Detail);
+  EXPECT_EQ(E->getString("change_state"), "uncertain");
+  EXPECT_EQ(E->getBoolean("analysis_complete"), true);
+  EXPECT_EQ(E->getBoolean("reference_comparison_complete"), false);
+  EXPECT_EQ(E->getBoolean("normalized_unchanged"), false);
+  EXPECT_TRUE(E->getArray("changes")->empty());
+  const auto Summary = parsed(neverd_comparison_summary_json(C));
+  const auto *Counts = Summary.getAsObject()->getObject("counts");
+  EXPECT_EQ(Counts->getInteger("changed"), 0);
+  EXPECT_EQ(Counts->getInteger("normalized_unchanged"), 0);
+  EXPECT_EQ(Counts->getInteger("uncertain_without_observed_change"), 1);
+  for (const auto &[Kind, Expected] :
+       {std::pair{"changed", 0}, std::pair{"uncertain", 1}}) {
+    const auto Query = render(llvm::json::Object{{"kind", Kind}});
+    const auto Rows =
+        parsed(neverd_comparison_functions_json(C, Query.c_str()));
+    EXPECT_EQ(Rows.getAsObject()->getInteger("total"), Expected);
+  }
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto JSON = llvm::json::parse(Saved);
+  ASSERT_TRUE(bool(JSON));
+  EXPECT_EQ(JSON->getAsObject()->getInteger("schema_version"), 4);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  auto *M = JSON->getAsObject()->getArray("matches")->front().getAsObject();
+  (*M)["reference_comparison_complete"] = true;
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*JSON).c_str()), 0);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  M->erase("reference_comparison_complete");
+  EXPECT_EQ(neverd_comparison_restore_json(C, render(*JSON).c_str()), 0);
+}
+
 TEST_F(BinaryDiffSDK, AnalysisSectionsBindDataOutsideTheFunctionInventory) {
   auto A = input(body());
   auto B = input(body());
@@ -605,7 +1032,7 @@ TEST_F(BinaryDiffSDK, AArch64ProfilesPreservePlacementAndOriginalInstructions) {
   ASSERT_TRUE(Primary);
   EXPECT_EQ(Primary->getString("architecture"), "aarch64");
   EXPECT_EQ(Primary->getInteger("bits"), 64);
-  EXPECT_EQ(Primary->getString("normalization"), "native-aarch64-operands-v1");
+  EXPECT_EQ(Primary->getString("normalization"), "native-aarch64-operands-v3");
   auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
   const auto *Evidence = Detail.getAsObject()->getObject("evidence");
   ASSERT_TRUE(Evidence) << render(Detail);
@@ -2166,7 +2593,7 @@ TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Saved = take(neverd_comparison_export_json(C));
   const auto Document = parsed(neverd_comparison_export_json(C));
   ASSERT_TRUE(Document.getAsObject());
-  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 5);
+  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 9);
   const auto *Matches = Document.getAsObject()->getArray("matches");
   ASSERT_TRUE(Matches);
   const std::map<std::string, std::string> Expected = {{"0x3000", "0xa010"},

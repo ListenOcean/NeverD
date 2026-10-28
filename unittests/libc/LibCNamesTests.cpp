@@ -928,6 +928,13 @@ TEST(IsNoReturnFunction, ItaniumCxxTerminators) {
   EXPECT_TRUE(isNoReturnFunction("__clang_call_terminate"));
 }
 
+TEST(IsNoReturnFunction, BionicStartupDoesNotMakeEveryInitializerTerminal) {
+  EXPECT_TRUE(isNoReturnFunction("__libc_init"));
+  EXPECT_FALSE(isNoReturnFunction("__libc_init_common"));
+  EXPECT_FALSE(isNoReturnFunction("__libc_init_globals"));
+  EXPECT_FALSE(isNoReturnFunction("__libc_init_scudo"));
+}
+
 TEST(IsNoReturnFunction, RustRoutinesDeclaredToReturnNever) {
   // v0 names in ELF and Mach-O spelling, a legacy name, a generic instance,
   // the panic_const family, and the panic handler std exports under its own
