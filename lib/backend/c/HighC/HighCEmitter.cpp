@@ -4988,28 +4988,60 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
           "raw environment requirement has no C runtime contract");
     Expr->forEachChildExpr(CheckRequirement);
   };
-  for (const auto &Func : Funcs) {
-    if (Func.ReturnProtection && Opts.TheArch != Arch::AArch64)
-      throw std::invalid_argument(
-          "AArch64 return protection requires AArch64 source emission");
-    Seen.clear();
-    if (Opts.TheArch == Arch::AArch64)
-      MemoryBases.emplace(Func);
-    walkStmts(Func.Body, [&](const HighStmt &Stmt) {
-      RequirementStatement = &Stmt;
+  // A unit that names the definitions it leaves out leaves out a function
+  // whose requirements fail, as the pipeline leaves out one it refused: no
+  // rendering reads it, and its callers call it as one outside the unit.
+  // Recorded positions, a source map and source names follow one pass's
+  // text, and structured exception syntax writes funclets inside their
+  // parents, so those units fail at the first failure, as they do for a
+  // function without a definition of its own or one whose body fills
+  // another's `__finally`.
+  const bool LeavesOut = Opts.RefusedDefinitions && !Opts.SourceMap &&
+                         !Opts.SourceNames && !Opts.StructuredExceptionSyntax;
+  std::set<va_t> FinallyBodies;
+  if (LeavesOut)
+    for (const HighFunc &Func : Funcs)
+      for (const auto &Entry : Func.SEHTerminationFrameBytes)
+        FinallyBodies.insert(Entry.first);
+  std::vector<CEmitterOptions::RefusedDefinition> Unmet;
+  std::vector<bool> LeftOut(Funcs.size(), false);
+  const auto Check = [&](size_t I, const auto &Requirements) {
+    try {
+      Requirements(Funcs[I]);
+    } catch (const std::exception &Error) {
+      if (!LeavesOut || Funcs[I].Name.empty() ||
+          FinallyBodies.count(Funcs[I].Entry))
+        throw;
+      Unmet.push_back({Funcs[I].Entry, Funcs[I].Name, Error.what()});
+      LeftOut[I] = true;
+    }
+  };
+  for (size_t I = 0; I < Funcs.size(); ++I)
+    Check(I, [&](const HighFunc &Func) {
+      if (Func.ReturnProtection && Opts.TheArch != Arch::AArch64)
+        throw std::invalid_argument(
+            "AArch64 return protection requires AArch64 source emission");
       Seen.clear();
-      forEachExpr(Stmt, CheckRequirement);
-      for (const auto &Clause : Stmt.EHClauses)
-        CheckRequirement(Clause.FilterValue);
+      if (Opts.TheArch == Arch::AArch64)
+        MemoryBases.emplace(Func);
+      walkStmts(Func.Body, [&](const HighStmt &Stmt) {
+        RequirementStatement = &Stmt;
+        Seen.clear();
+        forEachExpr(Stmt, CheckRequirement);
+        for (const auto &Clause : Stmt.EHClauses)
+          CheckRequirement(Clause.FilterValue);
+      });
     });
-  }
-  for (const auto &Func : Funcs)
-    if (Func.SourceTypeHint &&
-        (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
-         (hasSwiftErrorResult(*Func.SourceTypeHint) &&
-          !isSwiftErrorEntryProjected(Func, Opts.TheArch))))
-      throw std::invalid_argument("Indirect record or error-register source "
-                                  "entries need a projection proof");
+  for (size_t I = 0; I < Funcs.size(); ++I)
+    if (!LeftOut[I])
+      Check(I, [&](const HighFunc &Func) {
+        if (Func.SourceTypeHint &&
+            (hasIndirectSourceParameters(*Func.SourceTypeHint) ||
+             (hasSwiftErrorResult(*Func.SourceTypeHint) &&
+              !isSwiftErrorEntryProjected(Func, Opts.TheArch))))
+          throw std::invalid_argument("Indirect record or error-register "
+                                      "source entries need a projection proof");
+      });
   // The records the code reads members of through others, as
   // `l->head->child` reads a node, which only a rendering finds: each
   // rendering asks the local types for those an earlier one found.
@@ -5017,10 +5049,15 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   std::set<std::string> Asked;
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder,
                     std::vector<TypeRef> *Wanted = nullptr) {
-    // The definitions the unit leaves out are those of the text it keeps.
+    // The definitions the unit leaves out are those whose requirements
+    // failed, then those of the text it keeps.
     if (Opts.RefusedDefinitions)
-      Opts.RefusedDefinitions->clear();
-    std::vector<HighFunc> Working = Funcs;
+      *Opts.RefusedDefinitions = Unmet;
+    std::vector<HighFunc> Working;
+    Working.reserve(Funcs.size());
+    for (size_t I = 0; I < Funcs.size(); ++I)
+      if (!LeftOut[I])
+        Working.push_back(Funcs[I]);
     // MSVC SEH `__try`/`__finally` is plain C, so a termination handler's body
     // fills its `__finally` in the plain-C view as well as the C++ one.
     attachSEHFinallyBodies(Working, Opts.TheArch);

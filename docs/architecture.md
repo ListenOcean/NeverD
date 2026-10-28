@@ -318,7 +318,10 @@ transport an unavailable value without observing it; a real observation still
 requires its availability. Callee-save restoration follows those uses through
 dead copies and joins, while calls, exceptional entries and actual consumers
 retain their evidence. Native reconstruction does not acquire a machine-entry
-contract from these source seeds.
+contract from these source seeds. The x87 control word a function reads before
+writing it is not unavailable: it is the one the function entered with, which
+source LLVM reads at entry with the FNSTCW that X87ReadControl lowers to, as
+HighC reads it through its control-word helper.
 
 HighC prepares both declared and inferred void returns before analyzing local
 uses, retaining any effectful return evaluation. The shared source-flow graph
@@ -7121,6 +7124,11 @@ passes a prologue save of a callee-saved or link register, a scratch register's
 undefined incoming value (an alignment `push rax`), a slot past a gap in its
 stack arguments, or the register that holds its own target, unless the routine
 takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
+HighIR drops the store itself when it lands in the function's own frame below
+the entry stack pointer: those bytes held no defined value before it and hold
+none after, so C does not read the register only to fail. A variadic
+function's register save area is not such a store; its registers carry what
+its callers pass.
 Recovery records where it ended the register arguments at the target
 (`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
 past it, since dead-code elimination leaves only stale earlier writes of that
@@ -7237,7 +7245,10 @@ callee-count and operation bounds; support bodies are not emitted. Conflicting
 shapes and explicit source or user declarations do not gain inferred fields.
 Integer fields occupy complete ABI words even when a caller reads a narrow view.
 Reading only X1 can nominate an X0/X1 pair, including across a split call block;
-it still needs the same callee proof. Return-field checks follow every ordinary
+it still needs the same callee proof. Such a caller observed no argument passing
+through the call, so a register the callee leaves untouched supplies no field
+then: the callee must write each one. A tail forwarder or an import, which has
+no body to prove, gains no shape from such a read. Return-field checks follow every ordinary
 predecessor through shared epilogues and loops. A single indexed SSA dependency
 closure rejects values derived from unspecified inputs, missing definitions or
 unbound call clobbers, rather than accepting an arithmetic copy of unknown bits.
@@ -7368,9 +7379,14 @@ at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
 unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
-written as they would be. Asked for alone, such a function still fails with
-that reason, and so does a unit rendered with a source map, recorded
-positions or source names.
+written as they would be. So is one whose source requirements, checked before
+any rendering, fail (`c-emission-failed; immediate original memory requires a
+runtime GPR value or a complete occurrence-bound image span`): no rendering
+reads it, and its callers call it as a function outside the unit. Asked for
+alone, such a function still fails with that reason, and so does a unit
+rendered with a source map, recorded positions or source names, or one whose
+requirements fail under structured exception syntax, which writes funclets
+inside their parents, or in a function whose body fills another's `__finally`.
 
 HighC writes a unit's headers, helpers, declarations and image objects on the
 calling thread, then its function definitions on worker threads, each with a

@@ -941,7 +941,10 @@ Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
 jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
-zero-register index and a load overwriting its index register. Selector tests
+zero-register index and a load overwriting its index register. The C keeps
+each register-offset load and store as its encoded instruction, so these
+`AArch64_HighCExecution` cases execute only on an AArch64 host; elsewhere they
+compile the C for the kernel's target and skip the comparison. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
 Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
 explicit guarded upper-bound queries retain compound unsigned path predicates
@@ -3702,6 +3705,15 @@ fixtures exercise real x64 call bytes, shared pages, cache invalidation,
 save/reopen and settings restoration. They qualify conditional correspondence
 evidence, not callee semantics or arbitrary region transformations. The AArch64
 SDK fixture also retains the exact native BL row across save/reopen.
+Offline lineage hypothesis and anchor pages retain the native profile and
+conditional call provenance, including after collection save/reopen. Core
+projection controls cover ordinary and call-enabled evidence; Qt
+`nativeRegionCallConditionsSurviveReopen` checks both real native profiles,
+original anchor rows and the conditional-call notice through the ordinary
+source-evidence workflow. These remain unauthenticated saved coordinates.
+Ungrouped native/SSA controls retain all anchors with zero hypotheses,
+late and out-of-range pages, exact work boundaries and cancelled queries.
+The desktop all-span tabs retain the same call conditions after reopening.
 Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
 hypothesis and raw-anchor pages in a 417-function native fixture, then checks
 the original instruction address and call-context destination after loading.
