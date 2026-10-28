@@ -483,6 +483,27 @@ int fmt_e(int a) {
       {0, 1, -1, 7, 1000});
 }
 
+// sb formats into a stack buffer.  The LLVM route's frame record lays the
+// buffer's start out as a `uint64_t` member, whose address C converts to the
+// `char *` <stdio.h> declares for snprintf's buffer only through void *.
+// The hash of the text the call formats matches the kernel's.
+TEST_F(X86_64_CallAbi, AStackBufferPassesAsTheHeadersPointer) {
+  expectBothRoutesRunLikeSource(R"C(
+#include <stdio.h>
+int sb(int a) __attribute__((noinline));
+int sb(int a) {
+  char b[96];
+  int n = snprintf(b, sizeof b, "%d|%d", a, a * 3);
+  unsigned h = 0;
+  for (int i = 0; i < n && i < (int)sizeof b; i++)
+    h = h * 31 + (unsigned char)b[i];
+  return (int)h;
+}
+int buf_e(int a) { return sb(a); }
+)C",
+                                "buf_e", {"buf_e", "sb"}, {0, 1, -1, 7, 1000});
+}
+
 // A pointer walking a string is compared against its end through `~W`, the
 // bitwise complement of the string's address: the operator takes the address
 // as the integer it is, never the array.

@@ -4309,7 +4309,11 @@ result. A local the text declares a pointer takes an integer,
 as an indirect call's result, as the address it is. A C library routine
 takes a pointer to a typedef of its header's (bionic's long time_t, which the
 unit's exact widths call int32_t) and an array parameter (jmp_buf) through
-void *, as it takes a pointer to a record of its header's. An indirect call
+void *, as it takes a pointer to a record of its header's. In LLVM C, an
+object pointer parameter its header declares takes a frame member's address
+the same way where the member has another type (`frameAddressOfOtherType`):
+the start of a stack buffer `snprintf` formats into is a `uint64_t` member of
+the frame record, whose address C converts to no `char *`. An indirect call
 whose callee is unknown names its own instruction (`lowerCallInd`), where
 debug information finds its caller: it takes no signature from there
 (`debugFunctionCalled`), so the caller's `void *` result is not the call's. A function the image defines under the name of a routine

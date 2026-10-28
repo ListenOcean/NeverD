@@ -6180,6 +6180,12 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
     // takes as it is (`RaiseException(code, 0, 0, 0)`).
     const auto *Constant = llvm::dyn_cast<llvm::ConstantInt>(Operand);
     const bool Null = Constant && Constant->isZero();
+    // The parameter as the callee's declaration types it, where the debug
+    // context has one.
+    const TypeRef DeclaredParameter =
+        Function && ArgIdx < Function->Params.size()
+            ? Function->Params[ArgIdx].second
+            : nullptr;
     // A header's pointer parameter takes the integer that holds an address
     // converted, an object's or a function's (qsort's comparison).
     if (HeaderInteger &&
@@ -6209,6 +6215,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
              declaredParameterIsInteger(Call, CalleeName, ArgIdx))
       Argument = "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" +
                  Argument + ")";
+    // A frame member's address points to the type the frame record lays the
+    // member out as: the start of a stack buffer snprintf formats into is a
+    // `uint64_t` member.  A header's object pointer parameter of another type
+    // takes it through void *, as C converts it to no other object pointer.
+    else if (Library && !Library.Prototype && !Integer &&
+             libc::isObjectPointerParameter(Library.Name, ArgIdx,
+                                            libcVariant()) &&
+             frameAddressOfOtherType(*Operand, Argument, DeclaredParameter))
+      Argument = "(void *)" + Argument;
     const bool PointerArgument =
         Prototype       ? libc::isPointerType(Param)
         : HeaderInteger ? libc::isObjectPointerParameter(Library.Name, ArgIdx,
@@ -6742,6 +6757,27 @@ bool LLVMCWriter::declaredParameterIsInteger(const llvm::CallBase &Call,
       Callee ? Callee->getFunctionType() : Call.getFunctionType();
   return ArgIdx < Type->getNumParams() &&
          Type->getParamType(ArgIdx)->isIntegerTy();
+}
+
+bool LLVMCWriter::frameAddressOfOtherType(const llvm::Value &Pointer,
+                                          llvm::StringRef Text,
+                                          const TypeRef &Declared) const {
+  if (!Pointer.getType()->isPointerTy())
+    return false;
+  // The address of a frame slot, as valueStr spells it.
+  std::optional<TypedAccess> Address =
+      frameSlotAccess(&Pointer, 0, /*AddressOf=*/true);
+  if (!Address)
+    Address = frameSlotAccess(&Pointer, 8, /*AddressOf=*/true);
+  if (!Address || Address->Text != Text || !Address->Type ||
+      Address->Type->Kind != NdTypeKind::Ptr || !Address->Type->Pointee ||
+      Address->Type->Pointee->Kind == NdTypeKind::Void)
+    return false;
+  // A void * parameter takes any object pointer, and one of the member's own
+  // type takes its address as it is.
+  return !Declared || Declared->Kind != NdTypeKind::Ptr ||
+         (Declared->Pointee && Declared->Pointee->Kind != NdTypeKind::Void &&
+          typeToC(Declared) != typeToC(Address->Type));
 }
 
 bool LLVMCWriter::writeExclusiveSkip(

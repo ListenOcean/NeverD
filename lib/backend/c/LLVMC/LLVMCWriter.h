@@ -706,6 +706,13 @@ public:
   bool declaredParameterIsInteger(const llvm::CallBase &Call,
                                   llvm::StringRef CalleeName,
                                   unsigned ArgIdx) const;
+  /// Whether \p Text, \p Pointer as the call spells it, is the address of a
+  /// frame member whose type, which the frame record lays the member out as,
+  /// \p Declared does not point to: C converts it to such a parameter only
+  /// through void *.  A void * parameter takes it as it is; where no
+  /// declaration types the parameter, any such address counts.
+  bool frameAddressOfOtherType(const llvm::Value &Pointer, llvm::StringRef Text,
+                               const TypeRef &Declared) const;
   std::optional<std::string> enumeratorDisplay(const TypeRef &Ty,
                                                uint64_t Val) const;
   TypeRef enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const;

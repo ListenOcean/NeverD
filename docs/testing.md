@@ -222,6 +222,10 @@ doubles: one loaded whole, ones a conversion leaves beside an unknown upper
 lane, and constants `printf` and `snprintf` take from read-only data, which
 HighC prints as their values. Each C passes them as doubles: every call returns
 the count the kernel's does, and a hash of the text `snprintf` formats matches.
+`AStackBufferPassesAsTheHeadersPointer` runs the C of both routes for
+`snprintf` into a stack buffer, whose start the LLVM route's frame record lays
+out as a `uint64_t` member: that C passes its address through `void *` to the
+`char *` <stdio.h> declares, and a hash of the text matches the kernel's.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
