@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Undefined-output admission for legacy packed and scalar vector moves.
+/// Undefined-output admission for legacy vector moves and register XOR.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_LIFT_X86_X86LEGACYVECTORMOVEAUDIT_H
@@ -26,6 +26,14 @@ inline bool form(const cs_insn *Insn, Arch Target) {
   uint8_t RequiredPrefix = 0, LoadOpcode = 0, StoreOpcode = 0;
   unsigned MemoryBytes = 16;
   switch (Insn->id) {
+  case X86_INS_PXOR:
+    // Legacy register XOR changes all XMM bits and preserves flags and the
+    // upper vector lanes. Memory forms need their own alignment audit.
+    if (X.operands[1].type != X86_OP_REG)
+      return false;
+    RequiredPrefix = 0x66;
+    LoadOpcode = StoreOpcode = 0xef;
+    break;
   case X86_INS_MOVDQU:
     RequiredPrefix = 0xf3;
     LoadOpcode = 0x6f;

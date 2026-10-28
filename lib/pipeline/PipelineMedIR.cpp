@@ -68,9 +68,9 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
   simplifyProvenStackAlignment(Func, Image.Arch, Image.abiFormat(),
                                Func.EntryKind);
   std::string Diagnostic;
-  if (!validateSourceCallReturnReads(Func, Image, Diagnostic,
-                                     limits::ir::kSourceCallReturnReadWork,
-                                     &Source))
+  if (!preserveSourceCallReturnWrites(Func, Image, Diagnostic,
+                                      limits::ir::kSourceCallReturnReadWork,
+                                      &Source))
     throw LowToMedConversionError(Diagnostic);
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }

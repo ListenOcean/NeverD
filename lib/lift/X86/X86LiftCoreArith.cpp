@@ -14,6 +14,7 @@
 
 #include "X86LiftAPXValidation.h"
 #include "X86LiftDetail.h"
+#include "X86LockedUnary.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/lift/X86/X86Lifter.h"
@@ -771,6 +772,29 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
   case X86_INS_DEC: {
     if (X86.op_count < 1)
       break;
+    if (X86.prefix[0] == X86_PREFIX_LOCK) {
+      if (!lockedunary::form(Insn, L.targetArch()))
+        return false;
+      const auto &Memory = X86.operands[0];
+      const auto Address = S.computeEA(Memory);
+      const auto Old = S.makeTemp(Memory.size);
+      const auto One = NdVar::scalar(1, Memory.size);
+      const bool Increment = InsnId == X86_INS_INC;
+      const auto Addend = NdVar::scalar(
+          Increment ? 1 : (UINT64_MAX >> (64 - Memory.size * 8)), Memory.size);
+      S.emit(NdOp::ATOMIC_ADD, Old, {Address, Addend},
+             NdMemoryOrdering::SequentiallyConsistent,
+             X86Lifter::LiftState::memoryAddressSpace(Memory));
+      const auto Result = S.makeTemp(Memory.size);
+      S.emit(Increment ? NdOp::INT_ADD : NdOp::INT_SUB, Result, {Old, One});
+      L.emitZSPF(S, Result);
+      L.emitAF(S, Result, Old, One);
+      S.emit(Increment ? NdOp::INT_SOVF : NdOp::INT_SBOR,
+             NdVar::reg(x86reg::OF, 1), {Old, One});
+      // CF is preserved. The native XADD used by source backends computes
+      // its own host flags, while these explicit outputs carry guest flags.
+      break;
+    }
     const unsigned SourceIndex = ApxUnary.Valid ? ApxUnary.SourceIndex : 0;
     const bool SuppressFlags = ApxUnary.Valid && ApxUnary.NF;
     NdVar DstR = readArithmeticOperand(X86.operands[SourceIndex]);

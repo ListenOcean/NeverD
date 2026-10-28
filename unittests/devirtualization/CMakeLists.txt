@@ -242,6 +242,15 @@ add_neverd_unittest(NeverDInterpreterMachineStateTests
   MachineStringSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC Support
 )
+
+add_neverd_unittest(NeverDX64ContinuationSourceTests
+  X64ContinuationSourceTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline BinaryInterpreterSpecialization
+)
+target_compile_definitions(NeverDX64ContinuationSourceTests PRIVATE
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
 target_compile_definitions(NeverDInterpreterMachineStateTests PRIVATE
   TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
   NEVERD_BINARY="$<TARGET_FILE:neverd>"

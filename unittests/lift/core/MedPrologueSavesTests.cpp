@@ -781,6 +781,87 @@ TEST(SourceCallReturnReads, ConstantOldContentsCannotHideTheImplicitWrite) {
   }
 }
 
+TEST(SourceCallReturnReads, MaterializesTheOriginalPCAndRevalidatesTheStore) {
+  auto Func = observedCallSlot();
+  auto Image = callSlotImage();
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  ASSERT_EQ(Func.Blocks[0].Ops.size(), 9u);
+  const auto &Write = Func.Blocks[0].Ops[5];
+  EXPECT_EQ(Write.Opcode, NdOp::STORE);
+  EXPECT_EQ(Write.Inputs[1].ConstVal, 0x100du);
+  EXPECT_EQ(Write.Inputs[1].Size, 8u);
+  EXPECT_FALSE(Write.PrologueSave);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, Image, Error)) << Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.Blocks[0].Ops.size(), 9u);
+  Func.Blocks[0].Ops[5].Inputs[1].ConstVal ^= 1;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, Image, Error));
+  Func.Blocks[0].Ops[5].Inputs[1].ConstVal ^= 1;
+  // A changed call length cannot reuse a saved return-PC assertion.
+  Image.Segments[0].Data[8] = 0xff;
+  Image.Segments[0].Data[9] = 0xd0; // call rax: next PC is 0x100a
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, Image, Error));
+}
+
+TEST(SourceCallReturnReads, MaterializationRetainsPartialOutputAndFrameExtent) {
+  auto Func = observedCallSlot();
+  Func.FrameSize = 32;
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.insert(Ops.begin() + 5,
+             op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(29, 4)}));
+  auto Image = callSlotImage();
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.FrameSize, 40);
+  EXPECT_EQ(Func.Blocks[0].Ops[5].Inputs[1].ConstVal, 0x100du);
+  EXPECT_EQ(Func.Blocks[0].Ops[7].Inputs[1].ConstVal, 29u);
+  EXPECT_EQ(Func.Blocks[0].Ops[7].Inputs[1].Size, 4u);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, Image, Error)) << Error;
+}
+
+TEST(SourceCallReturnReads, MaterializationNeverTurnsTailsIntoPushes) {
+  auto Func = observedCallSlot();
+  auto Image = callSlotImage(0xe9);
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  EXPECT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.Blocks[0].Ops.size(), 7u);
+}
+
+TEST(SourceCallReturnReads, MaterializationIsTransactionalForUnknownStacks) {
+  for (bool MissingStack : {false, true}) {
+    auto Func = observedCallSlot();
+    if (MissingStack)
+      Func.Blocks[0].Ops.insert(
+          Func.Blocks[0].Ops.begin() + 4,
+          op(NdOp::COPY, sp(2), {MedVar::makeUnspecified(8, Arch::X64)}));
+    const auto Before = Func.Blocks[0].Ops.size();
+    auto Image = callSlotImage();
+    Image.Bits = Bitness::Bits64;
+    std::string Error;
+    EXPECT_FALSE(preserveSourceCallReturnWrites(Func, Image, Error,
+                                                MissingStack ? 262144 : 0));
+    EXPECT_EQ(Func.Blocks[0].Ops.size(), Before);
+    EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
+  }
+}
+
+TEST(SourceCallReturnReads, MaterializationRequiresAnActualCompleteNearCall) {
+  for (unsigned Size : {9u, 10u, 11u, 12u}) {
+    auto Func = observedCallSlot();
+    auto Image = callSlotImage();
+    Image.Bits = Bitness::Bits64;
+    Image.Segments[0].Size = Size;
+    Image.Segments[0].Data.resize(Size);
+    std::string Error;
+    EXPECT_FALSE(preserveSourceCallReturnWrites(Func, Image, Error));
+    EXPECT_EQ(Func.Blocks[0].Ops.size(), 7u);
+  }
+}
+
 TEST(SourceCallReturnReads, OnlyLaterWritesOfEachObservedByteEndTheHazard) {
   for (unsigned Bytes : {1u, 4u, 8u}) {
     auto Func = observedCallSlot();

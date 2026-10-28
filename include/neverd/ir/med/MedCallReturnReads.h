@@ -34,6 +34,16 @@ bool validateSourceCallReturnReads(
     const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
     size_t WorkLimit = limits::ir::kSourceCallReturnReadWork,
     const LowFunc *FreshSource = nullptr);
+
+/// Retain observed near-CALL return-address writes in the reconstructed frame.
+/// Only exact entry-relative slots below entry SP are admitted. Planning is
+/// transactional: ambiguous stacks, incomplete graphs and unavailable original
+/// encodings leave Func unchanged. This does not prove callee memory effects or
+/// authorize a physical stack switch. Invoke before source stack cleanup.
+bool preserveSourceCallReturnWrites(
+    MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
+    size_t WorkLimit = limits::ir::kSourceCallReturnReadWork,
+    const LowFunc *FreshSource = nullptr);
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDCALLRETURNREADS_H

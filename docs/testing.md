@@ -22,6 +22,44 @@ Both source routes refuse the negative controls; restored x64 callbacks
 execute with independent argument/result checks at O0/O2. A synthetic tail
 CALL cannot supply a real callee's stack effects to the pre-transfer proof.
 
+`ComputedCodeBranch.*` in `NeverDOwnInteriorCallTests` checks pure arithmetic
+dispatch without memory tables, all 16 values of a four-bit mask (including an
+overlapping backward loop), and exact entry lookup and instruction-end
+fallthrough for overlapping x86 streams. HighC and LLVMC execute the finite
+arms at O0/O2 with ASan/UBSan, with pipeline optimization enabled and disabled;
+the small-mask cases cover
+x64 PE/ELF/Mach-O and i386 ELF. The intentionally infinite arm must time out in
+a bounded child process rather than return or trap. Negative controls cover
+predecessor order, unknown join arms, partial writes, calls, large masks,
+exhausted work, newly discovered unknown backedges, and code pointers escaping
+the numeric dispatch graph.
+Data-address bases keep the same numeric coordinate; unresolved relocation
+fragments supply no constant facts.
+
+`WindowsKernelABI.ResumeThreadDoesNotTakeTheDispatchersAmbientRegisters`
+executes both source routes with an independent two-argument callee. Its
+ambient register observations cannot add source arguments to the declared
+native service. `WindowsKernelABI.NativeServiceKeepsItsDeclaredStackArgument`
+also executes a five-argument call, including its fifth stack operand.
+`RegisterOnlyServiceDoesNotTakeAdjacentFrameStores` passes a local record's
+address to a four-argument service; its initialized bytes must not become
+additional arguments, and the BOOLEAN carrier keeps only its low byte.
+`EmptyServiceContractDoesNotAcquireAmbientOperands` checks that a zero-argument
+contract remains complete despite a callee's ambient register read and local
+frame stores. Both compile and execute HighC and LLVMC at O0/O2 with ASan/UBSan.
+`HeaderLibrary.NativeServiceContractsMatchTheirBundledDeclarations` checks
+every added native-service argument width against the bundled phnt prototypes.
+`EveryUnambiguousDdkNativeServiceHasAnExactCallContract` checks the reverse
+direction for every bundled DDK Zw declaration, including zero-argument
+services, and compares overlapping phnt declarations. The known
+`ZwFlushInstructionCache` disagreement (ULONG versus SIZE_T) deliberately has
+no fixed contract; a separate test retains that conflict and a new conflict
+fails coverage. The
+`WindowsKernelABI.Wdk*` execution cases cover a transitive ordinary caller,
+narrow first/third BOOLEAN parameters, the fifth stack operand and an empty
+signature despite ambient reads. Both C backends run with pipeline optimization
+on/off and independently compiled O0/O2 code under ASan/UBSan.
+
 `NeverDSourceEntryBindingTests` runs source ABI, typed call, runtime entry and
 incoming stack binding regressions without the full mobile fixture inventory.
 Its store tests distinguish a logical stack parameter from a call or intrinsic
@@ -8447,6 +8485,56 @@ Shared-header and shared-latch regressions cover zero-extended 32-bit and full 6
 Partial-counter regressions cover frame and register lanes, both directions, low/interior/high positions, unusual widths, both byte orders and three-byte represented frame words. They check delayed lane discovery, preserved-bit mutations, nonprogress and unguarded wrap, invalid additional entries, exact/short inference budgets, and existing single-cut search.
 
 Leading-phase regressions cover two and three sequential loops reusing one countdown word, composition with existing nested-loop phases, exact and one-short rank/query budgets, nonprogressing loops and resets back to an earlier phase. Same-width corrupted phase constants, wrong results and frame writes must fail the complete checker without a certificate; missing original evidence remains unsupported.
+
+`NeverDX64ContinuationSourceTests` executes both HighC and LLVMC instruction
+steps at O0/O2 under ASan/UBSan. Independent byte/state oracles cover service
+selectors, live-frame jumps, indirect CALL target/slot aliasing, modified RET
+cleanup, changed saved-SP cells, FS/GS-to-stack aliases, partial registers,
+upper vector preservation, packed flags and fresh arbitrary values. The
+conditional wide-read fixture retains physical bytes from an earlier CALL
+under partial callback writes; it does not assume full output initialization.
+RDMSR and IRETQ must request native execution before changing state or touching
+the guest stack. Invalid profile/PC/flags, missing/duplicate addresses and
+exhausted instruction/operation budgets must fail explicitly. These checks
+establish a restricted continuation interface, not full kernel execution or
+success of the ordinary source routes. Changes to its shared binary provider
+also require the existing PE fixed-image, raw-environment, native undefined
+independence and binary refinement refusal checks.
+
+V2 cases check all 64 arbitrary-flag choices of CR8 moves, invalid entry/write
+state without partial commit, exact MXCSR load/store bytes and both writable
+masks, SWAPGS followed by a GS-relative read and a swap back, retained LFENCE,
+128-bit PXOR with untouched upper lanes, and memory bit tests with signed
+register offsets, immediate-index wrapping and all 16 arbitrary-flag choices.
+`X86NativeStateAudit.*` and `X86BitTestUndefinedEffects.*` bind the raw encodings to
+decoded operands, including prefixes, SIB/displacement/immediate extents and
+segment identity; malformed detail must not authorize coverage. Keep the V1
+profile/storage tests and the shared MXCSR/legacy-GS/task-priority recovery tests.
+Unsigned 64-bit register DIV checks all 16 encodings, RAX/RDX aliases, divisor
+zero, quotient-overflow boundaries and every one of the 64 arbitrary flag
+patterns against independent restoring division. Rejected calls must preserve
+all state bytes. Native audit tests additionally check lift-order independence,
+malformed byte/detail pairs and refusal of unaudited widths/forms.
+`LLVMCValues.NativeAssemblyKeepsOperandSnapshotsAcrossBranches` retains signed
+and unsigned 32/64-bit divide inputs across a branch and a source-memory
+overwrite. It compares generated C with independently compiled LLVM and exact
+arithmetic results at O0/O2 on x64 and native i386; operand pruning must never
+leave an uninitialized assembly input.
+`BinaryLowIRRefinement.OpaquePreservationCannotUpgradeSelectedUndefinedChoices`
+checks both audited PXOR and unaudited PAND: the missing-evidence classifications
+differ, but neither grants opaque vector preservation or permission to execute
+the vector arm under the scalar proof contract.
+
+V3 continuation cases enumerate all 2,048 admitted packed-flag combinations
+across STAC, PUSHFQ/POP, CLI/STI and CLAC, checking every state byte and the
+physical stack snapshot. Separate cases retain legacy GS/MXCSR/fence behavior,
+preserve AC and the complete state at a native-environment request,
+reject every excluded flag and invalid control value without mutation, and keep
+STAC/CLAC outside V1/V2. `BinaryLowIRRefinement.Smap*` checks independent incoming
+AC, mandatory final AC even with empty output selections, changed instructions,
+malformed intrinsic shapes and rejection under the previous profiles.
+`X86NativeStateAudit.AccessCheck*` checks canonical native bytes, mutated decode
+detail and the absence of an opaque-state certificate.
 
 `InterpreterMachineStateModel.*` in `NeverDLowIRRefinementTests` uses independent LowIR examples to check raw entry flags, status versus guest RAX, all 17 state words, partial register lanes, packed flags, sticky dynamic rejection, guest frame writes, both branch arms and cyclic inference followed by a fresh proof. Wrong outputs, lost status, changed memory, stale instruction records, malformed inputs and exhausted generation budgets must fail. Existing machine-source tests also exercise both C routes at O0/O2; model tests alone do not certify compiled C.
 

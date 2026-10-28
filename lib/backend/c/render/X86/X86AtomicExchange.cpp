@@ -20,10 +20,12 @@
 
 namespace neverd {
 
-std::string renderX86AtomicExchange(const X86AtomicExchangePlan &Plan,
-                                    const std::string &Address,
-                                    const std::string &Value) {
-  std::string Temporary = "neverd_xchg_value";
+std::string renderX86AtomicRMW(const X86AtomicRMWPlan &Plan,
+                               const std::string &Address,
+                               const std::string &Value) {
+  std::string Temporary = Plan.Kind == X86AtomicRMWKind::Exchange
+                              ? "neverd_xchg_value"
+                              : "neverd_xadd_value";
   while (Address.find(Temporary) != std::string::npos ||
          Value.find(Temporary) != std::string::npos)
     Temporary += "_";
@@ -34,18 +36,23 @@ std::string renderX86AtomicExchange(const X86AtomicExchangePlan &Plan,
          Value + "); __asm__ __volatile__(\"" + Plan.mnemonic() + " %0, " +
          Prefix + "(%1)\" : \"+" + (Plan.Bytes == 1 ? "q" : "r") + "\"(" +
          Temporary + ") : \"r\"((" + Pointer + ")(uintptr_t)(" + Address +
-         ")) : \"memory\"); " + Temporary + "; })";
+         ")) : \"memory\"" +
+         (Plan.Kind == X86AtomicRMWKind::FetchAdd ? ", \"cc\"" : "") + "); " +
+         Temporary + "; })";
 }
 
-std::optional<X86AtomicExchangePlan>
-x86AtomicExchangeCallPlan(Arch Architecture, const llvm::CallInst &Call) {
+std::optional<X86AtomicRMWPlan>
+x86AtomicRMWCallPlan(Arch Architecture, const llvm::CallInst &Call) {
   const auto *Assembly =
       llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Assembly || !llvm::StringRef(Assembly->getAsmString())
-                        .starts_with(kX86AtomicExchangeAsmMarker))
+  if (!Assembly)
+    return std::nullopt;
+  const llvm::StringRef Text = Assembly->getAsmString();
+  const bool Add = Text.starts_with(kX86AtomicFetchAddAsmMarker);
+  if (!Add && !Text.starts_with(kX86AtomicExchangeAsmMarker))
     return std::nullopt;
   const auto Invalid = []() {
-    throw std::invalid_argument("invalid owned x86 memory exchange");
+    throw std::invalid_argument("invalid owned x86 atomic memory transaction");
   };
   if (!Call.getType()->isIntegerTy() || Call.arg_size() != 2 ||
       !Call.getArgOperand(0)->getType()->isPointerTy() ||
@@ -60,7 +67,9 @@ x86AtomicExchangeCallPlan(Arch Architecture, const llvm::CallInst &Call) {
   else if (Space)
     Invalid();
   const unsigned Bits = Call.getType()->getIntegerBitWidth();
-  const auto Plan = x86AtomicExchangePlan(Architecture, Bits / 8, AddressSpace);
+  const auto Plan = x86AtomicRMWPlan(Architecture, Bits / 8, AddressSpace,
+                                     Add ? X86AtomicRMWKind::FetchAdd
+                                         : X86AtomicRMWKind::Exchange);
   if (!Plan || Bits != Plan->Bytes * 8 ||
       Assembly->getAsmString() != Plan->assembly() ||
       Assembly->getConstraintString() != Plan->constraints() ||

@@ -1289,19 +1289,20 @@ void MedLLVMEmitter::emitOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       Val = Builder.CreateIntCast(Val, ValTy, false, "atomic_rmw_val");
     llvm::Value *Ptr = resolveAtomicMemoryPtr(
         Op.Inputs[0], Op.Output.Size, ValTy, Builder, Op.MemoryAddressSpace);
-    if (Op.Opcode == NdOp::ATOMIC_XCHG)
-      if (const auto Plan = x86AtomicExchangePlan(TargetArch, Op.Output.Size,
-                                                  Op.MemoryAddressSpace)) {
-        // Generic atomicrmw with natural alignment would assert a fact the
-        // decoded address never supplied. Its unaligned libcall expansion
-        // also loses the original hardware transaction and fault behavior.
-        auto *Type =
-            llvm::FunctionType::get(ValTy, {Ptr->getType(), ValTy}, false);
-        auto *Assembly = llvm::InlineAsm::get(Type, Plan->assembly(),
-                                              Plan->constraints(), true);
-        Result = Builder.CreateCall(Assembly, {Ptr, Val}, "xchg_old");
-        break;
-      }
+    if (const auto Plan = x86AtomicRMWPlan(
+            TargetArch, Op.Output.Size, Op.MemoryAddressSpace,
+            Op.Opcode == NdOp::ATOMIC_XCHG ? X86AtomicRMWKind::Exchange
+                                           : X86AtomicRMWKind::FetchAdd)) {
+      // Generic atomicrmw with natural alignment would assert a fact the
+      // decoded address never supplied. Its unaligned libcall expansion
+      // also loses the original hardware transaction and fault behavior.
+      auto *Type =
+          llvm::FunctionType::get(ValTy, {Ptr->getType(), ValTy}, false);
+      auto *Assembly = llvm::InlineAsm::get(Type, Plan->assembly(),
+                                            Plan->constraints(), true);
+      Result = Builder.CreateCall(Assembly, {Ptr, Val}, "atomic_old");
+      break;
+    }
     llvm::AtomicRMWInst::BinOp RMWOp = Op.Opcode == NdOp::ATOMIC_ADD
                                            ? llvm::AtomicRMWInst::Add
                                            : llvm::AtomicRMWInst::Xchg;

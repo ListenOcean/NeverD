@@ -9,6 +9,7 @@
 
 #include "../../lib/analysis/arch/x86_64/StringTransfer.h"
 #include "../../lib/analysis/core/RecoveryArchitecture.h"
+#include "../../lib/lift/X86/X86NativeStateAudit.h"
 #include "gtest/gtest.h"
 
 #include "neverd/decode/Decoder.h"
@@ -57,6 +58,35 @@ std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
   EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Plain));
   EXPECT_EQ(Preserved, LowInstructionPreservedState{});
   return Ops;
+}
+
+TEST(NativeStateAudit, LockedIncrementAndDecrementHaveOneAtomicTransaction) {
+  for (unsigned Width : {1u, 2u, 4u, 8u})
+    for (bool Decrement : {false, true}) {
+      std::vector<uint8_t> Bytes{0xf0};
+      if (Width == 2)
+        Bytes.push_back(0x66);
+      if (Width == 8)
+        Bytes.push_back(0x48);
+      Bytes.push_back(Width == 1 ? 0xfe : 0xff);
+      Bytes.push_back(Decrement ? 0x08 : 0x00);
+      const auto Ops = lift(Bytes);
+      unsigned Atomic = 0;
+      for (const auto &Op : Ops) {
+        EXPECT_NE(Op.Opcode, NdOp::LOAD);
+        EXPECT_NE(Op.Opcode, NdOp::STORE);
+        EXPECT_FALSE(Op.Output.isReg() && Op.Output.Offset == x86reg::CF);
+        if (Op.Opcode == NdOp::ATOMIC_ADD) {
+          ++Atomic;
+          EXPECT_EQ(Op.MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          EXPECT_EQ(Op.Output.Size, Width);
+          EXPECT_EQ(Op.Inputs[1].Offset,
+                    Decrement ? UINT64_MAX >> (64 - Width * 8) : 1);
+        }
+      }
+      EXPECT_EQ(Atomic, 1u);
+    }
 }
 
 BinaryImage image(uint64_t Base = MemoryBase, unsigned Size = 256) {
@@ -186,6 +216,78 @@ TEST(X86NativeStateAudit, RepMovsqRetainsOrderedCopyAndCompleteState) {
           Expected.expect(Emulator);
           expectMemory(Emulator, MemoryBase, Memory);
         }
+}
+
+TEST(X86NativeStateAudit, AccessCheckHasNoArbitraryOrOpaqueStateCertificate) {
+  for (uint8_t Opcode : {uint8_t{0xca}, uint8_t{0xcb}}) {
+    const auto Ops = lift({0x0f, 0x01, Opcode});
+    ASSERT_EQ(Ops.size(), 1u);
+    EXPECT_EQ(Ops.front().Opcode, NdOp::INTRINSIC);
+    ASSERT_EQ(Ops.front().NumInputs, 1u);
+    EXPECT_EQ(Ops.front().Inputs[0].Offset,
+              static_cast<uint64_t>(Opcode == 0xca ? Intrinsic::Clac
+                                                   : Intrinsic::Stac));
+    EXPECT_EQ(Ops.front().Output.Size, 0u);
+  }
+}
+
+TEST(X86NativeStateAudit, AccessCheckRequiresMatchingCanonicalBytesAndDetail) {
+  for (uint8_t Opcode : {uint8_t{0xca}, uint8_t{0xcb}}) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    const uint8_t Bytes[]{0x0f, 0x01, Opcode};
+    DecodedInsn Insn;
+    ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), CodeAddress, Insn), 3);
+    ASSERT_NE(Insn.Raw, nullptr);
+    ASSERT_TRUE(nativestateaudit::accessCheckForm(Insn.Raw, Arch::X64));
+    EXPECT_FALSE(nativestateaudit::accessCheckForm(Insn.Raw, Arch::X86));
+    for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+      cs_insn Copy = *Insn.Raw;
+      cs_detail Detail = *Copy.detail;
+      Copy.detail = &Detail;
+      auto &X = Detail.x86;
+      switch (Mutation) {
+      case 0:
+        Copy.bytes[2] ^= 1;
+        break;
+      case 1:
+        Copy.size = 4;
+        break;
+      case 2:
+        Copy.id = X86_INS_SWAPGS;
+        break;
+      case 3:
+        X.modrm ^= 1;
+        break;
+      case 4:
+        X.prefix[0] = 0xf0;
+        break;
+      case 5:
+        X.rex = 0x48;
+        break;
+      case 6:
+        X.addr_size = 4;
+        break;
+      case 7:
+        X.encoding.modrm_offset = 1;
+        break;
+      case 8:
+        X.op_count = 1;
+        break;
+      case 9:
+        X.eflags ^= X86_EFLAGS_UNDEFINED_CF;
+        break;
+      case 10:
+        X.opcode[2] = 1;
+        break;
+      case 11:
+        X.avx_sae = true;
+        break;
+      }
+      EXPECT_FALSE(nativestateaudit::accessCheckForm(&Copy, Arch::X64))
+          << "mutation " << Mutation;
+    }
+  }
 }
 
 TEST(X86NativeStateAudit, RepMovsqZeroCountAvoidsMemoryAndBudgetIsExact) {
@@ -441,15 +543,14 @@ TEST(X86NativeStateAudit, OtherPrefixesModesAndInstructionFamiliesStayClosed) {
       {0x64, 0xf3, 0x48, 0xa5},
       {0x65, 0xf3, 0x48, 0xa5},
       {0xf3, 0x49, 0xa5},
-      {0x0f, 0xae, 0x18},
       {0xc5, 0xf8, 0xae, 0x10},
       {0x66, 0x0f, 0xae, 0x10},
       {0x67, 0x67, 0x0f, 0xae, 0x10},
       {0x40, 0x40, 0x0f, 0xae, 0x10},
       {0x44, 0x0f, 0xae, 0x10},
       {0x48, 0x0f, 0xae, 0x10},
-      {0x64, 0x0f, 0xae, 0x10},
-      {0x65, 0x0f, 0xae, 0x10}};
+      {0x64, 0x64, 0x0f, 0xae, 0x10},
+      {0x65, 0x65, 0x0f, 0xae, 0x10}};
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));
   for (const auto &Bytes : Cases) {
@@ -524,6 +625,289 @@ TEST(X86NativeStateAudit, RawAndDetailDisagreementCannotAuthorizeEffects) {
       Mutations[Index](*Insn.Raw);
       expectUnaudited(Dec, Insn);
     }
+  }
+}
+
+TEST(X86NativeStateAudit, MXCSRStoreAndSegmentFormsHaveCompleteFlagCoverage) {
+  for (uint8_t Opcode : {0x10, 0x18})
+    for (uint8_t Segment : {0, 0x64, 0x65}) {
+      std::vector<uint8_t> Bytes{0x0f, 0xae, Opcode};
+      if (Segment)
+        Bytes.insert(Bytes.begin(), Segment);
+      EXPECT_FALSE(lift(Bytes).empty());
+    }
+}
+
+TEST(X86NativeStateAudit, CR8EncodingBindsSixArbitraryFlagsWithoutOpaqueProof) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (uint8_t Register = 0; Register != 16; ++Register)
+    for (uint8_t Opcode : {0x20, 0x22}) {
+      const uint8_t Bytes[] = {uint8_t(Register < 8 ? 0x44 : 0x45), 0x0f,
+                               Opcode, uint8_t(0xc0 | (Register & 7))};
+      DecodedInsn Insn{};
+      ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), CodeAddress, Insn),
+                4);
+      std::vector<LowOp> Ops;
+      LowInstructionUndefinedEffects Effects;
+      LowInstructionPreservedState Preserved;
+      Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
+      ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+          << Effects.Diagnostic;
+      ASSERT_EQ(Effects.Effects.size(), 6u);
+      const unsigned Undefined[] = {x86reg::OF, x86reg::SF, x86reg::ZF,
+                                    x86reg::AF, x86reg::PF, x86reg::CF};
+      for (unsigned I = 0; I != 6; ++I) {
+        EXPECT_EQ(Effects.Effects[I].Output, NdVar::reg(Undefined[I], 1));
+        EXPECT_EQ(Effects.Effects[I].BitCount, 1u);
+        EXPECT_EQ(Effects.Effects[I].AfterOp, Ops.size());
+      }
+      EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+      Insn.Raw->detail->x86.operands[Opcode == 0x20 ? 1 : 0].reg = X86_REG_CR2;
+      expectUnaudited(Dec, Insn);
+    }
+}
+
+TEST(X86NativeStateAudit, CR2EncodingBindsSixArbitraryFlagsWithoutOpaqueProof) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (uint8_t Register = 0; Register != 16; ++Register)
+    for (uint8_t Opcode : {0x20, 0x22}) {
+      std::vector<uint8_t> Bytes{0x0f, Opcode, uint8_t(0xd0 | (Register & 7))};
+      if (Register >= 8)
+        Bytes.insert(Bytes.begin(), 0x41);
+      DecodedInsn Insn{};
+      ASSERT_EQ(
+          Dec.decodeOneForLift(Bytes.data(), Bytes.size(), CodeAddress, Insn),
+          int(Bytes.size()));
+      std::vector<LowOp> Ops;
+      LowInstructionUndefinedEffects Effects;
+      LowInstructionPreservedState Preserved;
+      Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
+      ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+          << Effects.Diagnostic;
+      ASSERT_EQ(Effects.Effects.size(), 6u);
+      for (const auto &Effect : Effects.Effects) {
+        EXPECT_EQ(Effect.BitCount, 1u);
+        EXPECT_EQ(Effect.AfterOp, Ops.size());
+      }
+      EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+      Insn.Raw->detail->x86.operands[Opcode == 0x20 ? 1 : 0].reg = X86_REG_CR3;
+      expectUnaudited(Dec, Insn);
+    }
+}
+
+TEST(X86NativeStateAudit, TimestampCoverageRequiresExactEncodingAndDetails) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (const std::vector<uint8_t> Bytes :
+       {std::vector<uint8_t>{0x0f, 0x31},
+        std::vector<uint8_t>{0x0f, 0x01, 0xf9}}) {
+    const auto Decode = [&] {
+      DecodedInsn I{};
+      EXPECT_EQ(
+          Dec.decodeOneForLift(Bytes.data(), Bytes.size(), CodeAddress, I),
+          int(Bytes.size()));
+      return I;
+    };
+    auto I = Decode();
+    std::vector<LowOp> Ops;
+    LowInstructionUndefinedEffects Effects;
+    LowInstructionPreservedState Preserved;
+    Dec.liftToLow(I, Ops, {}, {}, &Effects, &Preserved);
+    EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete);
+    EXPECT_TRUE(Effects.Effects.empty());
+    EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      auto Forged = Decode();
+      auto &X = Forged.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        X.op_count = 1;
+        break;
+      case 1:
+        X.prefix[0] = 0xf0;
+        break;
+      case 2:
+        X.encoding.modrm_offset ^= 2;
+        break;
+      case 3:
+        X.eflags = X86_EFLAGS_MODIFY_CF;
+        break;
+      case 4:
+        Forged.Raw->bytes[1] ^= 1;
+        break;
+      }
+      expectUnaudited(Dec, Forged);
+    }
+  }
+}
+
+TEST(X86NativeStateAudit, WritePrefetchBindsItsActualAddressAndHint) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (uint8_t Segment : {0, 0x64, 0x65})
+    for (uint8_t Address : {0, 0x67}) {
+      std::vector<uint8_t> Bytes;
+      if (Segment)
+        Bytes.push_back(Segment);
+      if (Address)
+        Bytes.push_back(Address);
+      Bytes.insert(Bytes.end(), {0x0f, 0x0d, 0x8f, 0x90, 0, 0, 0});
+      DecodedInsn I{};
+      ASSERT_EQ(
+          Dec.decodeOneForLift(Bytes.data(), Bytes.size(), CodeAddress, I),
+          int(Bytes.size()));
+      std::vector<LowOp> Ops;
+      LowInstructionUndefinedEffects Effects;
+      Dec.liftToLow(I, Ops, {}, {}, &Effects);
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+          << Effects.Diagnostic;
+      EXPECT_TRUE(Effects.Effects.empty());
+      I.Raw->detail->x86.operands[0].mem.disp++;
+      expectUnaudited(Dec, I);
+    }
+}
+
+TEST(X86NativeStateAudit, UnsignedDivisionBindsFlagsAfterSuccessfulCommit) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (uint8_t Register = 0; Register != 16; ++Register) {
+    const uint8_t Bytes[] = {uint8_t(Register < 8 ? 0x48 : 0x49), 0xf7,
+                             uint8_t(0xf0 | (Register & 7))};
+    DecodedInsn Insn{};
+    ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), CodeAddress, Insn), 3);
+    std::vector<LowOp> Ops;
+    LowInstructionUndefinedEffects Effects;
+    LowInstructionPreservedState Preserved;
+    Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
+    ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+        << Effects.Diagnostic;
+    EXPECT_EQ(Effects.OpCount, Ops.size());
+    EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
+    ASSERT_EQ(Effects.Effects.size(), 6u);
+    const unsigned Undefined[] = {x86reg::OF, x86reg::SF, x86reg::ZF,
+                                  x86reg::AF, x86reg::PF, x86reg::CF};
+    for (unsigned I = 0; I != 6; ++I) {
+      EXPECT_EQ(Effects.Effects[I].Output, NdVar::reg(Undefined[I], 1));
+      EXPECT_EQ(Effects.Effects[I].BitOffset, 0u);
+      EXPECT_EQ(Effects.Effects[I].BitCount, 1u);
+      EXPECT_FALSE(Effects.Effects[I].When);
+      EXPECT_EQ(Effects.Effects[I].AfterOp, Ops.size());
+    }
+    EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+  }
+}
+
+TEST(X86NativeStateAudit, UnsignedDivisionReadsActualHighHalfAfterPriorLifts) {
+  for (unsigned Prior = 0; Prior != 3; ++Prior) {
+    Decoder Dec;
+    ASSERT_TRUE(Dec.init(Arch::X64));
+    Dec.setStrict(true);
+    const uint8_t Clear[] = {0x31, 0xd2};
+    const uint8_t Divide[] = {0x48, 0xf7, 0xf1};
+    std::vector<LowOp> Ignored;
+    DecodedInsn Insn{};
+    if (Prior) {
+      ASSERT_EQ(Dec.decodeOneForLift(Clear, sizeof(Clear), CodeAddress, Insn),
+                2);
+      Dec.liftToLow(Insn, Ignored);
+    }
+    ASSERT_EQ(
+        Dec.decodeOneForLift(Divide, sizeof(Divide), CodeAddress + 2, Insn), 3);
+    if (Prior == 2)
+      Dec.liftToLow(Insn, Ignored);
+    std::vector<LowOp> Ops;
+    LowInstructionUndefinedEffects Effects;
+    Dec.liftToLow(Insn, Ops, {}, {}, &Effects);
+    ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete);
+    for (uint64_t Divisor : {0, 1, 3}) {
+      NdOpEmulator Emulator(image());
+      Emulator.setStrictMode(true);
+      StateOracle Expected(Emulator);
+      Expected.setRegister(Emulator, x86reg::RAX, 13);
+      Expected.setRegister(Emulator, x86reg::RDX, 1);
+      Expected.setRegister(Emulator, x86reg::RCX, Divisor);
+      const auto Completed = Emulator.run(Ops);
+      if (Divisor > 1) {
+        EXPECT_EQ(Completed, Ops.size());
+        // (2^64 + 13) / 3 = 6148914691236517209, remainder 2.
+        Expected.Registers[0] = UINT64_C(6148914691236517209);
+        Expected.Registers[2] = 2;
+      } else {
+        EXPECT_LT(Completed, Ops.size());
+      }
+      // The sidecar owns arbitrary flags. The concrete representative must
+      // leave every other bank unchanged, including on a failed precondition.
+      Expected.expect(Emulator);
+    }
+  }
+}
+
+TEST(X86NativeStateAudit, DivisionRejectsUnauditedFormsAndForgedDetails) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  using Mutation = void (*)(cs_insn &);
+  const Mutation Mutations[] = {
+      [](cs_insn &I) { I.id = X86_INS_IDIV; },
+      [](cs_insn &I) { I.bytes[I.size++] = 0x90; },
+      [](cs_insn &I) { I.bytes[0] = 0x40; },
+      [](cs_insn &I) { I.bytes[1] = 0xf6; },
+      [](cs_insn &I) { I.bytes[2] = 0xf9; },
+      [](cs_insn &I) { I.detail->x86.op_count = 2; },
+      [](cs_insn &I) { I.detail->x86.modrm ^= 1; },
+      [](cs_insn &I) { I.detail->x86.encoding.modrm_offset = 1; },
+      [](cs_insn &I) { I.detail->x86.opcode[0] ^= 1; },
+      [](cs_insn &I) { I.detail->x86.opcode[1] = 1; },
+      [](cs_insn &I) { I.detail->x86.rex ^= 1; },
+      [](cs_insn &I) { I.detail->x86.prefix[0] = 0xf0; },
+      [](cs_insn &I) { I.detail->x86.prefix[1] = 0x65; },
+      [](cs_insn &I) { I.detail->x86.prefix[2] = 0x66; },
+      [](cs_insn &I) { I.detail->x86.prefix[3] = 0x67; },
+      [](cs_insn &I) { I.detail->x86.addr_size = 4; },
+      [](cs_insn &I) { I.detail->x86.sib = 1; },
+      [](cs_insn &I) { I.detail->x86.disp = 1; },
+      [](cs_insn &I) { I.detail->x86.encoding.disp_offset = 2; },
+      [](cs_insn &I) { I.detail->x86.encoding.disp_size = 1; },
+      [](cs_insn &I) { I.detail->x86.encoding.imm_offset = 2; },
+      [](cs_insn &I) { I.detail->x86.encoding.imm_size = 1; },
+      [](cs_insn &I) { I.detail->x86.avx_sae = true; },
+      [](cs_insn &I) { I.detail->x86.avx_rm = X86_AVX_RM_RN; },
+      [](cs_insn &I) { I.detail->x86.avx_cc = X86_AVX_CC_EQ; },
+      [](cs_insn &I) { I.detail->x86.operands[0].size = 4; },
+      [](cs_insn &I) { I.detail->x86.operands[0].reg = X86_REG_RDX; },
+      [](cs_insn &I) { I.detail->x86.operands[0].avx_zero_opmask = true; },
+      [](cs_insn &I) {
+        I.detail->x86.operands[0].avx_bcast = X86_AVX_BCAST_2;
+      }};
+  for (unsigned I = 0; I != std::size(Mutations); ++I) {
+    SCOPED_TRACE(I);
+    const uint8_t Bytes[] = {0x48, 0xf7, 0xf1};
+    DecodedInsn Insn{};
+    ASSERT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), CodeAddress, Insn), 3);
+    Mutations[I](*Insn.Raw);
+    expectUnaudited(Dec, Insn);
+  }
+  const std::vector<std::vector<uint8_t>> Forms = {{0xf6, 0xf1},
+                                                   {0x66, 0xf7, 0xf1},
+                                                   {0xf7, 0xf1},
+                                                   {0x48, 0xf7, 0x31},
+                                                   {0x48, 0xf7, 0xf9},
+                                                   {0x66, 0x48, 0xf7, 0xf1},
+                                                   {0x67, 0x48, 0xf7, 0xf1},
+                                                   {0x48, 0x48, 0xf7, 0xf1}};
+  for (const auto &Bytes : Forms) {
+    DecodedInsn Insn{};
+    ASSERT_EQ(
+        Dec.decodeOneForLift(Bytes.data(), Bytes.size(), CodeAddress, Insn),
+        int(Bytes.size()));
+    expectUnaudited(Dec, Insn);
   }
 }
 

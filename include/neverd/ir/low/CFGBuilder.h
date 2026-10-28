@@ -1210,6 +1210,9 @@ private:
     /// when newly decoded paths split the producer's basic block.
     std::optional<NdVar> ScalarBranchInput;
     bool RejectedScalarBranch = false;
+    /// All-path finite scalar target set, independent of memory-table proofs.
+    bool ComputedScalarTargets = false;
+    bool RejectedComputedTargets = false;
 
     /// x87 stack-top (TOP) at this instruction's entry/exit in lift (worklist)
     /// order, and whether it absolute-resets TOP (FNINIT/FNCLEX). fixupFpuStack
@@ -1253,6 +1256,8 @@ private:
   /// jump table, the exact slot has one fixed target, so the safe model is a
   /// direct intra-function branch.
   bool resolveRelocatedInteriorBranch(const BinaryImage &Img, InsnRecord &Rec);
+  bool recoverComputedScalarBranches(const BinaryImage &Img, Decoder &Dec,
+                                     LowFunc &Func, size_t &RemainingWork);
   LowInstructionBoundary makeInstructionBoundary(const InsnRecord &Rec,
                                                  uint64_t FirstOp) const;
 

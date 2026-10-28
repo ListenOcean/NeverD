@@ -5,6 +5,27 @@ analysis and comparison output belong outside the repository.
 
 ## Open
 
+The x64 kernel call table now includes the 107 additional bundled DDK native
+service declarations whose parameter widths agree with the bundled native
+headers. Reverse inventory tests require exact arity and width coverage.
+`ZwFlushInstructionCache` remains excluded because the DDK declares its length
+as `ULONG` while the native headers declare `SIZE_T`. Ordinary wrappers use
+these fixed service contracts to bound incidental dispatcher register reads.
+Caller execution checks cover narrow register inputs, stack arguments and empty
+signatures through both C routes at O0/O2. A generic exported routine's actual
+body reads beyond a user prototype remain observable.
+
+Explicit x64 kernel continuation source carries GPRs, flags, vector bytes,
+segment bases, the physical stack and native-boundary requests. Its V3 SMAP
+profile adds a live AC bit and audited STAC/CLAC transitions under an explicit
+nonfaulting supervisor domain. Earlier profiles retain their AC restriction.
+Source execution checks compare the complete state, including refusal paths;
+refinement checks require final AC equality even without a return-value
+observer. This interface still requires a native environment for unsupported
+system effects. Ordinary source recovery still needs a proof connecting a
+service selector and its physical transfer frame to a source call contract;
+the shared dispatcher's union of machine-register reads cannot provide it.
+
 Shared MedIR flag folding preserves both subtraction operands even when they
 are equal. Treating `A-A` as `A-0` changes branch results and invents incoming
 register dependencies. `NeverDSelfCompareFlagTests` compares original machine

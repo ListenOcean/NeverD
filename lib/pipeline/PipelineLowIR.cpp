@@ -4392,8 +4392,10 @@ void computeCallRegisterEffects(
   std::set<va_t> DispatchThunks;
   std::map<va_t, GPRReadWidths> FixedEntryReads;
   std::map<va_t, int> FixedEntryStackArgs;
+  std::map<va_t, FixedIntegerCallArguments> FixedEntryIntegerArguments;
   if (Win64) {
     DispatchThunks = GuardForwarders;
+    const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
     auto Classify = [&](va_t Entry, llvm::StringRef Name) {
       if (Name.empty() || Entry == InvalidVA)
         return;
@@ -4406,6 +4408,12 @@ void computeCallRegisterEffects(
       if (!Proto)
         return;
       Result.CallPrototypeArguments.insert(Entry);
+      // Internal named routines use the same complete operand contract as
+      // imports. Counts alone leave register-only calls open to incidental
+      // frame stores during later argument recovery.
+      if (Convention && Convention->PrototypeIntegerArguments)
+        if (auto Integer = Convention->PrototypeIntegerArguments(Name))
+          FixedEntryIntegerArguments.emplace(Entry, std::move(*Integer));
       static constexpr uint64_t Win64Args[] = {x86reg::RCX, x86reg::RDX,
                                                x86reg::R8, x86reg::R9};
       GPRReadWidths Widths{};
@@ -4487,7 +4495,8 @@ void computeCallRegisterEffects(
         Change(Effect->second)->StackArgs = Count;
     Result.CallFloatReturns = std::move(Prototyped.FloatReturns);
     Result.CallEntryFloatingArguments = std::move(Prototyped.FloatingArguments);
-    Result.CallEntryIntegerArguments = std::move(Prototyped.IntegerArguments);
+    Result.CallEntryIntegerArguments = std::move(FixedEntryIntegerArguments);
+    Result.CallEntryIntegerArguments.merge(Prototyped.IntegerArguments);
     Result.CallEntryVariadicArguments = std::move(Prototyped.VariadicArguments);
   }
   CallRegisterSummaries Summaries =

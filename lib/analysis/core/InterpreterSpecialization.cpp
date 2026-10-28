@@ -4429,8 +4429,8 @@ SpecializationResult Specializer::run() {
   }
   if (Options.X64CR8State &&
       (!Options.ExplicitMachineState || !Options.NormalNonfaultingExecution ||
-       Options.X64FlagsProfile !=
-           InterpreterMachineStateProfile::KernelX64NoFaultV1)) {
+       !Options.X64FlagsProfile ||
+       !isKernelX64MachineStateProfile(*Options.X64FlagsProfile))) {
     fail(SpecializationStatus::InvalidInput,
          "CR8 state requires an explicit nonfaulting kernel machine profile");
     return std::move(Result);

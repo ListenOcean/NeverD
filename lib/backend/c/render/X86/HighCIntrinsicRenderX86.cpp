@@ -1190,7 +1190,9 @@ renderFlatMemoryIntrinsic(const HighExpr &Call,
     return "_mm_prefetch((const char *)" + Address + ", " + Hint + ");\n";
   switch (Call.IntrinsicId) {
   case Intrinsic::PrefetchW:
-    return "_m_prefetchw((void *)" + Address + ");\n";
+    // Generic compiler prefetch builtins may turn a write hint into PREFETCHT0
+    // without a target feature flag. The GNU path below retains PREFETCHW.
+    return MsvcIntrinsics ? "_m_prefetchw((void *)" + Address + ");\n" : "";
   case Intrinsic::Ldmxcsr:
     return "do {\n    uint32_t neverd_csr;\n"
            "    __builtin_memcpy(&neverd_csr, (const void *)" +
@@ -1414,6 +1416,8 @@ bool x86UsesMsvcIntrinsicHeader(Intrinsic Id) {
   switch (Id) {
   // What Microsoft's <intrin.h> declares and the GNU headers do not.
   case Intrinsic::Cpuid:
+  case Intrinsic::Rdtsc:
+  case Intrinsic::Rdtscp:
   case Intrinsic::CetWrss:
   case Intrinsic::CetWruss:
   case Intrinsic::Lidt:
@@ -1487,6 +1491,8 @@ bool x86UsesImplicitRegisterAsm(Intrinsic Id) {
 bool x86UsesGnuIntrinsicHeader(Intrinsic Id) {
   switch (Id) {
   case Intrinsic::PrefetchW:
+  case Intrinsic::Rdtsc:
+  case Intrinsic::Rdtscp:
   // __readeflags and __writeeflags (ia32intrin.h), which immintrin.h does
   // not declare.
   case Intrinsic::Pushf:
@@ -2277,8 +2283,6 @@ const char *hiloCollapseExpr(Intrinsic Id) {
   switch (Id) {
   case I::Rdtsc:
     return "__rdtsc()";
-  case I::Rdtscp:
-    return "__rdtscp()";
   default:
     return nullptr;
   }

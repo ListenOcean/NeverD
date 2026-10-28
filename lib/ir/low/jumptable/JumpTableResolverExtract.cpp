@@ -752,6 +752,24 @@ void CFGBuilder::extractJumpTables(LowFunc &Func) {
     JT.InsnAddr = Addr;
     JT.Targets = Rec.JumpTableTargets;
 
+    if (Rec.ComputedScalarTargets) {
+      for (const LowOp &Op : Rec.Ops)
+        if (Op.Opcode == NdOp::INDIR_BR && Op.NumInputs == 1) {
+          JumpTableSelectorUseRef Ref;
+          Ref.Addr = Op.Addr;
+          Ref.Seq = Op.Seq;
+          Ref.ExpectedOpcode = Op.Opcode;
+          Ref.ExpectedSize = Op.Inputs[0].Size;
+          Ref.Role = JumpTableSelectorUseRef::ValueRole::Input;
+          Ref.InputNo = 0;
+          JT.SelectorUseRefs.push_back(Ref);
+        }
+      for (va_t Target : JT.Targets)
+        JT.CaseLabels.push_back(static_cast<int64_t>(Target));
+      Func.JumpTables.push_back(std::move(JT));
+      continue;
+    }
+
     // Reuse the cached analysis from resolveJumpTable when available,
     // avoiding the duplicate backward-slicing logic.
     auto CachedIt = ResolvedTableInfo.find(Addr);

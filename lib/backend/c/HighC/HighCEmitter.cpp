@@ -1160,7 +1160,7 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
   if (const auto Plan =
           x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
-    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
+    return renderX86AtomicRMW(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1176,6 +1176,9 @@ HighCWriter::atomicFetchAddExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic fetch-add requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan = x86AtomicRMWPlan(Opts.TheArch, Ty->Size, AddressSpace,
+                                         X86AtomicRMWKind::FetchAdd))
+    return renderX86AtomicRMW(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_fetch_add(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +

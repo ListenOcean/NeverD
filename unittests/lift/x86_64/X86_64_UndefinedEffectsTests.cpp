@@ -549,7 +549,7 @@ TEST_F(X86UndefinedEffects, DoubleShiftChangedFormsDoNotPublishDraftEffects) {
 
 TEST_F(X86UndefinedEffects, BitAndRotateAuditBoundariesClearPartialEvidence) {
   const InstructionCase Cases[] = {
-      {"memory bit base", {0x0f, 0xb3, 0x08}},
+      {"duplicate memory bit segment", {0x65, 0x65, 0x0f, 0xb3, 0x08}},
       {"locked memory bit base", {0xf0, 0x0f, 0xb3, 0x08}},
       {"REP bit test", {0xf3, 0x0f, 0xa3, 0xc8}},
       {"duplicate bit-test operand prefix", {0x66, 0x66, 0x0f, 0xb3, 0xc8}},
@@ -634,6 +634,54 @@ TEST_F(X86UndefinedEffects, BitTestMutatedEncodingAndOperandsRemainUnaudited) {
         expectCleared(Effects);
         continue;
       }
+      ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
+      EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
+      expectCleared(Effects);
+    }
+}
+
+TEST_F(X86UndefinedEffects, MemoryBitTestBindsAddressAndImmediateDetails) {
+  for (bool Immediate : {false, true})
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      DecodedInsn Insn{};
+      ASSERT_TRUE(decode(
+          Immediate
+              ? std::vector<uint8_t>{0x66, 0x65, 0x0f, 0xba, 0x74, 0x4b, 0xfd,
+                                     0x12}
+              : std::vector<uint8_t>{0x65, 0x48, 0x0f, 0xb3, 0x4c, 0x53, 0xfd},
+          Insn));
+      auto &X = Insn.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        X.operands[0].mem.base = X86_REG_RDX;
+        break;
+      case 1:
+        X.operands[0].mem.index = X86_REG_R8;
+        break;
+      case 2:
+        X.operands[0].mem.scale = 8;
+        break;
+      case 3:
+        X.operands[0].mem.disp += 1;
+        break;
+      case 4:
+        X.operands[0].mem.segment = X86_REG_FS;
+        break;
+      case 5:
+        X.encoding.disp_offset -= 1;
+        break;
+      case 6:
+        X.encoding.imm_offset += 1;
+        break;
+      case 7:
+        X.sib ^= 1;
+        break;
+      case 8:
+        X.prefix[1] = 0;
+        break;
+      }
+      std::vector<LowOp> Ops;
+      auto Effects = staleEffects();
       ASSERT_NO_THROW(Dec.liftToLow(Insn, Ops, {}, {}, &Effects));
       EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Missing);
       expectCleared(Effects);

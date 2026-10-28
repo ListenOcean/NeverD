@@ -3992,6 +3992,15 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (!Callee || !Callee->isIntrinsic())
     return false;
 
+  if (Callee->getName() == "llvm.x86.rdtscp") {
+    const bool Live = valueFeedsPrintedUse(&Call);
+    const auto Timestamp = renderX86TimestampCall(
+        Opts.TheArch, Call, Live ? getName(&Call) : "", Live);
+    emitIndent(Indent);
+    OS << Timestamp->Code;
+    return true;
+  }
+
   if (x86FourSourceNativeName(Callee->getName().str())) {
     const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
     if (!I)
@@ -5359,11 +5368,11 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
     OS << *Atomic;
     return true;
   }
-  if (const auto Plan = x86AtomicExchangeCallPlan(Opts.TheArch, Call)) {
+  if (const auto Plan = x86AtomicRMWCallPlan(Opts.TheArch, Call)) {
     emitIndent(Indent);
     if (ResultLive)
       OS << Name << " = ";
-    OS << renderX86AtomicExchange(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
+    OS << renderX86AtomicRMW(*Plan, ArgStrs.at(0), ArgStrs.at(1)) << ";\n";
     return true;
   }
   if (auto BoundedLeaf = renderX86BoundedLeafCall(Opts.TheArch, Call, Name,

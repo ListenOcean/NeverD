@@ -17,6 +17,7 @@
 #include "../X86/RegistrationPhysicalFrame.h"
 #include "../X86/RegistrationPrologue.h"
 #include "../X86/RegistrationRoots.h"
+#include "ComputedBranchScalars.h"
 
 #include "neverd/Limits.h"
 #include "neverd/ir/Limits.h"
@@ -496,9 +497,10 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
           std::make_shared<FixedIntegerCallArguments>(I->second);
       MOp.CalleeRegisterArgs = 0;
       MOp.CalleeVectorArgs = 0;
-      MOp.CalleeStackArgs = I->second.Parameters.size();
+      MOp.CalleeStackArgs = 0;
       for (const auto &Parameter : I->second.Parameters) {
         if (Parameter.Kind == SourceABICarrierKind::Stack) {
+          MOp.CalleeStackArgs = I->second.Parameters.size();
           MOp.addInput(loadCallStackArgument(Block, LOp, Parameter.StackOffset,
                                              Parameter.Bytes, TailCall));
         } else {
@@ -619,8 +621,9 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
   // Its arguments are the registers this function set before the call, the
   // rule IDA uses; a register only passed through from this function's
   // entry is not taken as an argument.
-  if (Convention && Convention->DispatcherTargetRegister &&
-      CallDispatchThunks && MOp.NumInputs == 1 && LOp.Inputs[0].isConst() &&
+  if (!MOp.IntegerCallSignature && Convention &&
+      Convention->DispatcherTargetRegister && CallDispatchThunks &&
+      MOp.NumInputs == 1 && LOp.Inputs[0].isConst() &&
       CallDispatchThunks->count(Key)) {
     int8_t Count = 0;
     for (int8_t I = 0; I < Slots; ++I)
@@ -632,7 +635,8 @@ void LowToMedConverter::applyCallRegisterEffect(MedBlock &Block, MedOp &MOp,
     for (int8_t I = 0; I < Count; ++I)
       MOp.addInput(ndVarToMedVar(NdVar::reg(ArgRegs[I], TRI.PointerSize)));
     MOp.CalleeRegisterArgs = Count;
-  } else if (Convention && Convention->RegisterArgumentsFromCalleeSummary &&
+  } else if (!MOp.IntegerCallSignature && Convention &&
+             Convention->RegisterArgumentsFromCalleeSummary &&
              CallEntryReadGPRs && MOp.NumInputs == 1)
     if (auto R = CallEntryReadGPRs->find(ArgumentsKey);
         R != CallEntryReadGPRs->end() &&
@@ -1823,6 +1827,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     resolveSwitchSelectorPlans(Func);
     resolveScalarAddressModels(Func,
                                Low.RelocatedInstructionScalarModelOccurrences);
+    if (Image && !preserveComputedBranchScalars(Func, *Image))
+      throw LowToMedConversionError(
+          "computed code branch has an escaping or unproved numeric selector");
     resolveI386GetPcModels(Func, Low.I386GetPcOccurrences);
     resolveCxxContinuationExits(
         Func, Low,

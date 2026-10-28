@@ -590,8 +590,6 @@ bool hasBoundIntegerCallArguments(const MedOp &Op) {
       return false;
     HasStack |= Parameter.Kind == SourceABICarrierKind::Stack;
   }
-  if (!HasStack)
-    return false;
   return true;
 }
 

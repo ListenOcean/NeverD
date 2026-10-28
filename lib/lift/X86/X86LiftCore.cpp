@@ -14,6 +14,7 @@
 //===----------------------------------------------------------------------===//
 
 #include "X86BitTestUndefined.h"
+#include "X86DivisionUndefined.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -68,6 +69,7 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
   case X86_INS_DIV: {
     if (X86.op_count < 1)
       break;
+    const bool Audited = divisionundefined::form(Insn, TargetArch);
     NdVar Src = operandRead(S, X86.operands[0]);
     uint16_t Sz = Src.Size;
     if (Sz == 1) {
@@ -90,7 +92,11 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
       NdVar Rax = NdVar::reg(x86reg::RAX, Sz);
       NdVar Rdx = NdVar::reg(x86reg::RDX, Sz);
 
-      bool IsZeroRdx = (LastRdxState == RdxState::Zero && LastRdxSize >= Sz);
+      // An audited native instruction must consume its actual incoming RDX.
+      // Its semantics cannot depend on which independent span was lifted
+      // before it, or on a previous DIV having left a nonzero remainder.
+      bool IsZeroRdx =
+          !Audited && LastRdxState == RdxState::Zero && LastRdxSize >= Sz;
 
       if (IsZeroRdx) {
         NdVar OrigRax = S.makeTemp(Sz);
@@ -129,6 +135,8 @@ bool X86Lifter::liftCore(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
         S.emit(NdOp::SUBBYTES, Rdx, {Rem, NdVar::scalar(0, 4)});
       }
     }
+    if (Audited)
+      divisionundefined::record(S);
     break;
   }
   case X86_INS_IDIV: {

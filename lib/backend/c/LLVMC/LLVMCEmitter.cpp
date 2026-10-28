@@ -900,6 +900,12 @@ void LLVMCWriter::writeIncludes(llvm::Module &Mod) {
                                Opts.ScalarPointers)
                    .empty();
         if (auto *CI = llvm::dyn_cast<llvm::CallInst>(&Inst)) {
+          if (renderX86TimestampCall(Opts.TheArch, *CI, "result", true)) {
+            Headers.insert(Opts.Format == BinaryFormat::COFF ? "intrin.h"
+                                                             : "x86intrin.h");
+            HasCIntrinsics = true;
+            continue;
+          }
           if (auto Descriptor = renderX86DescriptorStateCall(
                   Opts.TheArch, Opts.Format, *CI, "result", true,
                   std::vector<std::string>(CI->arg_size(), "0"))) {
@@ -2878,7 +2884,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
           (void)x86CompactCallPlan(Opts.TheArch, *Call);
           (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
-          (void)x86AtomicExchangeCallPlan(Opts.TheArch, *Call);
+          (void)x86AtomicRMWCallPlan(Opts.TheArch, *Call);
         }
   if (Only && referencesVectorGlobal(*Only))
     throw std::runtime_error(

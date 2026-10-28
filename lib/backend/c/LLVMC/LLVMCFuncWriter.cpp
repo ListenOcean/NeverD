@@ -3173,6 +3173,11 @@ bool LLVMCWriter::isResultParamValue(const llvm::Value *V) const {
 unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
                                           llvm::StringRef CalleeName) const {
   const unsigned Have = Call.arg_size();
+  // Inline assembly has an exact input contract, not an inferred C call ABI.
+  // A trailing input loaded from a cross-block snapshot is still required;
+  // dropping its producers leaves the assembly using an uninitialized local.
+  if (Call.isInlineAsm())
+    return Have;
   const MsvcCallee *Msvc = msvcCallee(CalleeName, Opts.Format);
   auto Clamp = [&](size_t Limit) {
     return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));

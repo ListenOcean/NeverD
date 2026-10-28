@@ -21,11 +21,11 @@ class CallInst;
 
 namespace neverd {
 
-std::string renderX86AtomicExchange(const X86AtomicExchangePlan &Plan,
-                                    const std::string &Address,
-                                    const std::string &Value);
-std::optional<X86AtomicExchangePlan>
-x86AtomicExchangeCallPlan(Arch Architecture, const llvm::CallInst &Call);
+std::string renderX86AtomicRMW(const X86AtomicRMWPlan &Plan,
+                               const std::string &Address,
+                               const std::string &Value);
+std::optional<X86AtomicRMWPlan>
+x86AtomicRMWCallPlan(Arch Architecture, const llvm::CallInst &Call);
 
 } // namespace neverd
 

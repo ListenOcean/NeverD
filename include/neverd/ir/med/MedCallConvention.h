@@ -144,7 +144,7 @@ struct CallArgumentConvention {
   std::optional<size_t> (*PrototypeArgCount)(llvm::StringRef Name) = nullptr;
   /// The complete integer operands such a platform prototype gives a named
   /// function, each with the width it declares, its stack operands included;
-  /// nullopt where it gives none or no stack operand.  The operands bind
+  /// nullopt where no complete contract is available.  The operands bind
   /// before SSA, as a parsed declaration's do (importPrototypeArguments).
   std::optional<FixedIntegerCallArguments> (*PrototypeIntegerArguments)(
       llvm::StringRef Name) = nullptr;

@@ -8,6 +8,7 @@
 /// Unknown live-ins, mutable loads and partial writes never invent facts.
 
 #include "LowScalarExpression.h"
+#include "LowScalarTargets.h"
 
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
@@ -20,6 +21,72 @@
 #include <vector>
 
 namespace neverd {
+
+bool CFGBuilder::recoverComputedScalarBranches(const BinaryImage &Img,
+                                               Decoder &Dec, LowFunc &Func,
+                                               size_t &RemainingWork) {
+  if (Img.Arch != Arch::X86 && Img.Arch != Arch::X64)
+    return false;
+  if (std::none_of(Insns.begin(), Insns.end(), [](const auto &Entry) {
+        const auto &R = Entry.second;
+        return R.ComputedScalarTargets ||
+               (R.IsBranch && R.IsIndirect && !R.IsCall && !R.IsCond &&
+                !R.IsRet && !R.RejectedComputedTargets &&
+                R.JumpTableTargets.empty());
+      }))
+    return false;
+  const auto Targets = finiteScalarBranchTargets(Func, RemainingWork);
+  bool Changed = false;
+  std::vector<va_t> Explore;
+  for (auto &[Address, Rec] : Insns) {
+    if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall || Rec.IsCond ||
+        Rec.IsRet || Rec.RejectedComputedTargets ||
+        (!Rec.ComputedScalarTargets && !Rec.JumpTableTargets.empty()))
+      continue;
+    std::vector<va_t> Values;
+    if (Targets)
+      if (const auto Found = Targets->find(Address); Found != Targets->end())
+        Values = Found->second;
+    // Singleton transfers belong to exact-branch recovery. This owner
+    // publishes switches with a runtime selector, not constant selectors
+    // whose code identity needs a different downstream binding.
+    const bool Valid =
+        Values.size() > 1 &&
+        std::all_of(Values.begin(), Values.end(), [&](va_t T) {
+          return T != InvalidVA && !isTailCallTarget(T) &&
+                 Img.hasExecutableCodeOwnerRange(T, getInsnAlignment()) &&
+                 Img.readVA(T, getInsnAlignment());
+        });
+    if (!Valid) {
+      if (Rec.ComputedScalarTargets) {
+        Rec.JumpTableTargets.clear();
+        Rec.ComputedScalarTargets = false;
+        Rec.RejectedComputedTargets = true;
+        Changed = true;
+      }
+      continue;
+    }
+    if (Rec.ComputedScalarTargets && Rec.JumpTableTargets == Values)
+      continue;
+    Rec.ComputedScalarTargets = true;
+    Rec.JumpTableTargets = Values;
+    ResolvedTableInfo.erase(Address);
+    for (va_t Target : Values) {
+      BlockStarts.insert(Target);
+      Explore.push_back(Target);
+    }
+    Changed = true;
+  }
+  if (Changed) {
+    for (va_t Target : Explore)
+      if (!ExploredAddrs.count(Target))
+        explore(Img, Dec, Target);
+    exploreAddressTakenRoots(Img, Dec);
+    splitBlocks();
+    rebuildBlocks(Func);
+  }
+  return Changed;
+}
 
 bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
                                                Decoder &Dec, LowFunc &Func,
@@ -34,7 +101,7 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         return Rec.ScalarBranchInput ||
                (Rec.IsBranch && Rec.IsIndirect && !Rec.IsCond && !Rec.IsCall &&
                 !Rec.IsRet && !Rec.RejectedScalarBranch &&
-                Rec.JumpTableTargets.empty());
+                !Rec.RejectedComputedTargets && Rec.JumpTableTargets.empty());
       }))
     return false;
 
@@ -86,6 +153,7 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
           (!Terminator.IsBranch || !Terminator.IsIndirect ||
            Terminator.IsCond || Terminator.IsCall || Terminator.IsRet ||
            Terminator.RejectedScalarBranch ||
+           Terminator.RejectedComputedTargets ||
            !Terminator.JumpTableTargets.empty()))
         continue;
       // Byte facts preserve architectural subregister overlap exactly. Temps
@@ -133,8 +201,8 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
             break;
           }
           if (Rec.IsBranch && !Rec.IsCond && !Rec.IsCall && !Rec.IsRet &&
-              !Rec.RejectedScalarBranch && Rec.JumpTableTargets.empty() &&
-              Op.NumInputs == 1 &&
+              !Rec.RejectedScalarBranch && !Rec.RejectedComputedTargets &&
+              Rec.JumpTableTargets.empty() && Op.NumInputs == 1 &&
               (Op.Opcode == NdOp::INDIR_BR ||
                (Op.Opcode == NdOp::BRANCH && Rec.ScalarBranchInput))) {
             Targets[Rec.Addr] =
