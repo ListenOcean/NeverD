@@ -21455,15 +21455,6 @@ TEST(LLVMCodePointerInvariantBoundary,
               Observed.push_back(CompareExchange->getCompareOperand());
               Observed.push_back(CompareExchange->getNewValOperand());
             }
-            // x86 keeps an exchange as its native XCHG (X86AtomicRmw.h),
-            // whose owned assembly takes the address and then the value.
-            if (auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction))
-              if (const auto *Assembly =
-                      llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
-                  Assembly && Call->arg_size() == 2 &&
-                  llvm::StringRef(Assembly->getAsmString())
-                      .starts_with(kX86AtomicExchangeAsmMarker))
-                Observed.push_back(Call->getArgOperand(1));
           }
         ASSERT_EQ(Observed.size(),
                   Sink == ExactCodeAddressAtomicSink::Exchange ? 1u : 2u);

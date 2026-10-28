@@ -1958,7 +1958,17 @@ TEST_F(NativePointerRelocationBoundary,
     ASSERT_NE(Table, nullptr);
     ASSERT_TRUE(Table->isReadable());
     ASSERT_FALSE(Table->isExecutable());
-    EXPECT_TRUE(Img.readOnlyAfterRelocations(Table->VA, Table->Size));
+    if (C.Format == BinaryFormat::ELF) {
+      // These fixtures are bare static PIEs: the kernel maps their writable
+      // table, but no dynamic loader applies the GNU_RELRO header.
+      ASSERT_TRUE(Img.ELFMetadata);
+      ASSERT_TRUE(Img.ELFMetadata->Interpreter.empty());
+      ASSERT_NE(Img.Entry, 0u);
+      EXPECT_FALSE(Img.readOnlyAfterRelocations(Table->VA, Table->Size));
+      EXPECT_TRUE(isRuntimeWritableAddress(Img, Table->VA));
+    } else {
+      EXPECT_TRUE(Img.readOnlyAfterRelocations(Table->VA, Table->Size));
+    }
 
     const va_t Slot0 = Table->VA;
     const va_t Slot1 = Slot0 + Img.getPointerSize();
