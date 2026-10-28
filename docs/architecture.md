@@ -13387,7 +13387,11 @@ and add/list service calls remain unsupported.
 list/string truncation rules, including singleton zero tails and sticky encoding
 errors. ServiceManager reuses this owner. `AndroidArguments` independently
 tracks AAPCS64 GP/FP cursors and their shared overflow stack; JNI converts
-promoted floats under default FPCR and retains A-form float bits. Boxed value
+promoted floats through `AArch64FloatConversion`, which owns baseline FPCR
+rounding/FZ/DN and raised FPSR bits. JNI accumulates these flags into existing
+guest status even if a later service stops; A-form float bits need no conversion.
+The architecture helper uses APFloat for numeric rounding and owns ARM64
+tininess-before-rounding, flushing, NaN and directed-overflow effects. Boxed value
 constructors use shared final fields; the projected Float field admits a bit
 carrier without enabling general floating DEX execution. The volatile
 warning field is admitted by shared framework

@@ -7,6 +7,7 @@
 /// Original guest callers across relocation packing and CPU transports.
 //===----------------------------------------------------------------------===//
 #include "AndroidEventLogTestData.h"
+#include "aarch64/AArch64FloatConversionCases.h"
 #include "gtest/gtest.h"
 
 #include "neverd/emulation/ExecutionConfiguration.h"
@@ -91,18 +92,70 @@ TEST_P(AndroidJNI, EventLogFloatFieldDoesNotReturnBitsInAGeneralRegister) {
   EXPECT_NE(result.Diagnostic.find("JNIEnv.102"), std::string::npos);
 }
 
-TEST_P(AndroidJNI, EventLogPromotedFloatDoesNotGuessNondefaultFPControl) {
+TEST_P(AndroidJNI, EventLogPromotedFloatAcceptsBaselineFPControl) {
   for (unsigned form = 0; form != 3; ++form) {
     Options.Android->Arguments = {form, 5};
     Options.Android->EventLogWrites = {
         {{{0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0x80, 0x3f}, -11}}};
     auto result = run("jni_event_log");
-    EXPECT_EQ(result.Stop, form == 2 ? ProcessStopReason::Returned
-                                     : ProcessStopReason::UnsupportedService)
-        << result.Diagnostic;
-    EXPECT_EQ(result.EventLogWritesConsumed, form == 2 ? 1u : 0u);
-    if (form != 2)
-      EXPECT_NE(result.Diagnostic.find("default FPCR"), std::string::npos);
+    EXPECT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+    EXPECT_EQ(result.EventLogWritesConsumed, 1u);
+  }
+}
+
+TEST_P(AndroidJNI, EventLogFloatRoundingAndStatusShareTheArchitectureModel) {
+  constexpr uint32_t Initial = 0x08000002; // Existing QC/DZC are cumulative.
+  for (const auto &Case : test::FloatNarrowingCases) {
+    SCOPED_TRACE(Case.Input);
+    SCOPED_TRACE(Case.Control);
+    for (unsigned Form = 0; Form != 3; ++Form) {
+      SCOPED_TRACE(Form);
+      // A-form jvalue bits are untouched by FPCR, including signaling NaNs.
+      const uint32_t Output = Form == 2 && (Case.Raised & 1)
+                                  ? Case.Output & ~0x00400000u
+                                  : Case.Output;
+      const uint64_t Input =
+          Form == 2 ? (0xabadbeef00000000ull | Output) : Case.Input;
+      for (unsigned Boxed : {0u, 1u}) {
+        SCOPED_TRACE(Boxed);
+        Options.Android->Arguments = {Form, Input, Case.Control, Initial,
+                                      Boxed};
+        std::vector<uint8_t> Payload = {0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0, 0};
+        llvm::support::endian::write32le(Payload.data() + 5, Output);
+        Options.Android->EventLogWrites = {{{Payload, -11}}};
+        auto Result = run("jni_event_log_float_control");
+        ASSERT_EQ(Result.Stop, ProcessStopReason::Returned)
+            << Result.Diagnostic;
+        EXPECT_EQ(Result.ReturnValue, Initial | (Form == 2 ? 0 : Case.Raised));
+        EXPECT_EQ(Result.EventLogWritesConsumed, 1u);
+      }
+    }
+  }
+}
+
+TEST_P(AndroidJNI, EventLogFloatStatusSurvivesALaterServiceBoundary) {
+  Options.Android->ObserveCPUState = true;
+  for (unsigned Form : {0u, 1u}) {
+    Options.Android->Arguments = {Form, 0x3ff0000010000000, 0x00400000,
+                                  0x08000002, 0};
+    auto Result = run("jni_event_log_float_control");
+    EXPECT_EQ(Result.Stop, ProcessStopReason::UnsupportedService)
+        << Result.Diagnostic;
+    EXPECT_FALSE(Result.EventLogWritesConsumed);
+    ASSERT_TRUE(Result.CPUState);
+    ASSERT_TRUE(Result.CPUState->Registers) << Result.CPUState->Diagnostic;
+    unsigned Found = 0;
+    for (const auto &Register : *Result.CPUState->Registers) {
+      if (Register.Register == CPURegister::AArch64FPSR) {
+        EXPECT_EQ(Register.Value, (RegisterValue{0x08000012, 0}));
+        ++Found;
+      }
+      if (Register.Register == CPURegister::AArch64FPCR) {
+        EXPECT_EQ(Register.Value, (RegisterValue{0x00400000, 0}));
+        ++Found;
+      }
+    }
+    EXPECT_EQ(Found, 2u);
   }
 }
 
@@ -111,7 +164,7 @@ TEST_P(AndroidJNI, EventLogExplicitVAListKeepsIndependentScalarCursors) {
   std::vector<uint8_t> bytes(4096, 0xc7);
   Options.Android->ObserveMemoryOnFailure = true;
   Options.Android->ReadMemory = {{Base, bytes.size()}};
-  Options.Android->Arguments = {Base};
+  Options.Android->Arguments = {Base, 0};
   // Each FP and GP bank may be exhausted independently. Stack slots are
   // shared, and neither va_list nor its save areas are written by the model.
   for (unsigned stack = 0; stack != 4; ++stack) {
@@ -124,19 +177,25 @@ TEST_P(AndroidJNI, EventLogExplicitVAListKeepsIndependentScalarCursors) {
                                      stack & 2 ? 0 : uint32_t(-16));
     llvm::support::endian::write64le(bytes.data() + (stack & 1 ? 256 : 120),
                                      0x12345678);
-    // 1 + 2^-24 is exactly halfway: Java binary32 nearest-even yields 1.
+    // 1 + 2^-24 is exactly halfway; only rounding toward +inf yields 1+2^-23.
     llvm::support::endian::write64le(
         bytes.data() + (stack & 2 ? (stack & 1 ? 264 : 256) : 208),
         0x3ff0000010000000);
     Options.Android->Memory = {{Base, bytes.size(), bytes}};
-    Options.Android->EventLogWrites = {
-        {{{0x78, 0x56, 0x34, 0x12, 4, 0, 0, 0x80, 0x3f}, -11}}};
-    auto result = run("jni_event_log_explicit_va");
-    ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
-    EXPECT_EQ(result.ReturnValue, 0u);
-    EXPECT_EQ(result.EventLogWritesConsumed, 1u);
-    ASSERT_EQ(result.MemorySnapshots.size(), 1u);
-    EXPECT_EQ(result.MemorySnapshots[0].Bytes, bytes);
+    for (unsigned Rounding = 0; Rounding != 4; ++Rounding) {
+      SCOPED_TRACE(stack);
+      SCOPED_TRACE(Rounding);
+      Options.Android->Arguments[1] = Rounding << 22;
+      Options.Android->EventLogWrites = {
+          {{{0x78, 0x56, 0x34, 0x12, 4, uint8_t(Rounding == 1), 0, 0x80, 0x3f},
+            -11}}};
+      auto result = run("jni_event_log_explicit_va");
+      ASSERT_EQ(result.Stop, ProcessStopReason::Returned) << result.Diagnostic;
+      EXPECT_EQ(result.ReturnValue, 0x08000012u);
+      EXPECT_EQ(result.EventLogWritesConsumed, 1u);
+      ASSERT_EQ(result.MemorySnapshots.size(), 1u);
+      EXPECT_EQ(result.MemorySnapshots[0].Bytes, bytes);
+    }
   }
   for (unsigned invalid = 0; invalid != 5; ++invalid) {
     llvm::support::endian::write32le(bytes.data() + 24, -8);

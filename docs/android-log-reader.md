@@ -129,12 +129,17 @@ result takes precedence over the explicit transport result. A truncated string
 alone does not set that error, so a following invalid item still throws.
 
 JNI ordinary/V calls read promoted double values from the independent AAPCS64
-FP register/save area or shared overflow stack and convert to binary32 using
-nearest-even rounding. This conversion requires default FPCR; nondefault
-control stops before writing. A-form calls retain the low 32 jvalue bits and
-need no conversion. The shared argument reader leaves va_list and save areas
-unchanged. DEX can pass float register bits to exact library leaves; general
-floating DEX arithmetic/bodies and registered-native FP calls remain unmodeled.
+FP register/save area or shared overflow stack. The shared ARM64 narrowing
+model applies all four FPCR rounding modes, FZ and DN, and accumulates IOC,
+OFC, UFC, IXC and IDC into FPSR while retaining prior status and QC. Tininess
+is detected before rounding; FZ output flushing raises UFC without adding
+IXC. Signaling NaNs raise IOC even with DN. Earlier conversion effects survive
+a later event-write failure. Optional FP controls and exception traps remain
+unsupported. A-form calls retain the low 32 jvalue bits, including signaling
+NaNs, without conversion or added exceptions. FPCR, va_list and save areas
+remain unchanged. DEX can pass float register bits to exact library leaves;
+general floating DEX arithmetic/bodies and registered-native FP calls remain
+unmodeled.
 
 This finite contract supplies neither logd sockets, credentials, filtering,
 timestamps, daemon persistence nor a live reader stream. Writes do not append
