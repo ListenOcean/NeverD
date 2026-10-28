@@ -4408,6 +4408,11 @@ and actions with the fixture worker. `databaseRecoverySurvivesConsumedJournalAnd
 checks working-copy preservation and explicit discard when the packed state
 changes. Run these with the native Windows Qt platform when checking Windows
 file dialogs and view shortcuts.
+`searchBeforeTheListingHasACursorKeepsItsResults` starts a text search while
+the listing has no cursor and places one before the search answers. The search
+keeps its results: a search begun before the first rows arrived used to drop
+them, taking the cursor those rows bring for a move away, so searching right
+after opening a file showed nothing on a slow machine.
 
 The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
 `aLinkGoesToTheWorkbenchThatHasItsProgram` check link syntax, hash prefixes and

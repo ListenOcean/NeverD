@@ -3207,6 +3207,50 @@ private slots:
     QCOMPARE(view->model().total(), 0);
   }
 
+  void searchBeforeTheListingHasACursorKeepsItsResults() {
+    // A search started while the listing still waited for its first rows
+    // dropped its results when those rows placed the cursor, taking that for
+    // a move away from the search.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("search-first.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY_WITH_TIMEOUT(listing->cursorLine() && !listing->jumpPending(),
+                             OpenTimeoutMs);
+    const auto results = [&]() -> ChooserView * {
+      for (auto *view : bench.window->findChildren<ChooserView *>())
+        if (view->model().kind() == ChooserKind::SearchResults)
+          return view;
+      return nullptr;
+    };
+    // The listing as a file just opened shows it, with no cursor yet.
+    listing->clear();
+    QVERIFY(!listing->currentAddress());
+    QTimer input;
+    connect(&input, &QTimer::timeout, &input, [&] {
+      if (auto *dialog =
+              qobject_cast<QInputDialog *>(QApplication::activeModalWidget())) {
+        dialog->setTextValue(QStringLiteral("string 42"));
+        dialog->accept();
+      }
+    });
+    input.start(5);
+    bench.action(ActionId::SearchText)->trigger();
+    input.stop();
+    // Its first rows, and with them the cursor, arrive before the search
+    // answers.
+    ListingView::Line line;
+    line.item = line.address = Base;
+    line.itemSize = 1;
+    line.kind = QStringLiteral("insn");
+    ListingViewTestAccess::showOnly(*listing, line, 0);
+    QCOMPARE(listing->currentItem(), std::optional<Address>(Base));
+    QTRY_VERIFY_WITH_TIMEOUT(results() && results()->model().total() > 0,
+                             OpenTimeoutMs);
+  }
+
   void searchDuringAJumpStartsWhereTheJumpLands() {
     QTemporaryDir directory;
     Workbench bench;
