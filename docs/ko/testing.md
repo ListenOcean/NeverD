@@ -2230,4 +2230,6 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 
 `NeverDReadOnlyProtectionSourceTests`는 PE, ELF, Mach-O의 x64/ARM64 입력을 HighC와 LLVM C로 생성하고 호스트 Clang의 O0/O2 및 UBSan으로 전역 변수 읽기와 쓰기를 실행한다. 두 파이프라인 최적화 모드와 오해를 유발하는 상수 섹션 이름을 포함한다. `NeverDReadOnlyBytesTests`는 매핑 권한, 완전한 RELRO 범위와 잘못된 범위를 검사하며 포인터 경계 모음은 동일 ELF를 relro와 norelro로 링크한다. 재구성 C의 호스트 실행은 네이티브 ARM64나 Windows 커널 실행 검증이 아니다.
 
+`RelroKeepsPartialPagesAndStaticStartupWritable`는 x86, x64, ARM, ARM64의 페이지 경계와 명시적인 로더 보장을 검사합니다. 네이티브 포인터 테스트는 독립적인 Linux x64 부분 RELRO 및 로더 없는 정적 예제를 실행하여 전역 변수 쓰기 후 읽기를 검증합니다. `NeverDDataSymbolBindingTests`는 전체 포인터 보호와 두 C 경로를 검사합니다. 실제 ARM 페이지 구성의 인증을 의미하지는 않습니다.
+
 `NeverDLowScalarConstantTests`와 `NeverDIndirectCallValueSourceTests`는 블록 간 호출과 거부 조건을 두 C 경로의 실행으로 확인합니다. `NeverDLLVMCSourcePointerTests`는 포인터, 콜백, 별칭과 외부 선언을 O0/O2 및 UBSan으로 실행합니다. 네이티브 경계 테스트는 공개 MinGW 예제를 컴파일하고 MSVCRT/UCRT 배치 불일치를 거부합니다. 커널 또는 ARM64 네이티브 실행 인증은 아닙니다.

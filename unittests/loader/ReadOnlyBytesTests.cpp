@@ -4,6 +4,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/PointerRelocation.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+#include "neverd/object/ELFLayout.h"
 #include "neverd/support/BinaryEncoding.h"
 
 namespace neverd {
@@ -49,8 +50,10 @@ TEST(ImmutableImageScalar, ELFRelroRangeKeepsScalarsButNotRelocatedPointers) {
   Image.Sections.front().Name = ".data.rel.ro";
   EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
   Image.ELFMetadata.emplace();
+  Image.ELFMetadata->Type = llvm::ELF::ET_DYN;
+  const uint64_t Extent = 0x410000 - ReadVA;
   Image.ELFMetadata->ProgramHeaders.push_back(
-      {llvm::ELF::PT_GNU_RELRO, 0, 0, ReadVA, 0x10, 0x10, 1});
+      {llvm::ELF::PT_GNU_RELRO, 0, 0, ReadVA, Extent, Extent, 1});
   EXPECT_EQ(readImmutableImageScalar(Image, ReadVA, 1), 0xb8u);
   Image.BaseRelocations.push_back({ReadVA - 3, 10});
   EXPECT_FALSE(readImmutableImageScalar(Image, ReadVA, 1));
@@ -111,32 +114,78 @@ TEST(ImmutableImageScalar, NamesAndSectionFlagsCannotProtectWritableMappings) {
 TEST(ImmutableImageScalar, RelroProofRequiresCompleteNativeRange) {
   auto Image = codeImage();
   Image.Format = BinaryFormat::ELF;
+  const va_t Address = TextVA + kPageSize4K - 8;
+  Image.Segments.front().Size = 2 * kPageSize4K;
   Image.BaseRelocations.clear();
   Image.Segments.front().Flags =
       SegmentFlags::Readable | SegmentFlags::Writable;
   Image.Sections.front().Flags = Image.Segments.front().Flags;
   Image.ELFMetadata.emplace();
+  Image.ELFMetadata->Type = llvm::ELF::ET_DYN;
   Image.ELFMetadata->ProgramHeaders.push_back(
-      {llvm::ELF::PT_GNU_RELRO, 0, 0, ReadVA, 8, 8, 1});
-  EXPECT_TRUE(Image.readOnlyAfterRelocations(ReadVA, 8));
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA - 1, 1));
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 9));
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA + 8, 1));
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 0));
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, UINT64_MAX));
+      {llvm::ELF::PT_GNU_RELRO, 0, 0, Address, 8, 8, 1});
+  EXPECT_TRUE(Image.readOnlyAfterRelocations(Address, 8));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address - 1, 1));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 9));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address + 8, 1));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 0));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, UINT64_MAX));
   for (BinaryFormat Format : {BinaryFormat::COFF, BinaryFormat::MachO}) {
     Image.Format = Format;
-    EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 8));
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 8));
   }
   Image.Format = BinaryFormat::ELF;
   Image.IsRelocatable = true;
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 8));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 8));
   Image.IsRelocatable = false;
   Image.ELFMetadata->ProgramHeaders.back().MemorySize = UINT64_MAX;
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 8));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 8));
   Image.Segments.front().Flags = SegmentFlags::Readable;
   Image.Segments.front().Size = UINT64_MAX;
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(ReadVA, 1));
+  EXPECT_FALSE(Image.readOnlyAfterRelocations(Address, 1));
+}
+
+TEST(ImmutableImageScalar, RelroKeepsPartialPagesAndStaticStartupWritable) {
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<unsigned>(Architecture));
+    BinaryImage Image;
+    Image.Format = BinaryFormat::ELF;
+    Image.Arch = Architecture;
+    Segment Data;
+    Data.VA = 0x10000;
+    const uint64_t Page = maximumELFProtectionPageSize(Architecture);
+    ASSERT_NE(Page, 0u);
+    Data.Size = 2 * Page;
+    Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(Data);
+    Image.ELFMetadata.emplace();
+    auto &Metadata = *Image.ELFMetadata;
+    Metadata.Type = llvm::ELF::ET_DYN;
+    Metadata.ProgramHeaders.push_back(
+        {llvm::ELF::PT_GNU_RELRO, 0, 0, Data.VA + 3, Page + 4, Page + 4, 1});
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + 2, 1));
+    EXPECT_TRUE(Image.readOnlyAfterRelocations(Data.VA + 3, 4));
+    EXPECT_TRUE(Image.readOnlyAfterRelocations(Data.VA + Page - 1, 1));
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + Page - 1, 2));
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + Page, 1));
+    EXPECT_TRUE(isRuntimeWritableAddress(Image, Data.VA + Page));
+    Metadata.ProgramHeaders.back().MemorySize = Page - 4;
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+    Metadata.ProgramHeaders.back().MemorySize = Page - 3;
+    EXPECT_TRUE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+
+    // Neither an executable nor static PIE promises to call a dynamic
+    // loader. The kernel maps PT_LOAD but does not apply GNU_RELRO itself.
+    Image.Entry = 0x8000;
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+    Metadata.Type = llvm::ELF::ET_EXEC;
+    EXPECT_FALSE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+    Metadata.Interpreter = "/lib/ld.so";
+    EXPECT_TRUE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+    Metadata.Interpreter.clear();
+    Image.Segments.front().ReadOnlyAfterRelocations = true;
+    EXPECT_TRUE(Image.readOnlyAfterRelocations(Data.VA + 3, 1));
+  }
 }
 
 TEST(ImmutablePE32Code, IndexedAndOrdinaryReadersKeepEveryFixupBoundary) {

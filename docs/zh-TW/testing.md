@@ -2186,4 +2186,6 @@ MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計
 
 `NeverDReadOnlyProtectionSourceTests` 將 PE、ELF、Mach-O 的 x64/ARM64 輸入指令產生為 HighC 和 LLVM C，並以主機 Clang 在 O0/O2 加 UBSan 下執行全域變數讀寫。涵蓋兩種管線最佳化模式及具誤導性的常數區段名稱。`NeverDReadOnlyBytesTests` 檢查映射權限、完整 RELRO 範圍與非法範圍；原生指標邊界套件以 relro 和 norelro 連結相同 ELF 範例。重建 C 的主機執行不等於原生 ARM64 或 Windows 核心驗證。
 
+`RelroKeepsPartialPagesAndStaticStartupWritable` 檢查 x86、x64、ARM、ARM64 的頁面邊界與明確的載入器保證。原生指標測試執行獨立的 Linux x64 部分頁 RELRO 與無載入器靜態範例，驗證全域變數先寫後讀。`NeverDDataSymbolBindingTests` 檢查完整指標保護與兩條 C 路徑；這些檢查不代表原生 ARM 頁面配置認證。
+
 `NeverDLowScalarConstantTests` 與 `NeverDIndirectCallValueSourceTests` 涵蓋跨區塊呼叫及拒絕邊界，並執行兩條 C 路線。`NeverDLLVMCSourcePointerTests` 以 O0/O2 及 UBSan 檢查物件指標、回呼、別名及外部宣告。原生指標套件編譯公開 MinGW 範例並拒絕 MSVCRT/UCRT 配置不符；不代表原生核心或 ARM64 執行驗證。

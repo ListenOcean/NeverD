@@ -2240,4 +2240,6 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 
 `NeverDReadOnlyProtectionSourceTests` は PE、ELF、Mach-O の x64/ARM64 入力から HighC と LLVM C を生成し、ホスト Clang の O0/O2 と UBSan でグローバル変数の読み書きを実行する。両方のパイプライン最適化モードと紛らわしい定数セクション名を含む。`NeverDReadOnlyBytesTests` はマッピング権限、RELRO の完全な範囲と不正範囲を検査し、ポインター境界スイートは同じ ELF を relro と norelro でリンクする。再構成 C のホスト実行は ARM64 ネイティブや Windows カーネルの実行検証ではない。
 
+`RelroKeepsPartialPagesAndStaticStartupWritable` は x86、x64、ARM、ARM64 のページ境界と明示的なローダー保証を確認します。ネイティブポインターテストは Linux x64 の部分 RELRO とローダーなし静的プログラムを独立に実行し、グローバル変数への書き込み後の読み出しを検証します。`NeverDDataSymbolBindingTests` はポインター全体の保護と両 C 経路を確認します。実機 ARM のページ構成を認証するものではありません。
+
 `NeverDLowScalarConstantTests` と `NeverDIndirectCallValueSourceTests` はブロック間呼び出しと拒否条件を両 C 経路の実行で検証します。`NeverDLLVMCSourcePointerTests` はポインター、コールバック、別名、外部宣言を O0/O2 と UBSan で実行します。ネイティブ境界テストは公開 MinGW 例をコンパイルし、MSVCRT/UCRT の配置不一致を拒否します。カーネルや ARM64 のネイティブ実行を保証するものではありません。

@@ -3,6 +3,13 @@
 Use public fixtures and emitter tests as the durable contract. Private binary
 analysis and comparison output belong outside the repository.
 
+ELF relocation immutability also requires a dynamic-loader contract and full
+protected pages. An interpreterless static entry and a partial final RELRO page
+retain runtime storage; the target's maximum base page governs the proof.
+Independent native Linux x64 write/read fixtures reproduce both former constant
+folds. x86/x64/ARM/ARM64 model checks cover page-crossing reads; native ARM page
+configurations remain separate coverage.
+
 ## Open
 
 LLVM C compare-exchange now retains the old value, success flag and memory

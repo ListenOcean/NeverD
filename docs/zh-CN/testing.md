@@ -2205,4 +2205,6 @@ MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计
 
 `NeverDReadOnlyProtectionSourceTests` 对 PE、ELF、Mach-O 中的 x64/ARM64 输入指令生成 HighC 和 LLVM C，并用主机 Clang 在 O0/O2 加 UBSan 下执行全局变量读写。覆盖两种流水线优化模式及容易误导判断的常量节名称。`NeverDReadOnlyBytesTests` 检查映射权限、完整 RELRO 范围和非法范围；原生指针边界套件将同一 ELF 样例分别链接为 relro 与 norelro。重建 C 的主机执行不等于原生 ARM64 或 Windows 内核执行验证。
 
+`RelroKeepsPartialPagesAndStaticStartupWritable` 检查 x86、x64、ARM、ARM64 的页边界和显式加载器保证。原生指针测试执行独立的 Linux x64 部分页 RELRO 与无加载器静态样例，验证全局变量先写后读。`NeverDDataSymbolBindingTests` 检查完整指针保护和两条 C 路径；这些检查不代表原生 ARM 页配置认证。
+
 `NeverDLowScalarConstantTests` 和 `NeverDIndirectCallValueSourceTests` 覆盖跨块调用及拒绝边界，并执行两条 C 路线。`NeverDLLVMCSourcePointerTests` 在 O0/O2 加 UBSan 下检查对象指针、回调、别名和选中函数的外部声明。原生指针套件编译公开 MinGW 样例，拒绝 MSVCRT/UCRT 布局不符；这些不等于原生内核或 ARM64 执行验证。

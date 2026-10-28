@@ -1898,6 +1898,8 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 
 `BinaryImage::readOnlyAfterRelocations`가 로드 후 불변성을 통합 판단한다. 읽기 전용 매핑, 로더의 명시적 보호 보장 또는 링크된 ELF의 전체 범위를 덮는 PT_GNU_RELRO만 근거가 된다. `.data.rel.ro`, `__DATA_CONST` 같은 이름이나 세부 섹션 플래그만으로 쓰기 가능한 매핑을 상수로 취급하지 않는다. `-z norelro`와 SG_READ_ONLY 누락은 쓰기 가능 상태를 유지한다. 재배치 분류, 스칼라 상수 접기, LLVM 데이터 생성이 이 판단을 공유한다.
 
+RELRO 증명에는 동적 로더도 필요합니다. 독립적인 프로세스 진입점이 없는 공유 객체 또는 인터프리터가 있는 실행 파일이 대상입니다. 로더 없는 정적 프로그램은 런타임 읽기를 유지합니다. 불완전한 마지막 페이지는 분석 호스트의 페이지 크기가 아니라 대상이 지원하는 최대 기본 페이지를 반환하는 `maximumELFProtectionPageSize`로 제외합니다. [glibc](https://github.com/bminor/glibc/blob/master/elf/dl-reloc.c), [Arm ABI](https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst).
+
 `MedCallTarget`은 호출 레지스터 요약과 SSA 전에 고정 비트 폭의 상수 주소 연산을 증명하여 그대로 전달되는 인수를 보존합니다. 질의 이전의 정의만 근거가 되며 코드 주소 값과 함수 포인터가 저장된 메모리 슬롯은 구분됩니다.
 
 `LowScalarConstant`는 요약과 SSA 전에 유일한 직접 선행 블록 체인으로 호출 대상을 복원합니다. 지역 증명을 먼저 사용하며 복사와 계산이 예산을 공유합니다. 합류, 순환, 예외 간선, 독립 진입점과 잘못된 명령 경계에서는 상속을 중단하고 AL 조회는 블록 내부에 유지합니다. LLVM C의 정의와 호출은 매개변수 위치에 따른 포인터 형식 투영을 공유하며 멤버 읽기 변환도 통일합니다. CRT 헤더 재사용은 배치 검사를 유지합니다.

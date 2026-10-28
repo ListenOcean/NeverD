@@ -2266,4 +2266,6 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 تنفّذ `NeverDReadOnlyProtectionSourceTests` قراءة وكتابة المتغيرات العامة الناتجة من HighC وLLVM C بواسطة Clang المضيف مع O0/O2 وUBSan، لتعليمات x64/ARM64 في PE وELF وMach-O. تشمل نمطي تحسين خط المعالجة وأسماء الأقسام المضللة. تختبر `NeverDReadOnlyBytesTests` صلاحيات التعيين ونطاقات RELRO الكاملة والنطاقات غير الصالحة، وتربط اختبارات حدود المؤشرات ملف ELF نفسه مع relro وnorelro. لا يثبت تنفيذ C المعاد بناؤه على المضيف صحة التنفيذ الأصلي على ARM64 أو نواة Windows.
 
+يفحص `RelroKeepsPartialPagesAndStaticStartupWritable` حدود صفحات x86 وx64 وARM وARM64 وضمانات المُحمّل الصريحة. تنفّذ اختبارات المؤشرات الأصلية أمثلة Linux x64 مستقلة ذات RELRO جزئي أو بلا مُحمّل ديناميكي، وتكتب المتغير العام ثم تقرؤه. يفحص `NeverDDataSymbolBindingTests` حماية المؤشر بالكامل ومساري C. لا تثبت هذه الاختبارات اعتماد تكوينات صفحات ARM الأصلية.
+
 تختبر `NeverDLowScalarConstantTests` و`NeverDIndirectCallValueSourceTests` الاستدعاءات بين الكتل وحدود الرفض مع تنفيذ مساري C. تنفذ `NeverDLLVMCSourcePointerTests` المؤشرات وردود النداء والأسماء البديلة والتصريحات الخارجية عند O0/O2 مع UBSan. تختبر المجموعة الأصلية ترجمة مثال MinGW علني وترفض اختلاف تخطيطات MSVCRT/UCRT. لا يثبت ذلك تنفيذًا أصليًا للنواة أو ARM64.

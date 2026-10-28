@@ -14,6 +14,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/COFF/COFFLoader.h"
 #include "neverd/loader/PointerRelocation.h"
+#include "neverd/object/ELFLayout.h"
 #include "neverd/object/SectionNames.h"
 #include "neverd/support/BinaryEncoding.h"
 #include "neverd/support/BinaryLoading.h"
@@ -2498,6 +2499,119 @@ counter:
     EXPECT_FALSE(Img->readOnlyAfterRelocations(Data->VA, 8));
     EXPECT_TRUE(Img->readOnlyAfterRelocations(Img->Entry, 1));
   }
+#endif
+}
+
+TEST_F(NativePointerRelocationBoundary,
+       RelroWithoutACompleteProtectedPageRetainsNativeWrites) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "executes a public x86-64 Linux loader fixture";
+#else
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "needs Clang";
+  const auto Source = tmpFile("relro_tail.c");
+  const auto Program = tmpFile("relro_tail");
+  std::ofstream(Source)
+      << "#include <stdint.h>\n"
+         "uint32_t shared_value "
+         "__attribute__((section(\".data.rel.ro\")))=17;\n"
+         "__attribute__((noinline)) uint32_t read_value(void) {\n"
+         "  return shared_value;\n}\n"
+         "int main(void) { shared_value=43; return read_value()!=43; }\n";
+  const auto Built =
+      exec(NEVERD_TEST_CLANG,
+           {"-O2", "-fno-pie", "-no-pie", "-Wl,-z,relro", "-Wl,-z,now",
+            Source.string(), "-o", Program.string()});
+  ASSERT_TRUE(Built.ok()) << Built.err;
+  auto Full = loadBinary(Program);
+  ASSERT_TRUE(static_cast<bool>(Full)) << llvm::toString(Full.takeError());
+  const auto Symbol =
+      std::find_if(Full->Symbols.begin(), Full->Symbols.end(),
+                   [](const auto &S) { return S.Name == "shared_value"; });
+  ASSERT_NE(Symbol, Full->Symbols.end());
+  const va_t Address = Symbol->Addr;
+  EXPECT_TRUE(Full->readOnlyAfterRelocations(Address, 4));
+  std::ifstream Input(Program, std::ios::binary);
+  ASSERT_TRUE(Input);
+  std::vector<uint8_t> Bytes((std::istreambuf_iterator<char>(Input)),
+                             std::istreambuf_iterator<char>());
+  Input.close();
+  ELFHeaderInfo Header;
+  ASSERT_TRUE(validateELFHeaderTables(Bytes.data(), Bytes.size(), Header));
+  unsigned Changed = 0;
+  for (unsigned I = 0; I < Header.PhNum; ++I) {
+    auto *At = Bytes.data() + Header.PhOff + uint64_t(I) * Header.PhEntSize;
+    auto Fields = readELFPhdr(At, Header.Is64);
+    if (Fields.Type != llvm::ELF::PT_GNU_RELRO)
+      continue;
+    ASSERT_GT(Fields.MemSz, 0u);
+    ASSERT_GT(Fields.FileSz, 0u);
+    ASSERT_EQ((Fields.VAddr + Fields.MemSz) % kPageSize4K, 0u);
+    --Fields.MemSz;
+    --Fields.FileSz;
+    writeELFPhdr(At, Header.Is64, Fields);
+    ++Changed;
+  }
+  ASSERT_EQ(Changed, 1u);
+  const auto PartialProgram = tmpFile("relro_partial");
+  ASSERT_TRUE(fs::copy_file(Program, PartialProgram));
+  {
+    std::ofstream Output(PartialProgram, std::ios::binary | std::ios::trunc);
+    ASSERT_TRUE(Output);
+    Output.write(reinterpret_cast<const char *>(Bytes.data()), Bytes.size());
+  }
+  // The native loader accepts this image and leaves the partial tail writable.
+  EXPECT_TRUE(exec(PartialProgram.string(), {}).ok());
+  auto Partial = loadBinary(PartialProgram);
+  ASSERT_TRUE(static_cast<bool>(Partial))
+      << llvm::toString(Partial.takeError());
+  EXPECT_FALSE(Partial->readOnlyAfterRelocations(Address, 4));
+  EXPECT_TRUE(isRuntimeWritableAddress(*Partial, Address));
+
+  const auto StaticSource = tmpFile("static_relro.s");
+  const auto StaticProgram = tmpFile("static_relro");
+  std::ofstream(StaticSource) << R"asm(
+.text
+.globl _start, read_value
+.type read_value,@function
+read_value:
+  mov shared_value(%rip), %eax
+  ret
+.size read_value, .-read_value
+_start:
+  movl $43, shared_value(%rip)
+  call read_value
+  xor %edi,%edi
+  cmp $43,%eax
+  setne %dil
+  mov $60,%eax
+  syscall
+.section .data.rel.ro,"aw",@progbits
+.globl shared_value
+.type shared_value,@object
+shared_value: .long 17
+.size shared_value, 4
+.section .note.GNU-stack,"",@progbits
+)asm";
+  const auto StaticBuilt = exec(
+      NEVERD_TEST_CLANG, {"-nostdlib", "-static", "-Wl,-z,relro",
+                          StaticSource.string(), "-o", StaticProgram.string()});
+  ASSERT_TRUE(StaticBuilt.ok()) << StaticBuilt.err;
+  EXPECT_TRUE(exec(StaticProgram.string(), {}).ok());
+  auto Static = loadBinary(StaticProgram);
+  ASSERT_TRUE(static_cast<bool>(Static)) << llvm::toString(Static.takeError());
+  ASSERT_TRUE(Static->ELFMetadata);
+  EXPECT_TRUE(Static->ELFMetadata->Interpreter.empty());
+  ASSERT_TRUE(std::any_of(
+      Static->ELFMetadata->ProgramHeaders.begin(),
+      Static->ELFMetadata->ProgramHeaders.end(),
+      [](const auto &PH) { return PH.Type == llvm::ELF::PT_GNU_RELRO; }));
+  const auto StaticSymbol =
+      std::find_if(Static->Symbols.begin(), Static->Symbols.end(),
+                   [](const auto &S) { return S.Name == "shared_value"; });
+  ASSERT_NE(StaticSymbol, Static->Symbols.end());
+  EXPECT_FALSE(Static->readOnlyAfterRelocations(StaticSymbol->Addr, 4));
+  EXPECT_TRUE(isRuntimeWritableAddress(*Static, StaticSymbol->Addr));
 #endif
 }
 

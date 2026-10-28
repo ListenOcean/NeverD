@@ -2478,6 +2478,33 @@ target_include_directories(NeverDNativePointerRelocationBoundaryTests PRIVATE
 
 add_dependencies(NeverDNativePointerRelocationBoundaryTests neverd)
 
+add_neverd_unittest(NeverDDataSymbolBindingTests
+  format/DataSymbolBindingTests.cpp
+
+  LINK_LIBS LLVMAsmParser
+  LINK_COMPONENTS
+  Support
+  BackendC
+  BackendLLVM
+  Types
+  Pipeline
+)
+
+target_compile_definitions(NeverDDataSymbolBindingTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  TEST_OBJ_DIR="${CMAKE_CURRENT_BINARY_DIR}"
+)
+
+target_include_directories(NeverDDataSymbolBindingTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+  ${CMAKE_SOURCE_DIR}/include
+  ${LLVM_INCLUDE_DIRS}
+)
+
+add_dependencies(NeverDDataSymbolBindingTests neverd)
+
 add_neverd_unittest(NeverDMBASourceTests
   core/MBASourceTests.cpp
   LINK_LIBS LLVMSupport
