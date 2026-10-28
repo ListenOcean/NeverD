@@ -14,6 +14,7 @@
 #include "llvm/ADT/SmallString.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringSwitch.h"
+#include "llvm/Support/Compiler.h"
 #include "llvm/Support/raw_ostream.h"
 
 #if NEVERD_USE_SIMDJSON
@@ -55,13 +56,14 @@ neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
 namespace {
 // This root-array writer accepts only the fixed patch inventory schema keys.
 // Pretty selects the canonical two-space sidecar format. General string
-// values still use LLVM's JSON escaping.
+// values still use LLVM's JSON escaping. Keep the small attribute sink chain
+// inline so schema keys reach raw_ostream as constants.
 template <bool Pretty> class PatchOutput {
   llvm::raw_ostream &Stream;
   bool FirstObject = true;
   bool FirstAttribute = true;
 
-  void attributeBegin(llvm::StringLiteral Key) {
+  LLVM_ATTRIBUTE_ALWAYS_INLINE void attributeBegin(llvm::StringLiteral Key) {
     if (!FirstAttribute)
       Stream << ',';
     FirstAttribute = false;
@@ -96,17 +98,20 @@ public:
     Stream << '}';
   }
 
-  void attribute(llvm::StringLiteral Key, llvm::StringRef Text) {
+  LLVM_ATTRIBUTE_ALWAYS_INLINE void attribute(llvm::StringLiteral Key,
+                                              llvm::StringRef Text) {
     attributeBegin(Key);
     Stream << llvm::json::Value(Text);
   }
 
-  void attribute(llvm::StringLiteral Key, uint64_t Value) {
+  LLVM_ATTRIBUTE_ALWAYS_INLINE void attribute(llvm::StringLiteral Key,
+                                              uint64_t Value) {
     attributeBegin(Key);
     Stream << Value;
   }
 
-  void hexAttribute(llvm::StringLiteral Key, llvm::StringRef Text) {
+  LLVM_ATTRIBUTE_ALWAYS_INLINE void hexAttribute(llvm::StringLiteral Key,
+                                                 llvm::StringRef Text) {
     attributeBegin(Key);
     Stream << '"' << Text << '"';
   }
@@ -135,8 +140,9 @@ static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
 }
 
 template <bool Pretty>
-void writeHexAttribute(PatchOutput<Pretty> &Output, llvm::StringLiteral Key,
-                       llvm::StringRef Text) {
+LLVM_ATTRIBUTE_ALWAYS_INLINE void writeHexAttribute(PatchOutput<Pretty> &Output,
+                                                    llvm::StringLiteral Key,
+                                                    llvm::StringRef Text) {
   Output.hexAttribute(Key, Text);
 }
 
