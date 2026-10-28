@@ -7223,6 +7223,27 @@ passes its own argument on that way, as
 `long g(long a, long b) { return logv("x", b); }` does, passes zero where the
 program passes `b`, and its C takes no such parameter.
 
+System V's vector registers do not share it. A call that loads AL with a
+constant, in its own block (`lowByteConstantAtCall`, which gives
+`MedOp::VariadicVectorCount`), passes a routine that saves the vector
+registers for va_arg (its prologue tests AL and branches around their spills,
+`LocalRegisterEffect::SavesVectorArguments`) the low double of each of that
+many vector argument registers, and no other. The entry-read summary counts
+them as the call's reads (`RegisterStep::VectorCount`), so a register the
+caller passes on untouched is one it reads at its entry:
+`long gd(double x) { return logv("y", x); }`, which is
+`lea rdi; mov al, 1; jmp logv`, reads XMM0. Its callers pass that double as
+they pass any register a summary lists, and it takes it as a parameter, though
+no entry copy names the register (`detectSummaryVectorParams`). HighIR's scan
+of a call to the routine enters that parameter where the register reaches the
+call untouched, and call recovery for LLVM takes no vector register past the
+count, which holds only what earlier code left there. Where a callee's summary
+lists floating arguments, that recovery passes no integer register past those
+the summary counts, though the callee's own recovery took more as forwarded
+parameters: those positions pass zero, before the floating arguments. A call
+whose block loads AL with no constant gives no count, and nothing changes for
+it.
+
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
 the call at a call that may change the register (`callClobbersRegister`, the

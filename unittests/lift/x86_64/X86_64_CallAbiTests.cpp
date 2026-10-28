@@ -490,6 +490,86 @@ TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsDoubleArguments) {
   expectLiftedRunsLikeSource(VariadicDoubles, "vsum_d", "sd");
 }
 
+static const char *const ForwardedDoubles = R"C(
+long logv(const char *f, ...) __attribute__((noinline));
+long gd(double x) __attribute__((noinline));
+long gdc(double x) __attribute__((noinline));
+long gm(double x) __attribute__((noinline));
+long g2d(double a, double b) __attribute__((noinline));
+long gd(double x) { return logv("y", x); }
+long gdc(double x) { return logv("y", x) + 1; }
+long gm(double x) { return logv("z", x, 2.5); }
+long g2d(double a, double b) { return logv("w", a, b); }
+long logv(const char *f, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, f);
+  long s = f[0];
+  if (s == 'y') {
+    s += (long)(__builtin_va_arg(ap, double) * 4);
+  } else {
+    double a = __builtin_va_arg(ap, double);
+    s += (long)(a * (s == 'z' ? 8 : 16) - __builtin_va_arg(ap, double) * 2);
+  }
+  __builtin_va_end(ap);
+  return s;
+}
+int fwd_e(int a) {
+  return (int)(gd(a * 0.5) + gdc(a * 0.25) * 3 + gm(a + 0.5) * 5 +
+               g2d(a * 1.5, a - 2.0) * 7);
+}
+)C";
+
+// A call loads AL with the number of vector registers it passes a variadic
+// callee, which saves them for va_arg.  gd (`lea rdi; mov al, 1; jmp logv`),
+// gdc, which calls logv, gm, which sets XMM1 and passes on XMM0, and g2d pass
+// their own doubles on untouched below that count: each takes them as its
+// parameters, and fwd_e passes the doubles it computes.
+TEST_F(X86_64_CallAbi, AVariadicCallPassesOnTheDoublesALCounts) {
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu"}, ForwardedDoubles, "fwd_e",
+      {"fwd_e", "gd", "gdc", "gm", "g2d", "logv"}, {0, 1, -1, 7, 1000});
+}
+
+static const char *const ForwardedLoadedDoubles = R"C(
+long logv(const char *f, ...) __attribute__((noinline));
+long gd(double x) __attribute__((noinline));
+long gm(double x) __attribute__((noinline));
+long g2d(double a, double b) __attribute__((noinline));
+long gd(double x) { return logv("y", x); }
+long gm(double x) { return logv("z", x, 2.5); }
+long g2d(double a, double b) { return logv("w", a, b); }
+long logv(const char *f, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, f);
+  long s = f[0];
+  if (s == 'y') {
+    s += (long)(__builtin_va_arg(ap, double) * 4);
+  } else {
+    double a = __builtin_va_arg(ap, double);
+    s += (long)(a * (s == 'z' ? 8 : 16) - __builtin_va_arg(ap, double) * 2);
+  }
+  __builtin_va_end(ap);
+  return s;
+}
+volatile double Scale[4] = {0.5, 0.25, 1.5, -2.0};
+int fwd_e(int a) {
+  Scale[3] = a;
+  return (int)(gd(Scale[0] * Scale[3]) + gm(Scale[1]) * 5 +
+               g2d(Scale[2], Scale[3]) * 7);
+}
+)C";
+
+// The LLVM route's C passes them alike.  Its caller loads each double whole
+// (`movsd xmm0, [mem]`): that C holds a vector register whole, and an upper
+// lane a scalar conversion left as the caller's entry value would be an
+// unknown value there.
+TEST_F(X86_64_CallAbi, ALiftedVariadicCallPassesOnTheDoublesALCounts) {
+  LLVMC = true;
+  expectHighCRunsLikeSource(
+      {"-target", "x86_64-linux-gnu"}, ForwardedLoadedDoubles, "fwd_e",
+      {"fwd_e", "gd", "gm", "g2d", "logv", "Scale"}, {0, 1, -1, 7, 1000});
+}
+
 static const char *const VariadicStackIntegers = R"C(
 #include <stdarg.h>
 static int sb(int n, ...) __attribute__((noinline));

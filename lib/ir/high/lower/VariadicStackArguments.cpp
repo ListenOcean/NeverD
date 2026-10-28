@@ -281,11 +281,12 @@ bool registerEntering(const MedFunc &Func, const MedBlock &Block,
 
 bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
                                   uint64_t RegOff, const TargetRegInfo &TRI,
-                                  MedVar &Out) {
+                                  MedVar &Out, bool ParameterAtEntry) {
   std::optional<MedVar> Left;
   bool ReachedEntry = false;
   return registerEntering(Func, Block, RegOff, TRI, /*Calls=*/nullptr,
-                          /*Size=*/0, Out, Left, ReachedEntry);
+                          /*Size=*/0, Out, Left, ReachedEntry,
+                          ParameterAtEntry);
 }
 
 bool reachingRegisterAtCall(const MedFunc &Func, const MedBlock &Block,

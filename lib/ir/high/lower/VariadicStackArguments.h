@@ -52,9 +52,11 @@ const PhiNode *registerPhi(const MedFunc &Func, const MedBlock &Block,
 /// The register at \p RegOff as it enters \p Block of \p Func: the block's
 /// phi of it, else the last definition along the first predecessor path that
 /// has one, else at function entry the copy that names its incoming value.
+/// With \p ParameterAtEntry, a register the function takes as a parameter
+/// and its entry holds no copy of enters as that parameter.
 bool reachingRegisterAtBlockEntry(const MedFunc &Func, const MedBlock &Block,
                                   uint64_t RegOff, const TargetRegInfo &TRI,
-                                  MedVar &Out);
+                                  MedVar &Out, bool ParameterAtEntry = false);
 
 /// The integer argument register at \p RegOff as the call at \p CallIdx of
 /// \p Block reads it: the block's last write to it before the call, else as
