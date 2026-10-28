@@ -2138,6 +2138,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 运行 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）和 `NeverDCSourcePresentationTests`，检查字节来源、路径一致性、被覆盖或逃逸的存储、不可变镜像范围、预算、编码及元数据边界。`NeverDWorkerStackText` 编译公开的 x64/ARM64 PE 样例并通过两条 C 路径验证，包括未知覆盖写入。该测试需要 Clang 和 lld-link；Windows 原生执行需要单独验证。
 
+已验证的指针调用参数即使由 LLVM 整数承载地址，也使用相同的镜像文字注释。用例覆盖 x86/x64/ARM64 的 COFF、ELF 和 Mach-O，包括被拒绝的声明、相同数值的整数、动态地址、可写存储以及关闭或转义的注释。参数仍保留原地址；显示初始字节不代表存储不可变。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 交互式补丁的职责
 

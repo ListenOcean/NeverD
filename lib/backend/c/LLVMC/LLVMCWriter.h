@@ -770,9 +770,12 @@ public:
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
-  /// Recognized image text beside the load that reads it, even when the
-  /// object's declaration is folded out of the displayed function body.
-  std::string imageLoadComment(const llvm::LoadInst &Load) const;
+  /// Recognized image text at a proved data address, shared by loads and
+  /// pointer arguments even when the image declaration is folded away.
+  std::string imagePointerComment(const llvm::Value *Pointer) const;
+  /// Annotate a checked pointer argument without replacing its storage.
+  std::string imagePointerArgument(const llvm::Value *Pointer,
+                                   std::string Text) const;
   std::optional<va_t> imageDataVA(const llvm::Value *V) const;
   static unsigned imageIntegerAccessSize(const llvm::Type *Ty) {
     if (!Ty || !Ty->isIntegerTy())

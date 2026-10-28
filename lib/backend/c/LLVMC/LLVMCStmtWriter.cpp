@@ -1604,7 +1604,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   // Annotate only a read that emitted code. Forwarded or inlined reads must
   // not leave an orphan comment where their old instruction used to be.
   if (Load && OS.stream().tell() != Begin)
-    if (const auto Comment = imageLoadComment(*Load); !Comment.empty()) {
+    if (const auto Comment = imagePointerComment(Load->getPointerOperand());
+        !Comment.empty()) {
       emitIndent(Indent);
       OS << "/* " << Comment << " */\n";
     }
@@ -5837,8 +5838,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
         Expression += c_detail::sourceRecordValue(
             Hint->Signature.Parameters[I].Type,
             typeToCLLVM(Argument->getType()), Type, valueStr(Argument));
-      else
-        Expression += "(" + Type + ")(" + valueStr(Argument) + ")";
+      else {
+        std::string Projected = "(" + Type + ")(" + valueStr(Argument) + ")";
+        const bool Pointer =
+            Hint ? Hint->Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr
+                 : Argument->getType()->isPointerTy();
+        Expression += Pointer
+                          ? imagePointerArgument(Argument, std::move(Projected))
+                          : std::move(Projected);
+      }
     }
     Expression += ")";
     if (Hint && Hint->Signature.ReturnType->Kind == NdTypeKind::Struct)
@@ -6040,16 +6048,20 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
           Integer || PointerSpelling || Operand->getType()->isPointerTy()
               ? "(uintptr_t)"
               : "";
-      Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
-              "(" + Argument + ")";
+      std::string Projected = "(" + declarationToC(cDisplayType(Type), "") +
+                              ")" + Bridge + "(" + Argument + ")";
+      Expr += Type->Kind == NdTypeKind::Ptr
+                  ? imagePointerArgument(Operand, std::move(Projected))
+                  : std::move(Projected);
       continue;
     }
     if (const auto *Callee = Call.getCalledFunction();
         Callee && !needsCallSiteCType(Call)) {
       const auto &Parameters = definitionPointerTypes(*Callee).Parameters;
       if (ArgIdx < Parameters.size() && Parameters[ArgIdx].Type) {
-        Expr += "(" + Parameters[ArgIdx].declaration() + ")(uintptr_t)(" +
-                Argument + ")";
+        Expr += imagePointerArgument(Operand,
+                                     "(" + Parameters[ArgIdx].declaration() +
+                                         ")(uintptr_t)(" + Argument + ")");
         continue;
       }
     }
@@ -6095,7 +6107,13 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
              declaredParameterIsInteger(Call, CalleeName, ArgIdx))
       Argument = "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" +
                  Argument + ")";
-    Expr += Argument;
+    const bool PointerArgument =
+        Prototype       ? libc::isPointerType(Param)
+        : HeaderInteger ? libc::isObjectPointerParameter(Library.Name, ArgIdx,
+                                                         libcVariant())
+                        : Operand->getType()->isPointerTy();
+    Expr += PointerArgument ? imagePointerArgument(Operand, std::move(Argument))
+                            : std::move(Argument);
   }
   Expr += ")";
   RenderingCalls.pop_back();

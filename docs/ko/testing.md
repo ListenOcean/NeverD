@@ -2163,6 +2163,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NeverDObjCSourceCallTests`의 `SourceFrameAnalysis.*`와 `NeverDCSourcePresentationTests`를 실행하여 바이트 출처, 경로 일치, 덮어쓰거나 이탈한 저장소, 불변 이미지 범위, 예산, 인코딩 및 메타데이터 경계를 확인합니다. `NeverDWorkerStackText`는 공개 x64/ARM64 PE 사례를 컴파일하고 알 수 없는 덮어쓰기를 포함하여 두 C 경로를 검증합니다. Clang과 lld-link가 필요하며 Windows 네이티브 실행은 별도로 검증해야 합니다.
 
+검증된 포인터 호출 인수는 LLVM이 주소를 정수로 보관해도 같은 이미지 문자열 주석을 사용합니다. x86/x64/ARM64의 COFF, ELF, Mach-O에서 거부된 선언, 같은 숫자를 가진 정수, 동적 주소, 쓰기 가능한 저장소, 주석 비활성화와 이스케이프를 검사합니다. 인수는 원래 주소를 유지하며 초기 바이트 표시는 불변성을 증명하지 않습니다.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 대화형 패치의 책임
 

@@ -2119,6 +2119,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 執行 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）和 `NeverDCSourcePresentationTests`，檢查位元組來源、路徑一致性、遭覆寫或逸出的儲存、不可變映像範圍、預算、編碼及中繼資料邊界。`NeverDWorkerStackText` 編譯公開的 x64/ARM64 PE 樣例並透過兩條 C 路徑驗證，包括未知的覆寫。此測試需要 Clang 和 lld-link；Windows 原生執行需要另外驗證。
 
+已驗證的指標呼叫參數即使由 LLVM 整數承載位址，也使用相同的映像文字註解。案例涵蓋 x86/x64/ARM64 的 COFF、ELF 和 Mach-O，包括遭拒的宣告、相同數值的整數、動態位址、可寫儲存及停用或跳脫的註解。參數仍保留原位址；顯示初始位元組不代表儲存不可變。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 互動式修補的職責
 

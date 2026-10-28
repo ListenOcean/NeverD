@@ -369,6 +369,11 @@ prologues), and arbitrary runtime decoding still need separate proofs.
 LLVM C also places recognized text beside ordinary and volatile image reads
 inside the function body, which remains visible when the GUI folds image
 declarations. Dynamic pointers and disabled comments stay unannotated.
+Checked pointer call arguments now use that same bounded reader even when
+LLVM carries their address as an integer. The original address and mutable
+storage remain intact; scalar collisions and rejected source declarations
+cannot acquire pointer text. Public tests cover x86/x64/ARM64 and all three
+native formats.
 Exact scalar branches now reconnect discontiguous and backward code while
 preserving independently known tail calls. Their numeric and symbolic proofs
 carry values across unique decoded direct predecessors and share authenticated

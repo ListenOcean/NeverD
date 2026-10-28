@@ -2269,6 +2269,8 @@ Le regressioni degli oggetti d’ingresso verificano copie simboliche, salvatagg
 
 Eseguire `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) e `NeverDCSourcePresentationTests` per provenienza dei byte, accordo dei percorsi, memoria sovrascritta o sfuggita, intervalli immutabili dell’immagine, budget, codifiche e limiti dei metadati. `NeverDWorkerStackText` compila casi PE pubblici x64/ARM64 attraverso entrambi i percorsi C, incluse sovrascritture sconosciute. Servono Clang e lld-link; l’esecuzione nativa Windows richiede una verifica separata.
 
+Gli argomenti puntatore verificati usano le stesse annotazioni del testo dell’immagine anche quando LLVM conserva l’indirizzo in un intero. I casi coprono x86/x64/ARM64 con COFF, ELF e Mach-O, incluse dichiarazioni rifiutate, valori numerici uguali, indirizzi dinamici, memoria modificabile e commenti disabilitati o con escape. L’argomento mantiene l’indirizzo originale; mostrare i byte iniziali non ne prova l’immutabilità.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Responsabilità delle patch interattive
 

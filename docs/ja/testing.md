@@ -2173,6 +2173,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NeverDObjCSourceCallTests`（`SourceFrameAnalysis.*`）と `NeverDCSourcePresentationTests` を実行し、バイトの由来、経路の一致、上書きまたは逸出した記憶領域、不変のイメージ範囲、予算、文字コード、メタデータ境界を確認します。`NeverDWorkerStackText` は公開の x64/ARM64 PE 例をコンパイルし、未知の上書きを含めて両方の C 経路を検証します。Clang と lld-link が必要で、Windows のネイティブ実行は別途検証します。
 
+検証済みのポインター引数は、LLVM がアドレスを整数で保持する場合も同じイメージ文字列注釈を使います。x86/x64/ARM64 の COFF、ELF、Mach-O で、拒否された宣言、同じ数値の整数、動的アドレス、書き込み可能な記憶領域、注釈の無効化とエスケープを検証します。引数は元のアドレスを保持し、初期バイトの表示は不変性の証明にはなりません。
+
 <!-- i18n-section: interactive-byte-patches -->
 ## 対話的パッチの責務
 

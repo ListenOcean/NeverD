@@ -6910,6 +6910,12 @@ folds declarations. Unknown pointers have no guessed text; disabling comments
 leaves the original storage representation. It also checks
 comment escaping and that aggregate storage cannot become a scalar edit type.
 
+Checked pointer call arguments use the same image-text annotations even when LLVM
+uses an integer address carrier. The cases cover x86/x64/ARM64 with COFF, ELF
+and Mach-O, including rejected declarations, numeric collisions, dynamic
+addresses, writable storage and disabled or escaped comments. The original
+address remains the argument; displayed initial bytes do not prove immutability.
+
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
 segments, unrelated code/data relocations, exact byte values, partial overlap,
 promotion to a whole mirror, access order, strict pointer-overlap refusal and

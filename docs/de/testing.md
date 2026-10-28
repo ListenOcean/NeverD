@@ -2289,6 +2289,8 @@ Die Eingangsobjektregressionen prüfen symbolische Kopien, Sicherungen und kopie
 
 Führen Sie `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) und `NeverDCSourcePresentationTests` für Byte-Herkunft, Pfadübereinstimmung, überschriebene oder entwichene Speicherbereiche, unveränderliche Image-Bereiche, Budgets, Kodierungen und Metadatengrenzen aus. `NeverDWorkerStackText` kompiliert öffentliche x64/ARM64-PE-Fälle über beide C-Pfade, einschließlich unbekannter Überschreibungen. Clang und lld-link sind erforderlich; native Windows-Ausführung wird separat geprüft.
 
+Geprüfte Zeigerargumente verwenden dieselben Bildtextkommentare, auch wenn LLVM die Adresse als Ganzzahl führt. Die Fälle decken x86/x64/ARM64 mit COFF, ELF und Mach-O ab, einschließlich abgelehnter Deklarationen, gleicher Zahlenwerte, dynamischer Adressen, beschreibbarer Speicherbereiche sowie deaktivierter oder maskierter Kommentare. Die ursprüngliche Adresse bleibt das Argument; angezeigte Anfangsbytes beweisen keine Unveränderlichkeit.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Zuständigkeit für interaktive Patches
 

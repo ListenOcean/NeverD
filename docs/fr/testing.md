@@ -2288,6 +2288,8 @@ Les régressions des objets d’entrée vérifient copies symboliques, sauvegard
 
 Exécutez `NeverDObjCSourceCallTests` (`SourceFrameAnalysis.*`) et `NeverDCSourcePresentationTests` pour vérifier la provenance des octets, l’accord des chemins, les stockages écrasés ou échappés, les plages d’image immuables, les budgets, les encodages et les limites des métadonnées. `NeverDWorkerStackText` compile des cas PE publics x64/ARM64 dans les deux voies C, y compris les écrasements inconnus. Clang et lld-link sont requis ; l’exécution Windows native est une validation distincte.
 
+Les arguments pointeurs validés utilisent les mêmes annotations de texte de l’image, même si LLVM porte l’adresse dans un entier. Les cas couvrent x86/x64/ARM64 avec COFF, ELF et Mach-O : déclarations rejetées, valeurs numériques identiques, adresses dynamiques, mémoire modifiable et commentaires désactivés ou échappés. L’argument conserve son adresse d’origine ; l’affichage des octets initiaux ne prouve pas leur immutabilité.
+
 <!-- i18n-section: interactive-byte-patches -->
 ## Responsabilité des correctifs interactifs
 
