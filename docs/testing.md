@@ -6350,8 +6350,10 @@ every MMX register pairing, ignored prefixes and REX order, address width,
 segments and stack-reference provenance. It rejects contradictory decoder
 detail and selectors before effects, checks feature preflight without state
 mutation, and proves that FEMMS payload invalidation survives subsequent
-unary and binary operations. Its emission test exports 960 ELF objects across
-LLVM, HighC and LLVMC, both pipeline settings and C O0/O2.
+unary and binary operations. Its 96 instruction/form emission cases export
+960 ELF objects across LLVM, HighC and LLVMC, both pipeline settings and C
+O0/O2. Each case uses the ordinary CTest timeout; the retained probe numbers
+remain stable for the guest replay.
 
 ```sh
 python3 scripts/build.py build-release --target NeverDX86ThreeDNowContextTests \
