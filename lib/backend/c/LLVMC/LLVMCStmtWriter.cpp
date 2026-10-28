@@ -4012,7 +4012,20 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                    : valueStr(Store->getValueOperand()))
        << ";\n";
     emitIndent(Indent + 1);
-    OS << c_memory::storeCopy(Pointer, Value,
+    std::string CopyAddress = Pointer;
+    if (const auto *ConstantAddress =
+            llvm::dyn_cast<llvm::ConstantExpr>(Address);
+        ConstantAddress &&
+        ConstantAddress->getOpcode() == llvm::Instruction::IntToPtr) {
+      // An absolute guest address names memory in the invocation environment,
+      // not a host C object. Keep its integer carrier explicit: a literal
+      // high-half pointer inside memcpy triggers a false zero-object bound.
+      CopyAddress = freshVar("memory_address");
+      OS << "uintptr_t " << CopyAddress << " = "
+         << c_memory::integerOperand(Pointer) << ";\n";
+      emitIndent(Indent + 1);
+    }
+    OS << c_memory::storeCopy(CopyAddress, Value,
                               std::to_string(Size.getFixedValue()))
        << ";\n";
     emitIndent(Indent);

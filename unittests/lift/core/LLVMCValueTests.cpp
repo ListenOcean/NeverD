@@ -1707,6 +1707,44 @@ int main(void) {
   }
 }
 
+TEST(LLVMCValues, AbsoluteGuestStoresDoNotInventHostObjectBounds) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+target datalayout = "e-p:64:64"
+define i32 @guest_store(i1 %enabled, i32 %value) {
+entry:
+  br i1 %enabled, label %write, label %done
+write:
+  store i32 %value, ptr inttoptr (i64 -140737488351232 to ptr), align 1
+  br label %done
+done:
+  ret i32 %value
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  Module->setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = false;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  // The guest mapping belongs to its invocation environment. The host test
+  // only executes the disabled path; its compiler must retain the write
+  // without claiming the numeric address names a zero-sized host object.
+  const std::string Driver = R"(
+int main(void) {
+  return guest_store(0, 731) != 731;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun("#pragma clang diagnostic error \"-Wfortify-source\"\n" +
+                      Source + Driver,
+                  Optimization, {}, true);
+}
+
 TEST(LLVMCValues, RawMemoryUpdatesRetainObserversAliasesAndOrderedAccesses) {
   using namespace llvm;
   LLVMContext Context;
