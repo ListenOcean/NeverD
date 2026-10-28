@@ -561,3 +561,120 @@ assumed disjoint. Earlier finite offline runs reaching slot 1960/1963 observed
 target slot 1971; they do not close these static contexts. Real bank/CPI replay,
 arbitrary-input semantic equivalence and byte-identical source reconstruction
 remain outside the validated result.
+
+## 2026-10-28 P3 matched guest return qualification
+
+A mandatory guest recursion cycle previously acquired an invented returning
+continuation when context recursion was cut. Schema 11 computes matched-return
+reachability from canonical MedIR calls and CFG edges. A call requires both its
+callee and continuation to return; a branch admits either successor. A cycle
+cannot bootstrap a return from an EXIT after its mandatory recursive call.
+Host callbacks and unknown indirect calls remain potentially returning,
+including terminal-catalog syscalls. Callee prefixes retain their CALLX
+observations even when the callee cannot return.
+
+The isolated change is `22fde6821211fa04243a734d7d39bb41e5ce15eb`, compared
+with the complete `3abf679e6f5854bd77674321c03e0f701ee37ba1` round above.
+The new worker SHA-256 is
+`ff67c026d280432a5301f2221cc8f03aa44f4ee76d7d522961060f82ffb59b65`;
+report SHA-256 is
+`4daaf2fbb685161864e10990a075b98cc751c948a72c2b2886ea91ceda7c1cad`.
+All asset hashes, loader/cluster profiles, compiler versions/flags, dependency
+revisions and budgets match that baseline. The complete run uses 60 seconds
+per request, 8 GiB sampled process-group RSS, 512 MiB output and two concurrent
+assets. Internal limits remain 8,388,608 visits, 64 MiB retained estimate,
+524,288 output elements, four specializations and four complete alternatives.
+No isolated sample retry is substituted.
+
+| Stage | Before | After |
+|---|---:|---:|
+| Load | 72/72 | 72/72 |
+| Runtime image | 72/72 | 72/72 |
+| Decode | 72/72 | 72/72 |
+| Control flow | 72/72 | 72/72 |
+| Requisite verification | 72/72 | 72/72 |
+| CFG / MedIR | 72/72 | 72/72 |
+| HighIR processing | 72/72 | 72/72 |
+| Solana metadata | 72/72 | 72/72 |
+| LLVM export | 72/72 | 72/72 |
+| C export | 72/72 | 72/72 |
+| Rust export | 72/72 | 72/72 |
+| CALLX-context query | 72/72 | 72/72 |
+| C native object | 72/72 | 72/72 |
+| Rust native object | 72/72 | 72/72 |
+| Required SBF tests | 468/468 | 471/471 |
+
+There were no crashes, timeouts, compiler failures or skipped required tests.
+Official SBPF, Agave and protocol-ceiling scale checks were mandatory. The three
+new raw-execution regressions retain a real recursive base return, a CALLX
+executed before nontermination, and a returning sibling's memory facts.
+All 216 LLVM/C/Rust exports match the baseline byte-for-byte. C and Rust each
+cover 5,899,345 raw slots exactly once; all 72 source partitions agree.
+
+| Conditional recovery metric | Before | After |
+|---|---:|---:|
+| Singleton sites | 194 | 590 |
+| Finite-set sites | 31 | 49 |
+| Either conditional address proof | 225 | 639 |
+| Sites with no conditional address proof | 7,349 | 6,935 |
+| Global-budget-limited samples | 2 | 0 |
+| Context instruction visits | 170,102,731 | 106,683,295 |
+| Function summaries | 120,986 | 123,992 |
+| Generic return expression instantiations | 2 | 116 |
+
+This is a net gain, not monotonic proof retention: 419 sites gain a conditional
+proof and five lose one. The lost sites are boop-fun 149476 and spl-token-swap
+31501, 31530, 32233, 32261. The last two have raw-unreachable old prefixes.
+An independent raw ELF matched-return audit verifies all 1,385 nonreturning
+edges. Of 3,196 removed caller-entry target relations, 3,185 have a proven
+unreachable prefix. The other 11 remain precision losses under changed
+specialization/input propagation; they are not counted as justified pruning:
+
+| Sample | Caller entry | Call slot | CALLX slot |
+|---|---:|---:|---:|
+| boop-fun | 147703 | 147756 | 149476 |
+| heaven | 134053 | 134053 | 149441 |
+| meteora-damm-v1 | 3733 | 3733 | 162124 |
+| meteora-damm-v2 | 3537 | 3537 | 160763 |
+| meteora-dlmm | 239194 | 239194 | 247880 |
+| perena | 85783 | 86385 | 31035 |
+| pump-fun | 5484 | 5484 | 220358 |
+| raydium-clmm | 7667 | 7667 | 169724 |
+| raydium-launchlab | 118937 | 118937 | 127781 |
+| spl-token-swap | 31833 | 31837 | 31501 |
+| spl-token-swap | 31833 | 31837 | 31530 |
+
+Serialized expression witnesses change from 2,290 to 601: 1,700 removed and
+11 added. Of the removals, 1,695 map to raw-unreachable prefixes and two to the
+precision losses above. Three have no established condition equivalence
+(obric-v2 twice and pump-fun once). They remain audit gaps rather than a claim
+that equal target addresses imply equal conditional evidence.
+
+Lifinity-v1 singleton sites increase from 5 to 19, but slot 1963 is still
+unproven. Its unknown contexts decrease from 16 to ten: six missing full-width
+fields at 1960 and four unknown entry-register contexts. The successful
+32470 allocation and 32478 copy retain the captured identity. The 32487 error
+helper still falls back to a generic summary; its missing tag/payload at 32488
+prevents preserving r8 at the 32493 join and output+96 at 32926. Returning
+reallocation/copy paths and parameter-dependent aliasing remain open. A temporary
+inline-copy experiment improves some helper summaries but adds no target site;
+it was restored and is not part of this qualification.
+
+Whole-program structuring remains 0/72. All 7,574 raw CALLX sites retain dynamic
+fallback, and 71 samples still contain sites without any conditional proof.
+Bank/CPI business replay, other host platforms and byte-identical source
+reconstruction remain outside this result.
+
+The subsequent merge of dev `967a75a12` is separately qualified at
+`051d38a42cef8f371eeed8b23ecb8d0f91cfa29d`. This includes dev's Capstone update
+from `45dcfb3f8` to `3c00e8faf`, so it is not relabelled as the same-dependency
+comparison above. SBF sources/protocol and all other dependency inputs match.
+A clean rebuild passed the same 471 mandatory tests and another independent
+complete 72-SO run under the original budgets. Every stage and both native
+compilations passed. All 288 LLVM/C/Rust/query outputs match the isolated fix
+byte-for-byte, as do all 72 analysis stage details. The integrated worker
+SHA-256 is
+`08aaadcee3b97b8f2ca498ea0c72ea85929034077ce400f8f171ff817d1f756a`;
+report SHA-256 is
+`1b69b0633d61e5e88029c6a71ca122b30533f13ed42ec143bb45aa50bdb39267`.
+These local results do not claim all GitHub platform checks passed.
