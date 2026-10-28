@@ -437,8 +437,8 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
         // A byte/halfword register result alone does not define all X0 bits.
         MedOp Widen;
         Widen.Opcode = NdOp::INT_ZEXT;
-        Widen.Output.Kind = MedVar::Temp;
-        Widen.Output.Id = kTypedTemporaryId + Shape.Parameters.size();
+        Widen.Output = Call.Output;
+        ++Widen.Output.SSAVer;
         Widen.Output.Size = kPointerBytes;
         Widen.addInput(Call.Output);
         Return.Inputs[0] = Widen.Output;
@@ -457,7 +457,10 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
         checkBundle(Candidate, Variant.Key, Variant.Zero,
                     Shape.Parameters.size(), Variant.Raw);
         for (const auto &Block : *Candidate.getFunction(kFunction))
-          for (const auto &Instruction : Block)
+          for (const auto &Instruction : Block) {
+            if (const auto *Return =
+                    llvm::dyn_cast<llvm::ReturnInst>(&Instruction))
+              EXPECT_FALSE(llvm::isa<llvm::Constant>(Return->getReturnValue()));
             if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
                 Call && Call->isIndirectCall() && !Call->isInlineAsm()) {
               const auto *Type = Call->getFunctionType();
@@ -494,6 +497,7 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
                           Expected->Kind == NdTypeKind::Float);
               }
             }
+          }
       };
       Inspect(*Module);
       std::string IR;

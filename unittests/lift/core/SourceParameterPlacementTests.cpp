@@ -18,6 +18,9 @@
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include <iterator>
+#include <vector>
+
 using namespace neverd;
 
 namespace {

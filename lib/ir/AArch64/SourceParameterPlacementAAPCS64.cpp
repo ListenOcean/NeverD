@@ -7,8 +7,7 @@
 /// \file
 /// The AArch64 procedure call standard's parameter passing: integer values
 /// in X0-X7 (128-bit pairs start at even registers except on Darwin), floating
-/// values and the
-/// members of a homogeneous floating-point aggregate in V0-V7, other records
+/// values and homogeneous floating-point aggregate members in V0-V7, records
 /// of at most 16 bytes in consecutive X registers, larger ones by the address
 /// of a copy.  Values the registers no longer hold go to 8-byte stack slots;
 /// Apple's arm64 packs fixed scalar spills by their natural size and
