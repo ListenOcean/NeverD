@@ -3212,7 +3212,13 @@ non-section symbol rule; unregistered x86 thunks and tagged Thumb entries
 resolve through the same veneer owner. Function discovery reads no header, so
 the tables hold every routine a header library declares `_Noreturn`, as the
 SDK's `ExitProcess`, and its decode probe stops at a call through the import
-slot of one, as the CFG builder does. A whole program's output
+slot of one, as the CFG builder does. An internal callee ends its caller's
+path only when a proof lifts it and no path reaches a return. In an x64, ARM
+or ARM64 PE image only a leaf routine has no unwind entry; one no symbol gives
+a range either, such as a `__fastfail` stub, reaches that proof when its
+straight-line flow from the entry ends at a trap that never resumes. An x86
+image has no unwind table, so there a callee still needs a symbol's range. A
+whole program's output
 (`neverd_decompile_all`) reads the session's local types over its own image
 and debug information when the session holds the same file, as the command
 line loads it first. The prototype's types convert to the decompiler's
