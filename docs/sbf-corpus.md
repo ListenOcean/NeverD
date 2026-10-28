@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 9 covers complete function CFGs,
+every site retains dynamic fallback. Schema 10 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -125,6 +125,16 @@ and pre-call scratch before applying the resulting typed store. Summary
 `instantiated_stored_value_input_expressions` count this propagation separately
 from target-site coverage; they do not establish tag/payload correlation or
 path feasibility at a join.
+Schema 10 also preserves complete unions of loaded expressions at register,
+return and full-width output-field joins, capped at the existing four
+alternatives. Each member retains its own preceding-write guard. A bound
+loaded return is evaluated against the actual pre-call parameters and memory
+before applying callee writes; a later overwrite cannot change an already
+captured value. Edges expose `instantiated_return_input_expression`, and
+`instantiated_return_input_expressions` counts these successful computations,
+including solver contexts subsequently reclaimed. Neither counter is target
+coverage. An unknown member, a possibly aliased preceding write or a fifth
+alternative still loses the complete proof.
 Complete scratch spills and reloads can retain a captured loaded expression
 across blocks. They use canonical full-width and alias invalidation; partial
 overwrites and unknown writes still lose it. Resolved syscalls clobber the r0

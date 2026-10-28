@@ -446,7 +446,8 @@ void MemoryPostconditions::recordInputCopy(const RegisterValue &Source,
     Copies.push_back(Copy);
 }
 
-void MemoryPostconditions::meet(const MemoryPostconditions &Other) {
+void MemoryPostconditions::meet(const MemoryPostconditions &Other,
+                                ExpressionJoin MergeExpression) {
   llvm::erase_if(Copies, [&](const InputCopy &Copy) {
     return std::find(Other.Copies.begin(), Other.Copies.end(), Copy) ==
            Other.Copies.end();
@@ -461,6 +462,22 @@ void MemoryPostconditions::meet(const MemoryPostconditions &Other) {
         Keep = !Origins->unknown();
       } else {
         Keep = It->second == Found->second;
+      }
+    }
+    if (!Keep && MergeExpression && Found != Other.Values.end() &&
+        (std::holds_alternative<size_t>(It->second) ||
+         std::holds_alternative<size_t>(Found->second))) {
+      const auto *Left = std::get_if<ProvenValueSet>(&It->second);
+      const auto *Right = std::get_if<ProvenValueSet>(&Found->second);
+      const auto Combined = MergeExpression(
+          Left ? *Left : ProvenValueSet{},
+          Left ? std::nullopt : std::optional(std::get<size_t>(It->second)),
+          Right ? *Right : ProvenValueSet{},
+          Right ? std::nullopt
+                : std::optional(std::get<size_t>(Found->second)));
+      if (Combined) {
+        It->second = *Combined;
+        Keep = true;
       }
     }
     if (!Keep)

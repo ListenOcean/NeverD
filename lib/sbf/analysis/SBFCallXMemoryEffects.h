@@ -104,7 +104,11 @@ public:
                        const MemoryEffects &Before);
   void discardInputCopies() { Copies.clear(); }
   size_t copyCount() const { return Copies.size(); }
-  void meet(const MemoryPostconditions &Other);
+  using ExpressionJoin = llvm::function_ref<std::optional<size_t>(
+      const ProvenValueSet &, std::optional<size_t>, const ProvenValueSet &,
+      std::optional<size_t>)>;
+  void meet(const MemoryPostconditions &Other,
+            ExpressionJoin MergeExpression = nullptr);
   void invalidate(const MemoryEffects &Effects, const RegisterState &Entry,
                   const SBFProgram &Program);
   void include(const MemoryPostconditions &Callee,
