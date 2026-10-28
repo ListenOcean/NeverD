@@ -3499,7 +3499,7 @@ TEST_F(BinaryDiffSDK, AArch64CallRegionsKeepNativeCallAndRegisterOperands) {
   ASSERT_EQ(Rows.getAsObject()->getInteger("total"), 7);
   const auto *Call = (*Rows.getAsObject()->getArray("rows"))[3].getAsObject();
   EXPECT_EQ(Call->getObject("primary")->getString("bytes"), "05000094");
-  EXPECT_EQ(Call->getObject("primary")->getString("address"), "0x100c");
+  EXPECT_EQ(Call->getObject("primary")->getString("address"), "0x100C");
   const auto Saved = take(neverd_comparison_export_json(C));
   ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
   EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
