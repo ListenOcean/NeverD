@@ -6558,6 +6558,13 @@ follows its `bx lr`: the PC then equals a literal-pool address, and treating it
 as a reference to that word made the rebuilt access depend on where the copied
 code sat.
 
+ARM and Thumb control comes from the decoded instruction
+(`ARMLifter::classifyControl`). A load of PC returns only when it pops:
+`pop {..., pc}`, an LDM from SP, or `ldr pc, [sp], #N` with N a positive
+multiple of four. MSVC uses that last form to release the register arguments
+a function homed above its saved return address. Any other load of PC is an
+indirect branch.
+
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
 computed register versions do not inherit that role. HighC uses the same

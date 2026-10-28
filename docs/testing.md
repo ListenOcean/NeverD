@@ -6245,6 +6245,9 @@ Generated sources are cross-compiled at O0/O2 in both ARM and Thumb mode and
 their object bytes checked, including the 255/256 transition requiring `.w`.
 ARMv8 HLT also participates in source, object-byte and boundary checks,
 including repeated interior halts and a halt immediately before another entry.
+`ARM32ThumbControl.LoadingPCOffTheStackReturns` checks that Thumb-2
+`ldr pc, [sp], #N` returns for N of 4, 0xC and 0x14. Offset, pre-indexed,
+negative and non-SP loads of PC stay indirect branches.
 This is a compilation and encoding check, not native ARM execution.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and
