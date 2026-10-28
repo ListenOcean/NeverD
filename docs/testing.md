@@ -577,12 +577,16 @@ Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
 composition; a legitimate intermediate `ptrauth.resign` is checked rather
 than mistaken for an arbitrary IA/0 call. Both sources also compile through
 the configured LLVM backend to ELF for the original integer groups.
-`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks fixed f32/f64,
-exhausted FP registers, mixed integer/FP arguments, floating result bits and
-Darwin variadic tails across both keys, zero/dynamic discriminators and raw
-controls. All 30 typed groups emit actual Mach-O objects on five routes. Set
-`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer groups and
-30 typed groups with all five object routes.
+`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks signed/unsigned
+8/16/32-bit integers, 64-bit integers and pointers, fixed f32/f64, exhausted
+GP/FP registers, mixed operands, exact result bits and Darwin variadic tails
+across both keys, zero/dynamic discriminators and raw controls. All 75 typed
+groups emit actual Mach-O objects on five routes. Narrow register arguments
+and results require the correct LLVM extension attribute; stack arguments
+retain their source width. The outer fixture explicitly writes the complete
+X0 return carrier, and a constant result cannot stand in for the callback's
+value. Set `NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer
+groups and 75 typed groups with all five object routes.
 `NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
 C prototypes and refuses unsupported authenticated language bindings. Its five
 HighC variants must compile at O0/O2 with the original target and authentication.
@@ -590,10 +594,10 @@ Compiler IR identifiers are normalized for reproducible exports.
 The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
-neither establishes the complete Apple image, FP/aggregate/variadic call or
-native signed-unwind ABI.
+neither establishes the complete Apple image, aggregate-call or native
+signed-unwind ABI.
 The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
-binds the actual model inputs and all 116 current export hashes to their source
+binds the actual model inputs and 116 export hashes recorded at those source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
 control, original timeout failures and unchanged-limit serial repeats.
 The [typed-call receipt](evidence/arm64e-typed-call-abi-2026-10-28.json)
@@ -608,14 +612,29 @@ corresponding explicit-prototype model inputs. This does not qualify automatic
 prototype recovery, narrow integer/pointer parameters, HFA/aggregate calls,
 authenticated special-language ABI, whole images or native signed unwinding.
 
-The larger Release run contains 10,838 test instances, including tests shared
-by separate executables. It records 10,568 accepted instances, 145 skips and
+The larger Release run recorded in that receipt contains 10,838 test instances,
+including tests shared by separate executables. It records 10,568 accepted instances, 145 skips and
 125 failures reproduced with every changed runtime implementation restored to
 the tested dev base. The entire selection is not green. Six concurrent
 timeouts passed serially with the unchanged 120-second limit. Explicit x86_64
 compiler controls and a Clang 22 floating-builtin control retain their original
 failures and separate passing reports. The former Darwin overflow refusal
 assertion is replaced by exact byte/halfword/pointer stack offsets 0/2/8.
+
+The [Darwin scalar-carrier receipt](evidence/arm64e-darwin-scalar-carriers-2026-10-28.json)
+extends the typed profile to 75 groups, adding signed/unsigned byte, halfword
+and word values, pointers, packed fixed spills and a variadic tail after a
+packed fixed prefix. All 567 selected C++ tests and 39 environment admission
+tests pass. Thirty controlled model guests check 9,000 valid original/projected
+pairs and 21,600 invalid-signature pairs. The 5,760 C O0 exception-class
+differences remain separately counted; no wrong-signature callback executes.
+Integration with dev passes 52 targeted tests and preserves all 1,041 export
+hashes, including the 501 previous files. Independent placement tests also
+check Darwin odd-register 128-bit pairs and complete aligned integer spills;
+these do not admit 128-bit analyst call prototypes or aggregate spills.
+Automatic complete prototype recovery, aggregate/HFA transport, authenticated
+special-language and whole-image ABI, native signed unwinding, native Apple
+CPA2 execution and exact fault ESR/PC remain outside this qualification.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
@@ -4555,9 +4574,18 @@ They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
 `WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
 a listing row's address and segment name and copies exactly that word. Clicks
-on the arrow gutter, the colon, the gap before the body and the body itself
-leave the current line as the copy, and a drag inside the address keeps the
-characters it covers. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+on the colon and the gap before the body leave the clipboard as it was, and a
+drag inside the address keeps the characters it covers.
+`WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing, graph and
+pseudocode views. Without a selection, Ctrl+C and Edit Copy take the clicked
+word, the word an arrow key reaches and a right-clicked word. Blank space
+leaves the clipboard as it was, and a selection still wins. Keys move the
+listing's highlight with the copied word.
+`WorkbenchTests::cPseudocodeSplitsMemberAccesses` copies each word of
+`Device->Links.Flink` in C pseudocode, and
+`WorkbenchUnitTests::cWordsSplitMemberAccessesAtTheirDot` checks the word
+bounds and whole-word highlights behind it, dotted names kept whole outside
+C. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
@@ -15605,7 +15633,16 @@ byte views, other versions and other variables of the register, call records,
 published summary operands, unsettled calls, a bounded callee's arguments and
 the positions past them, preserved registers, register-pair results, joins,
 removed loads, exceptional edges, complete and partial overwrites, and the
-proof's budget. `SourceStackSpills`
+proof's budget. Under an incomplete EH3/EH4 registration proof, a reload of
+the pushed record's SavedESP word places the CALL after it, while a second
+saved value, a narrow or atomic write of the word, a mismatched handler or
+seeded level, a saved non-stack value or a missing source refuses; a runtime
+filter's CALL at or below its stack root is separated from the parent frame,
+unlike one above the root or one without a checked root.
+`RegistrationCallStackPop.ProvenCalleeCleanupOutlivesAnIncompleteProof` in
+`NeverDWindowsRegistrationRealignedTests` checks that a direct callee's proven
+cleanup adjusts only the block's own calls, not caller-cleanup, unknown or
+import-slot calls. `SourceStackSpills`
 variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
 return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes
@@ -15614,6 +15651,37 @@ continuation materialization remains a separate source-ABI requirement.
 `SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
 a unit of selected functions names the one this proof refuses and defines the
 other, while that function alone still fails with the diagnostic.
+
+`MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
+x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
+unknown and address-valued results, incomplete coverage, independent roots,
+calls, malformed edges, return occurrence binding and admission budgets.
+`CallResultBoundsSurviveTruncationAndSignExtension` checks bounded allocation
+arithmetic and negative/wrapping counterexamples at x86, x64, ARM and ARM64
+pointer widths. `CallBoundsDoNotHideNativeWidthOffsetWrap` rejects a nonnegative
+callee result whose complete stack offset crosses the signed native boundary,
+even when its upper endpoint alone fits.
+`SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
+keeps the physical CALL-slot rejection when a result can raise SP or has no
+summary.
+`SourceCallReturnReads.NativeWidthExtentsDoNotHidePhysicalCallSlots` checks
+x86/x64 CALL pushes and loads that cross the native offset boundary even when
+their starting SP or address fits. An independent byte-wise modular oracle
+checks the aliases, and the adjacent representable intervals remain accepted
+when the required callee bound is available.
+`PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
+checks serial/parallel batches, reversed function order and replacement of a
+bounded callee by an unknown one without retaining stale facts.
+`PipelineSourceStackAccesses.BoundedCalleeKeepsDynamicFrameRestores` runs actual
+x64 call/allocation/restore bytes through source LLVM emission in COFF, ELF and
+Mach-O at one and four threads. A loaded 16-bit result supplies a bounded
+allocation; a 32-bit result whose sign extension can raise SP remains refused.
+The successful modules pass LLVM verification.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` retains
+the larger PE whole-module compilation fixture. Its runtime relocator uses the
+same 16-bit section-count proof. This does not establish bounds for the other
+dynamic allocations in its printf helpers: an omitted stack probe supplies no
+scalar range fact. Native Windows execution is separate from cross-compilation.
 
 `MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
 direct and indirect CALLs whose only SP use precedes an explicit restore at an

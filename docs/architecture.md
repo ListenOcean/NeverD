@@ -367,6 +367,45 @@ the loads stay separated even then, it skips the costlier slot bounds
 (registration replay, offset ranges, SEH handler bounds and upper bounds),
 which can only narrow those writes. That attempt has its own allowance, so a
 refusal or exhaustion there leaves the bounded proof its whole budget.
+Where the PE32 registration-state proof stays incomplete, for example after a
+filter, handler or finally writes through a pointer parameter, the reader
+still places EH3/EH4 CALL stacks by the frame protocol
+(`X86/RegistrationCallStacks`). The prologue pushes the record (seeded level,
+scope table, handler) and saves ESP in the SavedESP word below the node FS:[0]
+links. When every exact store to that word saves one entry stack offset, each
+exact pointer-wide reload is seeded with it, which places the CALLs after a
+handler restores ESP; only a write outside every source object, corrupting the
+runtime's record, could change the word otherwise. A CALL whose stack derives
+from one runtime callback's stack root alone, at or below that root, runs on
+the dispatcher's stack below the parent frame and writes no parent byte.
+Pruning unreached arms still needs the complete proof. Low-to-Med also applies
+each direct callee's proven return cleanup
+(`RegistrationStateAnalysis::CalleeStacks`), which does not depend on the
+reaching state, so a single-function view pops a `ret imm` callee's arguments
+as a whole-image run does.
+`integerReturnRange` uses the same scalar range evaluator to summarize the
+complete primary integer return register of bounded ordinary x86/x64 leaves.
+It checks original LowIR coverage and return occurrences, then unions every
+MedIR return; a narrow load can bound a result without knowing the loaded bytes.
+Calls, intrinsics, independent/exceptional entries, incompatible source
+contracts and incomplete bodies provide no fact. Truncation and sign extension
+retain machine-width wrapping; a possible negative displacement cannot prove
+that an allocation only lowers the stack pointer, including on 32-bit targets.
+Call-derived facts also require both complete stack-offset endpoints to fit
+the native width; an upper bound alone cannot hide offset wraparound.
+The implicit CALL push must fit that coordinate too. An observing load whose
+extent crosses the native boundary refuses projection; it cannot disappear
+from the observation set. A store with such an extent proves no overwrite.
+Source conversion first uses its local stack proofs. A missing proof defers
+that caller until the parallel conversion joins; only then does the pipeline
+build the immutable callee range table and recheck pending callers. A CALL
+return-slot load the first pass would defer to the settled-MedIR check also
+waits there when some CALL's stack position had no local range, because those
+callee ranges may still prove it. Successful local proofs require no callee
+summary. Incoming-stack and register-pair
+reconversions rebuild the same phase-local facts. The checks still precede
+source save suppression and register-call expansion. No result is cached across
+image or body mutations, and no source return type supplies a machine proof.
 The omitted-callee reader also visits scalar direct calls carrying a proven
 private-frame address. Existing operation and extra-lift budgets still bound
 those bodies; an arity-only summary cannot stand in for their pointer effects.
@@ -613,9 +652,21 @@ authenticated storage, relocation and signed-unwind ABI contract.
 The shared AAPCS64 parameter placement owner describes Darwin fixed scalar
 spills with their natural size and alignment after either register bank is
 exhausted. ELF and Windows ARM64 retain eight-byte stack slots. Darwin variadic
-tails keep their separate eight-byte placement rule. Apple aggregate spills
-still need their own complete layout contract. The limits for this placement
-owner live in `SourceParameterPlacementAAPCS64.def`.
+tails keep their separate eight-byte placement rule. Darwin integer pairs may
+start at odd-numbered registers; an entire 128-bit scalar moves to a 16-byte
+aligned stack slot when the remaining registers cannot hold it. ELF and COFF
+retain even-register alignment. Apple aggregate spills still need their own
+complete layout contract. The limits for this placement owner live in
+`SourceParameterPlacementAAPCS64.def`.
+
+Fixed analyst call prototypes reuse `assignDarwinScalarSourceABI`, as Darwin
+variadic prefixes and recovered declarations already do. Narrow integer
+register parameters and AArch64 narrow results retain the ABI's 32-bit
+sign/zero-extension guarantee separately from their source width. LLVM source
+call emission consumes those validated guarantees as `signext`/`zeroext`
+attributes; signed source spelling alone does not grant them. Narrow stack
+arguments keep their original storage width. This scalar call contract does
+not admit 128-bit or aggregate analyst call prototypes.
 
 The DWARF reader keeps an image-derived arm64e return ABI flag separate from
 the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when

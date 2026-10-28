@@ -18,9 +18,15 @@
 #include "neverd/ir/SourceParameterPlacement.h"
 #include "neverd/ir/TargetRegInfo.h"
 
+#include <iterator>
+#include <vector>
+
 using namespace neverd;
 
 namespace {
+
+#define SOURCE_PARAMETER_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "SourceParameterPlacementFixtures.def"
 
 TypeRef intType(uint16_t Size) { return NdType::makeInt(Size, true); }
 TypeRef floatType(uint16_t Size) { return NdType::makeFloat(Size); }
@@ -251,6 +257,71 @@ TEST(SourceParameterPlacement, AAPCS64UsesHomogeneousAggregatesAndPairs) {
                  8, 8);
   expectRegister(P.Parameters[3][0], IntegerReg, integerRegister(A64, ELF, 4),
                  0, 8, /*Indirect=*/true);
+}
+
+TEST(SourceParameterPlacement, DarwinWideArgumentsStartAtOddRegisters) {
+  const auto WideRecord =
+      record(kAArch64WideIntegerBytes, NdRecordPassing::ByValue,
+             {{0, kAArch64IntegerBytes, false},
+              {kAArch64IntegerBytes, kAArch64IntegerBytes, false}},
+             kAArch64WideIntegerBytes);
+  for (const auto Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF})
+    for (const auto Wide : {intType(kAArch64WideIntegerBytes), WideRecord})
+      for (unsigned Prefix = 0; Prefix < kAArch64ArgumentRegisters; ++Prefix) {
+        std::vector<TypeRef> Params(Prefix, intType(kAArch64IntegerBytes));
+        Params.push_back(Wide);
+        Params.push_back(intType(kAArch64IntegerBytes));
+        const auto P =
+            place(Arch::AArch64, Format, intType(kAArch64IntegerBytes), Params);
+        const unsigned First = Format == BinaryFormat::MachO
+                                   ? Prefix
+                                   : (Prefix + 1) /
+                                         kAArch64WideIntegerRegisters *
+                                         kAArch64WideIntegerRegisters;
+        if (First + kAArch64WideIntegerRegisters > kAArch64ArgumentRegisters) {
+          if (Format == BinaryFormat::MachO && Wide == WideRecord) {
+            // Aggregate spills still need their separate layout contract.
+            EXPECT_EQ(P.Parameters.size(), Prefix);
+            continue;
+          }
+          ASSERT_EQ(P.Parameters.size(), Params.size());
+          ASSERT_EQ(P.Parameters[Prefix].size(), 1u);
+          expectStack(P.Parameters[Prefix][0], 0, kAArch64WideIntegerBytes);
+          expectStack(P.Parameters.back()[0], kAArch64WideIntegerBytes,
+                      kAArch64IntegerBytes);
+        } else {
+          ASSERT_EQ(P.Parameters.size(), Params.size());
+          ASSERT_EQ(P.Parameters[Prefix].size(), kAArch64WideIntegerRegisters);
+          for (unsigned I = 0; I < kAArch64WideIntegerRegisters; ++I)
+            expectRegister(P.Parameters[Prefix][I], IntegerReg,
+                           integerRegister(Arch::AArch64, Format, First + I),
+                           I * kAArch64IntegerBytes, kAArch64IntegerBytes);
+        }
+      }
+}
+
+TEST(SourceParameterPlacement, DarwinWideScalarSpillsKeepSixteenByteAlignment) {
+  struct Spill {
+    uint16_t Bytes;
+    int64_t Offset;
+  };
+  const Spill Spills[] = {
+#define SOURCE_PARAMETER_WIDE_SPILL(Bytes, Offset) {Bytes, Offset},
+#include "SourceParameterPlacementFixtures.def"
+  };
+  std::vector<TypeRef> Params(kAArch64ArgumentRegisters,
+                              intType(kAArch64IntegerBytes));
+  for (const auto &S : Spills)
+    Params.push_back(intType(S.Bytes));
+  const auto P = place(Arch::AArch64, BinaryFormat::MachO,
+                       intType(kAArch64IntegerBytes), Params);
+  ASSERT_EQ(P.Parameters.size(), Params.size());
+  for (unsigned I = 0; I < std::size(Spills); ++I) {
+    ASSERT_EQ(P.Parameters[kAArch64ArgumentRegisters + I].size(), 1u);
+    expectStack(P.Parameters[kAArch64ArgumentRegisters + I][0],
+                Spills[I].Offset, Spills[I].Bytes);
+  }
 }
 
 TEST(SourceParameterPlacement, AAPCS64KeepsTheResultPointerApartFromArguments) {

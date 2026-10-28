@@ -6,8 +6,8 @@
 ///
 /// \file
 /// The AArch64 procedure call standard's parameter passing: integer values
-/// in X0-X7 (a 128-bit one in an even-numbered pair), floating values and the
-/// members of a homogeneous floating-point aggregate in V0-V7, other records
+/// in X0-X7 (128-bit pairs start at even registers except on Darwin), floating
+/// values and homogeneous floating-point aggregate members in V0-V7, records
 /// of at most 16 bytes in consecutive X registers, larger ones by the address
 /// of a copy.  Values the registers no longer hold go to 8-byte stack slots;
 /// Apple's arm64 packs fixed scalar spills by their natural size and
@@ -91,13 +91,14 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
   auto Integers = [&](uint16_t Bytes, bool EvenPair, bool Scalar = false) {
     std::vector<SourceParameterPiece> Pieces;
     const size_t Count = (Bytes + kRegisterBytes - 1) / kRegisterBytes;
-    if (EvenPair)
-      NextInteger = llvm::alignTo(NextInteger, 2);
+    if (EvenPair && F != BinaryFormat::MachO)
+      NextInteger = llvm::alignTo(NextInteger, kIntegerPairRegisters);
     if (NextInteger + Count > Integer.size()) {
       NextInteger = Integer.size();
       return OnStack(Bytes,
                      Scalar ? Bytes
-                            : (EvenPair ? 2 * kRegisterBytes : kRegisterBytes),
+                            : (EvenPair ? kIntegerPairRegisters * kRegisterBytes
+                                        : kRegisterBytes),
                      /*Indirect=*/false, Scalar);
     }
     for (size_t I = 0; I < Count; ++I) {
@@ -132,9 +133,10 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
       Placement.Parameters.push_back(std::move(Pieces));
       continue;
     }
-    if (isIntegerScalar(Type) && Type->Size <= 2 * kRegisterBytes) {
+    if (isIntegerScalar(Type) &&
+        Type->Size <= kIntegerPairRegisters * kRegisterBytes) {
       Pieces = Integers(Type->Size, Type->Size > kRegisterBytes,
-                        Type->Size <= kRegisterBytes);
+                        /*Scalar=*/true);
     } else if (isFloatingScalar(Type)) {
       if (NextVector < Vector.size()) {
         Pieces.push_back(registerPiece(SourceABICarrierKind::FloatingRegister,
@@ -166,10 +168,11 @@ std::optional<SourceParameterPlacement> source_placement::placeAAPCS64(
           break;
         Pieces = Address();
       } else {
-        // A record aligned to 16 bytes starts at an even register.
+        // A 16-byte-aligned record starts at an even register outside Darwin.
         if (!scalarLeaves(Type) || !Type->Alignment)
           break;
-        Pieces = Integers(Type->Size, Type->Alignment == 2 * kRegisterBytes);
+        Pieces = Integers(Type->Size, Type->Alignment == kIntegerPairRegisters *
+                                                             kRegisterBytes);
       }
     } else {
       break;

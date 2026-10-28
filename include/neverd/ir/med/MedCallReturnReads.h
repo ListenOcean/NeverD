@@ -14,6 +14,7 @@
 
 #include "neverd/Common.h"
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/med/MedIntegerReturnRange.h"
 
 #include <cstddef>
 #include <map>
@@ -34,16 +35,24 @@ struct MedFunc;
 /// effects. FreshSource, when supplied, must be the exact LowIR input of this
 /// fresh conversion, before source cleanup. Its checked registration-state
 /// flow can locate restored x86 SEH stacks; this is not a reusable MedIR fact.
+/// Where that proof is incomplete, the EH3/EH4 frame protocol still places
+/// reloads of the saved stack pointer and runtime callback stacks.
 ///
 /// With \p Deferred, each such load is recorded there instead of refusing the
 /// function: whether its value is observed is known only once call arguments
 /// and returns are settled (validateObservedCallReturnReads). Every other
 /// refusal remains immediate.
+///
+/// \p NeedsCalleeFacts, when supplied without \p CallReturns, is set if a
+/// CALL's stack position had no local range. Callee return ranges may still
+/// bound it, so a load deferred now could be proved once they are known.
 bool validateSourceCallReturnReads(
     const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
     size_t WorkLimit = limits::ir::kSourceCallReturnReadWork,
     const LowFunc *FreshSource = nullptr,
-    std::vector<MedCallReturnRead> *Deferred = nullptr);
+    const MedCallReturnRanges *CallReturns = nullptr,
+    std::vector<MedCallReturnRead> *Deferred = nullptr,
+    bool *NeedsCalleeFacts = nullptr);
 
 /// Refuse a recorded CALL return-slot load (MedFunc::CallReturnReads) whose
 /// value the settled function still observes. Copies, byte views and joins
