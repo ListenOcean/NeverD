@@ -132,6 +132,7 @@ enum class CallXSummaryBarrier : uint8_t {
   UnknownTarget,
   UnsupportedRawEntry,
   SummaryBudget,
+  NonReturningCall,
 };
 
 struct CallXSummaryEdge {
@@ -235,6 +236,7 @@ struct CallXContextReport {
   size_t InstantiatedTargetInputExpressions = 0;
   size_t InstantiatedStoredValueInputExpressions = 0;
   size_t InstantiatedReturnInputExpressions = 0;
+  size_t ReturnReachabilityVisits = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.
