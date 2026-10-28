@@ -139,11 +139,21 @@ void DisassemblyView::remember(Address address) {
   emit historyChanged();
 }
 
+void DisassemblyView::moveStopToCursor() {
+  // A jump still on its way has not moved.
+  if (const auto current = currentAddress();
+      current && !history_.empty() && history_[historyIndex_] != *current &&
+      !listing_->jumpPending())
+    history_[historyIndex_] = *current;
+}
+
 void DisassemblyView::navigate(Address address, bool record,
                                std::optional<Address> from) {
   disconnect(graphNavigation_);
   if (record) {
-    // Record where we were, then where we go, so Esc returns here.
+    moveStopToCursor();
+    // Record where we were, then where we go, so Esc returns here. A code
+    // window pinned elsewhere supplies its own origin, a stop of its own.
     if (const auto current = from ? from : currentAddress()) {
       if (history_.empty() || history_[historyIndex_] != *current)
         remember(*current);
@@ -180,12 +190,9 @@ void DisassemblyView::navigate(Address address, bool record,
 void DisassemblyView::goBack() {
   if (!canGoBack())
     return;
-  // The newest entry is the current position after an unrecorded scroll.
-  if (const auto current = currentAddress();
-      current && historyIndex_ + 1 == history_.size() &&
-      history_.back() != *current) {
-    remember(*current);
-  }
+  // Back returns to where the jump began, and Forward to where the user left
+  // this stop, such as a row clicked in the code the jump opened.
+  moveStopToCursor();
   --historyIndex_;
   restoring_ = true;
   navigate(history_[historyIndex_], false);
@@ -196,6 +203,7 @@ void DisassemblyView::goBack() {
 void DisassemblyView::goForward() {
   if (!canGoForward())
     return;
+  moveStopToCursor();
   ++historyIndex_;
   restoring_ = true;
   navigate(history_[historyIndex_], false);
