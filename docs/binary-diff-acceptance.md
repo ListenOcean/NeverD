@@ -73,6 +73,10 @@ are checked separately. These are capacity, persistence and inspection results
 on consumed inputs, not new accuracy or transformation-truth qualification.
 The desktop retains saved native-region allowances and quality thresholds when
 the user compares again or changes the matched-call setting.
+Offline lineage projections retain the original native profile and conditional
+call evidence on both hypotheses and anchor rows. The desktop explains that
+these calls rely on the source report's function associations; collection
+restoration preserves that scope and the original report bytes.
 
 Integration of upstream atomicity admission `77d94bfd0a` changes the native
 coverage of 385 distinct functions across the SQLite and FFmpeg inputs. All

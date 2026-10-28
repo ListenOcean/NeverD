@@ -3702,6 +3702,12 @@ fixtures exercise real x64 call bytes, shared pages, cache invalidation,
 save/reopen and settings restoration. They qualify conditional correspondence
 evidence, not callee semantics or arbitrary region transformations. The AArch64
 SDK fixture also retains the exact native BL row across save/reopen.
+Offline lineage hypothesis and anchor pages retain the native profile and
+conditional call provenance, including after collection save/reopen. Core
+projection controls cover ordinary and call-enabled evidence; Qt
+`nativeRegionCallConditionsSurviveReopen` checks both real native profiles,
+original anchor rows and the conditional-call notice through the ordinary
+source-evidence workflow. These remain unauthenticated saved coordinates.
 Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
 hypothesis and raw-anchor pages in a 417-function native fixture, then checks
 the original instruction address and call-context destination after loading.

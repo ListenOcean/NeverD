@@ -695,35 +695,65 @@ TEST(BinaryDiffLineage, SourceRegionPagesDoNotBecomeAcceptedAssociations) {
     writeComparison(OS, Result, A, B);
     return Text;
   };
-  const auto L = load({Save()});
-  ASSERT_TRUE(L);
-  EXPECT_TRUE(L->edges().empty());
-  auto Query = readLineageQuery(
-      llvm::json::Object{{"kind", "native_regions"},
-                         {"revision", L->revision()},
-                         {"report", L->reports()[0].Evidence->ID}});
-  auto Page = lineagePage(*L, Query, {});
-  const auto &Row = *Page.JSON.getArray("items")->front().getAsObject();
-  EXPECT_EQ(Row.getNumber("confidence"), 0.75);
-  EXPECT_EQ(Row.getBoolean("native_authenticated"), false);
-  EXPECT_EQ(Row.getInteger("anchor_count"), 1);
-  Query.Kind = "native_region_anchors";
-  Page = lineagePage(*L, Query, {});
-  const auto &Anchor = *Page.JSON.getArray("items")->front().getAsObject();
-  EXPECT_EQ(Anchor.getInteger("primary_function_index"), 0);
-  EXPECT_EQ(Anchor.getInteger("secondary_function_index"), 1);
-  EXPECT_FALSE(Anchor.get("primary_address"));
-  Query.Index = 1;
-  EXPECT_THROW((void)lineagePage(*L, Query, {}), std::invalid_argument);
-  // Detached native evidence has no fresh binding. Invalid stored coordinates
-  // must fail explicitly when queried rather than indexing unchecked memory.
-  Result.Regions.Hypotheses[0].Anchors = {999};
-  const auto Invalid = load({Save()});
-  ASSERT_TRUE(Invalid);
-  Query.Revision = Invalid->revision().str();
-  Query.Report = Invalid->reports()[0].Evidence->ID;
-  Query.Index = 0;
-  EXPECT_THROW((void)lineagePage(*Invalid, Query, {}), std::invalid_argument);
+  for (const bool Calls : {false, true}) {
+    Result.Settings.Regions.Calls = Calls;
+    Result.Regions.Calls = Calls;
+    Result.Regions.Hypotheses[0].Anchors = {0};
+    const auto L = load({Save()});
+    ASSERT_TRUE(L);
+    EXPECT_TRUE(L->edges().empty());
+    auto Query = readLineageQuery(
+        llvm::json::Object{{"kind", "native_regions"},
+                           {"revision", L->revision()},
+                           {"report", L->reports()[0].Evidence->ID}});
+    auto Page = lineagePage(*L, Query, {});
+    const auto &Row = *Page.JSON.getArray("items")->front().getAsObject();
+    EXPECT_EQ(Row.getNumber("confidence"), 0.75);
+    EXPECT_EQ(Row.getBoolean("native_authenticated"), false);
+    EXPECT_EQ(Row.getInteger("anchor_count"), 1);
+    EXPECT_EQ(Row.getString("profile"), regionProfile(Calls));
+    if (Calls)
+      EXPECT_EQ(Row.getString("call_evidence"),
+                "current_function_correspondence");
+    else
+      EXPECT_FALSE(Row.get("call_evidence"));
+    std::string Error;
+    const auto Saved = writeLineage(*L);
+    const auto Reopened = readLineage(Saved, {}, Error);
+    ASSERT_TRUE(Reopened) << Error;
+    EXPECT_EQ(writeLineage(*Reopened), Saved);
+    const auto ReopenedPage = lineagePage(*Reopened, Query, {});
+    const auto &ReopenedRow =
+        *ReopenedPage.JSON.getArray("items")->front().getAsObject();
+    EXPECT_EQ(ReopenedRow.getString("profile"), Row.getString("profile"));
+    EXPECT_EQ(ReopenedRow.getString("call_evidence"),
+              Row.getString("call_evidence"));
+    Query.Kind = "native_region_anchors";
+    Page = lineagePage(*L, Query, {});
+    const auto &Anchor = *Page.JSON.getArray("items")->front().getAsObject();
+    EXPECT_EQ(Anchor.getInteger("primary_function_index"), 0);
+    EXPECT_EQ(Anchor.getInteger("secondary_function_index"), 1);
+    EXPECT_FALSE(Anchor.get("primary_address"));
+    EXPECT_EQ(Anchor.getString("profile"), regionProfile(Calls));
+    EXPECT_EQ(Anchor.getBoolean("native_authenticated"), false);
+    EXPECT_EQ(Anchor.getString("semantic_validation"), "not_performed");
+    if (Calls)
+      EXPECT_EQ(Anchor.getString("call_evidence"),
+                "current_function_correspondence");
+    else
+      EXPECT_FALSE(Anchor.get("call_evidence"));
+    Query.Index = 1;
+    EXPECT_THROW((void)lineagePage(*L, Query, {}), std::invalid_argument);
+    // Detached native evidence has no fresh binding. Invalid stored coordinates
+    // must fail explicitly when queried rather than indexing unchecked memory.
+    Result.Regions.Hypotheses[0].Anchors = {999};
+    const auto Invalid = load({Save()});
+    ASSERT_TRUE(Invalid);
+    Query.Revision = Invalid->revision().str();
+    Query.Report = Invalid->reports()[0].Evidence->ID;
+    Query.Index = 0;
+    EXPECT_THROW((void)lineagePage(*Invalid, Query, {}), std::invalid_argument);
+  }
 }
 
 TEST(BinaryDiffLineage, HistoricalDecisionsOutsideInventoryRemainWarnings) {

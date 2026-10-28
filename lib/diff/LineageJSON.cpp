@@ -11,6 +11,7 @@
 #include "neverd/diff/LineageJSON.h"
 
 #include "neverd/diff/FlowRegionsJSON.h"
+#include "neverd/diff/RegionsJSON.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringExtras.h"
@@ -552,7 +553,7 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
             llvm::json::Array Explanations;
             for (const auto K : H.Explanations)
               Explanations.push_back(regionKindName(K));
-            return llvm::json::Object{
+            auto Row = llvm::json::Object{
                 {"index", I},
                 {"id", H.Id},
                 {"anchor_count", H.Anchors.size()},
@@ -568,6 +569,8 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
                 {"analysis_complete", H.AnalysisComplete},
                 {"native_authenticated", false},
                 {"semantic_validation", "not_performed"}};
+            addRegionEvidenceFields(Row, S.Regions.Calls);
+            return Row;
           });
       } else if (Q.Kind == "native_region_anchors") {
         require(Q.Index < S.Regions.Hypotheses.size(),
@@ -579,7 +582,7 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
             const auto &A = S.Regions.Anchors[I];
             // These are original snapshot coordinates, not freshly resolved
             // VAs.
-            return llvm::json::Object{
+            auto Row = llvm::json::Object{
                 {"index", I},
                 {"hypothesis_id", S.Regions.Hypotheses[Q.Index].Id},
                 {"primary_function_index", A.Primary.Function},
@@ -590,7 +593,11 @@ LineagePage lineagePage(const Lineage &L, const LineageQuery &Q,
                 {"secondary_instruction_index", A.Secondary.FirstInstruction},
                 {"primary_instruction_count", A.Primary.InstructionCount},
                 {"secondary_instruction_count", A.Secondary.InstructionCount},
-                {"unique_seed", A.UniqueSeed}};
+                {"unique_seed", A.UniqueSeed},
+                {"native_authenticated", false},
+                {"semantic_validation", "not_performed"}};
+            addRegionEvidenceFields(Row, S.Regions.Calls);
+            return Row;
           });
       } else if (Q.Kind == "flow_regions") {
         for (uint32_t I = 0; I < S.FlowRegions.Hypotheses.size(); ++I)

@@ -179,9 +179,15 @@ RegionSettings readRegionSettings(const Value &V) {
     throw std::invalid_argument(*E);
   return S;
 }
+void addRegionEvidenceFields(Object &O, bool Calls) {
+  O["profile"] = regionProfile(Calls);
+  if (Calls)
+    O["call_evidence"] = "current_function_correspondence";
+  else
+    O.erase("call_evidence");
+}
 Object regionAnalysisJSON(const RegionAnalysis &R, bool SummaryOnly) {
-  Object O{{"profile", regionProfile(R.Calls)},
-           {"state", R.State ? Value(stateName(*R.State)) : Value(nullptr)},
+  Object O{{"state", R.State ? Value(stateName(*R.State)) : Value(nullptr)},
            {"stopped_phase", R.StoppedPhase},
            {"work", R.Work},
            {"primary_seeds", R.PrimarySeeds},
@@ -194,8 +200,7 @@ Object regionAnalysisJSON(const RegionAnalysis &R, bool SummaryOnly) {
            {"anchor_count", R.Anchors.size()},
            {"hypothesis_count", R.Hypotheses.size()},
            {"semantic_validation", "not_performed"}};
-  if (R.Calls)
-    O["call_evidence"] = "current_function_correspondence";
+  addRegionEvidenceFields(O, R.Calls);
   if (!SummaryOnly) {
     Array Anchors, Hypotheses;
     for (const auto &A : R.Anchors)

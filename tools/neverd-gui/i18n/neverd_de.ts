@@ -9593,6 +9593,10 @@ Mehrdeutigkeiten und manuelle Entscheidungen gelten nur im jeweiligen Bericht. R
         <source>Releases</source>
         <translation>Releases</translation>
     </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>Aufrufe in diesen gespeicherten Abschnitten beruhen auf den Funktionspaaren des Quellberichts. Sie beweisen kein gleichwertiges Verhalten der aufgerufenen Funktionen.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

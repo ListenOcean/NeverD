@@ -9557,6 +9557,10 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Releases</source>
         <translation>릴리스</translation>
     </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>저장된 구간의 호출은 원본 보고서의 함수 대응에 근거합니다. 호출 대상의 동작이 동등함을 증명하지는 않습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

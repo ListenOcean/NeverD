@@ -656,6 +656,7 @@ void LineageDialog::source(const QString &Report) {
           if (!Row.contains("index"))
             return;
           auto *Detail = new QDialog(D);
+          Detail->setObjectName("lineageRegionAnchors");
           Detail->setWindowTitle(tr("Original region anchors"));
           Detail->resize(limits::kComparisonCounterpartInitialWidth,
                          limits::kComparisonCounterpartInitialHeight);
@@ -665,6 +666,15 @@ void LineageDialog::source(const QString &Report) {
                  "association. Copy a row to inspect all retained fields; "
                  "export the source for complete SSA node mappings."),
               Detail));
+          if (Row["call_evidence"] == "current_function_correspondence") {
+            auto *Notice = label(
+                tr("Calls in these saved spans rely on the source report's "
+                   "function pairs. They do not prove equivalent callee "
+                   "behavior."),
+                Detail);
+            Notice->setObjectName("lineageRegionCallEvidence");
+            Layout->addWidget(Notice);
+          }
           const bool Native = QByteArray(AnchorKind) == "native_region_anchors";
           auto *P = page(
               Session,

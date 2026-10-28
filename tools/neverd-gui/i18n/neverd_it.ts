@@ -9593,6 +9593,10 @@ Ambiguità e decisioni manuali rimangono locali al rapporto. Le ipotesi di regio
         <source>Releases</source>
         <translation>Rilasci</translation>
     </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>Le chiamate in questi frammenti salvati si basano sulle coppie di funzioni del rapporto originale. Non dimostrano l’equivalenza del comportamento delle funzioni chiamate.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

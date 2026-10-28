@@ -231,6 +231,108 @@ private slots:
     QCOMPARE(Errors.size(), 0);
   }
 
+  void nativeRegionCallConditionsSurviveReopen_data() {
+    QTest::addColumn<bool>("Calls");
+    QTest::newRow("ordinary-runs") << false;
+    QTest::newRow("matched-calls") << true;
+  }
+
+  void nativeRegionCallConditionsSurviveReopen() {
+    QFETCH(bool, Calls);
+    const auto Path = Directory.filePath("lineage-regions.raw");
+    auto Code = QByteArray::fromHex(
+        Calls ? "89f883c00383f017e8130000006bc00783c00983f025c3"
+              : "89f883c00383f0176bc00783c00983f025c3");
+    if (Calls) {
+      Code.append(QByteArray(32 - Code.size(), char(0x90)));
+      Code.append(QByteArray::fromHex("89f883c00bc3"));
+    }
+    QVERIFY(write(Path, Code));
+    ComparisonSession Source(TEST_LINEAGE_WORKER, this);
+    QSignalSpy SourceErrors(&Source, &ComparisonSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Source.ready(), Timeout);
+    const auto Input = [&](const char *Base) {
+      return QJsonObject{{"path", Path},
+                         {"load_options", QJsonObject{{"loader", "binary"},
+                                                      {"processor", "x86_64"},
+                                                      {"base", Base}}}};
+    };
+    Source.start(
+        Input("0x1000"), Input("0x8000"),
+        {{"regions", QJsonObject{{"enabled", true}, {"calls", Calls}}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Source.busy(), Timeout);
+    QCOMPARE(SourceErrors.size(), 0);
+    QCOMPARE(Source.summary()["regions"].toObject()["hypothesis_count"].toInt(),
+             1);
+    const auto Report = Directory.filePath("lineage-regions.nddiff");
+    bool Saved = false;
+    Source.request(
+        "comparison_save", {{"path", Report}}, this,
+        [&](const QJsonObject &R) { Saved = R["status"] == QJsonValue("ok"); });
+    QTRY_VERIFY_WITH_TIMEOUT(Saved, Timeout);
+    LineageDialog View(TEST_LINEAGE_WORKER);
+    View.setAttribute(Qt::WA_DeleteOnClose, false);
+    View.show();
+    auto &Session = View.session();
+    QSignalSpy Errors(&Session, &LineageSession::failed);
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    const auto Collection = Directory.filePath("call-conditions.ndlineage");
+    for (const bool Reopen : {false, true}) {
+      if (Reopen) {
+        QSignalSpy Saves(&Session, &LineageSession::saved);
+        Session.save(Collection);
+        QTRY_COMPARE_WITH_TIMEOUT(Saves.size(), 1, Timeout);
+        Session.load({{"path", Collection}});
+      } else {
+        Session.load({{"reports", QJsonArray{Report}}});
+      }
+      auto *Inspect = View.findChild<QPushButton *>("lineageInspectSource");
+      QVERIFY(Inspect);
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Inspect->isEnabled(),
+                               Timeout);
+      Inspect->click();
+      auto *Evidence = View.findChild<QDialog *>("lineageSourceEvidence");
+      QVERIFY(Evidence);
+      auto *Regions = Evidence->findChild<LineagePageView *>("native_regions");
+      QVERIFY(Regions);
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Regions->rows().size() == 1,
+                               Timeout);
+      QCOMPARE(Regions->selected()["profile"].toString(),
+               QString(Calls ? "native-call-runs-v1" : "native-runs-v1"));
+      QCOMPARE(Regions->selected().contains("call_evidence"), Calls);
+      Evidence->findChild<QTabWidget *>()->setCurrentWidget(Regions);
+      Regions->table()->setFocus();
+      QTest::keyClick(Regions->table(), Qt::Key_Return);
+      auto *Detail = Evidence->findChild<QDialog *>("lineageRegionAnchors");
+      QVERIFY(Detail);
+      const auto *Notice =
+          Detail->findChild<QLabel *>("lineageRegionCallEvidence");
+      QCOMPARE(Notice != nullptr, Calls);
+      if (Notice)
+        QVERIFY(Notice->text().contains("source report's function pairs"));
+      auto *Anchors =
+          Detail->findChild<LineagePageView *>("native_region_anchors");
+      QVERIFY(Anchors);
+      QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Anchors->rows().size() == 1,
+                               Timeout);
+      QCOMPARE(Anchors->selected()["profile"], Regions->selected()["profile"]);
+      QCOMPARE(Anchors->selected()["call_evidence"],
+               Regions->selected()["call_evidence"]);
+      QVERIFY(!Anchors->selected()["native_authenticated"].toBool(true));
+      if (!Reopen && Calls) {
+        const auto Captures =
+            qEnvironmentVariable("NEVERD_LINEAGE_SCREENSHOTS");
+        if (!Captures.isEmpty()) {
+          QVERIFY(QDir().mkpath(Captures));
+          QVERIFY(
+              Detail->grab().save(Captures + "/call-region-conditions.png"));
+        }
+      }
+      delete Evidence;
+    }
+    QCOMPARE(Errors.size(), 0);
+  }
+
   void retainedRealCorpusWorkflow() {
     const auto Corpus = qEnvironmentVariable("NEVERD_LINEAGE_REAL_COLLECTION");
     if (Corpus.isEmpty())
