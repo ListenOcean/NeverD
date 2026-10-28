@@ -38,6 +38,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
+#include "neverd/backend/c/render/AArch64/AArch64ExclusiveC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X86/X87ContextRender.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
@@ -4528,6 +4529,83 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (IID == llvm::Intrinsic::aarch64_clrex) {
     emitIndent(Indent);
     OS << "__builtin_arm_clrex();\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  // An exclusive load or store is the builtin HighC writes for it. A load
+  // still sets the monitor, and a store's status still reports, where
+  // nothing reads the result.
+  if (IID == llvm::Intrinsic::aarch64_ldxr ||
+      IID == llvm::Intrinsic::aarch64_ldaxr ||
+      IID == llvm::Intrinsic::aarch64_stxr ||
+      IID == llvm::Intrinsic::aarch64_stlxr) {
+    const bool Load = IID == llvm::Intrinsic::aarch64_ldxr ||
+                      IID == llvm::Intrinsic::aarch64_ldaxr;
+    const unsigned AddressArgument = Load ? 0 : 1;
+    llvm::Type *Element = Call.getParamElementType(AddressArgument);
+    const char *Type = Element && Element->isIntegerTy()
+                           ? aarch64ExclusiveAccessType(
+                                 Element->getIntegerBitWidth() / 8, nullptr)
+                           : nullptr;
+    if (Opts.TheArch != Arch::AArch64 || !Type ||
+        Call.arg_size() != AddressArgument + 1)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Address = valueStr(Call.getArgOperand(AddressArgument));
+    emitIndent(Indent);
+    OS << (Call.use_empty()
+               ? "(void)"
+               : getName(&Call) + " = (" + typeToCLLVM(Call.getType()) + ")")
+       << (Load ? aarch64ExclusiveLoadC(IID == llvm::Intrinsic::aarch64_ldaxr,
+                                        Type, Address)
+                : aarch64ExclusiveStoreC(IID == llvm::Intrinsic::aarch64_stlxr,
+                                         Type, valueStr(Call.getArgOperand(0)),
+                                         Address))
+       << ";\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  // A pair travels as one 128-bit access, as the builtin of that width
+  // selects LDXP or STXP: the low word at the lower address.
+  if (IID == llvm::Intrinsic::aarch64_ldxp ||
+      IID == llvm::Intrinsic::aarch64_ldaxp) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 1)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Pair = freshVar("exclusive_pair");
+    emitIndent(Indent);
+    OS << "{ __uint128_t " << Pair << " = "
+       << aarch64ExclusiveLoadC(IID == llvm::Intrinsic::aarch64_ldaxp,
+                                "__uint128_t", valueStr(Call.getArgOperand(0)))
+       << ";\n";
+    emitIndent(Indent + 1);
+    if (Call.use_empty()) {
+      OS << "(void)" << Pair << ";\n";
+    } else {
+      OS << getName(&Call) << aggregateMemberPath(Call.getType(), {0})
+         << " = (uint64_t)" << Pair << ";\n";
+      emitIndent(Indent + 1);
+      OS << getName(&Call) << aggregateMemberPath(Call.getType(), {1})
+         << " = (uint64_t)(" << Pair << " >> 64);\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  if (IID == llvm::Intrinsic::aarch64_stxp ||
+      IID == llvm::Intrinsic::aarch64_stlxp) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Value =
+        "((__uint128_t)(uint64_t)(" + valueStr(Call.getArgOperand(1)) +
+        ") << 64 | (uint64_t)(" + valueStr(Call.getArgOperand(0)) + "))";
+    emitIndent(Indent);
+    OS << (Call.use_empty()
+               ? "(void)"
+               : getName(&Call) + " = (" + typeToCLLVM(Call.getType()) + ")")
+       << aarch64ExclusiveStoreC(IID == llvm::Intrinsic::aarch64_stlxp,
+                                 "__uint128_t", Value,
+                                 valueStr(Call.getArgOperand(2)))
+       << ";\n";
     HasCIntrinsics = true;
     return true;
   }

@@ -130,6 +130,45 @@ TEST_F(AArch64_Atomic, HighCExclusiveOpsUseStandardBuiltinsAndCompile) {
   expectPairedClangSyntax(cFile, source);
 }
 
+// LLVM C writes the builtins HighC writes, where it called undeclared
+// `llvm_aarch64_ldxr_p0`-style functions, and they build back to the same
+// exclusive instructions.
+TEST_F(AArch64_Atomic, LLVMCExclusiveOpsUseStandardBuiltinsAndCompile) {
+  auto r = decompileToC(testObj());
+  ASSERT_EQ(r.exitCode, 0) << r.err;
+
+  auto cFile = tmpFile("decompiled.c");
+  std::ifstream input(cFile);
+  ASSERT_TRUE(input.good());
+  std::string source((std::istreambuf_iterator<char>(input)),
+                     std::istreambuf_iterator<char>());
+  EXPECT_EQ(source.find("llvm_aarch64_"), std::string::npos) << source;
+  EXPECT_EQ(source.find("neverd.not-decompiled"), std::string::npos) << source;
+  for (const char *Builtin :
+       {"__builtin_arm_ldrex((const volatile uint32_t *)",
+        "__builtin_arm_ldaex(", "__builtin_arm_strex(", "__builtin_arm_stlex(",
+        "__builtin_arm_clrex()",
+        "__builtin_arm_ldrex((const volatile __uint128_t *)"})
+    EXPECT_NE(source.find(Builtin), std::string::npos) << Builtin << "\n"
+                                                       << source;
+
+  const auto Assembly = tmpFile("exclusive-rebuilt.s");
+  auto Built = runHighCClang(cFile,
+                             {"-target", "aarch64-linux-gnu",
+                              "-march=armv9.4-a+lse128+the+d128+rcpc3",
+                              "-ffreestanding", "-std=gnu11"},
+                             {"-O2", "-S", "-o", Assembly.string()});
+  ASSERT_EQ(Built.exitCode, 0) << Built.err << "\n" << source;
+  std::ifstream Rebuilt(Assembly);
+  const std::string Text((std::istreambuf_iterator<char>(Rebuilt)),
+                         std::istreambuf_iterator<char>());
+  for (const char *Mnemonic :
+       {"ldxr", "ldaxr", "stxr", "stlxr", "ldxp", "stxp"})
+    EXPECT_NE(Text.find("\t" + std::string(Mnemonic) + "\t"), std::string::npos)
+        << Mnemonic << "\n"
+        << Text;
+}
+
 TEST_F(AArch64_Atomic, BarrierLifted) {
   auto r = liftToLowIR(testObj());
   ASSERT_EQ(r.exitCode, 0);
