@@ -800,6 +800,8 @@ TEST(BinaryDiffLineage, UngroupedNativeAnchorsRetainEveryCoordinateAndPage) {
   expectStop(ComparisonState::ResourceLimited, [&] { lineagePage(*L, Q); });
   Q.MaxWork = Work;
   Q.Offset = 602;
+  EXPECT_THROW((void)lineagePage(*L, Q), std::invalid_argument);
+  Q.Offset = 601;
   Page = lineagePage(*L, Q).JSON;
   EXPECT_EQ(Page.getInteger("total"), 601);
   EXPECT_TRUE(Page.getArray("items")->empty());
