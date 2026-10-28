@@ -172,6 +172,13 @@ prebuilt package set has no ARM archive. Each record retains the actual compiler
 version and hashes, rather than assuming that a major-version label identifies
 one compiler binary.
 
+The generated recorder accepts `--profile resets` for the separate
+FNOP/EMMS/FEMMS corpus. It authenticates every seeded 528-byte input, expected
+state transition, refusal and success-only return, and retains the same compiler,
+runtime and file manifests as the arithmetic corpus. Cross-host comparison
+requires both profiles at one source commit. Native reference fields remain
+x64-only; their absence on ARM64 never counts as a physical FEMMS result.
+
 CI artifacts retain success and failure evidence for thirty days. Download and
 preserve them before expiry when long-term binary replay is required. A small
 committed ledger preserves hashes, scope and run links; it is not a substitute
