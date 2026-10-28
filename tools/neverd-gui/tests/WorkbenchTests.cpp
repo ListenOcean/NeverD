@@ -14264,4 +14264,3 @@ private slots:
 
 QTEST_MAIN(WorkbenchTests)
 #include "WorkbenchTests.moc"
-
