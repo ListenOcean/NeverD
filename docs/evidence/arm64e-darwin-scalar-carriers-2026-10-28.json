@@ -91,7 +91,43 @@
     "excluded_runs": [
       "Initial narrow fixtures did not define the complete physical X0 return. Their model attempt failed; those results are not qualification.",
       "Initial CTest label selection included stale sibling binaries because names share properties. That run was stopped and replaced by exact executable/CTest-index selection."
-    ]
+    ],
+    "publication_integration": {
+      "revision": "72ba44d1d33cde528d9e81ba1173cf44b91c1af9",
+      "passed": true,
+      "tests": 52,
+      "reports": {
+        "calls": {
+          "tests": 7,
+          "sha256": "46007c20495099da5089101a6bfb7af041533bd778d58b961e8034cf71df41ef"
+        },
+        "source": {
+          "tests": 14,
+          "sha256": "4525b38ccafba257fc0f3810ea81b4e848699e3c19b9181abee72f78385f5377"
+        },
+        "integer": {
+          "tests": 13,
+          "sha256": "547e42d45efdd32e535ce8716c424ce656b4e475a043d3a6bd6234faa7a82e72"
+        },
+        "placement": {
+          "tests": 18,
+          "sha256": "3bc169b65e166a8b7415a32e45db8c5a890cebef7283794f178f268421b7c9c4"
+        }
+      },
+      "exports": 1041,
+      "changed_exports": [],
+      "extra_exports": []
+    },
+    "publication_local_gitlink_inputs": {
+      "third_party/capstone": {
+        "head": "88f3e3966565fb9383cd4fbb20c051c9aa22f309",
+        "status": ""
+      },
+      "signatures": {
+        "head": "20b9036f4367e1308a3d2f0b214e06859090a7af",
+        "status": ""
+      }
+    }
   },
   "model": {
     "docker_image": "sha256:b60022df2f5f52d4461b273e3b44190abb85effff05cbb52e1ed25818f010023",

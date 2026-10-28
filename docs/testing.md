@@ -597,7 +597,7 @@ calling/rejection behavior from the C O0 diagnostic-syndrome differences;
 neither establishes the complete Apple image, aggregate-call or native
 signed-unwind ABI.
 The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
-binds the actual model inputs and all 116 current export hashes to their source
+binds the actual model inputs and 116 export hashes recorded at those source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
 control, original timeout failures and unchanged-limit serial repeats.
 The [typed-call receipt](evidence/arm64e-typed-call-abi-2026-10-28.json)
@@ -613,8 +613,7 @@ prototype recovery, narrow integer/pointer parameters, HFA/aggregate calls,
 authenticated special-language ABI, whole images or native signed unwinding.
 
 The larger Release run recorded in that receipt contains 10,838 test instances,
-including tests shared
-by separate executables. It records 10,568 accepted instances, 145 skips and
+including tests shared by separate executables. It records 10,568 accepted instances, 145 skips and
 125 failures reproduced with every changed runtime implementation restored to
 the tested dev base. The entire selection is not green. Six concurrent
 timeouts passed serially with the unchanged 120-second limit. Explicit x86_64
