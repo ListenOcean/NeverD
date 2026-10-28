@@ -197,9 +197,25 @@ below the count they load into `AL`: by a tail jump, by a call, and beside a
 double they set. Each takes them as parameters and its caller passes the
 doubles it computes, and the HighC runs like the kernel.
 `ALiftedVariadicCallPassesOnTheDoublesALCounts` runs the LLVM route's C of the
-jumping forwarders. Its caller loads each double whole, since that C holds a
-vector register whole and an upper lane a scalar conversion left unknown would
-fail there.
+same kernel, which holds a vector register whole: the upper lanes the caller's
+conversions leave unknown pass as zero, and the forwarder that calls aligns
+its stack with a `push rax` that passes no stack argument.
+`AnAlignmentPushPassesNoVariadicStackArgument` runs the C of both routes for
+calls to a variadic routine aligned by such a push: one with no stack argument
+and one with the push above two pushed longs. Neither slot is an argument,
+while a call that overwrites the pushed slot with a long and one that pushes
+three longs below a `sub rsp, 8` pass theirs, which va_arg reads.
+
+`X86_64_CallAbi.AScalarArgumentPassesOnlyItsLowLane` runs the C of both routes
+for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it
+before they jump to a callee reading only the double or the float. The
+conversions keep the register's upper lanes as the caller's entry value; the
+LLVM route's C passes zero there, and neither C reads an unknown value.
+`AFormattedCallPassesItsDoublesAsDoubles` runs the C of both routes for
+`printf`, `dprintf` and `snprintf` calls with constant formats that pass
+doubles: one loaded whole, and ones a conversion leaves beside an unknown upper
+lane. Each C passes them as doubles: every call returns the count the kernel's
+does, and a hash of the text `snprintf` formats matches.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives

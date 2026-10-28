@@ -7152,6 +7152,20 @@ source policy independently of analyst call-signature overrides. It supplies
 no dynamic callee result, native reconstruction contract or partially preserved
 vector-suffix proof. Ordinary LLVM undef/poison/freeze keep their own semantics.
 
+A floating argument's vector register is wider than the scalar most callees
+read in it. Parameter detection records the width of the scalar a vector
+argument register carries in its low lane where the function reads no other
+byte of it (`MedFunc::FPParamScalarBytes`), and call recovery gives each direct
+call to the function that width (`MedCallInfo::ArgReadBytes`). HighC passes
+the scalar alone. The LLVM route still declares such an x86 parameter as the
+whole register (`<2 x i64>`), so its call passes the scalar with zero above it
+(`emitCallOp`): a scalar instruction such as `cvtsi2sd` or `mulsd` keeps the
+upper lanes as the caller found them, its own unknown entry value where
+nothing set them, and the callee reads none of them.
+`int ep(int a) { return gp(a * 0.5); }` passes `gp` its double, where its LLVM
+C trapped before the call. A callee that reads the whole register, or an
+indirect one no recovery describes, still takes it whole.
+
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's
 routine, by the prototype the variable's absolute relocation names, or a
@@ -7264,6 +7278,22 @@ the summary counts, though the callee's own recovery took more as forwarded
 parameters: those positions pass zero, before the floating arguments. A call
 whose block loads AL with no constant gives no count, and nothing changes for
 it.
+
+Past its register save area, a System V variadic routine of the image takes
+one trailing stack parameter per slot its widest call stores from the call's
+stack pointer up (`finalizeVariadicCallees` for the LLVM route,
+`sizeVariadicOverflowFromStores` for HighC). A slot that holds only a scratch
+register's undefined incoming value is no stack argument
+(`holdsUndefinedIncomingScratch`): nothing in the caller defines that value
+and the caller takes no parameter in its register, so va_arg finds nothing
+there the program defines. That is the alignment `push rax` of
+`long gdc(void) { return logv("y") + 1; }`, or one above the longs a call
+pushes. Above the arguments such a slot is dropped; below one it keeps its
+place, as zero, as for the alignment `push eax` of an i386 call (below), and
+it is not the stack argument that shows every integer register of the call to
+be one. A slot a caller stores a value of its own in, such as a seventh
+variadic long, passes that value, and a call that stores fewer slots than the
+routine takes passes zero for the rest.
 
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
@@ -7403,6 +7433,20 @@ Writable or unsupported formats supply no contract. Darwin and Windows retain
 their distinct variadic policies. Register-only argument searches cross checked
 indexed memory operations without relaxing stack-slot alias barriers, and DCE
 keeps their reaching definitions through multiple predecessor blocks.
+
+A formatted call's MedIR inputs are every argument its format names, in the
+source's order, a floating one as the scalar in its vector register's low lane
+(`MedOp::ExactArguments`, `MedOp::ExactFloatInputs`); HighIR passes them as
+they are. Call recovery for LLVM takes the same inputs for a call that reaches
+an import (`recoverCallAbi`), after its own scan has found the registers the
+function passes on, and the emitter passes a floating one into the routine's
+`...` as a `double`, which System V and AAPCS64 carry in a vector register.
+The whole register its own scan found went there as integer bits, which C
+places in integer registers, where printf reads no floating argument:
+`printf("%f %d\n", G, a)` printed `0.000000`. A routine of the image keeps
+the arguments its own parameters take. Win64 binds no formatted call; its
+calls pass a variadic double's bits in the integer slot, where the routine
+reads it.
 
 Scalar floating return inference follows declared call results through complete
 low-byte views and PHI joins. A final integer result still takes precedence;
