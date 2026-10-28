@@ -428,7 +428,11 @@ still fails, which the `JTE_*FailsClosed*` lift tests also hold.
 AArch64 `ldapurb w8, [sp, #0x20]` with an image, which the emitter refuses
 before any module: a lift fails once, from the shard that owns the body.
 `ShardedEmissionKeepsBothFunctionsOfOneName` checks that two functions of one
-name keep both bodies in one module and in two shards. Decompile a whole
+name keep both bodies in one module and in two shards.
+`FunctionAddressSuffixesDoNotAliasExistingNames` checks chained collisions
+with real suffixed names, each body's return value and a caller's exact
+target. It covers x86/x64/ARM32/AArch64 across COFF, ELF and Mach-O, both
+input orders, and one or two shards. Decompile a whole
 x86-64 libsqlite3 or Rust binary, and an AArch64 Rust Mach-O, through `--llvm`
 after changing that retry: one such body used to fail the unit.
 

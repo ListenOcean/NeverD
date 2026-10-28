@@ -15,6 +15,7 @@
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/SourceABI.h"
+#include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86/X87Context.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -27,7 +28,9 @@
 #include "neverd/support/BinaryLoading.h"
 #include "neverd/support/Parallel.h"
 
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/Instructions.h"
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Support/raw_ostream.h"
@@ -2066,6 +2069,116 @@ TEST(PipelineOutcome, ShardedEmissionKeepsBothFunctionsOfOneName) {
     EXPECT_FALSE(Second->isDeclaration());
     EXPECT_EQ(OriginalVA(*First), 0x1010u);
     EXPECT_EQ(OriginalVA(*Second), 0x1060u);
+  }
+}
+
+// A real symbol may already use the address suffix chosen for a duplicate.
+// Preserve each body's value and the caller's target even across chained
+// collisions, reversed input order and independent LLVM shards.
+TEST(PipelineOutcome, FunctionAddressSuffixesDoNotAliasExistingNames) {
+  const auto OriginalVA = [](const llvm::Function &Function) -> uint64_t {
+    auto Address = rewrite_source::getOriginalVA(Function);
+    if (!Address) {
+      llvm::consumeError(Address.takeError());
+      return 0;
+    }
+    return Address->value_or(0);
+  };
+  for (Arch Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64}) {
+    for (BinaryFormat Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      for (bool Reverse : {false, true}) {
+        BinaryImage Image;
+        Image.Arch = Architecture;
+        Image.Bits = Architecture == Arch::X86 || Architecture == Arch::ARM
+                         ? Bitness::Bits32
+                         : Bitness::Bits64;
+        Image.Format = Format;
+        std::vector<MedFunc> Functions;
+        for (unsigned I = 0; I != 8; ++I) {
+          std::string Name = "source_" + std::to_string(I);
+          if (I == 0)
+            Name = "twin_1060_1060";
+          else if (I == 2)
+            Name = "twin_1060";
+          else if (I == 1 || I == 6)
+            Name = "twin";
+          MedFunc Function = sourceFunction(0x1000 + I * 16, std::move(Name));
+          Function.ReturnType = NdType::makeInt(Image.getPointerSize());
+          MedBlock Block;
+          Block.Id = 0;
+          Block.StartAddr = Function.Entry;
+          const auto &Registers = getTargetRegInfo(Architecture);
+          MedVar Value;
+          Value.Kind = MedVar::Reg;
+          Value.TheArch = Architecture;
+          Value.Id = 1;
+          Value.SSAVer = 1;
+          Value.Size = Image.getPointerSize();
+          Value.RegOff = Registers.IntReturnReg;
+          MedOp Produce;
+          Produce.Opcode = I == 7 ? NdOp::CALL : NdOp::COPY;
+          Produce.Addr = Function.Entry;
+          Produce.Output = Value;
+          Produce.addInput(MedVar::makeConst(I == 7 ? 0x1060 : I + 1,
+                                             Image.getPointerSize()));
+          Block.Ops.push_back(Produce);
+          MedOp Return;
+          Return.Opcode = NdOp::RETURN;
+          if (Registers.ReturnOperandIsValue)
+            Return.addInput(Value);
+          Block.Ops.push_back(Return);
+          Function.Blocks.push_back(std::move(Block));
+          Functions.push_back(std::move(Function));
+        }
+        if (Reverse)
+          std::reverse(Functions.begin(), Functions.end());
+        for (unsigned Threads : {1u, 2u}) {
+          SCOPED_TRACE(::testing::Message()
+                       << unsigned(Architecture) << ':' << unsigned(Format)
+                       << ':' << Reverse << ':' << Threads);
+          llvm::LLVMContext Context;
+          auto Result =
+              PipelineTestPeer::emitShards(Functions, Context, Image, Threads);
+          ASSERT_NE(Result.Module, nullptr) << Result.Error;
+          ASSERT_FALSE(llvm::verifyModule(*Result.Module, &llvm::errs()));
+          for (unsigned I = 0; I != 8; ++I) {
+            const llvm::Function *Found = nullptr;
+            for (const llvm::Function &Emitted : *Result.Module) {
+              if (OriginalVA(Emitted) != 0x1000 + I * 16)
+                continue;
+              ASSERT_EQ(Found, nullptr);
+              Found = &Emitted;
+            }
+            ASSERT_NE(Found, nullptr) << I;
+            ASSERT_EQ(Found->size(), 1u);
+            if (I != 7) {
+              const auto *Return = llvm::dyn_cast<llvm::ReturnInst>(
+                  Found->getEntryBlock().getTerminator());
+              ASSERT_NE(Return, nullptr);
+              const auto *Value = llvm::dyn_cast_or_null<llvm::ConstantInt>(
+                  Return->getReturnValue());
+              ASSERT_NE(Value, nullptr);
+              EXPECT_EQ(Value->getZExtValue(), I + 1);
+            } else {
+              unsigned Calls = 0;
+              for (const llvm::Instruction &Instruction :
+                   Found->getEntryBlock()) {
+                const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction);
+                if (!Call)
+                  continue;
+                const auto *Callee = llvm::dyn_cast<llvm::Function>(
+                    Call->getCalledOperand()->stripPointerCasts());
+                ASSERT_NE(Callee, nullptr);
+                EXPECT_EQ(OriginalVA(*Callee), 0x1060u);
+                ++Calls;
+              }
+              EXPECT_EQ(Calls, 1u);
+            }
+          }
+        }
+      }
+    }
   }
 }
 

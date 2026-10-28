@@ -12,6 +12,12 @@ configurations remain separate coverage.
 
 ## Open
 
+LLVM function-name disambiguation also reserves generated address suffixes.
+A real symbol using that suffix cannot absorb another function's body or
+redirect its callers. Chained collisions and reversed input order preserve
+each body's return value and call target across all four native architectures,
+all three native formats, and serial or sharded emission.
+
 LLVM C compare-exchange now retains the old value, success flag and memory
 effect at the original instruction position. Native 8/16/32/64-bit integers
 and ordinary pointers retain weak/strong, volatile and memory-order semantics,
