@@ -21,6 +21,7 @@
 #include "simdjson.h"
 #endif
 
+#include <algorithm>
 #include <charconv>
 #include <limits>
 #include <optional>
@@ -118,7 +119,12 @@ public:
 };
 
 class HexValue {
-  char Buffer[18] = {'0', 'x'}; // Prefix and up to sixteen hexadecimal digits.
+public:
+  static constexpr size_t MaxSize =
+      2 + std::numeric_limits<uint64_t>::digits / 4;
+
+private:
+  char Buffer[MaxSize] = {'0', 'x'};
 
 public:
   llvm::StringRef format(uint64_t Value) {
@@ -127,6 +133,50 @@ public:
     return llvm::StringRef(Buffer, End - Buffer);
   }
 };
+
+// Estimate compact output capacity from metadata without a second row scan.
+// Skip small output that fits in the remaining stream buffer. This is only
+// an allocation hint; the stream remains growable as usual.
+template <bool FullRows>
+static void reserveCompactOutput(llvm::raw_ostream &Stream,
+                                 const PatchOverlay &Overlay) {
+  if (Overlay.empty())
+    return;
+  // Remove the representative decimal zero and the string terminator.
+  constexpr size_t RowSyntaxBytes =
+      (FullRows
+           ? sizeof(
+                 R"({"addr":"","current":"","file_off":"","kind":"","original":"","size":0,"va":""})")
+           : sizeof(R"({"address":"","size":0})")) -
+      sizeof("0");
+  constexpr size_t MaxKindSize = std::max({
+#define NEVERD_PATCH_KIND(Id, Spelling) sizeof(Spelling) - 1,
+#include "neverd/patch/PatchKinds.def"
+  });
+  constexpr size_t MaxSizeDigits = std::numeric_limits<uint64_t>::digits10 + 1;
+  const uint64_t Count = Overlay.rows().size();
+  const uint64_t HexBytes = FullRows ? 4 * Overlay.bytes() : 0;
+  constexpr uint64_t MaxRowOverhead =
+      RowSyntaxBytes + (FullRows ? 3 : 1) * HexValue::MaxSize +
+      (FullRows ? MaxKindSize : 0) + MaxSizeDigits;
+  const auto BufferRemaining =
+      Stream.GetBufferSize() - Stream.GetNumBytesInBuffer();
+  if (2 + (Count - 1) + Count * MaxRowOverhead + HexBytes <= BufferRemaining)
+    return;
+  char SizeBuffer[MaxSizeDigits];
+  const auto SizeEnd =
+      std::to_chars(SizeBuffer, SizeBuffer + sizeof SizeBuffer, Overlay.bytes())
+          .ptr;
+  uint64_t RowOverhead =
+      RowSyntaxBytes + HexValue::MaxSize + (SizeEnd - SizeBuffer);
+  if constexpr (FullRows) {
+    HexValue Hex;
+    const auto FileOffsetSize =
+        Hex.format(Overlay.rows().rbegin()->first).size();
+    RowOverhead += 2 * FileOffsetSize + MaxKindSize;
+  }
+  Stream.reserveExtraSpace(2 + (Count - 1) + Count * RowOverhead + HexBytes);
+}
 
 // Only formatter-produced hexadecimal text reaches these helpers. It is ASCII
 // without quotes or escapes, so generic string validation/escaping is
@@ -176,6 +226,7 @@ void neverd::patch::writePatchRows(llvm::json::OStream &Output,
 
 void neverd::patch::writePatchRows(llvm::raw_ostream &Stream,
                                    const PatchOverlay &Overlay) {
+  reserveCompactOutput<true>(Stream, Overlay);
   PatchOutput<false> Output(Stream);
   writeRows(Output, Overlay);
 }
@@ -188,6 +239,7 @@ void neverd::patch::writePatchSidecarRows(llvm::raw_ostream &Stream,
 
 void neverd::patch::writePatchRanges(llvm::raw_ostream &Stream,
                                      const PatchOverlay &Overlay) {
+  reserveCompactOutput<false>(Stream, Overlay);
   PatchOutput<false> Output(Stream);
   HexValue Hex;
   Output.array([&] {
