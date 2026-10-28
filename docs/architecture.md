@@ -626,24 +626,51 @@ and exact fault-PC equality remain unqualified. Whole-image arm64e rebuilding
 still requires the separate
 authenticated storage, relocation and signed-unwind ABI contract.
 
-The shared AAPCS64 parameter placement owner describes Darwin fixed scalar
+The shared AAPCS64 parameter placement owner describes Darwin fixed value
 spills with their natural size and alignment after either register bank is
 exhausted. ELF and Windows ARM64 retain eight-byte stack slots. Darwin variadic
 tails keep their separate eight-byte placement rule. Darwin integer pairs may
 start at odd-numbered registers; an entire 128-bit scalar moves to a 16-byte
 aligned stack slot when the remaining registers cannot hold it. ELF and COFF
-retain even-register alignment. Apple aggregate spills still need their own
-complete layout contract. The limits for this placement owner live in
+retain even-register alignment. Complete aggregate spills exhaust their bank
+and preserve each field's declared offset. The limits for this owner live in
 `SourceParameterPlacementAAPCS64.def`.
 
-Fixed analyst call prototypes reuse `assignDarwinScalarSourceABI`, as Darwin
-variadic prefixes and recovered declarations already do. Narrow integer
+Fixed arm64 analyst call prototypes reuse `assignDarwinFixedSourceABI` and its
+shared AAPCS64 parameter placement. Darwin variadic prefixes retain their
+separate promoted-scalar contract. Narrow integer
 register parameters and AArch64 narrow results retain the ABI's 32-bit
 sign/zero-extension guarantee separately from their source width. LLVM source
 call emission consumes those validated guarantees as `signext`/`zeroext`
 attributes; signed source spelling alone does not grant them. Narrow stack
-arguments keep their original storage width. This scalar call contract does
-not admit 128-bit or aggregate analyst call prototypes.
+arguments keep their original storage width. A 128-bit argument retains two
+unsigned physical words before SSA; HighC reconstructs it with CONCAT and LLVM
+uses an i128 parameter. Supported natural-layout records retain their logical
+type and complete physical members. LLVM uses arrays for HFA and word-record
+arguments so register exhaustion cannot split a logical value. Results flatten
+back to the declared source offsets, preserving padding as non-value bytes.
+LLVM C admits these grouped Darwin parameters independently of the register
+count; ELF/x86 array restrictions remain in place.
+
+`sourceCallTypeOf` retains natural C record fields from the SDK's type library
+without changing the ordinary display conversion. Names, sizes, alignment and
+field offsets must agree with the natural layout; packed, overlapping,
+bitfield and incomplete value records fail. Pointer pointees keep their opaque
+display identity and supply no by-value layout or field-access authority.
+Both C routes retain the library's record and member names. LLVM source value
+types share one grouping owner with the producer. Conversion between an LLVM
+aggregate wrapper and the declared C record captures each value once and
+copies only its logical members; padding is excluded from integer observations.
+The call argument definedness proof follows byte ranges through copies and
+slices, so an observed 32-bit member can cross a wider register without
+requiring its padding bits. Other operations still require their full inputs;
+neither padding nor a later SSA version becomes an incoming parameter.
+The explicit call path currently supports one/two-word integer/pointer records,
+the padded 32-bit/64-bit integer pair and one-to-four-member f32/f64 HFAs,
+including nested records and complete stack spills. Array fields, arbitrary
+small mixed records, indirect by-value copies and indirect results still need
+their complete source storage and ABI contracts. These source declarations
+supply no authenticated whole-image or native signed-unwind ABI.
 
 The DWARF reader keeps an image-derived arm64e return ABI flag separate from
 the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when

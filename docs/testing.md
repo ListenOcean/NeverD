@@ -63,10 +63,10 @@ incomplete outgoing writes, unaligned carriers, frame-address returns, preserved
 changes, external loads and values initialized by the callee itself. A selected
 call optimized away is checked by compiling and executing its resulting source,
 rather than requiring an intermediate call record to survive optimization.
-`IncomingHomeSource.NarrowStackInputsKeepTheirExactWidth` executes signed and
+`ByWidth/IncomingHomeSourceNarrow.NarrowStackInputsKeepTheirExactWidth/*` executes signed and
 unsigned 1/2/4-byte reads through both C routes at O0/O2 with UBSan, for x64/ARM64
 PE/ELF and complete or selected-caller output. Callers write only the consumed
-bytes. The frame proof separately rejects reads wider than the declared input.
+bytes. The frame proof separately rejects reads wider than the declared input. The 24 profiles retain all 192 compiled executions while keeping each case under the unchanged 120-second limit.
 `ByProfile/IncomingHomeSourceMixedWidth.ReadsShareOneCompleteInput/*` executes
 mixed prefix and complete-slot reads through both C routes at O0/O2 with UBSan.
 Six architecture/format/carrier profiles retain every prefix width, signedness
@@ -580,13 +580,24 @@ the configured LLVM backend to ELF for the original integer groups.
 `ExplicitTypesKeepAuthenticationOnTheCall` additionally checks signed/unsigned
 8/16/32-bit integers, 64-bit integers and pointers, fixed f32/f64, exhausted
 GP/FP registers, mixed operands, exact result bits and Darwin variadic tails
-across both keys, zero/dynamic discriminators and raw controls. All 75 typed
+across both keys, zero/dynamic discriminators and raw controls. The matrix also
+checks signed/unsigned 128-bit values, single/pair integer and pointer records,
+a padded 32-bit/64-bit pair, and one-to-four-member f32/f64 HFAs with nested and
+whole-stack cases. All 200 typed
 groups emit actual Mach-O objects on five routes. Narrow register arguments
 and results require the correct LLVM extension attribute; stack arguments
 retain their source width. The outer fixture explicitly writes the complete
 X0 return carrier, and a constant result cannot stand in for the callback's
 value. Set `NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer
-groups and 75 typed groups with all five object routes.
+groups and 200 typed groups with all five object routes. Composite result
+oracles consume every logical member, excluding padding; pointer and integer
+members remain raw bits. The independent callback poisons record return padding.
+On macOS, `NeverDArm64eSourceCallSDK` loads a real arm64e dylib through the
+public C API, declares named integer/pointer records, a padded pair, a nested
+HFA and signed/unsigned 128-bit values, and applies complete call prototypes.
+Both C routes must compile all eight argument/result shapes at O0/O2.
+Packed/union values and indirect copies/results must refuse explicitly.
+These compiler checks execute no arm64e fixture code.
 `NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
 C prototypes and refuses unsupported authenticated language bindings. Its five
 HighC variants must compile at O0/O2 with the original target and authentication.
@@ -594,8 +605,7 @@ Compiler IR identifiers are normalized for reproducible exports.
 The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
-neither establishes the complete Apple image, aggregate-call or native
-signed-unwind ABI.
+neither establishes the complete Apple image or native signed-unwind ABI.
 The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
 binds the actual model inputs and 116 export hashes recorded at those source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
