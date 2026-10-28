@@ -311,6 +311,78 @@ TEST(MedConstantPropagation, EffectsAndOperandRolesSurviveConstantTransport) {
   EXPECT_EQ(Exit.Ops[2].Inputs[1], variable(9));
 }
 
+TEST(MedConstantPropagation, IndirectCallValuesCannotBecomeStorageAddresses) {
+  for (auto Provenance :
+       {ConstantAddressProvenance::Unknown, ConstantAddressProvenance::Scalar,
+        ConstantAddressProvenance::CodeAddress}) {
+    SCOPED_TRACE(unsigned(Provenance));
+    const auto Value = MedVar::makeConst(0x2000, 8, Provenance);
+    auto Func = loop(Value);
+    auto &Exit = block(Func, 3);
+    Exit.Ops = {
+        operation(NdOp::INDIR_CALL, variable(5), {variable(2), variable(2)}),
+        operation(NdOp::INDIR_CALL, variable(6), {Value, variable(2)}),
+        operation(NdOp::CALL, variable(7), {variable(2), variable(2)}),
+        operation(NdOp::RETURN, {}, {variable(7)})};
+    ASSERT_TRUE(propagateInvariantConstants(Func));
+    EXPECT_EQ(Exit.Ops[0].Inputs[0], variable(2));
+    EXPECT_EQ(Exit.Ops[0].Inputs[1], Value);
+    EXPECT_EQ(Exit.Ops[1].Inputs[0], Value);
+    EXPECT_EQ(Exit.Ops[1].Inputs[1], Value);
+    EXPECT_EQ(Exit.Ops[2].Inputs[0], Value);
+    EXPECT_EQ(Exit.Ops[2].Inputs[1], Value);
+    EXPECT_FALSE(propagateInvariantConstants(Func));
+  }
+}
+
+TEST(MedConstantPropagation, CallValueRoleSurvivesLowConversionAndCopyFolding) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(::testing::Message()
+                   << unsigned(Architecture) << ':' << unsigned(Format));
+      const auto &TRI = getTargetRegInfo(Architecture);
+      const auto Target = NdVar::reg(TRI.IntReturnReg, TRI.PointerSize);
+      LowFunc Low;
+      Low.Entry = 0x1000;
+      Low.Name = "indirect_call_value";
+      Low.Blocks.resize(2);
+      for (unsigned I = 0; I != Low.Blocks.size(); ++I) {
+        auto &Block = Low.Blocks[I];
+        Block.Id = I;
+        Block.StartAddr = Low.Entry + I * 0x10;
+        Block.EndAddr = Block.StartAddr + 0x10;
+      }
+      Low.Blocks[0].Succs = {1};
+      Low.Blocks[1].Preds = {0};
+      const auto Add = [&](unsigned Block, NdOp Opcode, NdVar Output,
+                           std::initializer_list<NdVar> Inputs) {
+        LowOp Op;
+        Op.Opcode = Opcode;
+        Op.Output = Output;
+        Op.Addr = Low.Blocks[Block].StartAddr;
+        for (const auto &Input : Inputs)
+          Op.addInput(Input);
+        Low.Blocks[Block].Ops.push_back(Op);
+      };
+      Add(0, NdOp::COPY, Target, {NdVar::cst(0x2000, TRI.PointerSize)});
+      Add(0, NdOp::BRANCH, {}, {NdVar::cst(0x1010, TRI.PointerSize)});
+      Add(1, NdOp::INDIR_CALL, Target, {Target});
+      Add(1, NdOp::RETURN, {}, {Target});
+      const auto Med = LowToMedConverter().convert(Low, Architecture, Format);
+      ASSERT_TRUE(verifyMedFunc(Med, "indirect-call-value"));
+      unsigned Calls = 0;
+      for (const auto &Block : Med.Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::INDIR_CALL) {
+            ++Calls;
+            ASSERT_GE(Op.NumInputs, 1U);
+            EXPECT_FALSE(Op.Inputs[0].isConst());
+          }
+      EXPECT_EQ(Calls, 1U);
+    }
+}
+
 TEST(MedConstantPropagation, BudgetExhaustionLeavesAllOperandsUnchanged) {
   auto Func = loop(MedVar::makeConst(73, 8));
   for (int I = 10; I < 65546; ++I)

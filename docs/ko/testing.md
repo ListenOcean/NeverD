@@ -2225,3 +2225,5 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 `NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 충돌, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
 
 먼저 현재 기본 블록만으로 증명할 수 있는 대상을 검사하여 무관한 선행 경로가 작업 예산을 소모하지 않도록 합니다. 긴 선행 경로 회귀 테스트도 이 경계를 검증합니다.
+
+MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공유합니다. 계산된 간접 호출 대상은 SSA 값으로 유지하며, 상수가 된 비트를 포인터 저장 주소로 해석하지 않습니다. 직접 호출과 일반 인수는 계속 접습니다. `NeverDImageAnalysisBoundaryTests`는 x86/x64/ARM32/ARM64 변환을, `NeverDIndirectCallValueSourceTests`는 세 네이티브 형식에서 x64/ARM64의 두 C 경로를 검증합니다. 원본 이미지 뷰는 구문과 불필요한 메모리 읽기가 없는지 확인하며, 이미지 제공자 없이 실행하지 않습니다.

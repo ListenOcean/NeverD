@@ -26,6 +26,13 @@ The same SSA identity rule now serves compound-condition rewriting and direct
 boolean flag propagation. Unknown operands disappear only when the result is
 independent of their bits; unspecified occurrences stay distinct.
 
+MedIR constant and copy propagation retain computed indirect-call targets as
+SSA values: a legacy literal target denotes pointer storage, so substituting
+its bits would invent a load from code. Both propagation sites share the operand
+rule. Cross-format x86/ARM conversion and x64/ARM64 source regressions cover
+value calls, with literal slots and ordinary arguments retained as controls.
+This does not supply missing caller state or prove a dynamic target constant.
+
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
 the call target, including when the current import slot can no longer name it.
