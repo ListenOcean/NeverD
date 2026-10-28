@@ -290,6 +290,12 @@ struct PipelineFunctionAudit {
   /// ownership; see LowFunc::UnprovenReturnAddresses.
   std::vector<va_t> UnprovenReturns;
   std::vector<va_t> TruncatedPaths;
+  /// Final CFG instruction starts and unsupported original-instruction sites,
+  /// collected only for a DeferMedIR view. Rejected functions retain this
+  /// metadata; it grants neither LowIR admission nor executable instruction
+  /// semantics. A state-source consumer must independently relift the selected
+  /// bytes.
+  std::vector<va_t> NativeInstructionAddresses;
   bool HasLowIR = false;
   bool HasMedIR = false;
   bool MedIRVerified = false;

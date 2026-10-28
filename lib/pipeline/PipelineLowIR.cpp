@@ -5454,6 +5454,16 @@ void Pipeline::buildLowIR(
       AuditIt->UnsupportedInstructions = Low.UnsupportedInstructionAddresses;
       AuditIt->UnprovenReturns = Low.UnprovenReturnAddresses;
       AuditIt->TruncatedPaths = Low.TruncatedPathAddresses;
+      if (Opts.DeferMedIR) {
+        std::set<va_t> Addresses;
+        for (const auto &Block : Low.Blocks)
+          for (const auto &Instruction : Block.InstructionBoundaries)
+            Addresses.insert(Instruction.Address);
+        Addresses.insert(Low.UnsupportedInstructionAddresses.begin(),
+                         Low.UnsupportedInstructionAddresses.end());
+        AuditIt->NativeInstructionAddresses.assign(Addresses.begin(),
+                                                   Addresses.end());
+      }
     }
 
     if (Opts.MaxFunctions > 0 && FuncCount >= Opts.MaxFunctions) {

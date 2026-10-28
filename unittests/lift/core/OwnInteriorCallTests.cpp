@@ -20,6 +20,7 @@
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/loader/ExceptionFunction.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/pipeline/X64ContinuationExport.h"
 
 #include "llvm/ADT/SmallString.h"
 #include "llvm/IR/LLVMContext.h"
@@ -1032,6 +1033,45 @@ TEST(OwnInteriorCall, ReturnAfterAStackSwitchIsRefused) {
                          0xc3});                       // ret
   EXPECT_TRUE(L.Source.empty()) << L.Source;
   EXPECT_EQ(L.UnprovenReturns, std::vector<va_t>{0x140001009});
+}
+
+TEST(OwnInteriorCall,
+     RejectedReturnsRetainOnlyTheirNativeInstructionSelection) {
+  auto Image =
+      makeImage({0xe8, 1, 0, 0, 0, 0xcc, 0x48, 0x8b, 0x21, 0xc3}, SysV64);
+  Image.Segments.front().FileSz = Image.Segments.front().Data.size();
+  PipelineOptions Options;
+  Options.OnlyFunctionEntries = {Entry};
+  Options.EmitDumpOutput = false;
+  Options.DeferMedIR = true;
+  llvm::LLVMContext Context;
+  auto Selected = Pipeline().run(Image, Context, Options);
+  ASSERT_TRUE(Selected.Success) << Selected.Error;
+  EXPECT_TRUE(Selected.LowFuncs.empty());
+  EXPECT_TRUE(Selected.MedFuncs.empty());
+  ASSERT_EQ(Selected.FunctionAudits.size(), 1u);
+  const auto &Audit = Selected.FunctionAudits.front();
+  EXPECT_FALSE(Audit.HasLowIR);
+  EXPECT_EQ(Audit.UnprovenReturns, std::vector<va_t>{Entry + 9});
+  // The interior CALL is a physical push-and-jump. Its old fallthrough is
+  // outside the recovered region until the environment resumes there.
+  EXPECT_EQ(Audit.NativeInstructionAddresses,
+            (std::vector<va_t>{Entry, Entry + 6, Entry + 9}));
+  const std::string Request =
+      R"({"profile":"kernel-events-v6","mxcsr_mask":65471,"paging_address_bits":48,"entries":[)" +
+      std::to_string(Entry) + "]}";
+  for (bool LLVM : {false, true}) {
+    auto Source = exportX64Continuation(Image, Request, LLVM);
+    ASSERT_TRUE(bool(Source)) << llvm::toString(Source.takeError());
+    EXPECT_NE(Source->Source.find("neverd_x64_continue_v6"), std::string::npos);
+    EXPECT_NE(Source->Manifest.find("rejected-incomplete"), std::string::npos);
+  }
+  Options.DeferMedIR = false;
+  auto Ordinary = Pipeline().run(Image, Context, Options);
+  EXPECT_TRUE(Ordinary.LowFuncs.empty());
+  EXPECT_TRUE(Ordinary.MedFuncs.empty());
+  EXPECT_EQ(Ordinary.FunctionAudits.front().UnprovenReturns,
+            std::vector<va_t>{Entry + 9});
 }
 
 TEST(OwnInteriorCall, SystemVCallsForTheirReturnAddressPushAndJump) {

@@ -14367,3 +14367,22 @@ keeps its retained words verbatim, so the deep simplifier walks them under the
 same work allowance before returning.
 
 `X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the memory operation; `INC/DEC` preserve CF. FS/GS address spaces remain attached. On x64, `LOCK AND/OR/XOR` use the shared system-state intrinsic owner and emit one native locked transaction. Its result packs PF/ZF/SF from that transaction; CF/OF are cleared and AF remains an explicit arbitrary effect. Widths and FS/GS address spaces remain part of the intrinsic contract. The i386 logical forms and other unowned locked core arithmetic still refuse. This is a LowIR lifting contract; emitted native alignment and fault behavior need their own qualification.
+
+### Explicit x64 continuation export
+
+`exportX64Continuation` owns bounded JSON selection, checked instruction-state
+projection and paired C/manifest generation. SDK and CLI adapters call this
+pipeline owner. It reuses `buildX64ContinuationSource` and the shared source ABI
+for each step; ordinary function arity, source frame promotion and callee-save
+assumptions do not enter this route. Selected CFG entries reuse deferred LowIR
+recovery and retain original instruction boundaries, including overlaps. Deferred
+LowIR audits preserve instruction selection for rejected functions separately
+from admitted LowFuncs. Unsupported sites remain in that selection and decode
+failures remain explicit; the state exporter independently relifts every byte
+before emission. This metadata grants no ordinary source or native rewrite
+admission. The driver owns only dispatch and instruction accounting: successful calls,
+returns, exceptions and privilege returns each consume one step and stop.
+Native requests and invalid invocations execute nothing and consume none.
+Both C routes include a state layout checked against the semantic owner and
+an exact byte manifest bound to the emitted source hash. The ordinary source
+interface remains separate. See [the invocation contract](x64-continuation-source.md).
