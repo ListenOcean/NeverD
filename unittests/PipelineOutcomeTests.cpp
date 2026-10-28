@@ -16,8 +16,11 @@
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/X86/X87Context.h"
+#include "neverd/ir/intrinsics/AArch64/AArch64AddressMemory.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CFGBuilder.h"
+#include "neverd/ir/med/IntrinsicShapes.h"
+#include "neverd/lift/AArch64/AArch64Regs.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/pipeline/Pipeline.h"
@@ -1926,6 +1929,89 @@ TEST(PipelineOutcome, RealShardedEmissionLeavesOutOnlyTheRefusedBody) {
     const llvm::Function *Function =
         Result.Module->getFunction(Functions[I].Name);
     // Linking drops the left-out body's declaration where nothing calls it.
+    if (I == 3) {
+      EXPECT_TRUE(!Function || Function->isDeclaration());
+      continue;
+    }
+    ASSERT_NE(Function, nullptr) << Functions[I].Name;
+    EXPECT_FALSE(Function->isDeclaration()) << Functions[I].Name;
+  }
+}
+
+// A body whose contract the emitter refuses before any module, as an
+// original SP memory operation with an image, fails only the shard that
+// writes it, and a unit that names what it leaves out keeps the others.
+TEST(PipelineOutcome, RealShardedEmissionLeavesOutABodyItsContractRefuses) {
+  llvm::LLVMContext Context;
+  BinaryImage Image;
+  Image.Arch = Arch::AArch64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  // `ldapurb w8, [sp, #0x20]`: an RCpc read keeps its original SP word,
+  // which no reconstructed source frame supplies.
+  constexpr uint32_t OrderedStackRead = 0x194203e8;
+  const auto Instruction = *aarch64AddressMemoryInstruction(OrderedStackRead);
+  ASSERT_TRUE(Instruction.stackBase());
+  std::vector<MedFunc> Functions;
+  for (unsigned I = 0; I < 8; ++I) {
+    MedFunc Function =
+        sourceFunction(0x1000 + I * 16, "source_" + std::to_string(I));
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    if (I == 3) {
+      MedVar Stack;
+      Stack.Kind = MedVar::Reg;
+      Stack.TheArch = Arch::AArch64;
+      Stack.Id = 1;
+      Stack.Size = kAddressMemoryPointerBytes;
+      Stack.RegOff = a64reg::SP;
+      MedVar Byte;
+      Byte.Kind = MedVar::Temp;
+      Byte.TheArch = Arch::AArch64;
+      Byte.Id = 2;
+      Byte.Size = static_cast<uint16_t>(Instruction.accessBytes());
+      MedOp Read;
+      Read.Opcode = NdOp::INTRINSIC;
+      Read.Addr = Function.Entry;
+      Read.Output = Byte;
+      Read.addInput(
+          MedVar::makeConst(static_cast<uint64_t>(Instruction.operation().Id),
+                            kAddressMemoryIdentifierBytes));
+      Read.addInput(Stack);
+      Read.addInput(MedVar::makeConst(0, Instruction.indexBytes()));
+      Read.addInput(
+          MedVar::makeConst(OrderedStackRead, kAddressMemoryWordBytes));
+      ASSERT_TRUE(aarch64AddressMemoryMedShapeIsValid(Read));
+      Block.Ops.push_back(Read);
+    }
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(Return);
+    Function.Blocks.push_back(std::move(Block));
+    Functions.push_back(std::move(Function));
+  }
+  // A run whose output names nothing it leaves out, as a lift's, fails with
+  // the refusal, from the one shard that writes the body.
+  auto Failed = PipelineTestPeer::emitShards(Functions, Context, Image, 2);
+  EXPECT_EQ(Failed.Module, nullptr);
+  EXPECT_TRUE(Failed.LeftOut.empty());
+  EXPECT_EQ(llvm::StringRef(Failed.Error)
+                .count(kAddressMemoryImmediateImageUnsupported),
+            1u)
+      << Failed.Error;
+
+  auto Result = PipelineTestPeer::emitShards(Functions, Context, Image, 2,
+                                             /*OmitRefusedBodies=*/true);
+  ASSERT_NE(Result.Module, nullptr) << Result.Error;
+  EXPECT_TRUE(Result.Error.empty());
+  EXPECT_FALSE(llvm::verifyModule(*Result.Module, &llvm::errs()));
+  ASSERT_EQ(Result.LeftOut.size(), 1u);
+  EXPECT_EQ(Result.LeftOut[0].first, 3u);
+  EXPECT_EQ(Result.LeftOut[0].second, kAddressMemoryImmediateImageUnsupported);
+  for (unsigned I = 0; I < 8; ++I) {
+    const llvm::Function *Function =
+        Result.Module->getFunction(Functions[I].Name);
     if (I == 3) {
       EXPECT_TRUE(!Function || Function->isDeclaration());
       continue;

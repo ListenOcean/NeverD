@@ -7462,9 +7462,18 @@ emitter names the body that wrote the refusal
 (`MedLLVMEmitter::refusedBodies`), the shard, or the serial module, is
 emitted again with that body masked off, and the LLVM C unit notes it first
 (`llvm-emission-failed; med_llvm_emitter: ambiguous pointer-table address
-... refusing stale-address fallback`). A lift, whose IR names nothing it
-leaves out, and a patch, which rewrites every function it lifts, still fail
-at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Asked for alone,
+... refusing stale-address fallback`). So does a body whose contract the
+emitter refuses before it builds any module, as an original SP memory
+operation with an image (`llvm-emission-failed; immediate original memory
+requires a runtime GPR value or a complete occurrence-bound image span`).
+The emitter names every refused body it writes before it throws the first
+one's reason. A shard checks only the bodies it writes, since the shards'
+masks partition the unit, and a retry only the bodies it keeps; a module
+that merely filters bodies out, as the SDK's view of one function, still
+checks every one (`setMaskedBodiesOwnedElsewhere`). A lift, whose IR names
+nothing it leaves out, and a patch, which rewrites every function it lifts,
+still fail at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Asked
+for alone,
 such a function still
 fails with that reason, and so does a unit
 rendered with a source map, recorded positions or source names, or one whose

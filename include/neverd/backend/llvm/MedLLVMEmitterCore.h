@@ -165,14 +165,24 @@ public:
 
   /// A function whose body refused a stale code or data address, by its
   /// index in the last emit()'s functions, with the error it wrote: that
-  /// emit() returned no module.  The same functions emitted with these
-  /// bodies masked off leave them declared only.
+  /// emit() returned no module.  A body the module writes whose contract its
+  /// LLVM cannot keep, as an original SP memory operation with an image, is
+  /// named the same way before any module, and emit() throws the first one's
+  /// reason.  The same functions emitted with these bodies masked off leave
+  /// them declared only.
   struct RefusedBody {
     size_t Index = 0;
     std::string Reason;
   };
   const std::vector<RefusedBody> &refusedBodies() const {
     return RefusedBodies;
+  }
+  /// Whether the caller accounts for each body its BodyMask leaves out:
+  /// another module of the same unit writes it, or the unit notes it left
+  /// out.  Only then does emit() leave such a body's contract to that module
+  /// or note; filtering alone hides no requirement.
+  void setMaskedBodiesOwnedElsewhere(bool Owned) {
+    MaskedBodiesOwnedElsewhere = Owned;
   }
 
 private:
@@ -2418,6 +2428,7 @@ private:
   std::set<va_t> CxxContinuationFunctionEntries;
   std::optional<size_t> ActiveCxxContinuationPlan;
   std::vector<RefusedBody> RefusedBodies;
+  bool MaskedBodiesOwnedElsewhere = false;
   // Sticky hard failure: a relocation-proven executable pointer must never
   // degrade to an embedded original VA.  emit() discards the module when set.
   bool FatalCodePointerResolution = false;

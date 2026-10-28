@@ -385,13 +385,18 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     const BinaryImage *EmissionImage =
         Result.InterpreterMachineSourceABI ? nullptr : &Img;
     // As a shard does where the unit names what it leaves out, a body that
-    // refuses a stale address stays declared only and the rest are emitted
-    // again without it. A patch rewrites every function it lifts, so there
-    // one refusal still fails the lift.
+    // refuses a stale address, or whose contract the emitter refuses before
+    // any module, stays declared only and the rest are emitted again without
+    // it. A patch rewrites every function it lifts, so there one refusal
+    // still fails the lift.
+    const bool OmitRefused = Opts.OmitRefusedLLVMBodies && !Opts.PatchMode &&
+                             !Result.InterpreterMachineSourceABI;
     std::vector<char> Mask;
     uint64_t UnhandledValueIntrinsics = 0;
     for (;;) {
       MedLLVMEmitter MedEmitter;
+      // The mask holds only bodies the unit notes left out.
+      MedEmitter.setMaskedBodiesOwnedElsewhere(!Mask.empty());
       MedEmitter.setPreserveUnknownSourceValues(Opts.SourceProjection &&
                                                 !Opts.PatchMode);
       MedEmitter.setSourceCalleeDeclarations(Result.OmittedCalleeDeclarations);
@@ -414,12 +419,13 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
         // SDK.
         Result.LlvmModule.reset();
         Result.LLVMSources.reset();
-        Result.Error = Error.what();
-        return false;
+        if (!OmitRefused || MedEmitter.refusedBodies().empty()) {
+          Result.Error = Error.what();
+          return false;
+        }
       }
       UnhandledValueIntrinsics = MedEmitter.unhandledValueIntrinsicCount();
-      if (Result.LlvmModule || !Opts.OmitRefusedLLVMBodies || Opts.PatchMode ||
-          Result.InterpreterMachineSourceABI ||
+      if (Result.LlvmModule || !OmitRefused ||
           MedEmitter.refusedBodies().empty())
         break;
       if (Mask.empty())
