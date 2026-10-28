@@ -7372,13 +7372,13 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
   // table it reaches the console and the boot services through is typed,
   // and each call reads the protocol's member, which its records name.
   struct Program {
-    const char *File, *Library, *Model;
+    const char *File, *Library, *Model, *CallSuffix;
     int64_t SystemTable;
   };
   const Program Programs[] = {
-      {"uefi_calls_x64.efi", "uefi-x64", "LLP64", 120},
-      {"uefi_calls_x86.efi", "uefi-x86", "ILP32", 72},
-      {"uefi_calls_arm64.efi", "uefi-arm64", "LLP64", 120},
+      {"uefi_calls_x64.efi", "uefi-x64", "LLP64", "))(", 120},
+      {"uefi_calls_x86.efi", "uefi-x86", "ILP32", "))(", 72},
+      {"uefi_calls_arm64.efi", "uefi-arm64", "LLP64", ")))(", 120},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -7416,20 +7416,22 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         HighC.find("(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)"),
         std::string::npos)
         << HighC;
-    EXPECT_NE(HighC.find("(SystemTable->ConOut->OutputString))("),
-              std::string::npos)
-        << HighC;
-    EXPECT_NE(HighC.find("(SystemTable->BootServices->HandleProtocol))("),
-              std::string::npos)
-        << HighC;
+    // AArch64 wraps the complete callee to retain raw branch semantics.
+    // That extra closing parenthesis is outside the actual argument list.
+    const std::string OutputCall =
+        std::string("(SystemTable->ConOut->OutputString") + P.CallSuffix;
+    const std::string HandleCall =
+        std::string("(SystemTable->BootServices->HandleProtocol") +
+        P.CallSuffix;
+    EXPECT_NE(HighC.find(OutputCall), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find(HandleCall), std::string::npos) << HighC;
     EXPECT_EQ(HighC.find("*(void **)(SystemTable->"), std::string::npos)
         << HighC;
     // A call through a member passes the parameters its type declares: on
     // x86 the word the caller pushed to make room on the stack is none.
     // These fixture arguments contain no commas inside a nested expression.
     for (const auto &[Callee, Count] :
-         {std::pair{"(SystemTable->ConOut->OutputString))(", 2u},
-          std::pair{"(SystemTable->BootServices->HandleProtocol))(", 3u}}) {
+         {std::pair{OutputCall, 2u}, std::pair{HandleCall, 3u}}) {
       const auto Begin = HighC.find(Callee);
       ASSERT_NE(Begin, std::string::npos) << HighC;
       const auto Call = HighC.substr(Begin, HighC.find('\n', Begin) - Begin);
@@ -7445,9 +7447,7 @@ TEST_F(SessionCAPITest, UefiApplicationsJoinTheirFirmwaresLibrary) {
         << HighC;
     const std::string LLVMC = takeString(
         neverd_decompile_llvm(Uefi, neverd_session_entry_addr(Uefi)));
-    EXPECT_NE(LLVMC.find("(SystemTable->ConOut->OutputString))("),
-              std::string::npos)
-        << LLVMC;
+    EXPECT_NE(LLVMC.find(OutputCall), std::string::npos) << LLVMC;
   }
 }
 

@@ -524,6 +524,52 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     InsnId = X86_INS_IMUL;
   }
 
+  if (X86.prefix[0] == X86_PREFIX_LOCK) {
+    const bool Unary = InsnId == X86_INS_INC || InsnId == X86_INS_DEC;
+    const bool Subtract = InsnId == X86_INS_SUB || InsnId == X86_INS_DEC;
+    if ((!Unary && InsnId != X86_INS_ADD && InsnId != X86_INS_SUB) ||
+        ApxBinary.Present || ApxUnary.Present || ApxImul.Present ||
+        X86.op_count != (Unary ? 1 : 2))
+      return false;
+    const auto &Memory = X86.operands[0];
+    if (Memory.type != X86_OP_MEM ||
+        (Memory.size != 1 && Memory.size != 2 && Memory.size != 4 &&
+         Memory.size != 8) ||
+        (Memory.size == 8 && L.targetArch() != Arch::X64) ||
+        (!Unary && ((X86.operands[1].type != X86_OP_REG &&
+                     X86.operands[1].type != X86_OP_IMM) ||
+                    X86.operands[1].size != Memory.size)))
+      return false;
+    const NdVar Address = S.computeEA(Memory);
+    const NdVar Source = Unary ? NdVar::scalar(1, Memory.size)
+                               : readArithmeticOperand(X86.operands[1]);
+    const NdVar Value = S.makeTemp(Memory.size);
+    S.emit(NdOp::COPY, Value, {Source});
+    NdVar Addend = Value;
+    if (Subtract) {
+      Addend = S.makeTemp(Memory.size);
+      S.emit(NdOp::INT_NEG2, Addend, {Value});
+    }
+    // One RMW owns both the old value and the memory update. Computing flags
+    // from that old value afterward also keeps faults before flag publication.
+    const NdVar Old = S.makeTemp(Memory.size);
+    S.emit(NdOp::ATOMIC_ADD, Old, {Address, Addend},
+           NdMemoryOrdering::SequentiallyConsistent,
+           X86Lifter::LiftState::memoryAddressSpace(Memory));
+    const NdVar Result = S.makeTemp(Memory.size);
+    S.emit(Subtract ? NdOp::INT_SUB : NdOp::INT_ADD, Result, {Old, Value});
+    if (Unary) {
+      // INC and DEC preserve the incoming carry, including at overflow.
+      L.emitZSPF(S, Result);
+      L.emitAF(S, Result, Old, Value);
+      S.emit(Subtract ? NdOp::INT_SBOR : NdOp::INT_SOVF,
+             NdVar::reg(x86reg::OF, 1), {Old, Value});
+    } else {
+      L.emitFlagsArith(S, Result, Old, Value, Subtract);
+    }
+    return true;
+  }
+
   if (ApxBinary.Valid && (InsnId == X86_INS_ADC || InsnId == X86_INS_SBB)) {
     const NdVar DestinationWrite = L.operandWrite(X86.operands[0]);
     NdVar A = S.makeTemp(X86.operands[0].size);

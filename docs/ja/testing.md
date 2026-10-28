@@ -2038,6 +2038,8 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 
 `SymAtomicCmpxchg.*` と `InterpreterSpecialization.AtomicCmpxchg*` は、全バイトの効果、両エンディアン、旧値の由来、入出力エイリアス、ネイティブ戻りセル、合流をまたぐアフィンスピルの無効化、有序操作の発生保持、厳密な受け入れ、十分な予算と不足予算を対象とします。独立したバイト参照器が扱うのは逐次的な値の意味論だけです。ソースラップの対照には初期化済みで構造が正しいグラフを使い、有序メモリの境界での拒否を要求します。独立 LowIR の対照には完全な sidecar も結び付け、証明書がないことを要求します。ネイティブバイナリの証明は、LOCK CMPXCHG のアーキテクチャ未定義出力監査が不完全なため、より早く拒否される場合があります。raw レシートの検査は順序、アドレス空間、更新オペランドを結び付けます。対応を主張する前に所有テスト群を実行してください。テスト定義だけでは実行の証拠になりません。
 
+`InterpreterSpecialization.AtomicUpdates*` は ADD/XCHG の全スカラー幅と両バイト順、旧値出力の重複、ネイティブ戻り領域、値不変操作の保持、ノード間の新旧メモリ由来、明示的実行域の拒否、フレーム保持の十分な予算と不足予算を検査します。全インタープリター特化、条件付きストア、原子シンボリックテストと共に実行します。バイト参照器は逐次値だけをモデル化します。
+
 `InterpreterSpecialization.WideIntegerConcat*` は両バイト順、上下位ワード、定数入力、重複出力、上位ワードによる分岐、不正形状、正確／不足予算、未知メモリ由来の保持を検査します。厳密に復号した `PSHUFD` は全256選択値と同一／別宛先を独立したダブルワード索引で照合します。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` はネイティブ証明と両ソース配置の拒否を維持します。
 
 `InterpreterSpecialization.Timestamp*` は独立した値・状態オラクルで全ビット、上位半分のクリア、独立／反復読み取り、レジスタ・フラグ・メモリ・セグメント基底の保持、正確／不足予算、不正な操作列、未知アドレス由来を検査します。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` は raw 完了とネイティブ証明／ソース配置の拒否を確認します。既存の `X86_64_Intrinsics` 時計ケースはソース出力と 1 回の読み取りによる全ビット結果を検査し、`DriverTimestamp` は Unicorn/KVM/WHP 共通の時計方針、状態保持、予算、オーバーフローを別途検査します。プラットフォームによるスキップはバックエンド実行の証拠ではありません。
@@ -2137,7 +2139,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting`、`ExecutorUsesIndependentRegionsForOnlyOneStore` は、1 回の STORE による 2〜3 個の独立した現在のルートの保持、両バイト順、相対座標のゼロをまたぐ部分範囲、重複宣言、保護外の隙間、書き込み後の未知値の世代を確認します。正確な予算と 1 単位不足の予算で全作業量を確認し、存在しない領域を生成しません。無効・範囲外参照、狭い基底や定数基底、空・逆向き区間、書き込み自身の基底は状態を変更せず拒否します。空の `AdditionalRegions` では従来の単一ルートと `AdditionalRanges` の費用を保ちます。実行器では単一イベント、同一領域の隣接バイト、後続の通常書き込みによる無効化を確認します。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` は比較の一致・不一致、正確・不足予算、2 つの保護ルート、旧値の出力、既存の保守的な拒否経路を確認します。
 
-`NeverDSymConditionalStoreTests` は独立したルート間の現在のバイトの条件付き効果、128 ビット書き込み、両エンディアン、部分的な重なり、シンボリック相対座標の折り返し、絶対メモリを対象とします。自身のバンクの隣接バイト、現在と過去の事実、書き込み後の未知エポック、非対応入力、必要量ちょうどと一単位不足の予算も確認します。実行器では既存のセグメント基址処理を使う STORE、厳格な CMPXCHG の成功と失敗、Old の遅延公開、拒否時の havoc、他の操作で Invalid が維持されることを確認します。通常の書き込みと保持契約の既定動作は変わりません。これらは有界メモリの意味論を検証するテストであり、アクセス権やプログラム全体の復元を認証するものではありません。
+`NeverDSymConditionalStoreTests` は絶対・シンボリック領域の有界バイト効果、両エンディアン、重なり、折り返し、未知の世代、正確な予算を検証する。実行器の対象は STORE、スカラー原子操作 ADD/XCHG/CMPXCHG、アドレス・値・出力レジスタの重複、Old の遅延公開、不正な形式、拒否時の havoc。`SymStorePreservation` は明示的なフレーム保存契約と、必要量ちょうど及び一単位不足の予算で同じ原子書き込み経路を検証する。記述子なしの通常実行は従来どおりであり、アクセス権限やプログラム全体の復元を認証するものではない。
 
 
 `AbsoluteMemoryFactsTests.inc` はノード間の絶対ターゲット、合流の競合、部分重複と未知の別名書き込み、両バイト順と連鎖の有無でのスタック分離を検査する。独立バイト実行器が効果を確認し、除外範囲の欠落と予算不足は拒否する。`SymStorePreservation.Absolute*` と `SymState.AbsoluteProjections*` は領域の共存、高位アドレス、純粋で有界な射影、未知世代とトランザクション的拒否を検査する。`NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`、続いてネイティブ独立性とLowIR精緻化スイートを実行する。
@@ -2223,3 +2225,7 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 メモリ事後条件の変更時には、保持値、条件付き結果、新しい未知状態、呼び出し前のターゲット、不正入力の拒否を確認する `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests` を実行してください。
 
 `NeverDSymbolicCallEffectTests` は両分岐、先行する呼び出し効果、繰り返し呼び出し、経路合流後の完全な条件を提供者が受け取ることも検査します。矛盾した効果は後続の操作と提供者呼び出しを停止します。これはソルバーを使わない探索回帰であり、外部 API 契約の検証ではありません。
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` と交換の対照テストは O0/O2 と UBSan で両 C 経路を実行し、x64 の全4幅、非整列アドレス、旧値、隣接バイトを確認します。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` は元の LLVM IR も実行し、未使用結果の書き込みを保持し、変更されたアセンブリ契約を拒否します。FS/GS はコンパイルのみでホスト TLS に触れません。実行には x64 ホストが必要で、競合やハードウェア障害の認証ではありません。
+
+`X86LegacyAtomic.LockedArithmetic*` は x86/x64 の幅、独立した算術フラグ、入力レジスタとキャリーの保持、符号付き即値、非整列の隣接バイト、読み取り専用・部分マッピング、FS/GS、ロックなしの対照を検証します。未対応のロック付き演算を通常のストアに変換しません。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` は四種類の命令の特化と、順序付きメモリの証明拒否を確認します。

@@ -20,6 +20,7 @@
 #include "simdjson.h"
 #endif
 
+#include <charconv>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -63,10 +64,17 @@ static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
 void neverd::patch::writePatchRows(llvm::json::OStream &Output,
                                    const PatchOverlay &Overlay) {
   llvm::SmallString<32> Bytes;
+  char Buffer[18] = {'0', 'x'}; // Prefix and up to sixteen hexadecimal digits.
+  const auto Hex = [&](uint64_t Value) {
+    const auto End =
+        std::to_chars(Buffer + 2, Buffer + sizeof Buffer, Value, 16).ptr;
+    return llvm::StringRef(Buffer, End - Buffer);
+  };
+  // Each view is consumed before the next conversion reuses its storage.
   Output.array([&] {
     for (const auto &[Offset, Row] : Overlay.rows())
       Output.object([&] {
-        const std::string FileOffset = "0x" + llvm::utohexstr(Offset, true);
+        const auto FileOffset = Hex(Offset);
         writeHexAttribute(Output, "addr", FileOffset);
         llvm::toHex(Row.Current, true, Bytes);
         writeHexAttribute(Output, "current", Bytes);
@@ -75,8 +83,7 @@ void neverd::patch::writePatchRows(llvm::json::OStream &Output,
         llvm::toHex(Row.Original, true, Bytes);
         writeHexAttribute(Output, "original", Bytes);
         Output.attribute("size", Row.size());
-        writeHexAttribute(Output, "va",
-                          "0x" + llvm::utohexstr(Row.Address, true));
+        writeHexAttribute(Output, "va", Hex(Row.Address));
       });
   });
 }

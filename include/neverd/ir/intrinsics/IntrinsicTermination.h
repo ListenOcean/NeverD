@@ -30,6 +30,7 @@ inline bool intrinsicNeverReturns(Intrinsic Id,
     return !isAArch64DebugBreakCode(Operand);
   case Intrinsic::Hlt_A64:
   case Intrinsic::Udf_A64:
+  case Intrinsic::X86Skinit:
     return true;
   case Intrinsic::IntN:
     return Operand && isX86NoReturnInterrupt(*Operand);

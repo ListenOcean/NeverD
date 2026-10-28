@@ -68,6 +68,7 @@ HexView::HexView(Session &session, const AddressSpace &space, QWidget *parent)
   connect(&session_, &Session::unloaded, this, [this] {
     current_.reset();
     anchor_.reset();
+    addressRow_.reset();
     pendingCopy_.reset();
     clearChunks();
   });
@@ -325,8 +326,10 @@ std::optional<QString> HexView::textAt(Address address) const {
 void HexView::setCurrent(Address address, int size) {
   // The disassembly echoes a move it follows; only a move elsewhere ends the
   // selection.
-  if (current_ != address)
+  if (current_ != address) {
     anchor_.reset();
+    addressRow_.reset();
+  }
   current_ = address;
   currentSize_ = std::max(1, size);
   const qint64 row = rowOf(address);
@@ -355,6 +358,10 @@ void HexView::paintEvent(QPaintEvent *) {
     if (!rowAddress)
       break;
     const int y = i * lineHeight_;
+    if (addressRow_ == rowAddress)
+      painter.fillRect(QRectF(::neverd::limits::gui_config::kHexViewMargin, y,
+                              digits * charWidth_, lineHeight_),
+                       theme.color(ColorRole::ListingSelection));
     painter.setPen(theme.color(ColorRole::HexAddress));
     painter.drawText(
         QPointF(::neverd::limits::gui_config::kHexViewMargin, y + ascent_),
@@ -525,6 +532,16 @@ std::optional<Address> HexView::addressAt(const QPointF &position) const {
   return address;
 }
 
+std::optional<Address> HexView::rowAddressAt(const QPointF &position) const {
+  const int digits = session_.bitness() == 64 ? 16 : 8;
+  const qreal left = ::neverd::limits::gui_config::kHexViewMargin;
+  const qreal x = position.x() + horizontalScrollBar()->value();
+  if (x < left || x >= left + digits * charWidth_)
+    return std::nullopt;
+  return addressOfRow(verticalScrollBar()->value() +
+                      int(position.y()) / std::max(1, lineHeight_));
+}
+
 void HexView::moveCurrent(Address address, bool extend) {
   const std::optional<Address> anchor =
       extend ? (anchor_ ? anchor_ : current_) : std::nullopt;
@@ -541,9 +558,25 @@ std::optional<std::pair<Address, Address>> HexView::selection() const {
 
 void HexView::mousePressEvent(QMouseEvent *event) {
   setFocus(Qt::MouseFocusReason);
+  // A plain click on a row's address goes to the row and selects the address
+  // for Ctrl+C, as a click on a disassembly line's prefix does.
+  if (const auto row = rowAddressAt(event->position());
+      row &&
+      !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier))) {
+    for (int b = 0; b < BytesPerRow; ++b)
+      if (const Address address = *row + Address(b);
+          space_.regionOf(address)) {
+        moveCurrent(address, false);
+        addressRow_ = row;
+        emit locationChanged(address);
+        return;
+      }
+    return;
+  }
   const auto address = addressAt(event->position());
   if (!address)
     return;
+  addressRow_.reset();
   // A press starts a selection a drag extends; Shift extends the current one.
   const bool extend = event->modifiers() & Qt::ShiftModifier;
   moveCurrent(*address, extend);
@@ -564,6 +597,11 @@ void HexView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void HexView::copySelection() {
+  if (addressRow_) {
+    QGuiApplication::clipboard()->setText(
+        displayAddress(*addressRow_, session_.bitness() == 64 ? 16 : 8));
+    return;
+  }
   const auto selected = byteSelection();
   if (!selected)
     return;

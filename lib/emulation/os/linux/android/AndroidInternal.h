@@ -320,6 +320,8 @@ private:
   std::map<uint64_t, LogList> LogLists;
   llvm::Expected<uint64_t> logToken();
   BionicResult logCall(const NativeCallEvent &Call);
+  std::optional<uint32_t> eventLogWrite(llvm::ArrayRef<uint8_t> Payload);
+  BionicResult eventLogCall(const NativeCallEvent &Call);
   BionicResult unsupportedLog(llvm::StringRef Detail);
   struct InputStream {
     uint32_t FD;

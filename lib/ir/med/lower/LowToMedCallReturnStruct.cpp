@@ -19,8 +19,10 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include <algorithm>
+#include <map>
 #include <optional>
 #include <set>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -124,6 +126,41 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
            Op.Inputs[0].Kind == MedVar::Reg &&
            Op.Inputs[0].RegOff == Op.Output.RegOff;
   };
+
+  // Exception ranges can end the call's block before its result is read.
+  // SSA identifies that result across such splits without guessing from a
+  // same-numbered register in a later block. Index genuine input reads once;
+  // these only propose a direct integer-pair return, still subject to the
+  // complete callee-body proof in the pipeline.
+  const auto Identity = [](const MedVar &V) {
+    return std::tuple{V.Kind, V.Id, V.SSAVer};
+  };
+  std::map<decltype(Identity(MedVar{})), uint16_t> ReadWidths;
+  std::map<uint32_t, std::vector<MedVar>> PairClobbers;
+  if (TargetArch == Arch::AArch64 && TRI.IntReturnRegs.size() == 2) {
+    for (const auto &Clobber : Func.CallClobbers)
+      if (Clobber.Value.Kind == MedVar::Reg &&
+          Clobber.Value.RegOff == TRI.IntReturnRegs[1])
+        PairClobbers[Clobber.CallSiteId].push_back(Clobber.Value);
+    if (!PairClobbers.empty())
+      for (const MedBlock &Block : Func.Blocks)
+        for (size_t I = 0; I < Block.Ops.size(); ++I) {
+          const MedOp &Read = Block.Ops[I];
+          if (isSelfView(Read) || keepsUpperBytesOfWrite(Block.Ops, I) ||
+              ((Read.Opcode == NdOp::INT_XOR || Read.Opcode == NdOp::INT_SUB) &&
+               Read.NumInputs == 2 &&
+               sameValue(Read.Inputs[0], Read.Inputs[1])))
+            continue;
+          for (uint8_t J = 0; J < Read.NumInputs; ++J) {
+            const MedVar &Value = Read.Inputs[J];
+            if (Value.Kind == MedVar::Reg &&
+                Value.RegOff == TRI.IntReturnRegs[1]) {
+              auto &Width = ReadWidths[Identity(Value)];
+              Width = std::max(Width, Value.Size);
+            }
+          }
+        }
+  }
 
   int MaxVer = 0, MaxId = 0;
   auto bump = [&](const MedVar &V) {
@@ -317,6 +354,25 @@ void LowToMedConverter::modelCallStructReturn(MedFunc &Func) {
           else
             Known->Size = std::max<uint16_t>(Known->Size, TRI.PointerSize);
         }
+      if (Op.Opcode == NdOp::CALL)
+        if (const auto Clobbers = PairClobbers.find(Op.CallSiteId);
+            Clobbers != PairClobbers.end())
+          for (const MedVar &Value : Clobbers->second)
+            if (const auto Read = ReadWidths.find(Identity(Value));
+                Read != ReadWidths.end() &&
+                std::none_of(Fields.begin(), Fields.end(), [&](const auto &F) {
+                  return F.RegOff == Value.RegOff;
+                }))
+              Fields.push_back({Value.RegOff, false, Read->second, Value});
+      // Reading just the second word still proposes an integer pair. Keep
+      // this as a candidate: only the direct callee's complete return proof
+      // can establish the otherwise unobserved first word.
+      if (TargetArch == Arch::AArch64 && Op.Opcode == NdOp::CALL &&
+          TRI.IntReturnRegs.size() == 2 && Fields.size() == 1 &&
+          !Fields.front().IsFP &&
+          Fields.front().RegOff == TRI.IntReturnRegs[1] &&
+          isCallClobber(Fields.front().Value, Op.CallSiteId))
+        Fields.push_back({TRI.IntReturnReg, false, TRI.PointerSize, Op.Output});
       if (Fields.size() < 2)
         continue;
       bool AnyFP = false, AnyInt = false;

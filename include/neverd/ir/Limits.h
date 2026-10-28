@@ -345,6 +345,8 @@ inline constexpr size_t kMedMutableSourceMaxPropagationWords = 16 * 1024 * 1024;
 
 // lib/ir/med/pass/MedStackAlignment.cpp
 inline constexpr size_t kMedStackAlignmentMaxProofSteps = 1 << 16;
+// Bound leaf admission before building a scalar definition index.
+inline constexpr size_t kMedIntegerReturnRangeMaxOps = 4096;
 
 // include/neverd/ir/high/HighSwiftErrorProjection.h
 inline constexpr int
@@ -816,7 +818,6 @@ inline constexpr int kMedTypePassScalarFPLoadElemSizeDepthLimit = 16;
 inline constexpr int kMedTypePassX87ReturnElemSizeDepthLimit = 16;
 inline constexpr int kMedTypePassIsReturnRegRestoreDepthLimit = 8;
 inline constexpr int kMedTypePassIntRetEffWidthRecDepthLimit = 8;
-inline constexpr int kMedTypePassDefinedLowBytesRecDepthLimit = 16;
 inline constexpr int kMedTypePassInferReturnTypeStepsLimit = 16;
 
 // include/neverd/ir/med/MedSwitchNorm.h

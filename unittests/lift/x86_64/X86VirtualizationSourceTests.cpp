@@ -1596,6 +1596,7 @@ TEST(X86DescriptorStateSource, VerifyResultsAgreeWithOriginalInstructions) {
 }
 
 TEST(X86DescriptorStateSource, LegacyVerifyCallsKeepDeadResultsAndSegments) {
+  unsigned Checks = 0;
   for (auto A : {Arch::X86, Arch::X64})
     for (bool Memory : {false, true})
       for (bool Dead : {false, true})
@@ -1606,43 +1607,73 @@ TEST(X86DescriptorStateSource, LegacyVerifyCallsKeepDeadResultsAndSegments) {
                                                   Dead ? 0 : 1, Space);
           if (!P)
             continue;
-          llvm::LLVMContext Context;
-          llvm::Module Module("legacy_descriptor", Context);
-          llvm::IRBuilder<> B(Context);
-          std::string Text = P->Text, Constraints = P->Constraints;
-          if (P->Address)
-            Constraints.replace(Constraints.find("{bx}"), 4, "r");
-          if (Dead) {
-            Text = Text.substr(0, Text.find("\n\tsetz $0"));
-            Text.replace(Text.find("$1"), 2, "$0");
-            Constraints.erase(0, 3);
+          for (const auto *InputConstraint : {"r", "{bx}"}) {
+            if (!P->Address && llvm::StringRef(InputConstraint) != "r")
+              continue;
+            SCOPED_TRACE(testing::Message()
+                         << unsigned(A) << " " << Memory << " " << Dead << " "
+                         << unsigned(Space) << " " << InputConstraint);
+            llvm::LLVMContext Context;
+            llvm::Module Module("legacy_descriptor", Context);
+            llvm::IRBuilder<> B(Context);
+            // Construct the historical spellings independently of the current
+            // address carrier, including the old fixed-BX and generic forms.
+            std::string Operand = Dead ? "$0" : "$1";
+            if (Memory)
+              Operand = "(" + Operand + ")";
+            if (Space == NdMemoryAddressSpace::X86FS)
+              Operand = "%fs:" + Operand;
+            else if (Space == NdMemoryAddressSpace::X86GS)
+              Operand = "%gs:" + Operand;
+            std::string Text = "verw " + Operand;
+            if (!Dead)
+              Text += "\n\tsetz $0";
+            const std::string Constraints = std::string(Dead ? "" : "=q,") +
+                                            InputConstraint +
+                                            ",~{flags},~{memory}";
+            auto *OperandTy = B.getIntNTy(8 * P->OperandBytes);
+            auto *FnTy = llvm::FunctionType::get(
+                Dead ? B.getVoidTy() : B.getInt8Ty(), {OperandTy}, false);
+            auto *Function = llvm::Function::Create(
+                FnTy, llvm::Function::ExternalLinkage, "probe", Module);
+            B.SetInsertPoint(
+                llvm::BasicBlock::Create(Context, "entry", Function));
+            auto *Call = B.CreateCall(
+                llvm::InlineAsm::get(FnTy, Text, Constraints, true),
+                {Function->getArg(0)});
+            if (Dead)
+              B.CreateRetVoid();
+            else
+              B.CreateRet(Call);
+            ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+            const auto Code = renderX86DescriptorStateCall(
+                A, BinaryFormat::ELF, *Call, Dead ? "" : "result", !Dead,
+                {"input"});
+            ASSERT_TRUE(Code);
+            if (A == Arch::X64)
+              EXPECT_NE(Code->Code.find(P->Builtin), std::string::npos)
+                  << Code->Code;
+            if (P->Address) {
+              EXPECT_NE(Code->Code.find(Space == NdMemoryAddressSpace::X86FS
+                                            ? "%%fs:"
+                                            : "%%gs:"),
+                        std::string::npos)
+                  << Code->Code;
+              if (A == Arch::X64)
+                EXPECT_NE(Code->Code.find(", 64, " +
+                                          std::to_string(P->Address->Prefix) +
+                                          ")"),
+                          std::string::npos)
+                    << Code->Code;
+            }
+            if (Dead)
+              EXPECT_TRUE(llvm::StringRef(Code->Code).starts_with("(void)"))
+                  << Code->Code;
+            ++Checks;
           }
-          auto *OperandTy = B.getIntNTy(8 * P->OperandBytes);
-          auto *FnTy = llvm::FunctionType::get(
-              Dead ? B.getVoidTy() : B.getInt8Ty(), {OperandTy}, false);
-          auto *Function = llvm::Function::Create(
-              FnTy, llvm::Function::ExternalLinkage, "probe", Module);
-          B.SetInsertPoint(
-              llvm::BasicBlock::Create(Context, "entry", Function));
-          auto *Call =
-              B.CreateCall(llvm::InlineAsm::get(FnTy, Text, Constraints, true),
-                           {Function->getArg(0)});
-          if (Dead)
-            B.CreateRetVoid();
-          else
-            B.CreateRet(Call);
-          ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
-          const auto Code = renderX86DescriptorStateCall(
-              A, BinaryFormat::ELF, *Call, Dead ? "" : "result", !Dead,
-              {"input"});
-          ASSERT_TRUE(Code);
-          if (A == Arch::X64)
-            EXPECT_NE(Code->Code.find(P->Builtin), std::string::npos)
-                << Code->Code;
-          if (Dead)
-            EXPECT_TRUE(llvm::StringRef(Code->Code).starts_with("(void)"))
-                << Code->Code;
         }
+  EXPECT_EQ(Checks, 24u);
+  RecordProperty("legacy_generic_and_fixed_bx_contracts", Checks);
 }
 
 TEST(X86DescriptorStateSource, NativeCallsRequireExactControlsTypesAndEffects) {

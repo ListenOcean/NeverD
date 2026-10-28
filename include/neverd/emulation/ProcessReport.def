@@ -323,6 +323,8 @@ NEVERD_PROCESS_REPORT_FIELD(ObservationSP, "sp")
 NEVERD_PROCESS_REPORT_FIELD(ObservationNZCV, "nzcv")
 NEVERD_PROCESS_REPORT_FIELD(MallocFillByte, "malloc_fill_byte")
 NEVERD_PROCESS_REPORT_FIELD(LogRecords, "log_records")
+NEVERD_PROCESS_REPORT_FIELD(EventLogWrites, "event_log_writes")
+NEVERD_PROCESS_REPORT_FIELD(EventLogWritesConsumed, "event_log_writes_consumed")
 NEVERD_PROCESS_REPORT_FIELD(LogID, "log_id")
 NEVERD_PROCESS_REPORT_FIELD(LogPID, "pid")
 NEVERD_PROCESS_REPORT_FIELD(LogTID, "tid")
@@ -467,9 +469,10 @@ NEVERD_PROCESS_REPORT_FIELD(Cause, "cause")
 #endif
 #ifdef NEVERD_PROCESS_REPORT_LIMIT
 NEVERD_PROCESS_REPORT_LIMIT(SchemaVersion, NEVERD_PROCESS_SCHEMA_VERSION, 1)
-// Up to 1 MiB of validated DEX and 16 MiB of validated Linux regular-file
-// bytes use two hex characters per byte. Their owners retain the decoded
-// bounds; other text, including JSON escapes, retains a 64 KiB ceiling.
+// Validated DEX, Linux regular-file and Android event-write bytes use two hex
+// characters per byte. Their owners retain the decoded bounds; other text,
+// including JSON escapes, retains a 64 KiB ceiling. The total wire ceiling
+// remains shared across all payloads.
 NEVERD_PROCESS_REPORT_LIMIT(JSONLimit, NEVERD_PROCESS_OPTIONS_JSON_LIMIT,
                             35717120)
 NEVERD_PROCESS_REPORT_LIMIT(JSONMetadataLimit,

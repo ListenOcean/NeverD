@@ -1315,6 +1315,8 @@ TEST(AArch64AddressMemory, AllScalarRegisterOffsetFamiliesKeepTheirContracts) {
     const auto Function = memoryFunction(Case.Word);
     EXPECT_EQ(endsCallArgumentSetup(Function.Blocks.front().Ops.front()),
               !Case.Load);
+    EXPECT_FALSE(endsCallArgumentSetup(Function.Blocks.front().Ops.front(),
+                                       /*RegistersOnly=*/true));
     EXPECT_TRUE(verifyMedFunc(Function, kName));
   }
 }

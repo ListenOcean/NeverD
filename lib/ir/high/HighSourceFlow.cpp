@@ -8,6 +8,7 @@
 
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/libc/LibCNames.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/bit.h"
@@ -83,7 +84,10 @@ class SourceFlow {
     size_t Other;
     uint16_t Width;
     bool Nonzero;
-    std::pair<size_t, size_t> identity() const { return {Local, Other}; }
+    uint64_t Bit = 0;
+    std::tuple<size_t, size_t, uint64_t> identity() const {
+      return {Local, Other, Bit};
+    }
   };
   struct Node {
     std::vector<size_t> Next, Previous, Uses, Writes;
@@ -111,6 +115,7 @@ class SourceFlow {
   std::vector<std::pair<size_t, va_t>> Gotos;
   size_t Operations = 0, EdgeCount = 0, CaseCount = 0;
   std::set<size_t> AddressTaken;
+  std::set<size_t> ExceptionUses;
   std::set<const HighStmt *> *DeadCopies;
   std::map<HighSourceLocalIdentity, HighSourceLocalIdentity> *Merges = nullptr;
 
@@ -306,7 +311,43 @@ class SourceFlow {
     }
     Value = stripIntegerView(Value);
     Other = stripIntegerView(Other);
+    uint64_t Bit = 0;
+    unsigned BitWidth = 0;
+    if (!Other && Value && Value->Kind == ExprKind::BinOp &&
+        Value->Op == NdOp::INT_AND && Value->Operands.size() == 2 &&
+        purePredicate(Value)) {
+      auto Mask = Value->Operands[1];
+      auto Bits = stripIntegerView(Value->Operands[0]);
+      if (Mask->Kind != ExprKind::Const)
+        std::swap(Mask, Bits);
+      if (Mask->Kind != ExprKind::Const || !Mask->ConstVal ||
+          (Mask->ConstVal & (Mask->ConstVal - 1)))
+        return std::nullopt;
+      Bit = Mask->ConstVal;
+      BitWidth = Value->Type->Size;
+      if (BitWidth < 4 || llvm::countr_zero(Bit) >= BitWidth * 8)
+        return std::nullopt;
+      if (Bits && Bits->Kind == ExprKind::BinOp &&
+          (Bits->Op == NdOp::INT_RIGHT || Bits->Op == NdOp::INT_ASHR) &&
+          Bits->Operands.size() == 2 &&
+          Bits->Operands[1]->Kind == ExprKind::Const) {
+        const auto Shift = Bits->Operands[1]->ConstVal;
+        const auto Width = Bits->Operands[0]->Type->Size * 8;
+        // Test an original bit, never a sign bit introduced by an arithmetic
+        // shift or a promoted narrow operand.
+        if (Bits->Type->Size != BitWidth || Width != BitWidth * 8 ||
+            Shift >= Width || llvm::countr_zero(Bit) >= Width - Shift)
+          return std::nullopt;
+        Bit <<= Shift;
+        Bits = stripIntegerView(Bits->Operands[0]);
+      }
+      Value = stripIntegerView(Bits);
+    }
     if (!scalarLocal(Value) || highSourceFrameBase(Function, Value->Var))
+      return std::nullopt;
+    if (Bit && (Value->Type->Kind != NdTypeKind::Int ||
+                Value->Type->Size != BitWidth ||
+                llvm::countr_zero(Bit) >= Value->Type->Size * 8))
       return std::nullopt;
     size_t Left = local(Value->Var), Right = NoNode;
     if (Other) {
@@ -320,7 +361,7 @@ class SourceFlow {
       if (Right < Left)
         std::swap(Left, Right);
     }
-    return Predicate{Left, Right, Value->Type->Size, Nonzero};
+    return Predicate{Left, Right, Value->Type->Size, Nonzero, Bit};
   }
   void branch(size_t Index, const ExprPtr &Condition, size_t Yes, size_t No) {
     Nodes[Index].Test = Condition;
@@ -494,9 +535,39 @@ class SourceFlow {
       break;
     case StmtKind::SEHTry:
     case StmtKind::CxxTry:
-    case StmtKind::ItaniumTry:
       fail("exception-dependent method projection is not supported",
            HighSourceFlowIssue::Exception);
+    case StmtKind::ItaniumTry: {
+      // For dead-copy liveness, a terminal catch adds no route back to the
+      // ordinary body. Retain every local its call can observe at ANY throw
+      // point, including values assigned inside the protected body. This is
+      // deliberately not an exception-aware definite-assignment proof.
+      if (!DeadCopies || Statement.EHClauses.empty() ||
+          Statement.EHClauses.size() != Statement.EHClauseBodies.size())
+        fail("exception-dependent method projection is not supported",
+             HighSourceFlowIssue::Exception);
+      for (size_t C = 0; C < Statement.EHClauses.size(); ++C) {
+        const auto &Body = Statement.EHClauseBodies[C];
+        if (Statement.EHClauses[C].Kind != HighEHClauseKind::ItaniumCatch ||
+            Body.size() != 1 || Body[0].Kind != StmtKind::Call)
+          fail("nonterminal exception handler needs an exception flow graph",
+               HighSourceFlowIssue::Exception);
+        const auto &Call = Body[0].CallExpr;
+        // The same runtime declaration owner that prints noreturn in HighC.
+        // An arbitrary native CFG flag is not a source termination contract.
+        const bool RuntimeDeclaration =
+            Call && Call->Kind == ExprKind::Call && !Call->IsIndirectCall &&
+            !Call->SourceCallHint && Call->IntrinsicId == Intrinsic::None &&
+            libc::isNoReturnFunction(Call->CallTarget);
+        if (!terminates(Call) && !RuntimeDeclaration)
+          fail("nonterminal exception handler needs an exception flow graph",
+               HighSourceFlowIssue::Exception);
+        reads(Index, Call);
+      }
+      ExceptionUses.insert(Nodes[Index].Uses.begin(), Nodes[Index].Uses.end());
+      edge(Index, block(Statement.Body, Next, Scope, Depth + 1));
+      break;
+    }
     default:
       fail("method source contains an unsupported statement kind");
     }
@@ -779,7 +850,7 @@ class SourceFlow {
       bool Consistent = true;
       size_t FirstNode = 0, LastNode = 0;
     };
-    using Relation = std::pair<size_t, size_t>;
+    using Relation = std::tuple<size_t, size_t, uint64_t>;
     std::map<Relation, Observations> Tests;
     for (size_t I = 0; I < Nodes.size(); ++I) {
       if (Facts(I).empty() || !Facts(I)[0])
@@ -797,14 +868,15 @@ class SourceFlow {
     std::map<size_t, uint32_t> InvalidatedBy;
     for (const auto &[Pair, Seen] : Tests)
       if (Seen.Count > 1 && Seen.Consistent &&
-          !AddressTaken.count(Pair.first) && !AddressTaken.count(Pair.second) &&
+          !AddressTaken.count(std::get<0>(Pair)) &&
+          !AddressTaken.count(std::get<1>(Pair)) &&
           Masks.size() <
               ::neverd::limits::ir::kHighSourceFlowRefineMasksSizeLimit) {
         const uint32_t Mask = uint32_t{1} << Masks.size();
         Masks.emplace(Pair, Mask);
-        InvalidatedBy[Pair.first] |= Mask;
-        if (Pair.second != NoNode)
-          InvalidatedBy[Pair.second] |= Mask;
+        InvalidatedBy[std::get<0>(Pair)] |= Mask;
+        if (std::get<1>(Pair) != NoNode)
+          InvalidatedBy[std::get<1>(Pair)] |= Mask;
       }
     if (Masks.empty())
       return Entry;
@@ -1136,7 +1208,8 @@ class SourceFlow {
     std::map<const HighStmt *, std::vector<size_t>> Candidates;
     for (size_t I = 0; I < Nodes.size(); ++I)
       if (Reachable[I] && Nodes[I].PhiCopy && Nodes[I].Definition &&
-          !AddressTaken.count(*Nodes[I].Definition))
+          !AddressTaken.count(*Nodes[I].Definition) &&
+          !ExceptionUses.count(*Nodes[I].Definition))
         Candidates[Nodes[I].Statement].push_back(I);
     while (!Candidates.empty()) {
       spend(Nodes.size() * Words);
@@ -1487,6 +1560,32 @@ class SourceFlow {
     // The outer validator can still inventory independent expressions.
     if (MissingTarget)
       return std::nullopt;
+    if (DeadCopies && Function.ExceptionMetadata &&
+        Function.ExceptionMetadata->Itanium) {
+      // Pads still emitted out of line have implicit unwinder entry edges.
+      // They must not lose a reaching definition merely because ordinary
+      // source control flow cannot enter them. Conservatively protect every
+      // local observed on their paths, including continuations into the body.
+      std::vector<size_t> Pending;
+      for (const auto &Site : Function.ExceptionMetadata->Itanium->CallSites)
+        if (Site.LandingPadVA)
+          if (auto It = Labels.find(Site.LandingPadVA);
+              It != Labels.end() && It->second != NoNode)
+            Pending.push_back(It->second);
+      std::vector<bool> Seen(Nodes.size());
+      while (!Pending.empty()) {
+        spend();
+        const size_t I = Pending.back();
+        Pending.pop_back();
+        if (Seen[I])
+          continue;
+        Seen[I] = true;
+        spend(Nodes[I].Uses.size() + Nodes[I].Next.size());
+        ExceptionUses.insert(Nodes[I].Uses.begin(), Nodes[I].Uses.end());
+        Pending.insert(Pending.end(), Nodes[I].Next.begin(),
+                       Nodes[I].Next.end());
+      }
+    }
     return refine(Entry);
   }
 

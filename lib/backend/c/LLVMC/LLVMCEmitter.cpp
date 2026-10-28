@@ -26,7 +26,7 @@
 #include "../pass/LLVMC/LLVMCLoopPhases.h"
 #include "../pass/LLVMC/LLVMCScalarLoopRecovery.h"
 #include "../render/X86/X86AmxState.h"
-#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86AtomicRmw.h"
 #include "../render/X86/X86CompressExpand.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
@@ -2893,7 +2893,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
           (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
           (void)x86CompactCallPlan(Opts.TheArch, *Call);
           (void)x86FourSourceCallPlan(Opts.TheArch, *Call);
-          (void)x86AtomicExchangeCallPlan(Opts.TheArch, *Call);
+          (void)x86AtomicRmwCallPlan(Opts.TheArch, *Call);
         }
       }
   }

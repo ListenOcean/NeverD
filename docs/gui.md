@@ -371,7 +371,8 @@ complete code. Text selects as in an editor: drag with the mouse, which scrolls
 while it is held beyond an edge, extend with Shift and the arrows or a Shift
 click, or press **Ctrl+A** (also **Select all** in the context menu) for the
 whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
-right click inside the selection keeps it.
+right click inside the selection keeps it. Without a selection they copy the
+highlighted word under the cursor (see **Edit → Copy**).
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array
@@ -548,7 +549,10 @@ Strings, Ctrl+X lists the references to the selected string.
 jump (G or `g` on the command line) moves it and keeps it in front. Its
 context menu's **Text encoding** reads the text column as ASCII, UTF-8,
 UTF-16, UTF-32 or a code page; a character shows at its first byte, and wide
-characters take two columns. The choice is kept for later sessions.
+characters take two columns. The choice is kept for later sessions. A click
+on a row's address goes to the row and selects the address, which Ctrl+C or
+**Edit → Copy** then copies as shown; a click on a byte or a move with the
+keys makes Copy take bytes again.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
@@ -773,9 +777,22 @@ workbench's Copy (Ctrl+C) and Create C file (Ctrl+F5) `CopyListingAsText` and
 `hx:BatchDecompile`, where 9.4 called them `EditCopy` and `hx:CreateCFile`.
 
 **Edit → Copy** (Ctrl+C) copies from the window that has the keyboard focus:
-the selected lines of a disassembly, pseudocode or IR window (the current line
-when nothing is selected), the selected rows of a list with their columns
-separated by tabs, or the text selected in a field.
+the selected text of a disassembly, pseudocode or IR window, the selected rows
+of a list with their columns separated by tabs, or the text selected in a
+field. Without a selection, a disassembly window, in text or graph view, and a
+pseudocode or IR window copy the word under the cursor, as IDA does: the name,
+register, variable or number the highlight marks. The highlight follows the
+cursor whether a click or a key moves it, so Copy takes the word it shows. On
+blank space Copy leaves the clipboard as it was, and a folded summary copies
+the code it stands for. Pseudocode, whether it reads in C, C++, Rust or Go,
+splits a member access or qualified name at its dot, so a click on `var_m8`
+in `stack_storage.var_m8` or on `Println` in `fmt.Println` copies just that
+word and a click on the variable highlights every use of it; a decimal
+number stays whole, and IR names such as `RSP.3` keep their dots. A click on a word in a
+disassembly line's `segment:address` prefix, with either button, selects that
+word: the segment name or the address. A prefix word copies only once a click
+selects it. A drag still selects characters, and a right click inside a
+selection keeps it.
 
 Export previews, Find, shortcut help, calculator results, connection and tool
 schema information, and the Pathfinder, type-library and comparison counterpart

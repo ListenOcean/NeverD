@@ -1417,7 +1417,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
           !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
           (Stmt.RetVal->Kind == ExprKind::Var &&
            !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
-           (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody));
+           (Stmt.RetVal->Var.Kind != MedVar::Param ||
+            (InEHClauseBody && !exceptionClausesUseFunctionFrame())));
       if (IndirectReturnName.empty() && !InferredVoid && !Unknown) {
         const std::string Value = formatReturnExpr(*Stmt.RetVal);
         if (Value.find("arguments") != std::string::npos) {
@@ -1450,7 +1451,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
         (InferredVoid || !Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
          (Stmt.RetVal->Kind == ExprKind::Var &&
           !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
-          (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody))))
+          (Stmt.RetVal->Var.Kind != MedVar::Param ||
+           (InEHClauseBody && !exceptionClausesUseFunctionFrame())))))
       OS << "return " << IndirectReturnName << ";\n";
     else if (InferredVoid) {
       // A function inferred `void` can return what a callee left in the
@@ -1469,7 +1471,8 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     } else if (!Stmt.RetVal || Stmt.RetVal->Kind == ExprKind::Undef ||
                (Stmt.RetVal->Kind == ExprKind::Var &&
                 !Analysis.AssignedVars.count(varName(Stmt.RetVal->Var)) &&
-                (Stmt.RetVal->Var.Kind != MedVar::Param || InEHClauseBody)))
+                (Stmt.RetVal->Var.Kind != MedVar::Param ||
+                 (InEHClauseBody && !exceptionClausesUseFunctionFrame()))))
       OS << "__builtin_trap(); /* unknown return value */\n";
     else
       OS << "return " << formatReturnExpr(*Stmt.RetVal) << ";\n";
@@ -2501,7 +2504,8 @@ void HighCWriter::writeStmts(const std::vector<HighStmt> &Stmts, int Indent,
       I = ForLast;
       continue;
     }
-    if (InEHClauseBody && S.Kind == StmtKind::Return &&
+    if (InEHClauseBody && !exceptionClausesUseFunctionFrame() &&
+        S.Kind == StmtKind::Return &&
         S.CxxContinuationReturnTargets.empty() && S.RetVal &&
         S.RetVal->Kind == ExprKind::Var) {
       const std::string Name = varName(S.RetVal->Var);

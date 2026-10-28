@@ -1,13 +1,13 @@
-//===- X86AtomicExchange.cpp - Memory XCHG C projection -----------------===//
+//===- X86AtomicRmw.cpp - Scalar atomic RMW C projection -----------------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Both C routes retain the exchange, including unaligned native accesses.
+/// Both C routes retain scalar transactions, including unaligned accesses.
 //===----------------------------------------------------------------------===//
 
-#include "X86AtomicExchange.h"
+#include "X86AtomicRmw.h"
 
 #include "neverd/backend/llvm/X86/LLVMX86AddressSpaces.h"
 
@@ -20,32 +20,37 @@
 
 namespace neverd {
 
-std::string renderX86AtomicExchange(const X86AtomicExchangePlan &Plan,
-                                    const std::string &Address,
-                                    const std::string &Value) {
-  std::string Temporary = "neverd_xchg_value";
+std::string renderX86AtomicRmw(const X86AtomicRmwPlan &Plan,
+                               const std::string &Address,
+                               const std::string &Value) {
+  std::string Temporary = "neverd_atomic_value";
   while (Address.find(Temporary) != std::string::npos ||
          Value.find(Temporary) != std::string::npos)
     Temporary += "_";
   const auto Word = "uint" + std::to_string(Plan.Bytes * 8) + "_t";
   const auto Pointer = "uint" + std::to_string(Plan.addressBytes() * 8) + "_t";
   const auto Prefix = Plan.segment().empty() ? "" : "%%" + Plan.segment() + ":";
+  const auto Clobbers =
+      Plan.Opcode == NdOp::ATOMIC_ADD ? "\"memory\", \"cc\"" : "\"memory\"";
   return "({ " + Word + " " + Temporary + " = (" + Word + ")(uintptr_t)(" +
          Value + "); __asm__ __volatile__(\"" + Plan.mnemonic() + " %0, " +
          Prefix + "(%1)\" : \"+" + (Plan.Bytes == 1 ? "q" : "r") + "\"(" +
          Temporary + ") : \"r\"((" + Pointer + ")(uintptr_t)(" + Address +
-         ")) : \"memory\"); " + Temporary + "; })";
+         ")) : " + Clobbers + "); " + Temporary + "; })";
 }
 
-std::optional<X86AtomicExchangePlan>
-x86AtomicExchangeCallPlan(Arch Architecture, const llvm::CallInst &Call) {
+std::optional<X86AtomicRmwPlan>
+x86AtomicRmwCallPlan(Arch Architecture, const llvm::CallInst &Call) {
   const auto *Assembly =
       llvm::dyn_cast<llvm::InlineAsm>(Call.getCalledOperand());
-  if (!Assembly || !llvm::StringRef(Assembly->getAsmString())
-                        .starts_with(kX86AtomicExchangeAsmMarker))
+  if (!Assembly)
+    return std::nullopt;
+  const llvm::StringRef Text = Assembly->getAsmString();
+  const bool Add = Text.starts_with(kX86AtomicAddAsmMarker);
+  if (!Add && !Text.starts_with(kX86AtomicExchangeAsmMarker))
     return std::nullopt;
   const auto Invalid = []() {
-    throw std::invalid_argument("invalid owned x86 memory exchange");
+    throw std::invalid_argument("invalid owned x86 atomic memory operation");
   };
   if (!Call.getType()->isIntegerTy() || Call.arg_size() != 2 ||
       !Call.getArgOperand(0)->getType()->isPointerTy() ||
@@ -60,7 +65,9 @@ x86AtomicExchangeCallPlan(Arch Architecture, const llvm::CallInst &Call) {
   else if (Space)
     Invalid();
   const unsigned Bits = Call.getType()->getIntegerBitWidth();
-  const auto Plan = x86AtomicExchangePlan(Architecture, Bits / 8, AddressSpace);
+  const auto Plan =
+      x86AtomicRmwPlan(Architecture, Add ? NdOp::ATOMIC_ADD : NdOp::ATOMIC_XCHG,
+                       Bits / 8, AddressSpace);
   if (!Plan || Bits != Plan->Bytes * 8 ||
       Assembly->getAsmString() != Plan->assembly() ||
       Assembly->getConstraintString() != Plan->constraints() ||

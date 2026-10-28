@@ -414,6 +414,7 @@ private:
   /// Put the copies a handler block's PHIs take on the dispatcher's entry in
   /// the `__except` arm that reaches it (see PhiNode::ExceptionalEntry).
   void attachSEHHandlerEntryCopies(HighFunc &Func, const MedFunc &Med);
+  void collectItaniumCallFrameOffsets(HighFunc &Func, const MedFunc &Med);
   void inferTypes(HighFunc &Func);
   void simplifyControlFlow(HighFunc &Func, const MedFunc &Med);
   void inlineGotoReturns(HighFunc &Func, const MedFunc &Med);

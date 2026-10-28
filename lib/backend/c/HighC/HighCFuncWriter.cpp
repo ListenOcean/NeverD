@@ -322,6 +322,19 @@ TypeRef HighCWriter::declaredFunctionReturnType(const HighFunc &Func) const {
         NdType::makeNamedRecord(cNamedTypeSpelling(Record->SourceName),
                                 Record->Size ? Record->Size : 8));
   }
+  if (Opts.TheArch == Arch::AArch64 && DebugFn->PlatformConvention) {
+    if (Dbg)
+      Dbg->completeType(DebugFn->ReturnType);
+    const auto Placement = placeSourceParameters(Opts.TheArch, Opts.Format,
+                                                 DebugFn->ReturnType, {});
+    if (Placement && Placement->ResultPointer &&
+        llvm::any_of(Func.Params, [&](const HighParam &Parameter) {
+          return Parameter.RegOff == Placement->ResultPointer->RegisterOffset;
+        }))
+      // The explicit result-buffer parameter carries the object. AAPCS64
+      // promises no scalar result in X0 for this return convention.
+      return NdType::makeVoid();
+  }
   // A return type C cannot spell keeps the recovered machine type, as a
   // parameter's does.
   if (!hasCValueLayout(cDisplayType(DebugFn->ReturnType)))
@@ -4928,6 +4941,9 @@ void HighCWriter::bindParams(const HighFunc &Func) const {
         bindDebugParams(Opts.TheArch, Opts.Format, *DebugFn, Sites, Dbg);
     ParamBindings = std::move(Bound.Params);
     ParamsPlaced = Bound.Placed;
+    for (size_t PI = 0; PI < ParamBindings.size(); ++PI)
+      if (ParamBindings[PI].Result && DebugFn->ReturnType)
+        EmittedParamTypes[PI] = NdType::makePtr(DebugFn->ReturnType);
   }
   for (size_t PI = 0; PI < Func.Params.size(); ++PI) {
     const DebugParamBinding &B = ParamBindings[PI];
@@ -6859,9 +6875,9 @@ void HighCWriter::writeFunctionProjection(const HighFunc &Func) {
       SourceRecorder ? SourceRecorder->positionBuffer() : 0;
   {
     llvm::raw_string_ostream BodyOS(Body);
-    llvm::raw_ostream *Saved = Out.redirect(&BodyOS);
+    llvm::raw_ostream *Saved = OS.redirect(&BodyOS);
     writeStmts(Func.Body, 1);
-    Out.redirect(Saved);
+    OS.redirect(Saved);
   }
   std::unordered_set<std::string_view> BodyIdents;
   if (!DeferredDecls.empty() || !MemoryTemporaries.empty() ||

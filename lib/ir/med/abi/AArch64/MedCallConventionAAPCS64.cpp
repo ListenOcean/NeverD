@@ -24,6 +24,7 @@ const CallArgumentConvention AAPCS64CallArguments = {
     .ImportArgumentsFromPrototype = true,
     .PrototypeArgCount = itaniumRuntimeArgCount,
     .ArgumentsFromCallSetup = true,
+    .FormattedCallArguments = true,
 };
 
 } // namespace neverd

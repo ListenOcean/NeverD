@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cassert>
 #include <optional>
+#include <utility>
 
 namespace neverd::symbolic {
 
@@ -68,7 +69,7 @@ SymRef narrowUnsignedProductSlice(SymContext &Ctx, SymRef Product, uint32_t Low,
     return {};
   const auto Carrier = Ctx.width(Product);
   uint32_t Shift = 0, Required = 0;
-  llvm::SmallVector<SymRef, 4> Sources;
+  llvm::SmallVector<std::pair<SymRef, uint32_t>, 4> Sources;
   for (SymRef Factor : Ctx.operands(Product)) {
     if (Ctx.isConst(Factor)) {
       const auto &Coefficient = Ctx.constValue(Factor);
@@ -99,10 +100,20 @@ SymRef narrowUnsignedProductSlice(SymContext &Ctx, SymRef Product, uint32_t Low,
         }
       }
     }
-    if (Ctx.width(Source) >= Carrier - Required)
+    uint32_t DropLow = 0;
+    if (Ctx.op(Source) == SymOp::Concat) {
+      const auto Tail = Ctx.operands(Source).back();
+      if (Ctx.isConst(Tail) && Ctx.constValue(Tail).isZero()) {
+        DropLow = Ctx.width(Tail);
+        if (DropLow > Low - Shift)
+          return {};
+        Shift += DropLow;
+      }
+    }
+    if (Ctx.width(Source) - DropLow >= Carrier - Required)
       return {};
-    Required += Ctx.width(Source);
-    Sources.push_back(Source);
+    Required += Ctx.width(Source) - DropLow;
+    Sources.emplace_back(Source, DropLow);
   }
   if (Sources.empty())
     return {};
@@ -110,9 +121,11 @@ SymRef narrowUnsignedProductSlice(SymContext &Ctx, SymRef Product, uint32_t Low,
   if (Begin >= Required)
     return Ctx.mkZero(Width);
   // No builder is called while the original operand arena is being read.
-  for (auto &Source : Sources)
-    Source = Ctx.mkZExt(Source, Required);
-  auto Narrow = Ctx.mkMul(Sources);
+  llvm::SmallVector<SymRef, 4> Factors;
+  for (auto [Source, DropLow] : Sources)
+    Factors.push_back(Ctx.mkZExt(
+        Ctx.mkExtract(Source, DropLow, Ctx.width(Source) - DropLow), Required));
+  auto Narrow = Ctx.mkMul(Factors);
   return Ctx.mkZExt(
       Ctx.mkExtract(Narrow, Begin, std::min(Width, Required - Begin)), Width);
 }

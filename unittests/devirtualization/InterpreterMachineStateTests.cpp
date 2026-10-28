@@ -554,44 +554,50 @@ TEST(InterpreterMachineStateTest, V1RefusesRetainedSegmentedMemory) {
   }
 }
 
-TEST(InterpreterMachineStateTest, OrderedCmpxchgStillRefusesSourceWrapping) {
-  const auto Address = NdVar::reg(x86reg::RCX, 8);
-  const auto Expected = NdVar::reg(x86reg::RDX, 8);
-  const auto Desired = NdVar::reg(x86reg::R8, 8);
-  const auto Old = NdVar::reg(x86reg::RAX, 8);
-  auto Control =
-      function({{operation(NdOp::COPY, Address, {NdVar::scalar(0x4000, 8)}),
-                 operation(NdOp::COPY, Expected, {NdVar::scalar(7, 8)}),
-                 operation(NdOp::COPY, Desired, {NdVar::scalar(11, 8)}),
-                 operation(NdOp::STORE, {}, {Address, Expected})},
-                {operation(NdOp::LOAD, Old, {Address})},
-                {operation(NdOp::RETURN, {}, {Old})}});
-  auto Ordered = Control;
-  auto &Access = Ordered.Blocks.front().Ops[4];
-  Access.Opcode = NdOp::ATOMIC_CMPXCHG;
-  Access.addInput(Expected);
-  Access.addInput(Desired);
-  Access.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
-  auto Boundaries = validateLowInstructionBoundaries(
-      Ordered, LowInstructionBoundaryRequirement::Required);
-  ASSERT_FALSE(bool(Boundaries)) << llvm::toString(std::move(Boundaries));
+TEST(InterpreterMachineStateTest, OrderedAtomicsStillRefusesSourceWrapping) {
+  for (auto Opcode :
+       {NdOp::ATOMIC_CMPXCHG, NdOp::ATOMIC_ADD, NdOp::ATOMIC_XCHG}) {
+    const auto Address = NdVar::reg(x86reg::RCX, 8);
+    const auto Expected = NdVar::reg(x86reg::RDX, 8);
+    const auto Desired = NdVar::reg(x86reg::R8, 8);
+    const auto Old = NdVar::reg(x86reg::RAX, 8);
+    auto Control =
+        function({{operation(NdOp::COPY, Address, {NdVar::scalar(0x4000, 8)}),
+                   operation(NdOp::COPY, Expected, {NdVar::scalar(7, 8)}),
+                   operation(NdOp::COPY, Desired, {NdVar::scalar(11, 8)}),
+                   operation(NdOp::STORE, {}, {Address, Expected})},
+                  {operation(NdOp::LOAD, Old, {Address})},
+                  {operation(NdOp::RETURN, {}, {Old})}});
+    auto Ordered = Control;
+    auto &Access = Ordered.Blocks.front().Ops[4];
+    Access.Opcode = Opcode;
+    Access.addInput(Expected);
+    if (Opcode == NdOp::ATOMIC_CMPXCHG)
+      Access.addInput(Desired);
+    Access.MemoryOrdering = NdMemoryOrdering::SequentiallyConsistent;
+    auto Boundaries = validateLowInstructionBoundaries(
+        Ordered, LowInstructionBoundaryRequirement::Required);
+    ASSERT_FALSE(bool(Boundaries)) << llvm::toString(std::move(Boundaries));
 
-  // The ordinary control establishes valid operands, initialization and CFG.
-  // A raw atomic operation alone must not expand this source ABI contract.
-  for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
-                      InterpreterMachineStateLayout::SharedGPRExit}) {
-    auto WrappedControl = wrapInterpreterMachineStateX64(
-        Control, BinaryFormat::ELF,
-        InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt, Layout);
-    ASSERT_TRUE(bool(WrappedControl))
-        << llvm::toString(WrappedControl.takeError());
-    auto Wrapped = wrapInterpreterMachineStateX64(
-        Ordered, BinaryFormat::ELF,
-        InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt, Layout);
-    ASSERT_FALSE(bool(Wrapped));
-    EXPECT_NE(llvm::toString(Wrapped.takeError())
-                  .find("cannot wrap ordered or special memory"),
-              std::string::npos);
+    // The ordinary control establishes valid operands, initialization and CFG.
+    // A raw atomic operation alone must not expand this source ABI contract.
+    for (auto Layout : {InterpreterMachineStateLayout::InlineReturns,
+                        InterpreterMachineStateLayout::SharedGPRExit}) {
+      auto WrappedControl = wrapInterpreterMachineStateX64(
+          Control, BinaryFormat::ELF,
+          InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt,
+          Layout);
+      ASSERT_TRUE(bool(WrappedControl))
+          << llvm::toString(WrappedControl.takeError());
+      auto Wrapped = wrapInterpreterMachineStateX64(
+          Ordered, BinaryFormat::ELF,
+          InterpreterMachineStateProfile::UserX64NoFaultV1, std::nullopt,
+          Layout);
+      ASSERT_FALSE(bool(Wrapped));
+      EXPECT_NE(llvm::toString(Wrapped.takeError())
+                    .find("cannot wrap ordered or special memory"),
+                std::string::npos);
+    }
   }
 }
 

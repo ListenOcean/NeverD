@@ -463,6 +463,33 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
       (Name == field::Initialize ? Out.Initialize
        : Name == field::JNI      ? Out.JNI
                                  : Out.DrainThreads) = *B;
+    } else if (Name == field::EventLogWrites) {
+      const auto *Writes = V.getAsArray();
+      if (!Writes || Writes->size() > android_model::LogRecordLimit)
+        return invalid(Name);
+      Out.EventLogWrites.emplace();
+      uint64_t Remaining = android_model::LogSnapshotLimit;
+      for (const auto &Item : *Writes) {
+        const auto *Write = Item.getAsObject();
+        if (!Write || Write->size() != 2)
+          return invalid(Name);
+        const auto Payload = Write->getString(field::LogPayload);
+        const auto *Result = Write->get(field::Result);
+        if (!Payload || !Result || Payload->size() % 2 ||
+            Payload->size() / 2 > android_model::LogPayloadLimit ||
+            !llvm::all_of(*Payload, llvm::isHexDigit))
+          return invalid(Name);
+        auto Returned = integer32(*Result, field::Result);
+        if (!Returned)
+          return Returned.takeError();
+        const uint64_t Size = Payload->size() / 2 + sizeof(int32_t);
+        if (Size > Remaining)
+          return invalid(Name);
+        Remaining -= Size;
+        const auto Bytes = llvm::fromHex(*Payload);
+        Out.EventLogWrites->push_back(
+            {{Bytes.begin(), Bytes.end()}, *Returned});
+      }
     } else if (Name == field::LogRecords) {
       const auto *Records = V.getAsArray();
       if (!Records || Records->size() > android_model::LogRecordLimit)
@@ -1071,6 +1098,8 @@ androidOptionsFromJSON(const llvm::json::Value &Value) {
     return std::move(E);
   if (auto E = android_model::validateLogRecords(Out.LogRecords))
     return std::move(E);
+  if (auto E = android_model::validateEventLogWrites(Out.EventLogWrites))
+    return std::move(E);
   if (Out.ObserveJavaState && !Out.JNI)
     return invalid(field::ObserveJavaState);
   if (Out.JavaLibrary && (!Out.JNI || !Out.Initialize))
@@ -1111,6 +1140,8 @@ llvm::json::Object androidResultJSON(const ProcessResult &Result) {
                          {field::Trace, std::move(Trace)},
                          {field::TraceTruncated, Result.TraceTruncated},
                          {field::Memory, std::move(Memory)}};
+  if (Result.EventLogWritesConsumed)
+    Out[field::EventLogWritesConsumed] = *Result.EventLogWritesConsumed;
   auto CPUStateJSON = [](const NativeCPUState &State) {
     llvm::json::Value Registers = nullptr;
     if (State.Registers) {

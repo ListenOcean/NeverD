@@ -57,4 +57,5 @@ NEVERD_X86_EXISTING_SYSTEM_STATE(X86SegmentedBlockMemory,
 NEVERD_X86_APPENDED_SYSTEM_STATE(X86LoadSegmentLimit, "lsl", AccessRights, -1)
 NEVERD_X86_APPENDED_SYSTEM_STATE(X86LoadSegmentLimitMemory, "lsl", AccessRights,
                                  0)
+NEVERD_X86_APPENDED_SYSTEM_STATE(X86Skinit, "skinit", SecureLaunch, -1)
 #endif

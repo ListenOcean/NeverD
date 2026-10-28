@@ -4453,6 +4453,11 @@ done:
                         "__gmon_start__(void);"),
             std::string::npos)
       << Source;
+#if !defined(__ELF__)
+  // This fixture emits ELF's undefined-weak contract. Mach-O requires a
+  // weak_import declaration, so its native linker cannot execute this oracle.
+  GTEST_SKIP() << "requires native ELF undefined-weak linkage";
+#endif
   Source += R"c(
 int main(void) {
   init_profiling();

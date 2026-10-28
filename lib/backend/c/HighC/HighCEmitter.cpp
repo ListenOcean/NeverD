@@ -20,7 +20,7 @@
 #include "../LibraryPrototype.h"
 #include "../UnalignedMemory.h"
 #include "../VariadicImportStub.h"
-#include "../render/X86/X86AtomicExchange.h"
+#include "../render/X86/X86AtomicRmw.h"
 #include "../render/X86/X86DescriptorState.h"
 #include "../render/X86/X86FPStateHelpers.h"
 #include "../render/X86/X86ScalarSystem.h"
@@ -59,6 +59,7 @@
 #include "neverd/loader/MachO/DarwinRuntimeCalls.h"
 #include "neverd/loader/StringLiteralSymbols.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/APFloat.h"
 #include "llvm/ADT/StringExtras.h"
@@ -70,6 +71,7 @@
 
 #include <algorithm>
 #include <charconv>
+#include <exception>
 #include <functional>
 #include <limits>
 #include <map>
@@ -1158,9 +1160,9 @@ HighCWriter::atomicExchangeExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic exchange requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
-  if (const auto Plan =
-          x86AtomicExchangePlan(Opts.TheArch, Ty->Size, AddressSpace))
-    return renderX86AtomicExchange(*Plan, Addr.str(), Val.str());
+  if (const auto Plan = x86AtomicRmwPlan(Opts.TheArch, NdOp::ATOMIC_XCHG,
+                                         Ty->Size, AddressSpace))
+    return renderX86AtomicRmw(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_exchange_n(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -1176,6 +1178,9 @@ HighCWriter::atomicFetchAddExpr(const TypeRef &Ty, llvm::StringRef Addr,
     llvm::report_fatal_error("atomic fetch-add requires memory ordering");
   validateAtomicIntegerWidth(Ty);
   validateMemoryAddressSpaceForC(AddressSpace, Opts.TheArch);
+  if (const auto Plan = x86AtomicRmwPlan(Opts.TheArch, NdOp::ATOMIC_ADD,
+                                         Ty->Size, AddressSpace))
+    return renderX86AtomicRmw(*Plan, Addr.str(), Val.str());
   std::string Type = memoryTypeName(Ty);
   return "__atomic_fetch_add(" +
          memoryPointerCast(Type, Addr, AddressSpace, false) + ", " +
@@ -2651,12 +2656,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         ImageLoadVars[varKey(S.Dst->Var)] = *Load;
     });
   // Symbols size the objects; the largest one at an address is the object.
-  if (SharedDataObjects) {
-    DataObjects = SharedDataObjects;
-  } else {
+  ReadsSharedDataObjects = SharedDataObjects != nullptr;
+  if (!ReadsSharedDataObjects)
     OwnDataObjects = collectImageDataObjects(*Opts.Image);
-    DataObjects = &OwnDataObjects;
-  }
   // The function the walk reads, and the statement in it.
   const HighFunc *Reading = nullptr;
   const HighStmt *ReadingStmt = nullptr;
@@ -3004,7 +3006,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   auto SymbolBounds = [&](va_t Addr, const std::pair<va_t, uint64_t> &Object) {
     if (sizedObjectAt(Addr))
       return true;
-    const auto &Starts = DataObjects->DataSymbolStarts;
+    const auto &Starts = dataObjects().DataSymbolStarts;
     if (std::binary_search(Starts.begin(), Starts.end(), Object.first))
       return true;
     return Dbg && Dbg->dataSymbolsAround(Addr).first == Object.first;
@@ -4752,24 +4754,103 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
   writeForwardDecls(Funcs);
   writeImageObjects();
 
+  if (!writeFunctionsInParallel(Funcs))
+    for (size_t I = 0; I < Funcs.size(); ++I) {
+      if (Funcs[I].Name.empty())
+        continue;
+      auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
+                                  : std::nullopt;
+      if (SourceRecorder && SourceRecorder->recordsPositions())
+        SourceRecorder->positionDefinition(Funcs[I].Entry, OS.tell());
+      else if (SourceRecorder)
+        OS << SourceRecorder->definition(Funcs[I].Entry);
+      if (Event)
+        OS << SourceRecorder->begin(*Event);
+      writeFunction(Funcs[I]);
+      if (Event)
+        OS << SourceRecorder->end(*Event);
+      if (I + 1 < Funcs.size())
+        OS << "\n";
+    }
+  recordSourceNames(Funcs);
+}
+
+bool HighCWriter::writeFunctionsInParallel(const std::vector<HighFunc> &Funcs) {
+  // A source recorder, a source map and the source names follow the text as
+  // one pass prints it; a small unit is not worth a writer per thread,
+  // unless it leaves out a definition that fails: a copy that threw starts
+  // afresh, where the serial loop would go on from its broken state.
+  const bool Refusing = Opts.RefusedDefinitions != nullptr;
+  if (SourceRecorder || Opts.SourceMap || Opts.SourceNames ||
+      (!Refusing && (Funcs.size() < limits::kMinParallelCFunctionDefinitions ||
+                     workerThreadCount() < 2)))
+    return false;
+  std::vector<uint64_t> Weight(Funcs.size(), 0);
+  for (size_t I = 0; I < Funcs.size(); ++I)
+    walkStmts(Funcs[I].Body, [&](const HighStmt &) { ++Weight[I]; });
+  std::vector<std::string> Texts(Funcs.size());
+  std::vector<std::vector<TypeRef>> Wanted(WantedRecords ? Funcs.size() : 0);
+  std::vector<std::exception_ptr> Failures(Funcs.size());
+  // The texts of the expressions the declarations printed are state each
+  // definition clears before its own: clear them once instead of copying.
+  PrintedIntegerTypes.clear();
+  UnsignedCarrierTexts.clear();
+  parallelForEachWeighted(Weight, [&](auto Claim, size_t Total) {
+    // The unit's declarations are written: each definition reads only what
+    // they prepared and resets the rest, so a copy of this writer prints it
+    // as the serial loop does, whichever definitions it wrote before.
+    std::optional<HighCWriter> Worker(std::in_place, *this);
+    const auto TagKeyword = [&Worker](llvm::StringRef Name) {
+      return Worker->recordTagKeyword(Name);
+    };
+    CRecordTagSpelling Tags(TagKeyword);
+    for (size_t I = Claim(); I < Total; I = Claim()) {
+      if (Funcs[I].Name.empty())
+        continue;
+      llvm::raw_string_ostream Text(Texts[I]);
+      Worker->WantedRecords = WantedRecords ? &Wanted[I] : nullptr;
+      llvm::raw_ostream *Previous = Worker->OS.redirect(&Text);
+      try {
+        Worker->writeFunction(Funcs[I]);
+        Worker->OS.redirect(Previous);
+      } catch (...) {
+        Failures[I] = std::current_exception();
+        // A definition that throws can leave the copy midway through its
+        // state, which the serial loop never goes on from: start afresh.
+        Worker.emplace(*this);
+      }
+    }
+  });
+  // The serial loop stops at the first definition that fails; a refusing
+  // unit leaves out each one that threw an error it can name.
+  std::vector<std::string> Refusals(Refusing ? Funcs.size() : 0);
+  for (size_t I = 0; I < Funcs.size(); ++I) {
+    if (!Failures[I])
+      continue;
+    if (!Refusing)
+      std::rethrow_exception(Failures[I]);
+    try {
+      std::rethrow_exception(Failures[I]);
+    } catch (const std::exception &Error) {
+      Refusals[I] = Error.what();
+    }
+  }
   for (size_t I = 0; I < Funcs.size(); ++I) {
     if (Funcs[I].Name.empty())
       continue;
-    auto Event = SourceRecorder ? SourceRecorder->function(Funcs[I].Entry)
-                                : std::nullopt;
-    if (SourceRecorder && SourceRecorder->recordsPositions())
-      SourceRecorder->positionDefinition(Funcs[I].Entry, OS.tell());
-    else if (SourceRecorder)
-      OS << SourceRecorder->definition(Funcs[I].Entry);
-    if (Event)
-      OS << SourceRecorder->begin(*Event);
-    writeFunction(Funcs[I]);
-    if (Event)
-      OS << SourceRecorder->end(*Event);
+    if (Failures[I]) {
+      Opts.RefusedDefinitions->push_back(
+          {Funcs[I].Entry, Funcs[I].Name, std::move(Refusals[I])});
+      continue;
+    }
+    OS << Texts[I];
     if (I + 1 < Funcs.size())
       OS << "\n";
+    if (WantedRecords)
+      WantedRecords->insert(WantedRecords->end(), Wanted[I].begin(),
+                            Wanted[I].end());
   }
-  recordSourceNames(Funcs);
+  return true;
 }
 
 //===----------------------------------------------------------------------===//
@@ -4930,12 +5011,17 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   std::set<std::string> Asked;
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder,
                     std::vector<TypeRef> *Wanted = nullptr) {
+    // The definitions the unit leaves out are those of the text it keeps.
+    if (Opts.RefusedDefinitions)
+      Opts.RefusedDefinitions->clear();
     std::vector<HighFunc> Working = Funcs;
     if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
       for (HighFunc &Func : Working) {
         attachCxxObjectActionCalls(Func, Opts.TheArch);
         attachItaniumHandlerBodies(Func);
+        if (Func.StructuredExceptionRegions)
+          eliminateHighDeadPhiCopies(Func);
       }
     }
     const bool Prepared = Opts.Image && Opts.Image == PreparedImage;

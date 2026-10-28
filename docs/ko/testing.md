@@ -2028,6 +2028,8 @@ Linux 네이티브 검증은 `HighSwiftEmitter` 전체도 실행하여 레지스
 
 `SymAtomicCmpxchg.*`와 `InterpreterSpecialization.AtomicCmpxchg*`는 전체 바이트 효과, 두 바이트 순서, 이전 값 출처, 입출력 별칭, 네이티브 반환 셀, 병합을 가로지르는 아핀 스필 무효화, 순서 지정 연산의 발생 유지, 엄격한 허용과 정확한/부족한 예산을 다룹니다. 독립 바이트 오라클은 순차 값 의미론만 모델링합니다. 소스 래핑 대조군은 초기화되고 구조적으로 유효한 그래프에 대해 순서 지정 메모리 경계의 거부를 요구합니다. 독립 LowIR 대조군은 완전한 sidecar도 결합하며 인증서가 없어야 합니다. 네이티브 바이너리 증명은 LOCK CMPXCHG의 아키텍처 미정의 출력 감사가 완전하지 않아 더 이른 단계에서 거부될 수 있습니다. raw 영수증 검사는 순서, 주소 공간과 새 값 피연산자를 결합합니다. 지원을 선언하기 전에 소유 테스트 모음을 실행해야 합니다. 테스트 정의만으로 실행 증거가 되지는 않습니다.
 
+`InterpreterSpecialization.AtomicUpdates*`는 ADD/XCHG의 모든 스칼라 폭과 두 바이트 순서, 이전 값 출력 겹침, 네이티브 반환 범위, 값이 바뀌지 않는 연산 유지, 노드 간 이전·새 메모리 출처, 명시적 실행 영역 거부, 프레임 보존의 정확한 예산과 부족한 예산을 검사합니다. 전체 인터프리터 특수화, 조건부 저장, 원자 기호 테스트와 함께 실행합니다. 바이트 오라클은 순차 값만 모델링합니다.
+
 `InterpreterSpecialization.WideIntegerConcat*`는 두 바이트 순서, 상하위 워드, 상수 입력, 겹치는 출력, 상위 워드 제어, 잘못된 형태, 정확한／부족한 예산, 알 수 없는 메모리 출처 보존을 검사합니다. 엄격히 디코딩한 `PSHUFD`의 256개 선택값과 동일／다른 목적지를 독립적인 더블워드 인덱스로 대조합니다. `BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery`는 네이티브 증명과 두 소스 배치의 거부를 유지합니다.
 
 `InterpreterSpecialization.Timestamp*`는 독립 값/상태 오라클로 전체 표본, 상위 절반 초기화, 독립/반복 읽기, 레지스터/플래그/메모리/세그먼트 기준 주소 보존, 정확한/부족한 예산, 잘못된 묶음과 알 수 없는 주소 출처를 검사합니다. `BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery`는 raw 완료와 네이티브 증명/소스 배치 거부를 확인합니다. 기존 `X86_64_Intrinsics` 시계 사례는 소스 출력과 단일 읽기의 전체 비트를 검사하며 `DriverTimestamp`는 Unicorn/KVM/WHP 공통 시계 정책, 상태 보존, 예산, 오버플로를 별도로 검사합니다. 플랫폼 건너뛰기는 해당 백엔드 실행을 입증하지 않습니다.
@@ -2127,7 +2129,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `SymStorePreservation.Independent*`, `RepeatedRegionsFormAUnionAndChargeEveryScan`, `EmptyIndependentRegionsKeepOriginalWorkAccounting`, `ExecutorUsesIndependentRegionsForOnlyOneStore`는 한 번의 STORE로 독립적인 현재 루트 두세 개를 보존하는 동작, 두 바이트 순서, 상대 좌표 0을 지나는 부분 구간, 중첩 선언, 보호되지 않은 간격, 쓰기 이후 미지 값 세대를 검사합니다. 정확한 예산과 한 단위 부족한 예산으로 전체 비용을 확인하며, 없는 영역은 구체화하지 않아야 합니다. 잘못되거나 범위를 벗어난 참조, 좁거나 상수인 기준 주소, 빈 구간이나 역방향 구간, 실제 쓰기 자체의 기준 주소는 상태 변경 없이 거부합니다. 비어 있는 `AdditionalRegions`는 기존 단일 루트 및 `AdditionalRanges` 비용을 유지합니다. 실행기는 단일 이벤트, 같은 영역의 인접 바이트, 이후 일반 쓰기의 무효화를 검사합니다. `SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget`는 비교 일치·불일치, 정확·부족 예산, 보호 루트 두 개, 이전 값 출력, 기존의 보수적 거부 경로를 검사합니다.
 
-`NeverDSymConditionalStoreTests`는 독립 루트 사이의 현재 바이트 조건부 효과, 128비트 쓰기, 두 바이트 순서, 부분 중첩, 기호 상대 좌표의 순환 및 절대 메모리를 다룹니다. 자체 뱅크의 인접 바이트, 현재 사실과 과거 사실, 쓰기 후 미지 에포크, 지원하지 않는 입력, 정확한 예산과 한 단위 부족한 예산도 확인합니다. 실행기 사례는 기존 세그먼트 기준 주소 처리를 사용하는 STORE, 엄격한 CMPXCHG의 성공과 실패, Old의 지연 공개, 거부 시 havoc 및 다른 연산에서 Invalid 유지 여부를 확인합니다. 일반 쓰기와 보존 계약의 기본 동작은 유지됩니다. 이 테스트는 제한된 메모리 의미론을 검증하며 접근 권한이나 전체 프로그램 복원을 인증하지 않습니다.
+`NeverDSymConditionalStoreTests`는 절대·기호 메모리의 제한된 바이트 효과, 양쪽 바이트 순서, 겹침, 순환, 알 수 없는 세대와 정확한 예산을 검증한다. 실행기 검사는 STORE, 스칼라 원자 ADD/XCHG/CMPXCHG, 주소·값·출력 레지스터 겹침, Old의 지연 공개, 잘못된 형식과 거부 시 havoc을 포함한다. `SymStorePreservation`은 명시적인 프레임 보존 계약 및 정확한 예산과 한 단위 부족한 예산으로 같은 원자 쓰기 경로를 검증한다. 설명자 없는 일반 실행은 기존 동작을 유지하며 접근 권한이나 전체 프로그램 복구를 인증하지 않는다.
 
 
 `AbsoluteMemoryFactsTests.inc`는 노드 간 절대 대상, 합류 충돌, 부분 중첩과 미지의 별칭 쓰기, 두 바이트 순서 및 연결 활성화/비활성화에서 스택 분리를 검사한다. 독립 바이트 실행기가 효과를 확인하며 제외 범위 누락과 예산 부족은 거부해야 한다. `SymStorePreservation.Absolute*`와 `SymState.AbsoluteProjections*`는 영역 공존, 높은 주소, 순수한 유한 투영, 미지 세대 및 원자적 거부를 검사한다. `NeverDInterpreterSpecializationTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests` 실행 후 네이티브 독립성과 LowIR 정제 모음을 실행한다.
@@ -2213,3 +2215,7 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 메모리 사후 조건을 변경할 때는 보존 값, 조건부 결과, 새로운 미지 상태, 호출 전 대상 및 잘못된 입력 거부를 확인하는 `NeverDSymbolicCallEffectTests`, `NeverDSymbolicIntegerIntrinsicTests`, `NeverDSymMemoryKnowledgeTests`를 함께 실행합니다.
 
 `NeverDSymbolicCallEffectTests`는 양쪽 분기, 이전 호출 효과, 반복 호출 및 경로 병합 후의 전체 조건이 제공자에게 전달되는지도 검사합니다. 모순된 효과는 후속 연산과 제공자 호출을 중단합니다. 이는 솔버 없이 수행하는 탐색 회귀 검사이며 외부 API 계약 검증은 아닙니다.
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes`와 교환 대조 검사는 O0/O2 및 UBSan에서 두 C 경로를 실행하여 x64의 네 폭, 비정렬 주소, 이전 값과 인접 바이트를 확인합니다. `LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*`는 원래 LLVM IR도 실행하고 미사용 결과의 쓰기를 보존하며 변경된 어셈블리 계약을 거부합니다. FS/GS는 호스트 TLS 접근 없이 컴파일만 합니다. 실행에는 x64 호스트가 필요하며 경합이나 하드웨어 오류를 인증하지 않습니다.
+
+`X86LegacyAtomic.LockedArithmetic*`는 x86/x64 너비, 독립 산술 플래그, 원본 레지스터와 캐리 보존, 부호 있는 즉시 값, 비정렬 인접 바이트, 읽기 전용·잘린 매핑, FS/GS 및 잠금 없는 대조군을 검사합니다. 지원하지 않는 잠금 연산은 일반 저장을 게시할 수 없습니다. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof`는 네 가지 잠금 산술의 특화와 순서 메모리 증명 거부를 확인합니다.

@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1238,6 +1239,59 @@ TEST(SymExpr, NativeAssociativeEvaluationMatchesFullWidthArithmetic) {
   }
 }
 
+TEST(SymExpr, WideConstantSlotsSurviveInterruptedInputLookup) {
+  for (unsigned Width : {8u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto Literal =
+        llvm::APInt(Width, 7) | llvm::APInt::getOneBitSet(Width, Width - 3);
+    const auto Root = Ctx.mkAdd(X, Ctx.mkConst(Literal));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_THROW(Plan.evalWith([](uint32_t) -> const llvm::APInt * {
+      throw std::runtime_error("interrupted lookup");
+    }),
+                 std::runtime_error);
+    for (const auto &Value : {llvm::APInt(Width, 5), llvm::APInt(Width, 0),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 1)}) {
+      const auto Actual = Plan.evalWith([&](uint32_t Id) {
+        EXPECT_EQ(Id, Ctx.varId(X));
+        return &Value;
+      });
+      ASSERT_EQ(Actual, Value + Literal);
+    }
+  }
+}
+
+TEST(SymExpr, EvaluationPlansKeepInterleavedConstantSlots) {
+  for (unsigned Width : {8u, 16u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto K = llvm::APInt::getOneBitSet(Width, Width - 1) | 7;
+    const llvm::APInt L(Width, 19), Three(Width, 3);
+    const auto Root =
+        Ctx.mkXor(Ctx.mkAdd(X, Ctx.mkConst(K)),
+                  Ctx.mkMul(Ctx.mkConst(Three), Ctx.mkXor(X, Ctx.mkConst(L))));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_EQ(Plan.numSteps(), Ctx.dagSize(Root));
+    for (const auto &Value : {llvm::APInt(Width, 0), llvm::APInt(Width, 5),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 2)}) {
+      const auto Expected = (Value + K) ^ (Three * (Value ^ L));
+      EXPECT_EQ(Plan.evalWith([&](uint32_t) { return &Value; }), Expected);
+      if (Width <= 64)
+        EXPECT_EQ(
+            Plan.evalU64With([&](uint32_t) { return Value.getZExtValue(); }),
+            Expected.getZExtValue());
+    }
+    EXPECT_EQ(
+        Plan.evalWith([](uint32_t) -> const llvm::APInt * { return nullptr; }),
+        K ^ (Three * L));
+  }
+}
+
 TEST(SymExpr, EvaluationPlanKeepsSharedInputsAfterContextGrowth) {
   for (unsigned Width : {8u, 64u, 65u, 257u}) {
     SymContext Ctx;
@@ -1531,6 +1585,112 @@ TEST(SymExpr, ProductWindowKeepsInnerOverflowAndSignedHighBits) {
   auto LostWrap = Inner.mkExtract(
       Inner.mkMul(Inner.mkZExt(P, 128), Inner.mkZExt(Q, 128)), 48, 64);
   EXPECT_NE(Inner.eval(Slice, WideInputs), Inner.eval(LostWrap, WideInputs));
+}
+
+TEST(SymExpr, ProductWindowsFactorZeroConcatenationLanes) {
+  SymContext C;
+  auto X = C.mkVar("x", 32), Y = C.mkVar("y", 32);
+  auto Left = C.mkConcat({X, C.mkZero(32)});
+  auto Right = C.mkConcat({Y, C.mkZero(8)});
+  auto Product = C.mkMul(C.mkZExt(Left, 104), C.mkZExt(Right, 104));
+  auto Actual = C.mkExtract(Product, 64, 32);
+  auto Expected =
+      C.mkExtract(C.mkMul(C.mkZExt(X, 64), C.mkZExt(Y, 64)), 24, 32);
+  ASSERT_EQ(Actual, Expected);
+  ASSERT_TRUE(C.fitsU64(Actual));
+  SymEvalPlan Plan(C, Actual);
+  ASSERT_TRUE(Plan.fitsU64());
+  std::mt19937_64 Random(0x636f6e6361747072);
+  for (unsigned I = 0; I < 512; ++I) {
+    uint64_t A = I < 4
+                     ? std::array<uint32_t, 4>{0, 1, 0x80000000, UINT32_MAX}[I]
+                     : uint32_t(Random());
+    uint64_t B = I < 4 ? UINT32_MAX : uint32_t(Random());
+    auto Oracle = ((A * B) >> 24) & UINT32_MAX;
+    EXPECT_EQ(Plan.evalU64({A, B}), Oracle);
+  }
+}
+
+TEST(SymExpr, ZeroConcatProductWindowsKeepAllLowerCarries) {
+  for (unsigned LeftPad : {1u, 7u, 32u})
+    for (unsigned RightPad : {1u, 8u}) {
+      SCOPED_TRACE(LeftPad);
+      SCOPED_TRACE(RightPad);
+      SymContext C;
+      auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+      auto Carrier = 17 + LeftPad + RightPad;
+      auto Left = C.mkConcat({X, C.mkZero(LeftPad)});
+      auto Right = C.mkConcat({Y, C.mkZero(RightPad)});
+      auto Actual = C.mkExtract(
+          C.mkMul(C.mkZExt(Left, Carrier), C.mkZExt(Right, Carrier)),
+          LeftPad + RightPad + 4, 8);
+      auto Product = C.mkMul(C.mkZExt(X, 16), C.mkZExt(Y, 16));
+      ASSERT_EQ(Actual, C.mkExtract(Product, 4, 8));
+      SymEvalPlan Plan(C, Actual);
+      for (unsigned A = 0; A < 256; ++A)
+        for (unsigned B = 0; B < 256; ++B) {
+          const llvm::APInt Inputs[] = {llvm::APInt(8, A), llvm::APInt(8, B)};
+          ASSERT_EQ(Plan.eval(Inputs), llvm::APInt(8, (A * B) >> 4));
+        }
+    }
+  std::mt19937_64 Random(0x7a65726f6c616e65);
+  for (unsigned Width : {1u, 7u, 32u, 65u, 129u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext C;
+    auto X = C.mkVar("x", Width), Y = C.mkVar("y", Width);
+    auto Carrier = 2 * Width + 73;
+    auto Left = C.mkConcat({X, C.mkZero(64)});
+    auto Right = C.mkConcat({Y, C.mkZero(8)});
+    auto Low = 72 + Width / 2;
+    auto Actual = C.mkExtract(
+        C.mkMul(C.mkZExt(Left, Carrier), C.mkZExt(Right, Carrier)), Low, Width);
+    auto Product = C.mkMul(C.mkZExt(X, 2 * Width), C.mkZExt(Y, 2 * Width));
+    ASSERT_EQ(Actual, C.mkExtract(Product, Width / 2, Width));
+    SymEvalPlan Plan(C, Actual);
+    for (unsigned I = 0; I < 64; ++I) {
+      llvm::APInt A(Width, 0), B(Width, 0);
+      for (unsigned Bit = 0; Bit < Width; Bit += 64) {
+        A |= llvm::APInt(Width, Random()).shl(Bit);
+        B |= llvm::APInt(Width, Random()).shl(Bit);
+      }
+      auto Oracle = (A.zext(Carrier).shl(64) * B.zext(Carrier).shl(8))
+                        .extractBits(Width, Low);
+      const llvm::APInt Inputs[] = {A, B};
+      EXPECT_EQ(Plan.eval(Inputs), Oracle);
+    }
+  }
+}
+
+TEST(SymExpr, ZeroConcatFactoringPreservesNonzeroLanesAndInnerWrap) {
+  for (unsigned Tail : {0u, 1u, 0x80u, 0xFFu})
+    for (unsigned Low : {1u, 7u, 8u, 16u, 24u}) {
+      SymContext C;
+      auto X = C.mkVar("x", 8), Y = C.mkVar("y", 8);
+      auto Left = C.mkConcat({X, C.mkConst(8, Tail)});
+      auto Right = C.mkConcat({Y, C.mkZero(8)});
+      auto Actual = C.mkExtract(
+          C.mkMul(C.mkZExt(Left, 48), C.mkZExt(Right, 48)), Low, 16);
+      SymEvalPlan Plan(C, Actual);
+      for (unsigned A : {0u, 1u, 0x7Fu, 0x80u, 0xFFu})
+        for (unsigned B : {0u, 1u, 0x7Fu, 0x80u, 0xFFu}) {
+          auto Oracle = (uint64_t((A << 8) | Tail) * (B << 8)) >> Low;
+          const llvm::APInt Inputs[] = {llvm::APInt(8, A), llvm::APInt(8, B)};
+          EXPECT_EQ(Plan.eval(Inputs), llvm::APInt(16, Oracle));
+        }
+    }
+  SymContext C;
+  auto X = C.mkVar("full_x", 64), Y = C.mkVar("y", 32);
+  auto Wrapped = C.mkExtract(C.mkConcat({X, C.mkZero(32)}), 0, 64);
+  auto Actual =
+      C.mkExtract(C.mkMul(C.mkZExt(Wrapped, 128),
+                          C.mkZExt(C.mkConcat({Y, C.mkZero(8)}), 128)),
+                  64, 64);
+  const llvm::APInt Inputs[] = {llvm::APInt(64, uint64_t(1) << 40),
+                                llvm::APInt(32, UINT32_MAX)};
+  EXPECT_EQ(C.eval(Actual, Inputs), llvm::APInt(64, 0));
+  auto Incorrect =
+      C.mkExtract(C.mkMul(C.mkZExt(X, 128), C.mkZExt(Y, 128)), 24, 64);
+  EXPECT_NE(C.eval(Actual, Inputs), C.eval(Incorrect, Inputs));
 }
 
 TEST(SymExpr, DivisionAndRemainderFollowTheBitvectorTheory) {

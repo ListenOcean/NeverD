@@ -3237,10 +3237,10 @@ TEST(MedABIPass, IndirectSretRequiresLatestFrameDerivedSetup) {
     EXPECT_EQ(Info.Args[0].ConstVal, 7U);
     EXPECT_EQ(Info.Args[0].Size, 8U);
     if (Sret) {
-      EXPECT_EQ(Info.Args[1].Kind, Result.Kind);
-      EXPECT_EQ(Info.Args[1].Id, Result.Id);
-      EXPECT_EQ(Info.Args[1].SSAVer, Result.SSAVer);
-      EXPECT_EQ(Info.Args[1].RegOff, Result.RegOff);
+      // Argument recovery forwards the value copied into X8, just as it
+      // forwards the ordinary argument's constant. The value, not the
+      // redundant register copy's SSA identity, is the result buffer.
+      EXPECT_EQ(Info.Args[1], Value);
     } else {
       ASSERT_TRUE(Info.Args[1].isConst());
       EXPECT_EQ(Info.Args[1].ConstVal, 42U);
@@ -3268,9 +3268,9 @@ TEST(MedABIPass, DirectSretUsesDeclaredCalleeContract) {
   ASSERT_TRUE(Args[0].isConst());
   EXPECT_EQ(Args[0].ConstVal, 7U);
   EXPECT_EQ(Args[0].Size, 8U);
-  EXPECT_EQ(Args[1].Id, Result.Id);
-  EXPECT_EQ(Args[1].SSAVer, Result.SSAVer);
-  EXPECT_EQ(Args[1].RegOff, Result.RegOff);
+  ASSERT_TRUE(Args[1].isConst());
+  EXPECT_EQ(Args[1].ConstVal, 0x9000U);
+  EXPECT_EQ(Args[1].Size, 8U);
 }
 
 TEST(MedABIPass, IndirectResultSetupSurvivesCallSiteBlockSplits) {
@@ -4945,6 +4945,147 @@ TEST(MedTypePass, FloatArgumentPassedThroughOnOnePathIsAFloatResult) {
   EXPECT_EQ(Func.ReturnType->Size, 8u);
 }
 
+TEST(MedTypePass, MergedFloatCallsRequireDefinedScalarBytes) {
+  for (unsigned Flow = 0; Flow != 3; ++Flow)
+    for (unsigned Input = 0; Input != 8; ++Input) {
+      SCOPED_TRACE(Flow);
+      SCOPED_TRACE(Input);
+      MedFunc Func = xmm0JoinReturn(Input != 1);
+      auto &Phi = Func.Blocks[2].Phis.front();
+      const MedVar Original = Phi.Args.front().second;
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Output = Phi.Args.back().second;
+      Call.CalleeFloatReturnBytes = 8;
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      Func.Blocks[1].Ops = {Call};
+      if (Input == 2)
+        Phi.Args.front().second.Kind = MedVar::Unspecified;
+      else if (Input == 3) {
+        Phi.ExceptionalEntry = Original;
+        Phi.ExceptionalEntry->Kind = MedVar::Unspecified;
+      } else if (Input == 4 || Input == 5) {
+        MedCallClobber Clobber;
+        Clobber.Value = reg(8, 1, 16, x86reg::XMM0, Arch::X64);
+        Clobber.PreservedPrefixSize = Input == 4 ? 8 : 4;
+        Clobber.PreservedInput = Original;
+        Func.CallClobbers.push_back(Clobber);
+        Phi.Args.front().second = Clobber.Value;
+      }
+      if (Input >= 6)
+        Func.Params.back().Size = Input == 6 ? 4 : 8;
+      // A view of the entry value and a post-merge copy/selection must not
+      // hide an undefined predecessor or exceptional entry.
+      const MedVar EntryCopy = temp(20, 0, 16, Arch::X64);
+      Func.Blocks[0].Ops.push_back(
+          unary(NdOp::COPY, EntryCopy, Phi.Args.front().second));
+      Phi.Args.front().second = EntryCopy;
+      if (Flow) {
+        MedOp Copy = unary(NdOp::COPY, reg(1, 3, 16, x86reg::XMM0, Arch::X64),
+                           Phi.Output);
+        if (Flow == 2) {
+          Copy.Opcode = NdOp::SELECT;
+          Copy.NumInputs = 0;
+          Copy.addInput(reg(21, 0, 1, x86reg::ZF, Arch::X64));
+          Copy.addInput(Phi.Output);
+          Copy.addInput(MedVar::makeConst(0, 16));
+        }
+        Func.Blocks[2].Ops.insert(Func.Blocks[2].Ops.begin(), Copy);
+      }
+      inferMedTypes(Func, Arch::X64);
+      ASSERT_TRUE(Func.ReturnType);
+      EXPECT_EQ(Func.ReturnType->Kind == NdTypeKind::Float,
+                Input == 0 || Input == 4 || Input == 7);
+    }
+}
+
+TEST(MedTypePass, FloatCallsDefineOnlyTheirDeclaredScalarWidth) {
+  for (uint16_t FirstWidth : {4, 8})
+    for (bool Reverse : {false, true})
+      for (bool SummaryOnly : {false, true}) {
+        SCOPED_TRACE(FirstWidth);
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(SummaryOnly);
+        MedFunc Func = xmm0JoinReturn(false);
+        auto &Phi = Func.Blocks[2].Phis.front();
+        const MedVar First = reg(1, 3, 16, x86reg::XMM0, Arch::X64);
+        std::map<va_t, uint16_t> Returns{{0x2000, FirstWidth}, {0x3000, 8}};
+        for (unsigned I = 0; I != 2; ++I) {
+          MedOp Call;
+          Call.Opcode = NdOp::CALL;
+          Call.Output = I == 0 ? First : Phi.Args.back().second;
+          Call.CalleeFloatReturnBytes = SummaryOnly ? 0
+                                        : I == 0    ? FirstWidth
+                                                    : 8;
+          Call.addInput(MedVar::makeConst(I == 0 ? 0x2000 : 0x3000, 8));
+          Func.Blocks[I].Ops = {Call};
+        }
+        Phi.Args.front().second = First;
+        if (Reverse)
+          std::reverse(Phi.Args.begin(), Phi.Args.end());
+        inferMedTypes(Func, Arch::X64, &Returns);
+        ASSERT_TRUE(Func.ReturnType);
+        // A scalar float call cannot supply the high bytes of a double
+        // merely because both results occupy a sixteen-byte XMM carrier.
+        EXPECT_EQ(Func.ReturnType->Kind == NdTypeKind::Float, FirstWidth == 8);
+        if (FirstWidth == 8)
+          EXPECT_EQ(Func.ReturnType->Size, 8u);
+      }
+}
+
+TEST(MedTypePass, FloatJoinsPropagateUnknownBytesAroundCycles) {
+  for (bool Defined : {false, true})
+    for (bool Reverse : {false, true}) {
+      SCOPED_TRACE(Defined);
+      SCOPED_TRACE(Reverse);
+      MedFunc Func;
+      Func.Entry = 0x1000;
+      Func.Blocks.resize(5);
+      for (int I = 0; I != 5; ++I)
+        Func.Blocks[I].Id = I;
+      Func.Blocks[0].Succs = {1, 2};
+      Func.Blocks[1].Preds = {0, 2};
+      Func.Blocks[1].Succs = {2, 3};
+      Func.Blocks[2].Preds = {0, 1};
+      Func.Blocks[2].Succs = {1, 4};
+      Func.Blocks[3].Preds = {1};
+      Func.Blocks[4].Preds = {2};
+      const MedVar Result = reg(1, 1, 16, x86reg::XMM0, Arch::X64);
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.Output = Result;
+      Call.CalleeFloatReturnBytes = 8;
+      Call.addInput(MedVar::makeConst(0x2000, 8));
+      Func.Blocks[0].Ops.push_back(Call);
+      MedVar Entry = MedVar::makeConst(0, 16);
+      if (!Defined)
+        Entry.Kind = MedVar::Unspecified;
+      PhiNode First, Second;
+      First.Output = reg(1, 2, 16, x86reg::XMM0, Arch::X64);
+      Second.Output = reg(1, 3, 16, x86reg::XMM0, Arch::X64);
+      First.Args = {{0, Entry}, {2, Second.Output}};
+      Second.Args = {{0, Result}, {1, First.Output}};
+      if (Reverse) {
+        std::reverse(First.Args.begin(), First.Args.end());
+        std::reverse(Second.Args.begin(), Second.Args.end());
+      }
+      Func.Blocks[1].Phis = {First};
+      Func.Blocks[2].Phis = {Second};
+      for (int I : {3, 4}) {
+        Func.Blocks[I].Ops.push_back(
+            unary(NdOp::COPY, reg(1, I + 1, 16, x86reg::XMM0, Arch::X64),
+                  I == 3 ? First.Output : Second.Output));
+        MedOp Return;
+        Return.Opcode = NdOp::RETURN;
+        Return.addInput(reg(2, 0, 8, x86reg::RAX, Arch::X64));
+        Func.Blocks[I].Ops.push_back(Return);
+      }
+      inferMedTypes(Func, Arch::X64);
+      ASSERT_TRUE(Func.ReturnType);
+      EXPECT_EQ(Func.ReturnType->Kind == NdTypeKind::Float, Defined);
+    }
+}
+
 /// `for (n = 8; n; n--) s = s * a + b;` lowered with the accumulator in
 /// XMM0 and the counter in \p CounterReg: the loop block computes both, and
 /// the exit block holds only the RETURN.  \p StoreSum also stores the sum in
@@ -5063,6 +5204,7 @@ TEST(MedTypePass, TheMaximumOfTwoFloatsIsAFloatResult) {
   const MedVar B = reg(2, 0, 16, x86reg::XMM1, TheArch);
   addLiveIn(Block, A);
   addLiveIn(Block, B);
+  Func.Params = {registerParam(A), registerParam(B)};
   const MedVar ALow = temp(10, 0, 8, TheArch), BLow = temp(11, 0, 8, TheArch);
   Block.Ops.push_back(binary(NdOp::SUBBYTES, ALow, A, MedVar::makeConst(0, 4)));
   Block.Ops.push_back(binary(NdOp::SUBBYTES, BLow, B, MedVar::makeConst(0, 4)));

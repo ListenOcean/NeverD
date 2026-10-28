@@ -52,6 +52,7 @@
 #include "neverd/ir/med/X86/I386PicAddress.h"
 #include "neverd/libc/LibCNames.h"
 #include "neverd/loader/SymbolDecoration.h"
+#include "neverd/loader/SymbolSpelling.h"
 #include "neverd/pipeline/Limits.h"
 #include "neverd/pipeline/Pipeline.h"
 
@@ -357,8 +358,8 @@ private:
 
   /// Whether \p Func's declaration says it returns nothing, as the C
   /// writers read it: a bound source signature, else debug information, else
-  /// the MSVC rule that a destructor returns nothing.  None when nothing
-  /// declares it.
+  /// the target ABI/runtime prototype of an unpatched definition. None when
+  /// nothing declares it.
   std::optional<bool> declaredNoValue(const MedFunc &Func) const {
     if (Func.SourceTypeHint && Func.SourceTypeHint->ReturnType)
       return Func.SourceTypeHint->ReturnType->Kind == NdTypeKind::Void;
@@ -368,6 +369,8 @@ private:
         return Debug->ReturnType->Kind == NdTypeKind::Void;
     if (isMsvcDestructorName(Func.Name))
       return true;
+    if (!Img.functionHasBytePatch(Func.Entry))
+      return namedNoValue(Func.Name);
     return std::nullopt;
   }
 
@@ -378,6 +381,15 @@ private:
     if (Name.empty())
       return std::nullopt;
     if (isMsvcDestructorName(Name))
+      return true;
+    // The generic and AArch64 ELF C++ ABIs declare these as void. ARM32
+    // and Apple ARM64 instead have a machine `this` result; leave those to
+    // their own contracts. A substring such as D1 in a normal name is not
+    // a destructor: require a complete mangling parse.
+    if (Img.Format == BinaryFormat::ELF &&
+        (Img.Arch == Arch::AArch64 || Img.Arch == Arch::X64 ||
+         Img.Arch == Arch::X86) &&
+        isItaniumConstructorOrDestructor(Name))
       return true;
     const std::string CName =
         cNameOfStatedName(Name, Img.Format, Img.Arch).str();

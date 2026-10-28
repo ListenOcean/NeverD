@@ -206,7 +206,7 @@ add_neverd_unittest(NeverDCodegenDiagnosticTests
 )
 add_neverd_unittest(NeverDItaniumHandlerTests
   lift/eh/ItaniumHandlerBodiesTests.cpp
-  LINK_COMPONENTS BackendC
+  LINK_COMPONENTS BackendC Types
 )
 add_neverd_unittest(NeverDSourceAnchorTests
   lift/core/HighIRSourceMapTests.cpp

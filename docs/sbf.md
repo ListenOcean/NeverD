@@ -392,6 +392,31 @@ reusing another caller's specialized scratch snapshot. Summary JSON reports
 `output_parameterized_words` and per-edge `applied_stored_values` separately
 from the conservative may-write intervals.
 
+A full-width stored value can also retain an entry-input expression when its
+source was loaded from memory and has no complete affine origin. Generic
+callers compose those expressions before adding the callee's writes. Actual
+callers evaluate them against their pre-call memory snapshot through the same
+guarded evaluator used for target expressions, then apply the result through
+the canonical typed store. Expressions captured before a source overwrite
+retain their earlier value; a write before the load remains part of its guard.
+Complete copies preserve captured field expressions, and full-width reloads
+can recover them after a spill. Alias invalidation, partial writes, missing
+stores and incompatible expressions at joins still discard the affected fact.
+Callee-relative expression IDs cannot escape without explicit substitution,
+and frame-tagged values cannot become literal code addresses. Schema 8 adds
+`output_field_value_expressions` per summary and
+`instantiated_stored_value_input_expressions` for applied field expressions.
+The existing work, retained-state and output budgets remain in force.
+
+Schema 10 also evaluates a live generic return expression against the actual
+caller's pre-call parameters and scratch, before invalidating callee writes.
+This uses the same guarded expression evaluator as target and output-field
+instantiation; a target-only overlay does not supply the return fact. Every
+union member must evaluate completely, including captured-load timing and
+alias invalidation. Summary edges expose `instantiated_return_input_expression`,
+and `instantiated_return_input_expressions` counts successful computations
+(including solver contexts later reclaimed), separately from target coverage.
+
 The symbolic origin lane uses the same complete finite domain as concrete
 registers. A register selecting several entry parameters can feed a common
 store or return after the join; nested summaries substitute every origin and
@@ -412,6 +437,12 @@ supply no proof. An unbound affine leaf can be rejected before evaluating a
 transfer. Target-expression evidence retains the generic callee's conservative
 return and memory effects.
 
+Schema 10 additionally accepts complete loaded-expression members at CFG,
+return and full-width output-field joins. Each member retains its preceding
+write guard, and unary transfers can consume a nested union. The same
+four-alternative limit applies throughout; an unknown member still absorbs
+the complete expression.
+
 Blocks join every remaining CFG predecessor, including the initial loop entry.
 A conditional successor is excluded only when every value alternative agrees
 on the outcome using the VM's normalized comparison semantics. Unknown or mixed
@@ -425,8 +456,13 @@ Solver-only summaries not referenced by a final edge or root may be reclaimed
 when a caller loop widens their inputs. Unrelated inputs within one root use the
 existing specialization limit instead of evicting and recomputing each other.
 When a later root supplies a different image-backed argument and all four
-retained variants repeat the same image argument, an old published dependency
-may be generalized only if its caller-visible return and memory transfer agree
+retained variants repeat one image argument, an old published dependency may
+make room. Forwarding wrappers with no CALLX sites of their own can also explore
+an image binding absent from every variant, once per entry register. The generic
+node remembers explored registers across evictions; ordinary scalar changes do
+not select this extra work. Functions owning CALLX sites retain their previous
+demand policy. An old published dependency may be generalized only if its
+caller-visible return and memory transfer agree
 exactly with the completed generic summary. This currently requires unknown
 memory effects, no returned scratch/postcondition cells, the same scalar return
 alternatives and the same constant or unknown return origin. Any target facts
@@ -500,7 +536,7 @@ full-width reload can restore it across basic blocks. Partial overwrites,
 unknown destinations, differing expressions at joins and uncertain memory
 effects discard it. These private expression IDs never enter the VM value or
 descriptor-byte lanes. A memory-preserving syscall still clobbers expression
-carriers r0-r5 through the canonical ABI; preserving memory cannot preserve
+carrier r0 through the canonical syscall ABI; preserving memory cannot preserve
 its old register result. Function summaries invalidate caller spills through
 their existing write effects. Callee-created spill IDs are not copied into a
 caller's differently bound expression state.
@@ -522,7 +558,7 @@ still makes that carrier live. Block-entry joins project register values,
 origins and expression carriers through the same input mask, retaining the
 frame anchor. They retain scratch and stored postconditions; only a deferred
 read's preceding-write bookkeeping can be dropped when no future input-memory
-read is possible. Differing loaded roots and unsupported affine
+read is possible. Unknown loaded members and unsupported affine
 substitutions remain unknown. This composition supplies target templates; it
 does not specialize a generic callee's return or memory result with a target
 overlay.
@@ -595,10 +631,88 @@ neither the address tag nor its numeric VM region proves separation. Joins
 widen translation bounds, and summary keys retain them. An unknown write
 address still invalidates all potentially aliased cells.
 
-Schema 6's additive `frame_coordinates` metadata records stack frame bytes,
-maximum call depth and `maximum_translation_bytes` (null for manual frames).
-Abstract frame coordinates never authorize an immutable-image load, including
-when a translation bound is available.
+Schema 7 retains `frame_coordinates`: stack frame bytes, maximum call depth
+and `maximum_translation_bytes` (null for manual frames). Abstract frame
+coordinates never authorize an immutable-image load, including when a
+translation bound is available.
+
+Schema 9 scopes tagged frame coordinates to their owning function summary.
+A known singleton entry r10 can anchor the input register values and typed
+memory cells at offset zero. Literal VM bits, formal-origin register numbers
+and captured heap identities do not move. The callee's returned frame values
+and cells are rebound before the caller consumes them; unrepresentable input
+translations stay in their original coordinates, and unrepresentable returned
+frame facts are forgotten. Instantiated expression witnesses use the caller's
+coordinates after its frame push. Reports name these namespaces and count
+`canonicalized_frame_inputs`, including cache lookups, rather than treating
+each normalization as a distinct context or recovered target.
+
+Typed stores and complete copies use the same range owner for these relative
+coordinates. A representable word below the numeric stack region can still
+describe a valid translated frame cell. A literal address requires the ordinary
+scratch range, while a bounded frame coordinate must have a possible complete
+scratch window. Wrapped words and immutable-image reads through frame tags
+remain refused. Normalization retains the existing alias bounds and memory
+snapshot keys; it does not project away unread caller memory.
+
+An exact cached specialization can also contain a recursive call cut by its
+earlier caller. When that non-self callee is no longer active, an opaque
+completed specialization can be reconsidered under the existing scalar-return,
+memory-transfer and target-preservation checks. Active callers and root
+summaries remain protected. Successful work is remembered per entry/cut callee
+and counted in `unblocked_recursion_retries`; it uses the existing four variants
+and resource budgets. A cluster of equal retained literal image bindings can
+likewise admit a new image binding when some other variants have unknown
+inputs. This selects work only; unknown inputs supply no pointer inequality or
+target proof, and replacement still preserves the old caller transfer and
+target evidence.
+
+Schema 11 computes whether a decoded block can reach a matched guest return.
+A direct call needs both a returning callee and a returning continuation;
+a conditional branch admits either successor. The least fixed point cannot
+invent a base return after a mandatory recursion cycle. This uses the canonical
+MedIR calls and intraprocedural CFG. Unknown indirect calls, unsupported raw
+entries and runtime dispatch remain potentially returning, including syscalls
+catalogued as terminal: a host callback can still return.
+
+When recursion or call depth prevents summarizing a callee whose CFG cannot
+return, the edge records `proven_nonreturning_call` and stops that continuation.
+The ordinary callee analysis still retains caller-conditioned CALLX evidence
+executed before termination. A nonreturning callee's memory effects cannot
+invalidate a different returning sibling path. The work is included in the
+unchanged query budgets and reported as `return_reachability_instruction_visits`;
+its temporary dependency graph is released before context recovery. This does
+not prove that a particular host call terminates or that a reachable EXIT is
+feasible for every input.
+
+Unsigned branch comparisons can establish bounds on values carried affinely
+to a function's return. A nullable return retains the null alternative.
+Nonliteral address returns receive a report-local captured identity; its bounds
+and identity travel through full-width stores, loads, object fields and complete
+copies. A capture is an opaque value, not a fabricated heap address or proof
+of fresh allocation. Distinct captures can alias. The canonical typed-memory
+owner checks their complete numeric footprints, including modular offsets,
+before preserving a frame or another object field. A partial write invalidates
+the overlapping field. Captures are rebound at caller boundaries and widened
+to bounds across CFG back edges, so successive calls or loop iterations cannot
+reuse an old object's equality identity. Coordinate configuration is shared
+across the analysis and charged at its owner.
+
+Generic byte-copy postconditions snapshot entry fields after invalidating all
+preceding may-writes. They retain full words only, meet at joins and disappear
+when a later destination write may overlap. Only generic summaries retain a
+complete entry-relative write history for deferred copies. A specialized caller
+applies them to its current memory and retains the resulting typed facts; it
+cannot replay them against an earlier entry snapshot. A caller can also
+instantiate a generic copy wrapper along a completely proven scalar path to a single
+`memcpy`/`memmove` syscall and a return suffix with no memory operations or
+other calls. This consumes the existing instruction budget and records the
+syscall slot and length on the summary edge; it creates no cached specialization.
+Unknown branches, loops, earlier loads/stores/calls and additional suffix memory
+operations cannot establish that path. This propagation is demanded by a
+captured source field or pointer. `captured_addresses`, bounded may-write
+intervals and `output_memory_copies` describe these additional facts separately
+from literal CALLX target proofs.
 
 Every result remains conditional on recognized CFG/function entries and its
 recorded caller facts. Unaligned targets and continuation slots use raw VM rules;
@@ -611,8 +725,15 @@ Contextual keys retain the typed full-width cells consumed by CALLX proofs.
 Descriptor-byte buffers have no reader in this optional analysis and are
 projected out, so unread byte differences do not split equivalent inputs or
 consume the retained-state budget. Canonical store/copy transfers retain their
-full-width tags and partial-overwrite invalidation. CFG scheduling and all-path
-joins are unchanged.
+full-width tags and partial-overwrite invalidation. Concrete functions whose
+completed generic summary contains CALLX sites process CFG joins in reverse
+postorder. Generic summaries and concrete forwarding wrappers retain FIFO
+scheduling, including the order in which they request the four cached
+specializations.
+The value lattice, all-path joins and resource limits remain unchanged.
+A concrete summary's proven target can also retain an independently instantiated
+generic input-expression witness when their actual target addresses agree.
+That witness does not change the concrete summary's return or memory transfer.
 
 `CallXContextSpecializationsPerEntry` still bounds each entry to four cached
 specializations. Further inputs use explicitly marked generic summaries.

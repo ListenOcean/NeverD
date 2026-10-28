@@ -8,7 +8,7 @@
 /// Creating, loading, and analyzing a session, the image metadata read off it,
 /// plus the error, allocation, and version entry points every caller needs.
 ///
-/// All returned strings are heap-allocated via strdup(); callers must
+/// All returned strings are heap-allocated; callers must
 /// free them with neverd_free_string().
 ///
 //===----------------------------------------------------------------------===//

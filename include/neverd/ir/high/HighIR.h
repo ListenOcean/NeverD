@@ -653,6 +653,10 @@ struct HighFunc {
   std::vector<HighLocal> Locals;
   std::vector<HighStmt> Body;
   std::optional<ExceptionFunction> ExceptionMetadata;
+  /// Entry-SP coordinates of frame PHIs when the Itanium C++ view enters
+  /// pads only from their protected calls. The machine range edges remain
+  /// unchanged. Use only after every pad has become a C++ clause.
+  std::vector<std::pair<MedVar, ExprPtr>> ItaniumCallFrameOffsets;
   bool HasUnresolvedSEHFrame = false;
   std::set<va_t> CxxContinuationTargets;
   unsigned StructuredExceptionRegions = 0;

@@ -878,7 +878,7 @@ void MedToHighConverter::eliminateDeadStmts(HighFunc &Func) {
 
   LLVM_DEBUG(llvm::dbgs() << "    dce phase 14: var rename (" << Func.Name
                           << ", " << Func.Body.size() << " stmts)\n");
-  renameVars(Func.Body);
+  renameVars(Func);
 
   postRenameCleanup(Func);
 

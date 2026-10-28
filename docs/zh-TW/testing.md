@@ -1984,6 +1984,8 @@ Linux 原生驗收也執行完整的 `HighSwiftEmitter` 測試集，涵蓋暫存
 
 `SymAtomicCmpxchg.*` 與 `InterpreterSpecialization.AtomicCmpxchg*` 涵蓋完整位元組效果、兩種位元組順序、舊值來源、輸入輸出別名、原生返回單元、跨匯合點的仿射溢出儲存失效、有序操作發生次數的保留、嚴格接納及精確／不足預算。獨立位元組校驗器僅模擬循序值語義。原始碼包裝對照採用初始化完整、結構有效的圖，要求在有序記憶體邊界拒絕。獨立 LowIR 對照另綁定完整 sidecar，並要求不產生憑證。原生二進位證明可能更早拒絕，因為 LOCK CMPXCHG 尚缺完整的架構未定義輸出稽核。原始收據檢查繫結記憶體順序、位址空間及目標運算元。宣告支援前應執行所屬測試集；測試定義本身不是執行證據。
 
+`InterpreterSpecialization.AtomicUpdates*` 涵蓋 ADD/XCHG 的所有純量寬度與兩種位元組序、舊值輸出重疊、原生返回範圍、不改變值的操作保留、跨節點的新舊記憶體來源、明確域拒絕及框架保留的精確／不足預算。應與全部解譯器特化、條件儲存和原子符號測試一起執行；位元組校驗器僅提供循序值語義。
+
 `InterpreterSpecialization.WideIntegerConcat*` 涵蓋兩種位元組序、高低字、常數輸入、重疊輸出、高字控制、非法形狀、精確／不足預算及未知記憶體來源保留。嚴格解碼的 `PSHUFD` 以獨立雙字索引驗證全部 256 種選擇值及相同／不同目的暫存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生證明與兩種原始碼配置的拒絕。
 
 `InterpreterSpecialization.Timestamp*` 以獨立值與狀態參考實作檢查完整讀數、高半部清零、獨立與重複讀取、暫存器／旗標／記憶體／區段基址保持、精確與不足預算、非法序列及未知位址來源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 檢查原始還原完成並保留原生證明與原始碼配置拒絕。現有 `X86_64_Intrinsics` 時間戳案例檢查原始碼產生與單次讀取的完整位元結果；`DriverTimestamp` 另行檢查 Unicorn/KVM/WHP 共用時鐘策略、狀態保持、預算及溢位。平台略過不代表該後端已執行。
@@ -2083,7 +2085,7 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `SymStorePreservation.Independent*`、`RepeatedRegionsFormAUnionAndChargeEveryScan`、`EmptyIndependentRegionsKeepOriginalWorkAccounting` 與 `ExecutorUsesIndependentRegionsForOnlyOneStore` 涵蓋一次 STORE 保留兩至三個獨立目前根、兩種位元組序、跨相對零點的部分區間、重疊宣告、未保護間隙及寫入後未知值的世代。精確預算及少一單位的預算檢查完整計費，缺少的區域不得具現化。無效或越界參照、窄或常數基底、空或反向區間，以及實際寫入本身的基底均應拒絕且不改變狀態。空 `AdditionalRegions` 維持既有單根及 `AdditionalRanges` 計費。執行器檢查單次事件、同區域相鄰位元組及後續一般寫入的失效效果。`SymAtomicCmpxchg.IndependentRegionsShareTheWritePhaseAndItsBudget` 涵蓋比較符合及不符合、精確及不足預算、兩個保留根、舊值輸出及既有保守拒絕路徑。
 
-`NeverDSymConditionalStoreTests` 涵蓋獨立根的目前位元組條件效果、128 位元寫入、兩種位元組順序、部分重疊、符號相對座標環繞及絕對記憶體，並檢查自身區域相鄰位元組、目前與歷史事實、寫入後未知時期、不支援的輸入，以及精確與少一單位預算。執行器案例涵蓋沿用既有區段基址處理的 STORE、嚴格 CMPXCHG 的成功與失敗、Old 延後發布、拒絕時 havoc，以及其他操作保持 Invalid。一般寫入與保留契約的預設行為不變。這些測試驗證有界記憶體語義，不認證存取權限或完整程式還原。
+`NeverDSymConditionalStoreTests` 涵蓋絕對與符號儲存區的有界位元組效果、雙端序、重疊、環繞、未知時期和精確預算。執行器測試包含 STORE、純量原子 ADD/XCHG/CMPXCHG、位址/值/輸出暫存器重疊、Old 延後發布、非法形狀及拒絕時 havoc。`SymStorePreservation` 以明確堆疊框架保留契約檢查同一原子寫入路徑，以及精確和少一單位預算。無描述元的一般執行行為不變；這些檢查不認證存取權限或完整程式恢復。
 
 
 `AbsoluteMemoryFactsTests.inc` 涵蓋絕對位址目標跨節點傳遞、衝突匯合、部分重疊及未知別名寫入，以及兩種位元組序和啟用/停用串接時的堆疊分離證明。獨立位元組執行器檢查副作用；缺少排除範圍或預算不足時必須拒絕。`SymStorePreservation.Absolute*` 與 `SymState.AbsoluteProjections*` 檢查區域共存、高位址、唯讀有界投影、寫入後的未知值世代和交易式拒絕。執行 `NeverDInterpreterSpecializationTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests`，再執行原生獨立性及 LowIR 精化測試。
@@ -2169,3 +2171,7 @@ HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告�
 呼叫後記憶體測試涵蓋保留值、條件結果、未知狀態更新、呼叫前目標與無效輸入拒絕。修改此邊界時，請一併執行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 與 `NeverDSymMemoryKnowledgeTests`。
 
 `NeverDSymbolicCallEffectTests` 也檢查提供者能取得兩個分支、先前呼叫效果、重複呼叫及合流後的完整路徑條件；矛盾效果會阻止後續操作及提供者呼叫。這是不依賴求解器的探索回歸，並非外部 API 契約驗證。
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` 與交換對照在 O0/O2 及 UBSan 下執行兩條 C 輸出路線，涵蓋四種 x64 寬度、未對齊位址、舊值及所有相鄰位元組。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` 也執行原始 LLVM IR、保留未使用結果的寫入，並拒絕變更的組合語言契約。FS/GS 形式僅編譯，不存取宿主 TLS；執行需要 x64 宿主。這些檢查不認證並行競爭或硬體故障。
+
+`X86LegacyAtomic.LockedArithmetic*` 檢查 x86/x64 純量寬度、獨立算術旗標、來源暫存器與進位保留、有號立即數、未對齊鄰接位元組、唯讀及截斷映射、FS/GS 位址與無鎖對照。不支援的帶鎖核心運算不能發布一般儲存。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` 也檢查四種帶鎖算術的原始特化，並保留有序記憶體證明拒絕。

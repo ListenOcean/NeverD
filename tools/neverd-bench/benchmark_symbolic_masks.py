@@ -967,6 +967,28 @@ def complemented_carry_product_corpus(width, count):
     return rows
 
 
+def narrow_product_cross_terms_corpus(width, count):
+    """Partial products with three effective nonlinear bits and deeper carries."""
+    rows = []
+    configurations = ((6, 23, 3), (6, 30, 3), (7, 47, 4),
+                      (7, 62, 4), (8, 95, 5), (8, 126, 5))
+    for index in range(count):
+        kind = index % 36
+        observed, degree, high = configurations[kind // 6]
+        mode, neighbor = kind % 6 // 2, bool(kind % 2)
+        base = ("x", "(x^1)", "(~x)")[mode]
+        factors = []
+        for i in range(degree):
+            offset = 2*i + int(neighbor and i == 0)
+            upper = f"(((y+{i})&-2)*((z+{2*i})&-{1 << (high-1)}))"
+            factors.append(f"(({base}+{offset})^{upper})")
+        if mode == 2:
+            factors.reverse()
+        rows.append(f"({3 << (width-observed)}*{'*'.join(factors)})"
+                    "+(x^y)+2*(x&y)+(z|w)+(z&w)")
+    return rows
+
+
 def residue_power_corpus(width, count):
     """Degree-16–512 grouped powers with an independent-parity multiplier.
 
@@ -1243,6 +1265,7 @@ def main():
                  "residue-product", "affine-residue", "prefix-residue", "residue-frontier",
                  "distributed-prefix", "multiple-residual", "carry-product",
                  "permuted-carry-product", "complemented-carry-product",
+                 "narrow-product-cross-terms",
                  "residue-power", "residue-quotient", "residue-subgroup",
                  "sparse-linear-mixed-degree"),
         default="complement",
@@ -1284,6 +1307,7 @@ def main():
                 "carry-product": carry_product_corpus,
                 "permuted-carry-product": permuted_carry_product_corpus,
                 "complemented-carry-product": complemented_carry_product_corpus,
+                "narrow-product-cross-terms": narrow_product_cross_terms_corpus,
                 "residue-power": residue_power_corpus,
                 "residue-quotient": residue_quotient_corpus,
                 "residue-subgroup": residue_subgroup_corpus,
