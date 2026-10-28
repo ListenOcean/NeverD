@@ -271,8 +271,11 @@ void fillUnstructuredGotoSkeleton(HighFunc &Func, const MedFunc &Med);
 /// widest direct call stores from the call's stack pointer up, which MedToHigh
 /// seeds where its va_arg walk reads its overflow.  For a convention whose
 /// calls take their arguments from callee summaries, which recover no call
-/// arguments for finalizeVariadicCallees to count.
-void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch);
+/// arguments for finalizeVariadicCallees to count.  A slot holding only a
+/// scratch register's undefined incoming value under the convention of a
+/// \p Format image is no argument (holdsUndefinedIncomingScratch).
+void sizeVariadicOverflowFromStores(std::vector<MedFunc> &Funcs, Arch TheArch,
+                                    BinaryFormat Format);
 
 /// What its name says of a call target outside \p Funcs, or of one named as
 /// a C library routine (markVaListCalls): how many integer parameters it

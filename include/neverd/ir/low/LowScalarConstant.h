@@ -19,6 +19,8 @@
 
 namespace neverd {
 
+struct CallRegisterBodyView;
+
 /// Evaluate the bounded scalar operations shared by exact frame-value
 /// propagation and image-address inventories. Results wrap at the declared
 /// width; a pointer identity, a memory value or an unsupported operation is
@@ -43,12 +45,18 @@ constantRegisterValueAtCall(const LowFunc &Function,
                             const SourceCallOccurrenceKey &Site,
                             const NdVar &Register);
 
-/// Exact register-call values established in the same basic block. The keys
-/// retain the original indirect occurrences. Calls and opaque operations kill
-/// facts; loads, predecessor values and constant memory-call slots supply none.
-/// These are numeric values, not function ownership or ABI evidence.
+/// Exact register-call values established locally or along a bounded unique
+/// direct-predecessor chain. The keys retain the original indirect occurrences.
+/// Joins, independent roots, exceptional edges and cycles provide no inherited
+/// facts. Calls, opaque effects, loads and literal memory-call slots provide
+/// none. These are numeric values, not function ownership or ABI evidence.
 std::map<SourceCallOccurrenceKey, va_t>
 constantRegisterCallTargets(const LowFunc &Function);
+
+/// The same proof for retained call-summary bodies, with their coverage and
+/// independent-root facts. A cache hit cannot change the target proof.
+std::map<SourceCallOccurrenceKey, va_t>
+constantRegisterCallTargets(const CallRegisterBodyView &Function);
 
 } // namespace neverd
 

@@ -245,11 +245,14 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
       Mask[I] = (ShardPlan.ShardOf[I] == S);
     LLVMEmissionResult Result;
     // Where the unit names what it leaves out, a body that refuses a stale
-    // address stays declared only, with why, and the shard is emitted again
-    // without it: one refusal must not cost the unit every other definition.
-    // Each round leaves out at least one body.
+    // address, or whose contract the emitter refuses before any module,
+    // stays declared only, with why, and the shard is emitted again without
+    // it: one refusal must not cost the unit every other definition. Each
+    // round leaves out at least one body.
     for (;;) {
       MedLLVMEmitter Emitter;
+      // The shards' masks partition the unit, and a body left out is noted.
+      Emitter.setMaskedBodiesOwnedElsewhere(true);
       Emitter.setPreserveUnknownSourceValues(PreserveUnknownSourceValues);
       Emitter.setSourceCalleeDeclarations(SourceCalleeDeclarations);
       Emitter.setDebugContext(Dbg);
@@ -259,9 +262,17 @@ Pipeline::LLVMEmissionResult Pipeline::emitLLVMSharded(
         Result.Sources = std::make_shared<LLVMSourceMap>();
         Emitter.setSourceMap(Result.Sources.get());
       }
-      Result.Module = Emitter.emit(Funcs, ShardCtx, "neverd_output", TheArch,
-                                   Imports, &Img, Fmt,
-                                   /*MergeableGlobals=*/true, &Mask);
+      try {
+        Result.Module = Emitter.emit(Funcs, ShardCtx, "neverd_output", TheArch,
+                                     Imports, &Img, Fmt,
+                                     /*MergeableGlobals=*/true, &Mask);
+      } catch (const std::exception &) {
+        // Any other error, and a refusal the unit cannot name, fails the
+        // shard with the emitter's text.
+        if (!OmitRefusedBodies || Emitter.refusedBodies().empty())
+          throw;
+        Result.Module.reset();
+      }
       Result.UnhandledValueIntrinsics = Emitter.unhandledValueIntrinsicCount();
       if (Result.Module || !OmitRefusedBodies ||
           Emitter.refusedBodies().empty())

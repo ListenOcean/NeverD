@@ -111,6 +111,25 @@ public:
   std::string sourceImportDeclaration(const FunctionSym &Function,
                                       llvm::StringRef Name);
   std::map<std::string, FunctionSym> SourceImportPrototypes;
+  struct SourcePointerType {
+    TypeRef Type;
+    std::string Alias;
+    std::string declaration(llvm::StringRef Name = {}) const;
+  };
+  struct DefinitionPointerTypes {
+    std::vector<SourcePointerType> Parameters;
+    SourcePointerType Result;
+  };
+  /// The pointer types actually printed by a definition, shared by its
+  /// signature and direct calls regardless of module order. Declarations
+  /// outside the selected projection keep their own LLVM/source contract.
+  const DefinitionPointerTypes &
+  definitionPointerTypes(const llvm::Function &Fn) const;
+  mutable std::map<const llvm::Function *, DefinitionPointerTypes>
+      DefinitionPointers;
+  std::optional<DebugParamBindings>
+  debugArgumentBindings(const llvm::Function &Fn,
+                        const FunctionSym &Signature) const;
   /// Records which symbol each function identifier stands for
   /// (CSourceMap::Names), as HighC does, from the ordinary render.
   void recordSourceNames(const llvm::Module &Mod);
@@ -601,6 +620,7 @@ public:
   /// \p Call's text \p Expr as a value of the call's own type: the pointer a
   /// library routine returns as the integer that holds it, and the result a
   /// callee that returns nothing leaves undefined as zero.
+  static bool needsCallSiteCType(const llvm::CallBase &Call);
   std::string callResult(const llvm::CallBase &Call, std::string Expr) const;
   /// MSVC ctor/dtor that returns `this` and whose result is unread. A store
   /// into an alloca that nothing loads does not count. Print the call as a
@@ -750,9 +770,12 @@ public:
   std::optional<va_t>
   uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const;
   std::string namedImageObject(va_t Addr) const;
-  /// Recognized image text beside the load that reads it, even when the
-  /// object's declaration is folded out of the displayed function body.
-  std::string imageLoadComment(const llvm::LoadInst &Load) const;
+  /// Recognized image text at a proved data address, shared by loads and
+  /// pointer arguments even when the image declaration is folded away.
+  std::string imagePointerComment(const llvm::Value *Pointer) const;
+  /// Annotate a checked pointer argument without replacing its storage.
+  std::string imagePointerArgument(const llvm::Value *Pointer,
+                                   std::string Text) const;
   std::optional<va_t> imageDataVA(const llvm::Value *V) const;
   static unsigned imageIntegerAccessSize(const llvm::Type *Ty) {
     if (!Ty || !Ty->isIntegerTy())

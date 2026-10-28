@@ -262,7 +262,8 @@ bool MedLLVMEmitter::isMutableDataSeg(const Segment *S) const {
     return false;
   // Some formats retain writable loader flags on relocated pointer tables that
   // become immutable after fixups; pointer-table machinery owns those ranges.
-  if (section_names::isReadOnlyAfterRelocSectionName(S->Name))
+  if (Img ? Img->readOnlyAfterRelocations(S->VA, S->Size)
+          : S->ReadOnlyAfterRelocations)
     return false;
   if (!Img)
     return true;
@@ -479,8 +480,8 @@ void MedLLVMEmitter::rebindDirectDataBytes(llvm::Constant *Mirror,
 
 bool MedLLVMEmitter::isReadOnlyAfterReloc(const Segment *S) const {
   return S && S->isReadable() && !S->isExecutable() && !S->Data.empty() &&
-         (!S->isWritable() || S->ReadOnlyAfterRelocations ||
-          section_names::isReadOnlyAfterRelocSectionName(S->Name));
+         (Img ? Img->readOnlyAfterRelocations(S->VA, S->Size)
+              : !S->isWritable() || S->ReadOnlyAfterRelocations);
 }
 
 std::pair<llvm::Constant *, uint64_t>
@@ -514,22 +515,15 @@ bool MedLLVMEmitter::isMaterializableReadOnlyDataAddress(uint64_t VA) const {
       VA - Seg->VA >= Seg->Data.size())
     return false;
 
-  // A format-native section is finer provenance than its load segment.  In a
-  // linked ELF, lld can place `.data.rel.ro` in an ordinary writable PT_LOAD
-  // together with unrelated sections; the segment name/permissions therefore
-  // cannot express the post-relocation immutability of this exact address.
-  // Mach-O has the inverse coarse-layout case: read-only data can share the
-  // executable __TEXT segment.  Accept exact readable, non-executable section
-  // evidence when the enclosing segment is too coarse, including writable
-  // RELRO sections that become immutable after the dynamic loader fixes them.
+  // A data section can share an executable mapping, and an exact RELRO range
+  // can share a writable mapping. Keep data ownership separate from the
+  // loader's address-specific protection proof.
   bool HasReadOnlySectionEvidence = false;
   if (const Section *Sec = Img->getSectionFor(VA))
     HasReadOnlySectionEvidence =
         Sec->isReadable() &&
         (Img->isMachO() ? !Img->isCodeAddress(VA) : !Sec->isExecutable()) &&
-        (!Sec->isWritable() ||
-         section_names::isReadOnlyAfterRelocSectionName(Sec->Name) ||
-         section_names::isReadOnlyAfterRelocSectionName(Sec->SegmentName));
+        Img->readOnlyAfterRelocations(VA, 1);
   if (Seg->isWritable() && !isReadOnlyAfterReloc(Seg) &&
       !HasReadOnlySectionEvidence)
     return false;
@@ -554,13 +548,10 @@ bool MedLLVMEmitter::isMaterializableReadOnlyDataAddress(
 
   bool HasReadOnlySectionEvidence = false;
   if (OwnerSec)
-    HasReadOnlySectionEvidence =
-        OwnerSec->isReadable() &&
-        (Img->isMachO() ? !Img->isCodeAddress(OwnerVA)
-                        : !OwnerSec->isExecutable()) &&
-        (!OwnerSec->isWritable() ||
-         section_names::isReadOnlyAfterRelocSectionName(OwnerSec->Name) ||
-         section_names::isReadOnlyAfterRelocSectionName(OwnerSec->SegmentName));
+    HasReadOnlySectionEvidence = OwnerSec->isReadable() &&
+                                 (Img->isMachO() ? !Img->isCodeAddress(OwnerVA)
+                                                 : !OwnerSec->isExecutable()) &&
+                                 Img->readOnlyAfterRelocations(OwnerVA, 1);
   if (OwnerSeg->isWritable() && !isReadOnlyAfterReloc(OwnerSeg) &&
       !HasReadOnlySectionEvidence)
     return false;
