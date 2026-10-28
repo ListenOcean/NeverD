@@ -40,12 +40,17 @@ struct MedFunc;
 /// function: whether its value is observed is known only once call arguments
 /// and returns are settled (validateObservedCallReturnReads). Every other
 /// refusal remains immediate.
+///
+/// \p NeedsCalleeFacts, when supplied without \p CallReturns, is set if a
+/// CALL's stack position had no local range. Callee return ranges may still
+/// bound it, so a load deferred now could be proved once they are known.
 bool validateSourceCallReturnReads(
     const MedFunc &Func, const BinaryImage &Image, std::string &Diagnostic,
     size_t WorkLimit = limits::ir::kSourceCallReturnReadWork,
     const LowFunc *FreshSource = nullptr,
     const MedCallReturnRanges *CallReturns = nullptr,
-    std::vector<MedCallReturnRead> *Deferred = nullptr);
+    std::vector<MedCallReturnRead> *Deferred = nullptr,
+    bool *NeedsCalleeFacts = nullptr);
 
 /// Refuse a recorded CALL return-slot load (MedFunc::CallReturnReads) whose
 /// value the settled function still observes. Copies, byte views and joins

@@ -37,10 +37,15 @@ MedStackProjection medStackProjection(const PipelineOptions &Options);
 
 /// Recompute entry kind, alignment and source stack annotations on this fresh
 /// conversion. Never copy annotation flags from another operation sequence.
+/// With \p WaitForCalleeFacts and no \p CallReturns, a CALL return-slot load
+/// deferred only because a CALL's stack position had no local range refuses
+/// this attempt instead, before any annotation: the caller retries it once
+/// callee return ranges are known.
 void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
                              MedStackProjection Projection,
-                             const MedCallReturnRanges *CallReturns = nullptr);
+                             const MedCallReturnRanges *CallReturns = nullptr,
+                             bool WaitForCalleeFacts = false);
 
 /// Read complete local leaf results in parallel after conversion has joined.
 /// The returned facts are immutable during the following source checks.

@@ -278,8 +278,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                                    std::string &Diagnostic, size_t WorkLimit,
                                    const LowFunc *FreshSource,
                                    const MedCallReturnRanges *CallReturns,
-                                   std::vector<MedCallReturnRead> *Deferred) {
+                                   std::vector<MedCallReturnRead> *Deferred,
+                                   bool *NeedsCalleeFacts) {
   Diagnostic.clear();
+  if (NeedsCalleeFacts)
+    *NeedsCalleeFacts = false;
   // Link-register targets have no implicit stack write. The current source
   // call encoding authority authenticates x86 near CALL/JMP occurrences.
   if (!getTargetRegInfo(Image.Arch).CallPushesReturnAddress ||
@@ -866,8 +869,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     const auto Bounds =
         entryStackOffsetRanges(Func, UnboundedStacks, Image.Arch,
                                Image.abiFormat(), Func.EntryKind, CallReturns);
-    for (size_t I = 0; I < Bounds.size(); ++I)
+    for (size_t I = 0; I < Bounds.size(); ++I) {
       CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+      if (!Bounds[I] && !CallReturns && NeedsCalleeFacts)
+        *NeedsCalleeFacts = true;
+    }
   }
   if (FreshSource &&
       llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {

@@ -70,7 +70,8 @@ bool refusalFailsRun(const PipelineOptions &Options) {
 void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
                              MedStackProjection Projection,
-                             const MedCallReturnRanges *CallReturns) {
+                             const MedCallReturnRanges *CallReturns,
+                             bool WaitForCalleeFacts) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
     return;
@@ -80,10 +81,18 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
   // (refuseObservedCallReturnReads); other refusals are final now.
   std::string Diagnostic;
   Func.CallReturnReads.clear();
+  bool NeedsCalleeFacts = false;
   if (!validateSourceCallReturnReads(
           Func, Image, Diagnostic, limits::ir::kSourceCallReturnReadWork,
-          &Source, CallReturns, &Func.CallReturnReads))
+          &Source, CallReturns, &Func.CallReturnReads,
+          WaitForCalleeFacts ? &NeedsCalleeFacts : nullptr))
     throw LowToMedConversionError(Diagnostic);
+  // A callee's return range may bound the dynamic stack below such a CALL and
+  // prove the load. Retry with those facts instead of deferring it now.
+  if (NeedsCalleeFacts && !Func.CallReturnReads.empty())
+    throw LowToMedConversionError(
+        "source frame in " + Func.Name +
+        ": a CALL return-slot proof waits for callee return ranges");
   markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
 }
 
@@ -452,6 +461,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     }
   };
   MedCallReturnRanges CallReturns;
+  bool CalleeFactsReady = false;
   auto FinishOne = [&](size_t I) {
     if (!Converted[I] || ConversionErrors[I])
       return;
@@ -460,7 +470,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       auto &MF = Result.MedFuncs[I];
       const auto &Projected = ProjectedFunctions[I];
       prepareMedStackAccesses(MF, Projected ? *Projected : Result.LowFuncs[I],
-                              Img, medStackProjection(Opts), &CallReturns);
+                              Img, medStackProjection(Opts),
+                              CalleeFactsReady ? &CallReturns : nullptr,
+                              !CalleeFactsReady);
       StackPrepared = true;
       if (medStackProjection(Opts) == MedStackProjection::Source)
         expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);
@@ -493,6 +505,7 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
     // missing stack proof asks for the complete, immutable callee table, after
     // every conversion has joined. A second refusal remains a real error.
     CallReturns = sourceCallReturnRanges(Img, Result);
+    CalleeFactsReady = true;
     parallelForEachWeighted(PendingWeight, [&](auto Claim, size_t N) {
       for (size_t J; (J = Claim()) < N;) {
         const size_t I = Pending[J];

@@ -382,8 +382,11 @@ extent crosses the native boundary refuses projection; it cannot disappear
 from the observation set. A store with such an extent proves no overwrite.
 Source conversion first uses its local stack proofs. A missing proof defers
 that caller until the parallel conversion joins; only then does the pipeline
-build the immutable callee range table and recheck pending callers. Successful
-local proofs require no callee summary. Incoming-stack and register-pair
+build the immutable callee range table and recheck pending callers. A CALL
+return-slot load the first pass would defer to the settled-MedIR check also
+waits there when some CALL's stack position had no local range, because those
+callee ranges may still prove it. Successful local proofs require no callee
+summary. Incoming-stack and register-pair
 reconversions rebuild the same phase-local facts. The checks still precede
 source save suppression and register-call expansion. No result is cached across
 image or body mutations, and no source return type supplies a machine proof.
