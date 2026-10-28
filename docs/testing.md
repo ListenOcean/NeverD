@@ -941,7 +941,10 @@ Include `NativeBooleanResultProof.*`, all `JTE_AArch64.*` cases and the
 jump-table/computed-goto tests:
 identical-address reads preserve the differential result proof, while either
 tainted address input must refuse it. Computed-goto execution covers both a
-zero-register index and a load overwriting its index register. Selector tests
+zero-register index and a load overwriting its index register. The C keeps
+each register-offset load and store as its encoded instruction, so these
+`AArch64_HighCExecution` cases execute only on an AArch64 host; elsewhere they
+compile the C for the kernel's target and skip the comparison. Selector tests
 reject stale or duplicated authentication records and duplicate load occurrences.
 Run `ResolverGuardPredicates.*` and `ResolverPredicateDemand.*` as well:
 explicit guarded upper-bound queries retain compound unsigned path predicates

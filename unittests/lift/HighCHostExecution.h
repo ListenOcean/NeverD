@@ -15,6 +15,8 @@
 
 #include "NeverDLiftFixture.h"
 
+#include "neverd/backend/c/render/AArch64/AArch64AddressMemoryC.h"
+
 #include <algorithm>
 #include <fstream>
 #include <initializer_list>
@@ -83,6 +85,24 @@ protected:
     const std::string C((std::istreambuf_iterator<char>(Input)),
                         std::istreambuf_iterator<char>());
     ASSERT_EQ(C.find("unknown"), std::string::npos) << C;
+
+    // AArch64 C retains each original register-offset memory instruction as
+    // its encoded word (AArch64AddressMemory.def), which only an AArch64 host
+    // executes. Elsewhere the C must still build for the kernel's target; the
+    // comparison against the kernel is then an explicit skip, not a pass.
+#if !defined(__aarch64__)
+    if (C.find(neverd::kAddressMemoryLoadCAsm) != std::string::npos ||
+        C.find(neverd::kAddressMemoryStoreCAsm) != std::string::npos) {
+      std::vector<std::string> TargetArgs = TargetFlags;
+      TargetArgs.insert(TargetArgs.end(), {"-ffreestanding", "-std=gnu11",
+                                           "-fno-strict-aliasing"});
+      const auto Target =
+          checkHighCClangCompile(tmpFile("decompiled_high.c"), TargetArgs);
+      ASSERT_EQ(Target.exitCode, 0) << Target.err << "\n" << C;
+      GTEST_SKIP() << "the C retains original AArch64 memory instructions; "
+                      "executing it requires an AArch64 host";
+    }
+#endif
 
     std::string Reference = Kernel;
     for (const std::string Name : Names)
