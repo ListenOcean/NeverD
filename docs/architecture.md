@@ -10316,7 +10316,7 @@ reversal within each 64-bit block. Both 64-bit and 128-bit vectors use the
 existing vector-effect owner; narrow results clear the upper half. Reserved
 offsets, reserved element sizes and scalable encodings remain unsupported.
 
-Baseline integer CMEQ, UZP1, XTN/XTN2 and UMAXV use that same admission owner.
+Baseline integer CMEQ, UZP1, XTN/XTN2, UMAXV and UMINV use that same admission owner.
 The original instructions execute on the selected checked CPU transport; OS
 models do not replace them with scalar stubs. Optional/scalable forms still fail
 admission. Independent lane and full-state oracles cover both execution levels.
@@ -13495,11 +13495,30 @@ This follows the pinned API 28
 [Java Parcel](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/android/os/Parcel.java),
 [JNI adapter](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_os_Parcel.cpp)
 and [native data contract](https://android.googlesource.com/platform/frameworks/native/+/android-9.0.0_r1/libs/binder/Parcel.cpp).
-In the ServiceManagerProxy call sequence, both obtains now have shared semantics;
-`writeInterfaceToken` remains the next boundary because it reads Binder-thread
-StrictMode policy. No default policy or native Binder handle is inferred from
-Java proxy keys. Borrowed native Parcels, object/FD translation, custom string
-helpers, capacity/size mutation, floating methods and RPC remain unsupported.
+`BinderThreadState` belongs to each native guest thread, with the same state
+shape for Bionic's single-thread fallback. API 28 native IPCThreadState starts
+its StrictMode policy at zero. JNI detach/reattach does not reset this state,
+and newly created pthreads do not inherit the parent's policy. `AndroidDex`
+connects RuntimeServices to the current native thread; shared Dalvik Binder
+get/set methods and Parcel token writing use those services. A standalone
+Runtime without the service stops explicitly. The native policy is distinct
+from Java StrictMode/BlockGuard and from kernel Binder handle state.
+
+`writeInterfaceToken` writes the current 32-bit native policy OR `0x00400000`
+(PENALTY_GATHER), then reuses the shared String encoder. It leaves the local
+policy unchanged, adds no later-platform WorkSource header and requires a
+nonnull interface String. Its completed policy/length writes survive model
+resource stops just like ordinary Parcel writes. This follows API 28
+[Binder natives](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/jni/android_util_Binder.cpp)
+and [IPCThreadState](https://android.googlesource.com/platform/frameworks/native/+/android-9.0.0_r1/libs/binder/IPCThreadState.cpp).
+
+The ServiceManagerProxy sequence now has shared obtain, token and name-writing
+semantics. Its next transport boundary is `BinderProxy.transact`: Java proxy
+keys do not identify native handles, peer state or reply object translations.
+`enforceInterface` also remains unmodeled: its incoming transaction flags and
+Java StrictMode policy-change upcall cannot be omitted. Borrowed native Parcels,
+object/FD translation, custom string helpers, capacity/size mutation, floating
+methods and RPC remain unsupported.
 
 
 `KernelFileSystem` owns the validated volume/node state; `KernelModel` owns canonical device topology and references. `DriverFileSystemJSON` is transport only. `DeviceOwnerKind` distinguishes Guest, PnpProvider and FileSystemProvider; only PnP routes use `isPnpProviderDevice`. Volume devices exist before DriverEntry, and four shared route guards reject unimplemented file I/O before publication. Owner snapshots remain independent of guest object projections and configuration.
