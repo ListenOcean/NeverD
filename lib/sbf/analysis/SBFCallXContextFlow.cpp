@@ -559,6 +559,7 @@ private:
   summarize(size_t Entry, const ContextState &Input, bool Generic = false,
             CallXInputGeneralization *Generalization = nullptr);
   llvm::Error computeInputDependencies();
+  llvm::Error computeReturnReachability();
   ContextState genericInput() const;
   llvm::Expected<RegisterValue> captureAddress(size_t Owner, size_t CallSlot,
                                                uint64_t Source,
@@ -722,12 +723,124 @@ private:
   size_t InstantiatedTargetInputExpressions = 0;
   size_t InstantiatedStoredValueInputExpressions = 0;
   size_t InstantiatedReturnInputExpressions = 0;
+  std::vector<uint8_t> MayReturnFromBlock;
+  size_t ReturnReachabilityVisits = 0;
   bool SpecializationBudgetExhausted = false;
   size_t Visits = 0;
   size_t CacheHits = 0;
   uint64_t RetainedBytes = 0;
   uint64_t PeakRetainedBytes = 0;
 };
+
+llvm::Error ContextFlow::computeReturnReachability() {
+  // Least fixed point of matched guest returns. A call requires its callee
+  // AND continuation to return; a branch needs any successor. Host and unknown
+  // indirect calls may return, including catalogued terminal syscalls. A
+  // mandatory recursion cycle cannot bootstrap itself from an EXIT after it.
+  const size_t Count = Program.Med.Blocks.size();
+  const size_t Before = Visits;
+  uint64_t TemporaryBytes =
+      Count * (4 * sizeof(size_t) + sizeof(uint8_t)) + 2 * sizeof(size_t);
+  if (auto Error = retain(Count * sizeof(uint8_t) + TemporaryBytes))
+    return Error;
+  const auto Release =
+      llvm::scope_exit([&] { RetainedBytes -= TemporaryBytes; });
+  MayReturnFromBlock.assign(Count, false);
+  std::vector<uint8_t> TailReturns(Count);
+  std::vector<size_t> RemainingCalls(Count), ReverseOffsets(Count + 1);
+  const auto DirectCallee =
+      [&](const MedInstruction &Instruction) -> std::optional<size_t> {
+    if (Instruction.Call != CallKind::Internal || !Instruction.CallTarget ||
+        (Instruction.Dispatch ==
+             CallDispatchPolicy::LegacyRuntimeThenFunction &&
+         Program.isSyscallRegistered(
+             static_cast<uint32_t>(Instruction.Immediate))))
+      return std::nullopt;
+    const auto It = ByEntry.find(*Instruction.CallTarget);
+    if (It == ByEntry.end() || !Index.find(*Instruction.CallTarget))
+      return std::nullopt;
+    return It->second;
+  };
+  for (const auto &Block : Program.Med.Blocks) {
+    if (auto Error = visit())
+      return Error;
+    const auto *Last = Index.find(Block.EndSlot - 1);
+    TailReturns[Block.ID] = Last && Last->Op == Operation::Exit;
+    for (size_t Slot = Block.StartSlot; Slot < Block.EndSlot; ++Slot) {
+      const auto *Instruction = Index.find(Slot);
+      if (!Instruction)
+        continue;
+      if (auto Error = visit())
+        return Error;
+      if (const auto Entry = DirectCallee(*Instruction)) {
+        ++RemainingCalls[Block.ID];
+        ++ReverseOffsets[*Entry + 1];
+      }
+    }
+    for (size_t E = Offsets[Block.ID]; E < Offsets[Block.ID + 1]; ++E) {
+      if (auto Error = visit())
+        return Error;
+      ++ReverseOffsets[Successors[E] + 1];
+    }
+  }
+  std::partial_sum(ReverseOffsets.begin(), ReverseOffsets.end(),
+                   ReverseOffsets.begin());
+  struct Dependency {
+    size_t Block;
+    bool Callee;
+  };
+  const uint64_t EdgeBytes = ReverseOffsets.back() * sizeof(Dependency);
+  if (auto Error = retain(EdgeBytes))
+    return Error;
+  TemporaryBytes += EdgeBytes;
+  std::vector<Dependency> Reverse(ReverseOffsets.back());
+  auto Next = ReverseOffsets;
+  for (const auto &Block : Program.Med.Blocks) {
+    for (size_t Slot = Block.StartSlot; Slot < Block.EndSlot; ++Slot) {
+      const auto *Instruction = Index.find(Slot);
+      if (!Instruction)
+        continue;
+      if (auto Error = visit())
+        return Error;
+      if (const auto Entry = DirectCallee(*Instruction))
+        Reverse[Next[*Entry]++] = {Block.ID, true};
+    }
+    for (size_t E = Offsets[Block.ID]; E < Offsets[Block.ID + 1]; ++E) {
+      if (auto Error = visit())
+        return Error;
+      Reverse[Next[Successors[E]]++] = {Block.ID, false};
+    }
+  }
+  std::vector<size_t> Pending;
+  Pending.reserve(Count);
+  const auto Admit = [&](size_t Block) {
+    if (!MayReturnFromBlock[Block] && TailReturns[Block] &&
+        RemainingCalls[Block] == 0) {
+      MayReturnFromBlock[Block] = true;
+      Pending.push_back(Block);
+    }
+  };
+  for (size_t Block = 0; Block < Count; ++Block) {
+    if (auto Error = visit())
+      return Error;
+    Admit(Block);
+  }
+  for (size_t I = 0; I < Pending.size(); ++I) {
+    const size_t Block = Pending[I];
+    for (size_t E = ReverseOffsets[Block]; E < ReverseOffsets[Block + 1]; ++E) {
+      if (auto Error = visit())
+        return Error;
+      const auto &Use = Reverse[E];
+      if (Use.Callee)
+        --RemainingCalls[Use.Block];
+      else
+        TailReturns[Use.Block] = true;
+      Admit(Use.Block);
+    }
+  }
+  ReturnReachabilityVisits = Visits - Before;
+  return llvm::Error::success();
+}
 
 void ContextFlow::reclaimContext(FunctionContext &Context,
                                  std::vector<size_t> *Unreferenced,
@@ -2632,6 +2745,19 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
     Edge.Barrier = CallXSummaryBarrier::RecursiveCall;
   else if (ActiveEntries.size() >= Program.Config.MaxCallDepth - 1)
     Edge.Barrier = CallXSummaryBarrier::CallDepth;
+  if ((Edge.Barrier == CallXSummaryBarrier::RecursiveCall ||
+       Edge.Barrier == CallXSummaryBarrier::CallDepth) &&
+      !Edge.LegacyRuntime &&
+      !MayReturnFromBlock[ByEntry.at(*Edge.CalleeEntrySlot)]) {
+    Edge.Barrier = CallXSummaryBarrier::NonReturningCall;
+    if (Collect) {
+      if (auto Error = retain(sizeof(Edge)))
+        return std::move(Error);
+      Context.RetainedBytes += sizeof(Edge);
+      Context.Calls.push_back(Edge);
+    }
+    return false;
+  }
 
   FunctionContext *Callee = nullptr;
   if (Edge.Barrier == CallXSummaryBarrier::None) {
@@ -2702,6 +2828,18 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
         llvm::consumeError(std::move(Error));
       }
     }
+  }
+  if (Callee && !Callee->Return) {
+    // Keep caller-conditioned sites reached before termination. Its writes
+    // cannot affect a returning sibling path of this caller's summary.
+    if (Collect) {
+      if (auto Error = retain(sizeof(Edge)))
+        return std::move(Error);
+      Context.RetainedBytes += sizeof(Edge);
+      Context.Calls.push_back(Edge);
+      ++Callee->IncomingReferences;
+    }
+    return false;
   }
   const auto CopyLength = State.Registers[3].singleton();
   bool CopiesCapturedValue = false;
@@ -3005,8 +3143,6 @@ llvm::Expected<bool> ContextFlow::callTarget(FunctionContext &Context,
   }
   transfer(Instruction, State, nullptr);
   if (Callee) {
-    if (!Callee->Return)
-      return false;
     State.Registers[0] =
         translateFrameValues(Callee->Return->Registers[0], ReturnFrameDelta);
     State.Scratch = std::move(ReturnScratch);
@@ -3649,6 +3785,8 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
     return Report;
   if (auto Error = computeInputDependencies())
     return std::move(Error);
+  if (auto Error = computeReturnReachability())
+    return std::move(Error);
   if (auto Error = collectEntryPrefixes(Report))
     return std::move(Error);
   // Build sound all-unknown-input summaries first. They are reusable across
@@ -3881,6 +4019,7 @@ llvm::Expected<CallXContextReport> ContextFlow::run() {
       InstantiatedStoredValueInputExpressions;
   Report.InstantiatedReturnInputExpressions =
       InstantiatedReturnInputExpressions;
+  Report.ReturnReachabilityVisits = ReturnReachabilityVisits;
   return Report;
 }
 
