@@ -2183,3 +2183,5 @@ HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告�
 先驗證目前基本區塊能獨立證明的目標，避免無關前驅耗盡其工作預算。長前驅回歸也驗證此邊界。
 
 MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計算所得的間接呼叫目標保留 SSA 值身分，不能因位元模式成為常數而被當作指標儲存位址；直接呼叫和一般參數繼續摺疊。`NeverDImageAnalysisBoundaryTests` 檢查 x86/x64/ARM32/ARM64 的轉換，`NeverDIndirectCallValueSourceTests` 在三種原生格式下執行 x64/ARM64 兩條 C 路徑；原映像檢視僅檢查語法及沒有憑空增加的記憶體讀取，不能脫離映像提供者執行。
+
+`NeverDReadOnlyProtectionSourceTests` 將 PE、ELF、Mach-O 的 x64/ARM64 輸入指令產生為 HighC 和 LLVM C，並以主機 Clang 在 O0/O2 加 UBSan 下執行全域變數讀寫。涵蓋兩種管線最佳化模式及具誤導性的常數區段名稱。`NeverDReadOnlyBytesTests` 檢查映射權限、完整 RELRO 範圍與非法範圍；原生指標邊界套件以 relro 和 norelro 連結相同 ELF 範例。重建 C 的主機執行不等於原生 ARM64 或 Windows 核心驗證。

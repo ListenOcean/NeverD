@@ -1846,3 +1846,7 @@ x86 提升器在保存旗標計算所需的運算元之前，將相同暫存器�
 先驗證目前基本區塊能獨立證明的目標，避免無關前驅耗盡其工作預算。長前驅回歸也驗證此邊界。
 
 MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計算所得的間接呼叫目標保留 SSA 值身分，不能因位元模式成為常數而被當作指標儲存位址；直接呼叫和一般參數繼續摺疊。`NeverDImageAnalysisBoundaryTests` 檢查 x86/x64/ARM32/ARM64 的轉換，`NeverDIndirectCallValueSourceTests` 在三種原生格式下執行 x64/ARM64 兩條 C 路徑；原映像檢視僅檢查語法及沒有憑空增加的記憶體讀取，不能脫離映像提供者執行。
+
+`BinaryImage::readOnlyAfterRelocations` 統一決定載入後的不可變性。唯讀映射、載入器明確保證的保護，或已連結 ELF 中完整涵蓋的 PT_GNU_RELRO 範圍才構成證據。`.data.rel.ro`、`__DATA_CONST` 等名稱及更細的區段旗標不能把可寫映射變成常數；`-z norelro` 和缺少 SG_READ_ONLY 的情況保持可寫。重定位分類、純量摺疊和 LLVM 資料產生共用此判斷。
+
+`MedCallTarget` 在呼叫暫存器摘要與 SSA 之前證明有限位寬的常數位址運算，保留未經改寫的轉送參數。證據只能來自查詢之前的定義；程式碼位址值與存放函式指標的記憶體槽保持不同語意。

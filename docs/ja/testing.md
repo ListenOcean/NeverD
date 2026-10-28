@@ -2237,3 +2237,5 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 まず現在の基本ブロックだけで証明できる対象を調べ、無関係な先行経路による予算消費を避けます。長い先行経路の回帰テストでもこの境界を検証します。
 
 MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を共有します。計算された間接呼び出し先は SSA 値のまま保持し、定数化したビットをポインター格納先と解釈しません。直接呼び出しと通常の引数は引き続き畳み込みます。`NeverDImageAnalysisBoundaryTests` は x86/x64/ARM32/ARM64 の変換を、`NeverDIndirectCallValueSourceTests` は三つのネイティブ形式で x64/ARM64 の両 C 経路を検証します。元のイメージの表示では構文と余分なメモリー読み取りがないことを確認し、イメージ提供者なしでは実行しません。
+
+`NeverDReadOnlyProtectionSourceTests` は PE、ELF、Mach-O の x64/ARM64 入力から HighC と LLVM C を生成し、ホスト Clang の O0/O2 と UBSan でグローバル変数の読み書きを実行する。両方のパイプライン最適化モードと紛らわしい定数セクション名を含む。`NeverDReadOnlyBytesTests` はマッピング権限、RELRO の完全な範囲と不正範囲を検査し、ポインター境界スイートは同じ ELF を relro と norelro でリンクする。再構成 C のホスト実行は ARM64 ネイティブや Windows カーネルの実行検証ではない。

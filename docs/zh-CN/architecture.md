@@ -1926,3 +1926,7 @@ x86 提升器在保存标志位计算所需的操作数之前，将相同寄存�
 先验证当前基本块能独立证明的目标，避免无关前驱耗尽其工作预算。长前驱回归也验证这一边界。
 
 MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计算所得的间接调用目标保留 SSA 值身份，不能因位模式变成常量而被当作指针存储地址；直接调用和普通参数继续折叠。`NeverDImageAnalysisBoundaryTests` 检查 x86/x64/ARM32/ARM64 的转换，`NeverDIndirectCallValueSourceTests` 在三种原生格式下执行 x64/ARM64 两条 C 路线；原镜像视图只检查语法和没有凭空增加的内存读取，不能脱离镜像提供者执行。
+
+`BinaryImage::readOnlyAfterRelocations` 统一决定装载后的不可变性。只读映射、装载器明确保证的保护，或已链接 ELF 中完整覆盖的 PT_GNU_RELRO 范围才构成证据。`.data.rel.ro`、`__DATA_CONST` 等名称及更细的节标志不能把可写映射变成常量；`-z norelro` 和缺失 SG_READ_ONLY 的情况保持可写。重定位分类、标量折叠和 LLVM 数据生成共用该判断。
+
+`MedCallTarget` 在调用寄存器摘要和 SSA 之前证明有限位宽的常量地址运算，保留未经改写的转发参数。证据只能来自查询之前的定义；代码地址值和存放函数指针的内存槽保持不同语义。

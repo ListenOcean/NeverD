@@ -16484,3 +16484,5 @@ names a site; `HighCPointerAddresses.ThenPredChainUndefSkipArmFoldsElse`,
 Run `NeverDHighControlFlowTests`, `NeverDHighCStoreForwardingTests`,
 `NeverDWindowsEHSourceTests` and `NeverDCPointerProjectionTests`. This is a
 HighIR structuring contract; it requires no external source interface.
+
+`NeverDReadOnlyProtectionSourceTests` executes read/write globals through HighC and LLVM C on host Clang at O0/O2 with UBSan, for x64/ARM64 input instructions across PE, ELF and Mach-O. Both pipeline optimization modes and misleading constant-section names are covered. `NeverDReadOnlyBytesTests` checks mapping authority, complete RELRO extents and malformed ranges; the native pointer boundary suite links the same ELF fixture with relro and norelro. Host execution of reconstructed C does not qualify native ARM64 or Windows kernel execution.

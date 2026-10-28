@@ -33,6 +33,18 @@ rule. Cross-format x86/ARM conversion and x64/ARM64 source regressions cover
 value calls, with literal slots and ordinary arguments retained as controls.
 This does not supply missing caller state or prove a dynamic target constant.
 
+Runtime immutability belongs to the shared loader protection query. Section
+names alone cannot fold writable data or grant a function-pointer fact;
+relocation classification and LLVM materialization use the same mapping proof.
+Public read/write functions exercise both C routes across x64/ARM64 and the
+three native containers, while real ELF relro/norelro links retain the contrast.
+This does not infer a runtime initializer or missing VM memory state.
+
+Affine register-call targets share the reaching-value proof before entry-read
+summaries and SSA. This preserves untouched forwarding inputs through selected
+function and whole-module source projection. Cross-block register targets and
+full MinGW source type bridges remain separate tracked qualification gaps.
+
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
 the call target, including when the current import slot can no longer name it.

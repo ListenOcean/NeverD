@@ -6458,10 +6458,13 @@ ELF GOT data identities come from the exact relocation symbol snapshot through
 relocation inventory owns addend rules; whether the slot is read-only once
 relocated owns whether a slot load can become a symbolic address, as
 `BinaryImage::readOnlyAfterRelocations` decides by the address: a read-only
-segment, a segment or section of relocated constants (`.data.rel.ro`,
-`__DATA_CONST`), or complete PT_GNU_RELRO coverage. An ELF load segment keeps
-its `LOAD_n` name, since it holds sections of both kinds; no decision reads a
-linked image's segment name. Writable slots retain
+segment, an explicit normalized loader protection guarantee, or complete
+PT_GNU_RELRO coverage in a linked ELF image. Names such as `.data.rel.ro` and
+`__DATA_CONST` never prove protection: `-z norelro` and a missing Mach-O
+SG_READ_ONLY flag retain writable storage. Relocation classification, scalar
+folding and LLVM data materialization share this address-specific authority.
+An ELF load segment keeps its `LOAD_n` name because it holds sections of both
+kinds. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
@@ -14014,7 +14017,10 @@ at instruction boundaries and discards earlier writes across opaque effects.
 No cross-block values or implicit memory contents are introduced.
 
 `MedCallTarget` observes cached callable values through the Med ABI owner's
-exact address, width and overlap proof. The machine call-summary adapter,
+exact address, width and overlap proof. Finite-width constant address arithmetic
+is proved before call-register summaries and SSA consume its parameter reads;
+only definitions preceding that query can supply the value. A numeric code
+value and a loaded pointer slot retain distinct roles. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
 An observation retains the original LOAD index, including through private SSA
 versions. HighIR names an imported call only when the same memory-reachability
