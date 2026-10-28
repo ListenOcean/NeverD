@@ -7,12 +7,15 @@ analysis and comparison output belong outside the repository.
 
 LLVM C compare-exchange now retains the old value, success flag and memory
 effect at the original instruction position. Native 8/16/32/64-bit integers
-and ordinary pointers retain weak/strong, volatile and memory-order semantics;
-unrepresentable width, alignment, address-space, synchronization-scope and
-ordering contracts fail explicitly. The intrinsic semantic suite executes
-both outcomes, unused results and observers that overwrite the cell at O0/O2,
-with a separate translation unit for the scalar oracle. Frame-address operands
-and pointer snapshots have dedicated controls.
+and ordinary pointers retain weak/strong, volatile and memory-order semantics,
+as does a 128-bit pair (AArch64 CASP, x86-64 LOCK CMPXCHG16B) where C has a
+native 128-bit integer; other unrepresentable width, alignment, address-space,
+synchronization-scope and ordering contracts fail explicitly. The intrinsic
+semantic suite executes both outcomes, unused results and observers that
+overwrite the cell at O0/O2, with a separate translation unit for the scalar
+oracle, and both outcomes of every CASP ordering with either half deciding the
+comparison. Frame-address operands and pointer snapshots have dedicated
+controls.
 
 x87 context propagation retains a definite nested use across unresolved or
 recursive sibling calls. Complete-function cache admission uses the same

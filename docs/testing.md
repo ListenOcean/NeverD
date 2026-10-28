@@ -1089,6 +1089,14 @@ LLVM RMW operations with dead, single-use and repeated results, checking the
 subsequent load and callback against an independent scalar oracle at O0/O2.
 `MemoryExchangePreservesTypedPointerMemberBits` checks that exchanging a typed
 pointer field still returns the machine integer bits expected by its consumer.
+`LLVMCIntrinsicSemantics.CompareExchangeCarriesA128BitPair` executes both
+outcomes of each CASP ordering and LOCK CMPXCHG16B's at O0/O2, with values
+that differ only in one half (x64 hosts build it with `-mcx16`);
+`CompareExchangeRejectsUnrepresentableContracts` keeps refusing a 128-bit
+pair where pointers are 32-bit.
+`AArch64_Atomic.CaspLLVMCUsesStandardCompareExchangeAndCompiles` decompiles
+the four CASP forms through LLVM C and rebuilds them for AArch64+LSE as the
+same instructions.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,

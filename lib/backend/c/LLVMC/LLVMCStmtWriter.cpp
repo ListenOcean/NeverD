@@ -3838,9 +3838,15 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     const auto Success = Exchange->getSuccessOrdering();
     const auto Failure = Exchange->getFailureOrdering();
     // The C builtin requires native, naturally aligned objects in ordinary
-    // memory. Do not discard an address space or approximate a wider CAS.
-    if ((Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64) ||
-        Exchange->getNewValOperand()->getType() != ValueType ||
+    // memory: 1, 2, 4 or 8 bytes, or 16 where C has a native 128-bit integer,
+    // as on the 64-bit targets whose pair compare-exchange (CASP, CMPXCHG16B)
+    // lifts to one. Atomic min/max already carries that width through the
+    // same builtin. Do not discard an address space or approximate a wider
+    // CAS.
+    const bool NativeWidth =
+        Bits == 8 || Bits == 16 || Bits == 32 || Bits == 64 ||
+        (Bits == 128 && !PointerType && Layout.getPointerSizeInBits() == 64);
+    if (!NativeWidth || Exchange->getNewValOperand()->getType() != ValueType ||
         Exchange->getPointerAddressSpace() != 0 ||
         (PointerType && (PointerType->getAddressSpace() != 0 ||
                          Layout.isNonIntegralPointerType(PointerType))) ||

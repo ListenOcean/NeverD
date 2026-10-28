@@ -7451,13 +7451,14 @@ unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
 written as they would be. An LLVM C unit leaves out a definition whose C
-throws the same way (`c-emission-failed; unsupported LLVM C cmpxchg shape` for
-an AArch64 CASP pair). So is one whose source requirements, checked before
-any rendering, fail (`c-emission-failed; immediate original memory requires a
-runtime GPR value or a complete occurrence-bound image span`): no rendering
-reads it, and its callers call it as a function outside the unit. Before any
-C, a body the LLVM emitter refuses for a stale code or data address no longer
-discards its whole shard: the emitter names the body that wrote the refusal
+throws the same way (`c-emission-failed; LLVM C constant is not supported: ptr
+blockaddress(...)` for an address inside a function's code). So is one whose
+source requirements, checked before any rendering, fail (`c-emission-failed;
+immediate original memory requires a runtime GPR value or a complete
+occurrence-bound image span`): no rendering reads it, and its callers call it
+as a function outside the unit. Before any C, a body the LLVM emitter refuses
+for a stale code or data address no longer discards its whole shard: the
+emitter names the body that wrote the refusal
 (`MedLLVMEmitter::refusedBodies`), the shard, or the serial module, is
 emitted again with that body masked off, and the LLVM C unit notes it first
 (`llvm-emission-failed; med_llvm_emitter: ambiguous pointer-table address
