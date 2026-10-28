@@ -7192,7 +7192,7 @@ takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
 Source preparation leaves the store itself out of both C routes when it lands
 in the function's own frame below the entry stack pointer and no load or stack
 variable of the function reads those bytes back
-(`markUnreadUndefinedScratchStores`, after call recovery, by
+(`markUndefinedScratchStores`, after call recovery, by
 `holdsUndefinedIncomingScratch`): those bytes held no defined value before it
 and hold none after, so C does not read the register only to fail. The slot's
 address reaching a call is no such read: the function may overwrite the slot
@@ -7200,9 +7200,18 @@ first (`double v = a * 0.75; return pf(a, &v);`, whose push reserves `v`), or
 the routine may write it, where the LLVM route's C stored the unknown value
 and trapped. HighIR drops such a store too once its own
 forwarding has removed the reads (`elimUndefinedEntryScratchStores`). A store
-whose bytes the function reads back stays, so that the read fails where it
-uses the value. A variadic function's register save area is not such a store;
-its registers carry what its callers pass.
+of the variadic count register (System V's RAX), which carries nothing into a
+function that is not variadic, goes even where the bytes are read back, if on
+every path a call receives an address in the slot before anything may read
+them: a local a routine fills through its address (`int x; get(&x, a); return
+x + 2;`), whose read sees what the routine wrote or bytes the program never
+defined, as the C local's does. That rests on the standard convention
+recovery assumes everywhere; `__regcall` and hand-written conventions that
+pass a value in RAX are not modeled. Any other store whose bytes the function
+reads back stays, so that the read fails where it uses the value: a spill
+read back before a call has its slot, or R10, which carries a nested
+function's static chain. A variadic function's register save area is not
+such a store; its registers carry what its callers pass.
 Recovery records where it ended the register arguments at the target
 (`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
 past it, since dead-code elimination leaves only stale earlier writes of that

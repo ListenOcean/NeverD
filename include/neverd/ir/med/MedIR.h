@@ -244,7 +244,9 @@ struct MedOp {
   bool Dead = false;
   /// Source views only: this STORE saves a callee-saved register's entry
   /// value into prologue storage, or a scalar into scratch bytes
-  /// proved unobserved before overwrite/return (markSourceStackAccesses).
+  /// proved unobserved before overwrite/return (markSourceStackAccesses), or
+  /// a scratch register's undefined incoming value into frame bytes nothing
+  /// reads as that value (markUndefinedScratchStores).
   /// Source emitters leave it out. Binary lifting and patching never set it.
   bool PrologueSave = false;
   /// Source views only: this LOAD reads the return address the call pushed,

@@ -746,6 +746,89 @@ int slot_e(int a) { return ef(a) + ep(a) * 3; }
                                 {0, 1, -1, 7, 1000});
 }
 
+// out_e reserves its local's slot with `push rax` and passes the slot's
+// address to get, which fills it, before it reads the local back.  RAX
+// carries nothing into a function that is not variadic, so the read sees
+// what get wrote: neither C stores RAX's unknown incoming value there.
+TEST_F(X86_64_CallAbi, ALocalARoutineFillsBehindAPushHoldsWhatItWrote) {
+  expectBothRoutesRunLikeSource(R"C(
+void get(int *p, int a) __attribute__((noinline));
+void get(int *p, int a) { *p = a * 7 + 1; }
+int out_e(int a) {
+  int x;
+  get(&x, a);
+  return x + 2;
+}
+)C",
+                                "out_e", {"out_e", "get"}, {0, 1, -1, 7, 1000});
+}
+
+/// The definition of \p Name in \p C, from the line that opens it to its
+/// closing brace; empty where \p C defines no such function.
+static std::string definitionOf(const std::string &C, const std::string &Name) {
+  std::smatch Head;
+  if (!std::regex_search(
+          C, Head,
+          std::regex("(^|\n)[^\n;]*\\b" + Name + "\\([^\n;]*\\) \\{\n")))
+    return {};
+  const size_t Begin = static_cast<size_t>(Head.position(0));
+  return C.substr(Begin, C.find("\n}\n", Begin) - Begin);
+}
+
+// spill reads back the slot of its `push rax` before any routine has the
+// slot's address, a value it keeps across its body, and chain saves R10, a
+// nested function's static chain, where a routine fills the slot: neither
+// is a local filled behind an alignment push, and each C still fails where
+// it uses the register's unknown incoming value.
+TEST_F(X86_64_CallAbi, AReadBackScratchSaveKeepsItsUnknownValue) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "cross-target compilation requires Clang";
+  const auto Source = tmpFile("kernel.c");
+  const auto Object = tmpFile("kernel.o");
+  std::ofstream(Source) << R"C(
+long spill(long a);
+long chain(long a);
+void fill(long *p, long a) __attribute__((noinline));
+void fill(long *p, long a) { *p = a * 3; }
+__asm__(".text\n"
+        ".globl spill\n"
+        ".type spill,@function\n"
+        "spill:\n"
+        "  pushq %rax\n"
+        "  leaq 1(%rdi), %rax\n"
+        "  popq %rcx\n"
+        "  addq %rcx, %rax\n"
+        "  retq\n"
+        ".globl chain\n"
+        ".type chain,@function\n"
+        "chain:\n"
+        "  pushq %r10\n"
+        "  movq %rdi, %rsi\n"
+        "  movq %rsp, %rdi\n"
+        "  callq fill\n"
+        "  popq %rax\n"
+        "  retq\n");
+)C";
+  const auto Compiled =
+      exec(NEVERD_TEST_CLANG, {"-target", "x86_64-linux-gnu", "-O2", "-c",
+                               Source.string(), "-o", Object.string()});
+  ASSERT_EQ(Compiled.exitCode, 0) << Compiled.err;
+  for (const bool Route : {false, true}) {
+    SCOPED_TRACE(Route ? "LLVM C" : "HighC");
+    const auto Decompiled =
+        Route ? decompileToC(Object) : decompileToHighC(Object);
+    ASSERT_EQ(Decompiled.exitCode, 0) << Decompiled.err;
+    std::ifstream Input(tmpFile(Route ? "decompiled.c" : "decompiled_high.c"));
+    const std::string C((std::istreambuf_iterator<char>(Input)),
+                        std::istreambuf_iterator<char>());
+    for (const char *Name : {"spill", "chain"}) {
+      const std::string Body = definitionOf(C, Name);
+      ASSERT_FALSE(Body.empty()) << Name << "\n" << C;
+      EXPECT_NE(Body.find("unknown"), std::string::npos) << Body;
+    }
+  }
+}
+
 static const char *const VariadicForwarders = R"C(
 #include <stdarg.h>
 static int vsum(int n, va_list ap) __attribute__((noinline));

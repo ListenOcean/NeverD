@@ -48,11 +48,17 @@ void markUnobservedBorrowedFrameStores(
 /// `push rax` makes one, into the function's own frame below the entry stack
 /// pointer, where no load or stack variable of the function reads those
 /// bytes: they held no defined value before the store and hold none after
-/// it.  A store whose bytes the function reads back stays, so that the read
-/// fails where it uses the value.  A variadic function's register save area
-/// and a function an exception dispatcher enters keep theirs.
-void markUnreadUndefinedScratchStores(MedFunc &Func, Arch Architecture,
-                                      BinaryFormat Format);
+/// it.  A store of the convention's variadic count register (System V's
+/// RAX), which carries nothing into a function that is not variadic, goes
+/// also where a call receives an address in its slot before anything may
+/// read the bytes, as for a local a routine fills through its address
+/// (`int x; get(&x, a); return x;`): a read then sees what the routine wrote
+/// or bytes the program never defined, as the local's would.  Any other
+/// store whose bytes the function reads back stays, so that the read fails
+/// where it uses the value.  A variadic function's register save area and a
+/// function an exception dispatcher enters keep theirs.
+void markUndefinedScratchStores(MedFunc &Func, Arch Architecture,
+                                BinaryFormat Format);
 
 /// In source mode, mark each store that saves a callee-saved register's entry
 /// value into prologue storage as a PrologueSave.  Prologue storage is the

@@ -138,7 +138,7 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
     if (Complete.count(Func.Entry))
       markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
                                         Callees);
-    markUnreadUndefinedScratchStores(Func, Image.Arch, Image.abiFormat());
+    markUndefinedScratchStores(Func, Image.Arch, Image.abiFormat());
   }
 }
 

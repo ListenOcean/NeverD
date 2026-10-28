@@ -210,6 +210,13 @@ functions that reserve a local's slot with such a push: one overwrites it with
 a double before it passes the slot's address on, and one passes the address to
 a routine that writes it. Neither reads the slot back, and neither C stores
 RAX's unknown incoming value there.
+`ALocalARoutineFillsBehindAPushHoldsWhatItWrote` runs the C of both routes for
+a local whose slot such a push reserves and whose address a routine that
+fills it receives before the local is read back: neither C stores RAX's
+unknown value there. `AReadBackScratchSaveKeepsItsUnknownValue` keeps it in
+both routes' C where a `push rax` is read back before any call has its slot,
+and where a routine fills the slot of a pushed R10, a nested function's
+static chain.
 
 `X86_64_CallAbi.AScalarArgumentPassesOnlyItsLowLane` runs the C of both routes
 for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it
