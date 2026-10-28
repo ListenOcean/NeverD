@@ -5045,7 +5045,12 @@ rather than to the statement the engine's rows give it;
 `pseudocodeFunctionLinksStayInTheirWindow` double-clicks a call in C and LLVM
 C, moves in the callee as a click does, and checks that one Back returns the
 code to the call's line and column with the view scrolled as it was, and that
-Forward returns to where the callee was left; `historyStopsFollowTheCursor`
+Forward returns to where the callee was left;
+`restingOnACallShowsAnImportsType` rests the mouse on a call of an import and
+of a function of the image and checks the import's type and parameters'
+places, that the image's function and a keyword hint nothing, and that a hint
+the mouse left before the worker answered stays away;
+`historyStopsFollowTheCursor`
 moves between jumps and checks that Back skips those moves and Forward returns
 to them; `bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
 brackets nested, lines apart and around a folded block, on brackets of a

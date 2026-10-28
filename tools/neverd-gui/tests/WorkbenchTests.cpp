@@ -8034,6 +8034,80 @@ private slots:
           !row.first().toString().startsWith(QStringLiteral("Cannot jump to")));
   }
 
+  void restingOnACallShowsAnImportsType_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<bool>("import");
+    QTest::newRow("import") << QStringLiteral("pseudocode-import.bin") << true;
+    QTest::newRow("image") << QStringLiteral("pseudocode-navigation.bin")
+                           << false;
+  }
+
+  void restingOnACallShowsAnImportsType() {
+    // As Hex-Rays' hint does, the mouse resting on the name of an import a
+    // call names shows its type, without the name the code already shows, and
+    // where each argument is passed. A function of the image hints nothing:
+    // only decompiling it types it, which a hover must not wait for.
+    QFETCH(QString, fixture);
+    QFETCH(bool, import);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, fixture));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address caller = Base + 0x140, callee = Base + 0x160;
+    bench.session.editFunction(
+        callee, {{"type", "int64_t function_22(void *arg0, int64_t arg1)"}});
+    auto *disassembly = bench.window->disassembly();
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *code = bench.codeView(QStringLiteral("source"))->text();
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete(), OpenTimeoutMs);
+    // Rest the mouse on the second character of a name of a line.
+    const QStringList source = code->allText().split(QLatin1Char('\n'));
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const auto rest = [&](int line, const QString &name) {
+      const auto column = source.value(line).indexOf(name);
+      if (column < 0)
+        return false;
+      code->setCursorLine(line);
+      const QRect start = code->cursorViewportRect();
+      const QPoint point(
+          start.x() +
+              qRound(metrics.horizontalAdvance(source[line].left(column + 1)) +
+                     metrics.horizontalAdvance(QLatin1Char('M')) / 2),
+          start.center().y());
+      QHelpEvent help(QEvent::ToolTip, code->viewport()->mapTo(code, point),
+                      code->viewport()->mapToGlobal(point));
+      QApplication::sendEvent(code, &help);
+      return true;
+    };
+    // A hint the mouse left before the worker answered stays away, as does
+    // the type of a function of the image.
+    QVERIFY(rest(1, QStringLiteral("function_22")));
+    if (import) {
+      QEvent leave(QEvent::Leave);
+      QApplication::sendEvent(code->viewport(), &leave);
+    }
+    QTest::qWait(500);
+    QVERIFY(!QToolTip::isVisible());
+    if (import) {
+      const QString type = QStringLiteral("int64_t(void *arg0, int64_t arg1)");
+      QVERIFY(rest(1, QStringLiteral("function_22")));
+      QTRY_VERIFY_WITH_TIMEOUT(QToolTip::text().contains(type), OpenTimeoutMs);
+      const QString hint = QToolTip::text();
+      QVERIFY2(hint.contains(QStringLiteral("rcx  void *arg0")) &&
+                   hint.contains(QStringLiteral("rdx  int64_t arg1")) &&
+                   !hint.contains(QStringLiteral("function_22")),
+               qPrintable(hint));
+      QToolTip::hideText();
+    }
+    // A keyword hints nothing.
+    QVERIFY(rest(1, QStringLiteral("return")));
+    QTest::qWait(500);
+    QVERIFY(!QToolTip::isVisible());
+  }
+
   void pseudocodeFunctionLinksStayInTheirWindow_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("secondWindow");

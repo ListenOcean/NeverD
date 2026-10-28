@@ -112,6 +112,9 @@ inline constexpr int kCodeViewPageLines = 256;
 /// the interactive first load small, and retry it if a batch exceeds bytes.
 inline constexpr int kCodeViewNameRefreshPageLines =
     ::neverd::sdk::kMaxCodeViewPageLines;
+/// The characters a function's hint holds on a line before its type breaks
+/// after a comma.
+inline constexpr int kCodeViewHintColumns = 96;
 
 // tools/neverd-gui/app/FindInViewDialog.cpp
 inline constexpr int kFindInViewDebounceMs = 120;

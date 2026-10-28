@@ -372,9 +372,15 @@ operations in C can fold into one-line summaries too. Click a summary or press
 Keypad + on it to expand it; Keypad - folds the declarations again, and the
 context menu expands or collapses either kind. Hovering a type or macro the code
 declares, such as an unaligned access type, shows its declaration, and
-double-clicking it goes there. Double-clicking a function's name shows that
-function's pseudocode in place; an import's name opens its thunk, or its slot
-when it has none, in the disassembly, as do other names of data. Memory reads
+double-clicking it goes there. Hovering the name of an import a call names
+shows its type, as Hex-Rays' hint does, without the name the code already
+shows (`int32_t(char* __s1, char* __s2)` on `strcmp`), and under it each
+parameter after where it is passed (`rdi  char *__s1`); the hint goes once the
+mouse leaves the name. A function of the image shows no type there: only
+decompiling it types it, which could hold up the next jump for seconds.
+Double-clicking a function's name shows that function's pseudocode in place;
+an import's name opens its thunk, or its slot when it has none, in the
+disassembly, as do other names of data. Memory reads
 and writes print through the standard scalar types, `*(uint64_t *)p`. That C
 reads scalars at any address and through any type, so it is built for a target
 that allows unaligned access and with `-fno-strict-aliasing`, as its prelude

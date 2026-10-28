@@ -34,6 +34,7 @@
 #include <QToolButton>
 #include <QToolTip>
 #include <QVBoxLayout>
+#include <QtMath>
 #include <algorithm>
 #include <limits>
 #include <utility>
@@ -151,6 +152,50 @@ QColor codeColor(int role) {
       ColorRole::CodePunctuation, ColorRole::CodePreprocessor};
   return Theme::instance().color(
       Map[role >= 0 && role < int(std::size(Map)) ? role : 0]);
+}
+
+/// What resting on a function's name shows, from the worker's function_type:
+/// its type, which Hex-Rays' hint spells without the name the code already
+/// shows, then each parameter after where it is passed.
+QString functionHint(const QJsonObject &type) {
+  QString declaration = type.value("declaration").toString();
+  const QString name = type.value("name").toString();
+  if (const auto at = declaration.indexOf(name + QLatin1Char('('));
+      !name.isEmpty() && at >= 0)
+    declaration =
+        declaration.left(at).trimmed() + declaration.mid(at + name.size());
+  // A long type breaks after its commas.
+  QStringList rows;
+  const QStringList pieces = declaration.split(QStringLiteral(", "));
+  for (int i = 0; i < pieces.size(); ++i) {
+    const QString piece =
+        pieces[i] + (i + 1 < pieces.size() ? QStringLiteral(",") : QString());
+    if (!rows.isEmpty() && rows.last().size() + 1 + piece.size() <=
+                               ::neverd::limits::gui::kCodeViewHintColumns)
+      rows.last() += QLatin1Char(' ') + piece;
+    else
+      rows.append(rows.isEmpty() ? piece : QStringLiteral("    ") + piece);
+  }
+  const QJsonArray parameters = type.value("parameters").toArray();
+  qsizetype width = 0;
+  for (const auto &parameter : parameters)
+    width = std::max(width,
+                     parameter.toObject().value("location").toString().size());
+  if (width > 0)
+    for (const auto &value : parameters) {
+      const QJsonObject parameter = value.toObject();
+      const QString kind = parameter.value("type").toString();
+      const QString parameterName = parameter.value("name").toString();
+      rows.append(parameter.value("location").toString().leftJustified(width) +
+                  QStringLiteral("  ") + kind +
+                  (parameterName.isEmpty() || kind.endsWith(QLatin1Char('*'))
+                       ? QString()
+                       : QStringLiteral(" ")) +
+                  parameterName);
+    }
+  return QStringLiteral("<pre style=\"font-family:'%1'; margin:0\">%2</pre>")
+      .arg(Theme::instance().codeFont().family(),
+           rows.join(QLatin1Char('\n')).toHtmlEscaped());
 }
 
 /// A source language's words: control flow, other keywords and types.
@@ -454,6 +499,12 @@ CodeText::CodeText(Session &session, QWidget *parent)
   });
   connect(&session_.highlightLocks(), &HighlightLocks::changed, viewport(),
           qOverload<>(&QWidget::update));
+  // Scrolling moves another name under the mouse.
+  for (auto *bar : {verticalScrollBar(), horizontalScrollBar()})
+    connect(bar, &QScrollBar::valueChanged, this, [this] {
+      ++hintSerial_;
+      hintRect_ = {};
+    });
   connect(&session_, &Session::revisionChanged, this, [this] {
     if (!function_)
       return;
@@ -1277,10 +1328,13 @@ void CodeText::updateMouseCursor(const QPoint &position) {
 }
 
 bool CodeText::viewportEvent(QEvent *event) {
-  if (event->type() == QEvent::Enter)
+  if (event->type() == QEvent::Enter) {
     updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
-  else if (event->type() == QEvent::Leave)
+  } else if (event->type() == QEvent::Leave) {
     viewport()->setCursor(Qt::IBeamCursor);
+    ++hintSerial_;
+    hintRect_ = {};
+  }
   return QAbstractScrollArea::viewportEvent(event);
 }
 
@@ -1354,6 +1408,9 @@ bool CodeText::event(QEvent *event) {
   if (event->type() == QEvent::ToolTip) {
     auto *help = static_cast<QHelpEvent *>(event);
     const QPoint local = viewport()->mapFrom(this, help->pos());
+    // A new rest of the mouse drops the hint still on its way.
+    ++hintSerial_;
+    hintRect_ = {};
     if (const QString id = blockAt(local); !id.isEmpty()) {
       QToolTip::showText(
           help->globalPos(),
@@ -1452,10 +1509,87 @@ bool CodeText::event(QEvent *event) {
           return true;
         }
     QToolTip::hideText();
+    // A function's name shows its type and where its arguments go.
+    if (const int line = lineAt(local.y()); line >= 0 && line < lines_.size())
+      if (hintFunction(line, columnAt(line, local.x()), help->globalPos()))
+        return true;
     event->ignore();
     return true;
   }
   return QAbstractScrollArea::event(event);
+}
+
+bool CodeText::hintFunction(int line, int column,
+                            const QPoint &globalPosition) {
+  if (!function_ || !session_.typesFunctions() ||
+      !sourceDialect(dialectOf(representation_, pageLanguage_)))
+    return false;
+  // A name the code calls; a member an object calls is not the binary's.
+  const auto &styled = lines_[line].styled;
+  const auto [begin, end] = tokenRange(styled.text, column, tokenDots());
+  const auto *span = styled.spanAt(begin);
+  const QStringView before = QStringView(styled.text).left(begin);
+  if (begin == end || !span || span->role != Function ||
+      before.endsWith(u'.') || before.endsWith(u"->"))
+    return false;
+  const QString token = styled.text.mid(begin, end - begin);
+  const QString query = linkedSymbol(token).value_or(token);
+  // The hint goes once the mouse leaves the name.
+  auto &layout =
+      styled.layout(Theme::instance().codeFont(), styleStamp_, codeColor);
+  if (!layout.lineCount())
+    return false;
+  const QTextLine text = layout.lineAt(0);
+  const int top = (line - verticalScrollBar()->value()) * lineHeight_;
+  const QRect rect(QPoint(textLeft() + qFloor(text.cursorToX(begin)), top),
+                   QPoint(textLeft() + qCeil(text.cursorToX(end)) - 1,
+                          top + lineHeight_ - 1));
+  hintRect_ = rect;
+  const auto show = [this, rect, globalPosition](const QString &hint) {
+    if (!hint.isEmpty())
+      QToolTip::showText(globalPosition, hint, viewport(), rect);
+  };
+  if (hintsVersion_ != DocumentVersion) {
+    functionHints_.clear();
+    hintsVersion_ = DocumentVersion;
+  }
+  if (const auto known = functionHints_.constFind(query);
+      known != functionHints_.cend()) {
+    show(*known);
+    return true;
+  }
+  // The name resolves as a double-click resolves it. Only an import's thunk
+  // has a hint: its type is the library's, read at once, while a function of
+  // the image is typed only by decompiling it, which can hold the worker for
+  // seconds and with it the next jump; a hover must not.
+  const quint64 serial = hintSerial_, document = DocumentVersion;
+  const auto keep = [this, query, document](const QString &hint) {
+    if (document == DocumentVersion)
+      functionHints_.insert(query, hint);
+  };
+  const auto none = [keep](const QString &, const QString &) { keep({}); };
+  session_.read(
+      QStringLiteral("resolve"), {{"query", query}}, this,
+      [this, serial, document, show, keep, none](const QJsonObject &payload) {
+        const auto address = addressValue(payload.value("address"));
+        if (!address || !payload.value("import").toBool() ||
+            addressValue(payload.value("function_address")) != address) {
+          keep({});
+          return;
+        }
+        session_.read(
+            QStringLiteral("function_type"),
+            {{"address", hexAddress(*address)}}, this,
+            [this, serial, document, show, keep](const QJsonObject &type) {
+              const QString hint = functionHint(type);
+              keep(hint);
+              if (serial == hintSerial_ && document == DocumentVersion)
+                show(hint);
+            },
+            none);
+      },
+      none);
+  return true;
 }
 
 void CodeText::highlightLine(Line &line, bool &inComment) const {
@@ -2506,6 +2640,10 @@ void CodeText::mousePressEvent(QMouseEvent *event) {
 
 void CodeText::mouseMoveEvent(QMouseEvent *event) {
   updateMouseCursor(event->position().toPoint());
+  if (!hintRect_.contains(event->position().toPoint())) {
+    ++hintSerial_;
+    hintRect_ = {};
+  }
   if (!selecting_ || !(event->buttons() & Qt::LeftButton) || lines_.isEmpty())
     return;
   dragPoint_ = event->position().toPoint();

@@ -380,6 +380,18 @@ private:
   /// The global last activated by its name, whose declaration shows if the
   /// binary does not name it.
   QString unresolvedDeclaration_;
+  /// Hint the type of the import a call at \p line and \p column names, and
+  /// where its arguments go, as Hex-Rays' hint does, once the worker answers;
+  /// false where no call is named.
+  bool hintFunction(int line, int column, const QPoint &globalPosition);
+  /// This document's hints by the name asked about, empty for a name that
+  /// names no function.
+  QHash<QString, QString> functionHints_;
+  quint64 hintsVersion_ = 0;
+  /// The hint on its way, which another hover, a move off its name or a
+  /// scroll drops, and the rectangle of its name.
+  quint64 hintSerial_ = 0;
+  QRect hintRect_;
   /// The language the first page names, and how many declarations it shows
   /// as C because that language could not spell them.
   QString pageLanguage_;
