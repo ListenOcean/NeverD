@@ -110,35 +110,36 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
            Terminator.RejectedScalarBranch ||
            !Terminator.JumpTableTargets.empty()))
         continue;
-      // A direct predecessor transports its register state without starting
-      // a new ABI invocation. Stop at joins and independent roots: their
-      // missing entry state must remain unknown. Do not borrow recovered
-      // indirect edges, which would make their own revalidation circular.
-      llvm::SmallVector<const LowBlock *, 8> Prefix{&Block};
-      llvm::SmallDenseSet<int, 8> Seen{Block.Id};
-      llvm::SmallPtrSet<const InsnRecord *, 8> DirectEdges;
-      while (true) {
-        const LowBlock &Current = *Prefix.back();
+      // Direct edges transport register state without a new ABI invocation.
+      // Recovered edges cannot justify their own proof. Independent roots and
+      // exceptional entries retain arbitrary incoming state.
+      struct ScalarPath {
+        llvm::SmallVector<const LowBlock *, 8> Blocks;
+        llvm::SmallDenseSet<int, 8> Seen;
+        llvm::SmallPtrSet<const InsnRecord *, 8> DirectEdges;
+      };
+      const auto Independent = [&](const LowBlock &Current) {
+        return Current.StartAddr == Func.Entry ||
+               !Current.ExceptionalPreds.empty() ||
+               Func.ModuleAnalysisRoots.count(Current.StartAddr) ||
+               Func.OrdinaryModuleAnalysisRoots.count(Current.StartAddr);
+      };
+      const auto AppendPredecessor = [&](ScalarPath &Path, int P) {
         if (!Spend(1)) {
           Complete = false;
-          break;
+          return false;
         }
-        if (Current.StartAddr == Func.Entry || Current.Preds.size() != 1 ||
-            !Current.ExceptionalPreds.empty() ||
-            Func.ModuleAnalysisRoots.count(Current.StartAddr) ||
-            Func.OrdinaryModuleAnalysisRoots.count(Current.StartAddr))
-          break;
-        const int P = Current.Preds.front();
+        const LowBlock &Current = *Path.Blocks.back();
         if (P < 0 || static_cast<size_t>(P) >= Func.Blocks.size() ||
-            !Seen.insert(P).second)
-          break;
+            Path.Seen.contains(P))
+          return false;
         const LowBlock &Previous = Func.Blocks[P];
         if (Previous.InstructionBoundaries.empty())
-          break;
+          return false;
         const auto Edge =
             Insns.find(Previous.InstructionBoundaries.back().Address);
         if (Edge == Insns.end())
-          break;
+          return false;
         const InsnRecord &Transfer = Edge->second;
         if (Transfer.IsCall || Transfer.IsRet || Transfer.IsIndirect ||
             Transfer.ScalarBranchInput || Transfer.IsOpaqueTerminator ||
@@ -146,79 +147,128 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
             (Transfer.IsBranch && Transfer.BranchTarget != Current.StartAddr &&
              (!Transfer.IsCond || Previous.EndAddr != Current.StartAddr)) ||
             (!Transfer.IsBranch && Previous.EndAddr != Current.StartAddr))
-          break;
-        DirectEdges.insert(&Transfer);
-        Prefix.push_back(&Previous);
-      }
-      if (!Complete)
-        break;
-      llvm::SmallVector<const InsnRecord *, 16> Instructions;
-      for (auto It = Prefix.rbegin(); It != Prefix.rend(); ++It) {
-        for (const LowInstructionBoundary &Boundary :
-             (*It)->InstructionBoundaries) {
+          return false;
+        Path.Seen.insert(P);
+        Path.DirectEdges.insert(&Transfer);
+        Path.Blocks.push_back(&Previous);
+        return true;
+      };
+      const auto ExtendPath = [&](ScalarPath &Path) {
+        while (Complete) {
+          const LowBlock &Current = *Path.Blocks.back();
           if (!Spend(1)) {
             Complete = false;
             break;
           }
-          const auto At = Insns.find(Boundary.Address);
-          if (At == Insns.end()) {
-            Complete = false;
+          if (Independent(Current) || Current.Preds.size() != 1 ||
+              !AppendPredecessor(Path, Current.Preds.front()))
             break;
+        }
+      };
+      const auto EvaluatePath =
+          [&](const ScalarPath &Path) -> std::optional<uint64_t> {
+        llvm::SmallVector<const InsnRecord *, 16> Instructions;
+        for (auto It = Path.Blocks.rbegin(); It != Path.Blocks.rend(); ++It) {
+          for (const LowInstructionBoundary &Boundary :
+               (*It)->InstructionBoundaries) {
+            if (!Spend(1)) {
+              Complete = false;
+              break;
+            }
+            const auto At = Insns.find(Boundary.Address);
+            if (At == Insns.end()) {
+              Complete = false;
+              break;
+            }
+            Instructions.push_back(&At->second);
           }
-          Instructions.push_back(&At->second);
+          if (!Complete)
+            break;
         }
         if (!Complete)
-          break;
-      }
-      if (!Complete)
-        break;
-      // Byte facts preserve architectural subregister overlap exactly. Temps
-      // have identities, not byte offsets, and live for one instruction only.
-      std::map<uint64_t, uint8_t> Registers;
-      std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
-      auto ValueOf = [&](const NdVar &Value) -> std::optional<uint64_t> {
-        if (!Spend(1 + Value.Size) || !Value.Size || Value.Size > 8)
-          return std::nullopt;
-        if (Value.isConst())
-          return Value.Offset & (UINT64_MAX >> ((8 - Value.Size) * 8));
-        if (Value.isTemp()) {
-          const auto At = Temps.find(Value.Offset);
-          return At != Temps.end() && At->second.first == Value.Size
-                     ? std::optional<uint64_t>{At->second.second}
-                     : std::nullopt;
-        }
-        if (!Value.isReg() || Value.Offset > UINT64_MAX - Value.Size)
-          return std::nullopt;
-        uint64_t Result = 0;
-        for (uint16_t I = 0; I < Value.Size; ++I) {
-          const auto At = Registers.find(Value.Offset + I);
-          if (At == Registers.end())
+          return {};
+        std::optional<uint64_t> Target;
+        // Byte facts preserve architectural subregister overlap exactly. Temps
+        // have identities, not byte offsets, and live for one instruction only.
+        std::map<uint64_t, uint8_t> Registers;
+        std::map<uint64_t, std::pair<uint16_t, uint64_t>> Temps;
+        auto ValueOf = [&](const NdVar &Value) -> std::optional<uint64_t> {
+          if (!Spend(1 + Value.Size) || !Value.Size || Value.Size > 8)
             return std::nullopt;
-          Result |= uint64_t{At->second} << (I * 8);
-        }
-        return Result;
-      };
-      for (const InsnRecord *Instruction : Instructions) {
-        if (!Spend(1 + Temps.size())) {
-          Complete = false;
-          break;
-        }
-        Temps.clear();
-        const InsnRecord &Rec = *Instruction;
-        for (const LowOp &Op : Rec.Ops) {
-          if (!Spend(1)) {
+          if (Value.isConst())
+            return Value.Offset & (UINT64_MAX >> ((8 - Value.Size) * 8));
+          if (Value.isTemp()) {
+            const auto At = Temps.find(Value.Offset);
+            return At != Temps.end() && At->second.first == Value.Size
+                       ? std::optional<uint64_t>{At->second.second}
+                       : std::nullopt;
+          }
+          if (!Value.isReg() || Value.Offset > UINT64_MAX - Value.Size)
+            return std::nullopt;
+          uint64_t Result = 0;
+          for (uint16_t I = 0; I < Value.Size; ++I) {
+            const auto At = Registers.find(Value.Offset + I);
+            if (At == Registers.end())
+              return std::nullopt;
+            Result |= uint64_t{At->second} << (I * 8);
+          }
+          return Result;
+        };
+        for (const InsnRecord *Instruction : Instructions) {
+          if (!Spend(1 + Temps.size())) {
             Complete = false;
             break;
           }
-          if (Rec.IsBranch && !Rec.IsCond && !Rec.IsCall && !Rec.IsRet &&
-              !Rec.RejectedScalarBranch && Rec.JumpTableTargets.empty() &&
-              Op.NumInputs == 1 &&
-              (Op.Opcode == NdOp::INDIR_BR ||
-               (Op.Opcode == NdOp::BRANCH && Rec.ScalarBranchInput))) {
-            Targets[Rec.Addr] =
-                ValueOf(Rec.ScalarBranchInput.value_or(Op.Inputs[0]));
+          Temps.clear();
+          const InsnRecord &Rec = *Instruction;
+          for (const LowOp &Op : Rec.Ops) {
+            if (!Spend(1)) {
+              Complete = false;
+              break;
+            }
+            if (Rec.IsBranch && !Rec.IsCond && !Rec.IsCall && !Rec.IsRet &&
+                !Rec.RejectedScalarBranch && Rec.JumpTableTargets.empty() &&
+                Op.NumInputs == 1 &&
+                (Op.Opcode == NdOp::INDIR_BR ||
+                 (Op.Opcode == NdOp::BRANCH && Rec.ScalarBranchInput))) {
+              Target = ValueOf(Rec.ScalarBranchInput.value_or(Op.Inputs[0]));
+            }
+            if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+              if (!Spend(Registers.size() + Temps.size())) {
+                Complete = false;
+                break;
+              }
+              Registers.clear();
+              Temps.clear();
+            }
+            const NdVar &Output = Op.Output;
+            if (!Output.isReg() && !Output.isTemp())
+              continue;
+            auto Result = lowScalarConstantResult(Op, ValueOf);
+            if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1)
+              if (auto Address = ValueOf(Op.Inputs[0]))
+                Result = ReadImage(Op, *Address);
+            if (!Spend(1 + Output.Size)) {
+              Complete = false;
+              break;
+            }
+            if (Output.isTemp()) {
+              if (Result)
+                Temps[Output.Offset] = {Output.Size, *Result};
+              else
+                Temps.erase(Output.Offset);
+            } else if (Output.Offset <= UINT64_MAX - Output.Size) {
+              for (uint16_t I = 0; I < Output.Size; ++I)
+                if (Result)
+                  Registers[Output.Offset + I] = uint8_t(*Result >> (I * 8));
+                else
+                  Registers.erase(Output.Offset + I);
+            } else
+              Registers.clear();
           }
-          if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+          if (!Complete)
+            break;
+          if (Rec.IsOpaqueTerminator || Rec.IsInstructionGuard) {
             if (!Spend(Registers.size() + Temps.size())) {
               Complete = false;
               break;
@@ -226,78 +276,75 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
             Registers.clear();
             Temps.clear();
           }
-          const NdVar &Output = Op.Output;
-          if (!Output.isReg() && !Output.isTemp())
-            continue;
-          auto Result = lowScalarConstantResult(Op, ValueOf);
-          if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1)
-            if (auto Address = ValueOf(Op.Inputs[0]))
-              Result = ReadImage(Op, *Address);
-          if (!Spend(1 + Output.Size)) {
-            Complete = false;
+        }
+        if (!Complete || RemainingWork == 0) {
+          Complete = false;
+          return {};
+        }
+        if (!Target) {
+          std::vector<LowOp> Operations;
+          bool Bounded = true;
+          for (const InsnRecord *Instruction : Instructions) {
+            for (const LowOp &Op : Instruction->Ops) {
+              if (Op.Addr == Terminator.Addr && Op.NumInputs == 1 &&
+                  (Op.Opcode == NdOp::INDIR_BR ||
+                   (Op.Opcode == NdOp::BRANCH &&
+                    Terminator.ScalarBranchInput))) {
+                Target = constantScalarExpression(
+                    Operations,
+                    Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
+                    Terminator.Addr, RemainingWork, ReadImage);
+                Bounded = false;
+                break;
+              }
+              // Prefix edges contribute no path predicate. Every value must
+              // hold for arbitrary input on this straight sequence.
+              if (Path.DirectEdges.contains(Instruction) &&
+                  (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR))
+                continue;
+              if (Operations.size() ==
+                  limits::kMaxScalarBranchSymbolicOperations) {
+                Bounded = false;
+                break;
+              }
+              Operations.push_back(Op);
+            }
+            if (!Bounded)
+              break;
+          }
+        }
+        return Target;
+      };
+      ScalarPath Path;
+      Path.Blocks.push_back(&Block);
+      Path.Seen.insert(Block.Id);
+      ExtendPath(Path);
+      auto Target = EvaluatePath(Path);
+      const LowBlock &Join = *Path.Blocks.back();
+      if (Complete && !Target && Join.Preds.size() > 1 && !Independent(Join)) {
+        // A single join can contribute a value only when every direct incoming
+        // path proves the same result. Do not recursively enumerate earlier
+        // joins: their inputs remain arbitrary, avoiding exponential paths.
+        std::optional<uint64_t> Common;
+        for (int P : Join.Preds) {
+          ScalarPath Incoming = Path;
+          if (!AppendPredecessor(Incoming, P)) {
+            Common.reset();
             break;
           }
-          if (Output.isTemp()) {
-            if (Result)
-              Temps[Output.Offset] = {Output.Size, *Result};
-            else
-              Temps.erase(Output.Offset);
-          } else if (Output.Offset <= UINT64_MAX - Output.Size) {
-            for (uint16_t I = 0; I < Output.Size; ++I)
-              if (Result)
-                Registers[Output.Offset + I] = uint8_t(*Result >> (I * 8));
-              else
-                Registers.erase(Output.Offset + I);
-          } else
-            Registers.clear();
-        }
-        if (!Complete)
-          break;
-        if (Rec.IsOpaqueTerminator || Rec.IsInstructionGuard) {
-          if (!Spend(Registers.size() + Temps.size())) {
-            Complete = false;
+          ExtendPath(Incoming);
+          const auto Value = EvaluatePath(Incoming);
+          if (!Complete || !Value || (Common && *Common != *Value)) {
+            Common.reset();
             break;
           }
-          Registers.clear();
-          Temps.clear();
+          Common = Value;
         }
+        Target = Common;
       }
-      if (!Complete || RemainingWork == 0) {
-        Complete = false;
+      Targets[Terminator.Addr] = Target;
+      if (!Complete)
         break;
-      }
-      const auto Target = Targets.find(Terminator.Addr);
-      if (Target != Targets.end() && !Target->second) {
-        std::vector<LowOp> Operations;
-        bool Bounded = true;
-        for (const InsnRecord *Instruction : Instructions) {
-          for (const LowOp &Op : Instruction->Ops) {
-            if (Op.Addr == Terminator.Addr && Op.NumInputs == 1 &&
-                (Op.Opcode == NdOp::INDIR_BR ||
-                 (Op.Opcode == NdOp::BRANCH && Terminator.ScalarBranchInput))) {
-              Target->second = constantScalarExpression(
-                  Operations,
-                  Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
-                  Terminator.Addr, RemainingWork, ReadImage);
-              Bounded = false;
-              break;
-            }
-            // Prefix edges contribute no path predicate. Every value must
-            // hold for arbitrary input on this straight sequence.
-            if (DirectEdges.contains(Instruction) &&
-                (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR))
-              continue;
-            if (Operations.size() ==
-                limits::kMaxScalarBranchSymbolicOperations) {
-              Bounded = false;
-              break;
-            }
-            Operations.push_back(Op);
-          }
-          if (!Bounded)
-            break;
-        }
-      }
     }
     if (!Complete) {
       // No prefix of an incomplete proof can retain authority after new edges

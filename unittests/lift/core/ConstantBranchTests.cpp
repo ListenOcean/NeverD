@@ -404,6 +404,50 @@ TEST(ConstantBranch, ScalarIdentitiesSpanDirectPredecessors) {
     }
 }
 
+TEST(ConstantBranch, EveryPredecessorMustProveTheSameTarget) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
+      for (unsigned Alternative = 0; Alternative != 3; ++Alternative) {
+        SCOPED_TRACE(::testing::Message()
+                     << unsigned(Architecture) << ':' << unsigned(Format) << ':'
+                     << Alternative);
+        std::vector<uint8_t> Bytes;
+        if (Architecture == Arch::AArch64) {
+          Bytes = {0x80, 0x00, 0x00, 0xb4,  // cbz x0,0x1010
+                   0x10, 0x06, 0x82, 0xd2,  // mov x16,0x1030
+                   0x06, 0x00, 0x00, 0x14}; // b 0x1020
+          Bytes.resize(0x10, 0);
+          Bytes.insert(Bytes.end(),
+                       {0x10, 0x06, 0x82, 0xd2, 0x03, 0x00, 0x00, 0x14});
+          if (Alternative == 1)
+            writeLE<uint32_t>(Bytes.data() + 0x10, 0xd503201f); // nop: no x16
+          if (Alternative == 2)
+            writeLE<uint32_t>(Bytes.data() + 0x10,
+                              0xd2820810); // mov x16,0x1040
+          Bytes.resize(0x20, 0);
+          Bytes.insert(Bytes.end(), {0x00, 0x02, 0x1f, 0xd6}); // br x16
+          Bytes.resize(0x44, 0);
+          writeLE<uint32_t>(Bytes.data() + 0x30, 0xd65f03c0);
+          writeLE<uint32_t>(Bytes.data() + 0x40, 0xd65f03c0);
+        } else {
+          Bytes = {0x85, 0xff, 0x74, 0x0c, 0xb8, 0x30, 0x10, 0, 0, 0xeb, 21};
+          Bytes.resize(0x10, 0xcc);
+          Bytes.insert(Bytes.end(), {0xb8, 0x30, 0x10, 0, 0, 0xeb, 9});
+          if (Alternative == 1)
+            std::fill(Bytes.begin() + 0x10, Bytes.begin() + 0x15, 0x90);
+          if (Alternative == 2)
+            Bytes[0x11] = 0x40;
+          Bytes.resize(0x20, 0xcc);
+          Bytes.insert(Bytes.end(), {0xff, 0xe0});
+          Bytes.resize(0x41, 0xcc);
+          Bytes[0x30] = Bytes[0x40] = 0xc3;
+        }
+        const auto Function = build(std::move(Bytes), Architecture, Format);
+        EXPECT_EQ(addresses(Function).count(0x1030), Alternative == 0);
+      }
+}
+
 TEST(ConstantBranch, ConflictingPredecessorsKeepTheDispatchDynamic) {
   for (auto Architecture : {Arch::X86, Arch::X64}) {
     // Both paths are possible and supply distinct dispatch registers.

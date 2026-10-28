@@ -1285,8 +1285,10 @@ remain separate observations, and opaque effects clear register facts. The query
 charges the same function evidence budget and owns finite operation, node,
 atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
 symbolic optimization or solver synthesis by default.
-Register facts may cross a unique decoded direct predecessor edge. Joins,
-independent roots and exceptional entries stop that walk, and recovered
+Register facts may cross a unique decoded direct predecessor edge. At the
+first join, each direct incoming path must independently prove the same target.
+Earlier joins remain arbitrary inputs rather than recursively enumerated paths.
+Independent roots and exceptional entries stop the walk, and recovered
 indirect edges cannot supply their own proof. Only the traversed direct-edge
 control operations leave the symbolic sequence; instruction guards remain.
 Recovery revalidates the complete producer path after discovering new edges.

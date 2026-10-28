@@ -1975,8 +1975,9 @@ COFF and Mach-O, and a similar nonconstant expression must retain its input
 dependence. Partial register writes, calls, opaque effects, separate memory
 reads, instruction-local temporary reuse, malformed records and exhausted
 budgets cannot publish an edge. Direct predecessor chains carry exact numeric
-and symbolic facts while conflicting joins and independent continuation roots
-keep arbitrary incoming state. Repeated image loads participate in identities
+and symbolic facts. A joined dispatch requires all incoming paths to agree;
+conflicting or undefined alternatives and independent continuation roots retain
+arbitrary incoming state. Repeated image loads participate in identities
 only with the shared immutable-byte proof; writable lookalikes stay dynamic.
 `NeverDConstantBranchSourceTests` executes x64/ARM64 PE, ELF and Mach-O source
 through HighC and LLVM C, with pipeline optimization enabled and disabled,
@@ -1988,7 +1989,8 @@ serves jump-table proofs; run `NeverDJumpTableTests` and
 `NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
 both C routes for readonly loads, NOT, NEG, sign-extended target offsets and
 four mixed Boolean/arithmetic identities over unknown scalar inputs, direct
-predecessor state transport and identities containing immutable image loads.
+predecessor state transport, unanimous joined paths and identities containing
+immutable image loads.
 Independent native ELF x64 fixtures return a known result past an overlapping
 unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
 144 independent input pairs include zero, all ones, sign and alternating bits.

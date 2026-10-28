@@ -328,8 +328,9 @@ declarations. Dynamic pointers and disabled comments stay unannotated.
 Exact scalar branches now reconnect discontiguous and backward code while
 preserving independently known tail calls. Their numeric and symbolic proofs
 carry values across unique decoded direct predecessors and share authenticated
-immutable image reads. Joins, independent entries, writable memory and missing
-caller/VM state still need their own proofs. Worker navigation uses complete
+immutable image reads. A joined target also requires unanimous proofs from its
+direct incoming paths. Conflicting joins, independent entries, writable memory
+and missing caller/VM state still need their own proofs. Worker navigation uses complete
 recovered instruction ownership to select the original function when a user
 lands on a fragment; it does not invent a new callable entry or its live-ins.
 Saved code items retain this bounded owner lookup on literal GUI navigation.

@@ -43,6 +43,8 @@ INPUTS = (0, 1, 2, 3, 7, 255, 256, 0x5555555555555555,
 
 CASES = (
     ("load", "mov ecx,DWORD PTR[rip+.Ldelta]", 19),
+    ("joined-prefix", "test rdi,rdi\njz .Lother\nmov ecx,DWORD PTR[rip+.Ldelta]\n"
+     "jmp .Lcontinued\n.Lother:\nmov ecx,DWORD PTR[rip+.Ldelta]\n.Lcontinued:", 32),
     ("direct-prefix", "mov ecx,DWORD PTR[rip+.Ldelta]\njmp .Lcontinued\n"
      ".byte 0xcc\n.Lcontinued:", 22),
     ("symbolic-prefix", "mov rcx,rdi\nor rcx,rsi\nmov rdx,rdi\nand rdx,rsi\n"
