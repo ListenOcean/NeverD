@@ -15952,7 +15952,11 @@ every hexadecimal digit width, and round-trip complete rows at each indentation.
 Compact inventory output also matches independently constructed JSON objects
 across every patch kind, all byte values, decimal size boundaries and high
 addresses. Nested output retains its surrounding fields at indentation 0, 2
-and 4; the compact and general stream entry points share the row schema.
+and 4; the compact, canonical sidecar and general stream entry points share
+the row schema. The fixed sidecar writer matches independent two-space JSON
+bytes, including empty arrays, and the SDK raw-value wrapper supplies exactly
+one owner newline. Native adapter tests retain exact persisted bytes, stale
+digest refusals and failed-write preservation of the previous sidecar.
 Compact range JSON retains file-offset ordering across nonmonotonic virtual
 addresses and split runs. Its exact bytes are checked against independent
 objects across hexadecimal address and decimal size boundaries, including an
