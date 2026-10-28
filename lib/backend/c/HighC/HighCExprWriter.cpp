@@ -26,6 +26,7 @@
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
+#include "../render/X86/X87ControlAccess.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -2196,15 +2197,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
       llvm::report_fatal_error("invalid HighC x87 constant/control contract");
     const std::string Word = MemoryIdentifiers.allocate("x87_control");
     if (E.IntrinsicId == Intrinsic::X87ReadControl)
-      return "({ uint16_t " + Word +
-             "; __asm__ volatile(\"fnstcw %0\" : \"=m\"(" + Word +
-             ") :: \"memory\"); " + Word + "; })";
+      return "({ uint16_t " + Word + ";" +
+             renderX87ControlAccess(false, "&" + Word) + Word + "; })";
     const unsigned Index = E.IntrinsicId == Intrinsic::X87LoadConstant ? 1 : 0;
     const std::string Init = "({ uint16_t " + Word + " = (uint16_t)(" +
                              exprStr(*E.Operands[Index]) + "); ";
     if (E.IntrinsicId == Intrinsic::X87WriteControl)
-      return Init + "__asm__ volatile(\"fldcw %0\" :: \"m\"(" + Word +
-             ") : \"memory\"); })";
+      return Init + renderX87ControlAccess(true, "&" + Word) + "})";
     const std::string Value = MemoryIdentifiers.allocate("x87_constant");
     return Init + "unsigned _BitInt(80) " + Value +
            " = 0; __asm__ volatile(\"fldcw (%1)\\n\\t" +
