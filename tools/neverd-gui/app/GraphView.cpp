@@ -283,6 +283,12 @@ QString GraphView::currentRowText() const {
   return node.rows[cursorRow_].styled.text;
 }
 
+QString GraphView::copyText() const {
+  if (const QString word = currentToken(); !word.isEmpty())
+    return word;
+  return currentRowText();
+}
+
 std::optional<Address> GraphView::operandTarget() const {
   if (cursorNode_ < 0 || cursorNode_ >= nodes_.size())
     return std::nullopt;
@@ -634,8 +640,7 @@ void GraphView::mousePressEvent(QMouseEvent *event) {
     if (row >= 0 && row < nodes_[node].rows.size()) {
       cursorColumn_ = columnAt(nodes_[node].rows[row], nodes_[node],
                                toScene(event->position()));
-      if (event->button() == Qt::LeftButton)
-        highlight_ = nodes_[node].rows[row].styled.tokenAt(cursorColumn_);
+      highlight_ = nodes_[node].rows[row].styled.tokenAt(cursorColumn_);
     }
     if (const auto address = currentAddress()) {
       pendingCursor_ = address;
@@ -669,6 +674,12 @@ void GraphView::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void GraphView::keyPressEvent(QKeyEvent *event) {
+  // The highlight follows the cursor, as IDA's does, so Copy takes the word
+  // it marks.
+  const auto follow = [this] {
+    highlight_ = currentToken();
+    update();
+  };
   switch (event->key()) {
   case Qt::Key_Up:
     if (cursorNode_ >= 0) {
@@ -677,6 +688,7 @@ void GraphView::keyPressEvent(QKeyEvent *event) {
       else if (cursorNode_ > 0)
         moveCursor(cursorNode_ - 1,
                    int(nodes_[cursorNode_ - 1].rows.size()) - 1);
+      follow();
     }
     return;
   case Qt::Key_Down:
@@ -685,15 +697,16 @@ void GraphView::keyPressEvent(QKeyEvent *event) {
         moveCursor(cursorNode_, cursorRow_ + 1);
       else if (cursorNode_ + 1 < nodes_.size())
         moveCursor(cursorNode_ + 1, 0);
+      follow();
     }
     return;
   case Qt::Key_Left:
     cursorColumn_ = std::max(0, cursorColumn_ - 1);
-    update();
+    follow();
     return;
   case Qt::Key_Right:
     ++cursorColumn_;
-    update();
+    follow();
     return;
   case Qt::Key_PageUp:
     origin_.ry() -= height() * 0.9 / scale_;
@@ -723,6 +736,7 @@ void GraphView::keyPressEvent(QKeyEvent *event) {
     for (int i = 0; i < nodes_.size(); ++i)
       if (function_ && nodes_[i].start == *function_) {
         moveCursor(i, 0);
+        follow();
         break;
       }
     return;

@@ -132,6 +132,10 @@ public:
   };
   std::optional<NumberTarget> numberTarget() const;
   QString selectedText() const;
+  /// What Copy takes: the selection; else, as in IDA, the name or word under
+  /// the cursor, which the highlight marks; else the current line, a folded
+  /// summary as the code it stands for.
+  QString copyText() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
   /// Source coordinates, independent of the current fold projection.
@@ -261,6 +265,8 @@ private:
   int epilogueLine() const;
   /// The token at a line and column; in LLVM IR, a name with its sigil.
   QString tokenAt(int line, int column) const;
+  /// The source name or token under the cursor; none in a folded summary.
+  QString cursorWord() const;
   /// A double-click in LLVM IR: a global goes to the image address it stands
   /// for, or else to what the binary names so; any other name goes to the
   /// line that defines it.

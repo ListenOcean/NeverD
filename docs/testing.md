@@ -4555,9 +4555,13 @@ They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
 `WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
 a listing row's address and segment name and copies exactly that word. Clicks
-on the arrow gutter, the colon, the gap before the body and the body itself
-leave the current line as the copy, and a drag inside the address keeps the
-characters it covers. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+on the arrow gutter, the colon and the gap before the body leave the current
+line as the copy, and a drag inside the address keeps the characters it
+covers. `WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing,
+graph and pseudocode views. Without a selection, Ctrl+C and Edit Copy take the
+clicked word. They take the word an arrow key reaches, a right-clicked word,
+and the line on blank space, and a selection still wins. Keys move the
+listing's highlight with the copied word. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.

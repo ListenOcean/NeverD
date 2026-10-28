@@ -120,8 +120,8 @@
         <translation>コピー(&amp;C)</translation>
     </message>
     <message>
-        <source>Copy the selection or current line</source>
-        <translation>選択範囲または現在の行をコピーします</translation>
+        <source>Copy the selection, the highlighted word or the current line</source>
+        <translation>選択範囲、ハイライトされた単語、または現在の行をコピーします</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>

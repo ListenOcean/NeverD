@@ -4185,7 +4185,7 @@ void MainWindow::copySelection() {
       return;
     }
     if (auto *code = qobject_cast<CodeText *>(widget)) {
-      QApplication::clipboard()->setText(code->selectedText());
+      QApplication::clipboard()->setText(code->copyText());
       return;
     }
     if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
@@ -4197,7 +4197,7 @@ void MainWindow::copySelection() {
       return;
     }
   }
-  QApplication::clipboard()->setText(disassembly_->selectedText());
+  QApplication::clipboard()->setText(disassembly_->copyText());
 }
 
 void MainWindow::chooseLocation(ChooserKind kind, ActionId command) {
