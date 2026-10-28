@@ -68,6 +68,7 @@
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ControlAccess.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -480,6 +481,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
   HeaderCallRecords.clear();
+  DefinitionPointers.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   collectImageDataUses(Mod);
@@ -680,12 +682,40 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
       OS << " __attribute__((weak))";
     OS << ";\n";
   }
+  // A unit that names the definitions it leaves out leaves out each one whose
+  // C throws an error it can name, as HighC's does: setupFunction starts the
+  // next definition from its own state. A recorded rendering, a source map
+  // and source names follow one pass's text, so those still fail.
+  const bool Refusing = Opts.RefusedDefinitions && !OnlyFunction &&
+                        !SourceRecorder && !Opts.SourceMap && !Opts.SourceNames;
+  if (Opts.RefusedDefinitions)
+    Opts.RefusedDefinitions->clear();
   auto WriteFunctions = [&] {
     for (auto &Fn : Mod) {
       if (Fn.isDeclaration())
         continue;
       if (OnlyFunction && &Fn != OnlyFunction)
         continue;
+      if (Refusing) {
+        std::string Text;
+        llvm::raw_string_ostream TextOS(Text);
+        try {
+          RestoreOutput Restore{OS, &OS.stream()};
+          OS.retarget(&TextOS);
+          writeFunction(Fn);
+        } catch (const std::exception &Error) {
+          std::optional<uint64_t> Entry;
+          if (auto VA = rewrite_source::getOriginalVA(Fn))
+            Entry = *VA;
+          else
+            llvm::consumeError(VA.takeError());
+          Opts.RefusedDefinitions->push_back(
+              {Entry.value_or(0), Fn.getName().str(), Error.what()});
+          continue;
+        }
+        OS << Text << "\n";
+        continue;
+      }
       auto Event = SourceRecorder ? SourceRecorder->function(Fn) : std::nullopt;
       if (SourceRecorder)
         OS << SourceRecorder->definition(Fn);
@@ -2089,6 +2119,10 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   const std::string Undefined = "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
   if (calleeReturnsNothing(Call))
     return Undefined;
+  if (const auto *Callee = Call.getCalledFunction();
+      Callee && Type->isIntegerTy() && !needsCallSiteCType(Call) &&
+      definitionPointerTypes(*Callee).Result.Type)
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)(" + Expr + "))";
   const LibraryCallee Library = libraryCallee(Call);
   if (!Library)
     return Expr;
@@ -2897,8 +2931,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       throw std::invalid_argument(kReturnProtectionCRequiresAArch64);
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
-        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
           (void)llvmAArch64AuthenticatedCall(*Call, Opts.TheArch);
+          (void)classifyX87ControlAccess(*Call, Opts.TheArch);
+        }
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
           (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);

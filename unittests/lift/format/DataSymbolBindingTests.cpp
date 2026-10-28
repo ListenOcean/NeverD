@@ -8,6 +8,7 @@
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/loader/DataSymbolBinding.h"
+#include "neverd/object/ELFLayout.h"
 #include "neverd/pipeline/Pipeline.h"
 #include "neverd/support/BinaryLoading.h"
 
@@ -65,8 +66,13 @@ protected:
         exec(NEVERD_TEST_CLANG, {"--target=" + Target.str(), "-fPIC", "-O1",
                                  "-c", Source.string(), "-o", Object.string()});
     EXPECT_TRUE(Compile.ok()) << Compile.err;
-    auto Link = exec("ld.lld", {"-shared", "-z", Relro ? "relro" : "norelro",
-                                Object.string(), "-o", Library.string()});
+    // A portable immutable slot must fit the largest supported Arm page,
+    // including when this cross-target fixture is built on an x86 host.
+    const auto Page = std::to_string(kELFArmMaxProtectionPageSize);
+    auto Link = exec("ld.lld",
+                     {"-shared", "-z", Relro ? "relro" : "norelro", "-z",
+                      "max-page-size=" + Page, "-z", "common-page-size=" + Page,
+                      Object.string(), "-o", Library.string()});
     EXPECT_TRUE(Link.ok()) << Link.err;
     if (Sectionless) {
       std::ifstream Input(Library, std::ios::binary);
@@ -1151,7 +1157,7 @@ TEST(DataSymbolBindings, ExactSymbolKindAddendAndPermissionsOwnTheBinding) {
   Image.Arch = Arch::AArch64;
   Image.Bits = Bitness::Bits64;
   Segment Data;
-  Data.VA = 0x1000;
+  Data.VA = 0x10000 - 8;
   Data.Size = 32;
   Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
   Data.Data.assign(Data.Size, 0xa5); // File bytes are not a RELA addend.
@@ -1176,6 +1182,7 @@ TEST(DataSymbolBindings, ExactSymbolKindAddendAndPermissionsOwnTheBinding) {
   EXPECT_EQ(Binding().Addend, -8);
   EXPECT_FALSE(Binding().Immutable);
   Image.ELFMetadata.emplace();
+  Image.ELFMetadata->Type = llvm::ELF::ET_DYN;
   Image.ELFMetadata->ProgramHeaders.push_back(
       {llvm::ELF::PT_GNU_RELRO, 0, 0, Data.VA, 7, 7, 1});
   EXPECT_FALSE(Binding().Immutable); // A partial pointer is not read-only.

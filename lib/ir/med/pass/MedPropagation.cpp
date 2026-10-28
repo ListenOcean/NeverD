@@ -101,6 +101,9 @@ void LowToMedConverter::propagate(MedFunc &Func) {
               Def->RegistrationRoot == MedOp::RegistrationRootKind::None &&
               Def->Inputs[0].Size == Op.Inputs[I].Size) {
             MedVar Replacement = Def->Inputs[0];
+            if (Replacement.isConst() &&
+                !canPropagateConstantToOperand(Op.Opcode, I))
+              continue;
             // COPY is value transport, so an untagged immediate remains
             // role-neutral at its definition.  Once SSA substitutes it into a
             // numeric operand, classify only this occurrence as scalar.  Exact

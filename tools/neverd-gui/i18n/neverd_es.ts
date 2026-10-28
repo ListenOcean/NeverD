@@ -9593,6 +9593,18 @@ Las ambigüedades y decisiones manuales se limitan al informe. Las hipótesis de
         <source>Releases</source>
         <translation>Versiones publicadas</translation>
     </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>Las llamadas de estos fragmentos guardados se basan en los pares de funciones del informe original. No demuestran que el comportamiento de las funciones llamadas sea equivalente.</translation>
+    </message>
+    <message>
+        <source>All native spans</source>
+        <translation>Todos los fragmentos nativos</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>Todos los fragmentos SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

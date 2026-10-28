@@ -16,6 +16,7 @@
 #include "X86FPStateHelpers.h"
 #include "X86ScalarSystem.h"
 #include "X86SystemRegister.h"
+#include "X87ControlAccess.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -133,11 +134,6 @@ const char *x87CHelperName(X87CHelper Helper) {
   llvm_unreachable("unknown x87 C helper");
 }
 
-bool isX87ControlWord(Arch TheArch, const MedVar &V) {
-  return (TheArch == Arch::X86 || TheArch == Arch::X64) &&
-         V.Kind == MedVar::Reg && V.RegOff == x86reg::FPU_CW && V.Size == 2;
-}
-
 /// The operands the x87 value instruction of \p Helper reads.
 static unsigned x87ValueHelperOperands(X87CHelper Helper) {
   switch (Helper) {
@@ -250,8 +246,8 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
   if (Used.count(X87CHelper::ControlWord))
     OS << "static inline uint16_t neverd_x87_control_word(void) {\n"
           "    uint16_t word;\n"
-          "    __asm__ volatile(\"fnstcw %0\" : \"=m\"(word));\n"
-          "    return word;\n"
+       << renderX87ControlAccess(false, "&word")
+       << "    return word;\n"
           "}\n\n";
   if (!Used.count(X87CHelper::Fprem))
     return;

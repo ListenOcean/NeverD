@@ -6935,3 +6935,58 @@ int main(void) { return call_site() != 7 || calls != 1 || errors; }
       compileAndRun(Source, Optimization, {}, false, false, {}, Harness);
   }
 }
+
+TEST(LLVMCValues, AUnitLeavesOutOnlyTheDefinitionItCannotWrite) {
+  // LLVM C refuses a compare-exchange whose synchronization scope the C
+  // builtin cannot state: a unit that lists what it leaves out keeps the
+  // others.
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Error;
+  auto Module = llvm::parseAssemblyString(R"ir(
+define i64 @before_exchange(i64 %x) {
+  %r = add i64 %x, 1
+  ret i64 %r
+}
+define i1 @scoped_exchange(ptr %p, i64 %expected, i64 %desired) {
+  %exchange = cmpxchg ptr %p, i64 %expected, i64 %desired syncscope("singlethread") seq_cst seq_cst
+  %ok = extractvalue { i64, i1 } %exchange, 1
+  ret i1 %ok
+}
+define i64 @after_exchange(i64 %x) {
+  %r = mul i64 %x, 3
+  ret i64 %r
+}
+)ir",
+                                          Error, Context);
+  ASSERT_TRUE(Module) << Error.getMessage().str();
+  Module->setTargetTriple(llvm::Triple("aarch64-linux-gnu"));
+  Module->setDataLayout("e-m:e-i8:8:32-i16:16:32-i64:64-i128:128-n32:64-S128");
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::AArch64;
+  Options.EmitIncludes = false;
+  std::vector<neverd::CEmitterOptions::RefusedDefinition> Refused;
+  Options.RefusedDefinitions = &Refused;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
+  ASSERT_EQ(Refused.size(), 1u) << Source;
+  EXPECT_EQ(Refused.front().Name, "scoped_exchange");
+  EXPECT_EQ(Refused.front().Reason, "unsupported LLVM C cmpxchg shape");
+  // Each kept definition is written; the left-out one is only declared.
+  const auto Defines = [&](llvm::StringRef Name) {
+    llvm::SmallVector<llvm::StringRef> Lines;
+    llvm::StringRef(Source).split(Lines, '\n');
+    return llvm::any_of(Lines, [&](llvm::StringRef Line) {
+      return Line.contains((Name + "(").str()) && Line.ends_with(") {");
+    });
+  };
+  EXPECT_TRUE(Defines("before_exchange")) << Source;
+  EXPECT_TRUE(Defines("after_exchange")) << Source;
+  EXPECT_FALSE(Defines("scoped_exchange")) << Source;
+  // Without the list, the definition fails the unit.
+  Options.RefusedDefinitions = nullptr;
+  std::string Unit;
+  llvm::raw_string_ostream UnitOS(Unit);
+  EXPECT_THROW(neverd::LLVMCEmitter().emit(*Module, UnitOS, Options),
+               std::runtime_error);
+}

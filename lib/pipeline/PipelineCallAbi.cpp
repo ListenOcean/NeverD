@@ -732,6 +732,11 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       enqueueCallees(Conversion.CalleesRead);
     else
       enqueueCallees(calleesToRead(*Conversion.Body, Img, Result));
+    // System V's model takes every register a variadic prologue saves: as an
+    // omitted callee's signature it would make its callers pass registers
+    // they never set.
+    if (Conversion.Body->takesVectorArgumentRegisters())
+      continue;
     Signatures.push_back(Conversion.Body);
   }
   return Signatures;
@@ -1349,7 +1354,8 @@ readIncomingStackCallees(const BinaryImage &Image, PipelineResult &Result,
 
 void confirmOmittedStructReturns(
     const BinaryImage &Image, const PipelineResult &Result,
-    std::map<va_t, std::vector<MedReturnReg>> &Candidates) {
+    std::map<va_t, std::vector<MedReturnReg>> &Candidates,
+    const std::set<va_t> &FirstWordObserved) {
   if (Candidates.empty())
     return;
   if (auto *Memo = Result.CalleeSignatureMemo.get())
@@ -1383,7 +1389,8 @@ void confirmOmittedStructReturns(
             Reader.conversion(It->first, Read, &Read != &Local, Low);
         Proven = Conversion.Body && !Conversion.Body->SourceParametersBound &&
                  returnsStructFields(*Conversion.Body, It->second, Image.Arch,
-                                     Image.abiFormat());
+                                     Image.abiFormat(),
+                                     FirstWordObserved.count(It->first) != 0);
       }
     }
     if (Proven)

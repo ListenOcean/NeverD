@@ -9557,6 +9557,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
         <source>Releases</source>
         <translation>發布版本</translation>
     </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>這些已儲存片段中的呼叫依據來源報告的函式配對。它們不能證明被呼叫函式的行為等價。</translation>
+    </message>
+    <message>
+        <source>All native spans</source>
+        <translation>全部原生片段</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>全部 SSA 片段</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

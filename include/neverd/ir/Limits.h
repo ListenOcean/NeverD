@@ -128,6 +128,8 @@ inline constexpr size_t kHighDeadStoreElimNarrowSourceConcatLocalsBudget =
 inline constexpr size_t kHighDeadStoreElimBudget = 200000;
 inline constexpr size_t kHighDeadStoreElimElimUnreadPrivateFrameStoresBudget =
     100000;
+inline constexpr size_t
+    kHighDeadStoreElimElimUndefinedEntryScratchStoresBudget = 100000;
 
 // lib/ir/high/pass/HighDemandedBytes.cpp
 inline constexpr size_t kHighDemandedBytesVisitBudget = 2000000;
@@ -335,6 +337,11 @@ inline constexpr size_t kMedImmutableTableScansMaxEvaluationWork = 65536;
 inline constexpr unsigned kMedImmutableTableScansMaxEvaluationDepth = 64;
 inline constexpr unsigned kMedImmutableTableScansMaxScanIterations = 4096;
 inline constexpr unsigned kMedImmutableTableScansMaxFoldRounds = 4;
+
+// lib/ir/med/pass/MedSSA.cpp
+// COPY and constant-step definitions one termination handler register value
+// is traced through before it has no stable form.
+inline constexpr unsigned kMedSSASEHFuncletRegisterChainLimit = 32;
 
 // lib/ir/med/pass/MedMutableSource.cpp
 inline constexpr size_t kMedMutableSourceMaxBlocks = 4096;

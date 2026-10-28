@@ -442,6 +442,10 @@ struct MedCallReturnRead {
 struct MedStructReturnCandidate {
   uint32_t CallSiteId = 0;
   std::vector<MedVar> Fields;
+  /// The caller read only the second integer word; the first is proposed.
+  /// A second word the callee leaves untouched is then the caller's own
+  /// residue, not a returned argument: the callee must write each field.
+  bool SecondWordOnly = false;
 };
 
 struct MedTypedLocal {
@@ -485,6 +489,24 @@ struct MedCallInfo {
   /// -1 when recovery ended them elsewhere.
   int TargetRegisterArgIdx = -1;
   uint16_t StackArgumentSlotBytes = 0;
+};
+
+/// A parent's value of one callee-saved register throughout the protected
+/// ranges a termination handler ends, in a form no later pass renames or
+/// removes: a fixed offset from the entry stack pointer, the register an
+/// incoming argument arrives in, or a constant.
+struct SEHFuncletRegisterValue {
+  enum class Kind : uint8_t { EntryStackOffset, EntryArgument, Constant };
+  Kind ValueKind = Kind::Constant;
+  /// EntryStackOffset: bytes from the entry stack pointer.
+  int64_t Offset = 0;
+  /// EntryArgument: the argument register's offset.
+  uint64_t RegOff = 0;
+  /// Constant: the register's bits, and the address they name if any.
+  uint64_t Value = 0;
+  ConstantAddressProvenance Provenance = ConstantAddressProvenance::Unknown;
+  uint64_t AddressOwnerVA = InvalidVA;
+  bool operator==(const SEHFuncletRegisterValue &) const = default;
 };
 
 struct MedFunc {
@@ -699,6 +721,14 @@ struct MedFunc {
   /// they receive lies (proveLowSEHTerminationFrame). A handler whose frame
   /// LowIR did not certify is absent.
   std::map<va_t, uint64_t> SEHTerminationFrameBytes;
+  /// ARM and AArch64 termination handlers read the parent's callee-saved
+  /// registers, which the unwinder restores to their values where the
+  /// exception struck. By handler entry and register offset: a full-width
+  /// callee-saved register's value throughout every protected range the
+  /// handler ends, where no protected operation writes it and the ranges agree
+  /// (buildSsa). A register absent here has no such value.
+  std::map<va_t, std::map<uint64_t, SEHFuncletRegisterValue>>
+      SEHFuncletRegisters;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
   /// Independent replay of expanded shared helpers. The source states above
   /// retain their original call occurrences and prologue receipt.

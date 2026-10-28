@@ -219,7 +219,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
     // A convention whose calls take their arguments from callee summaries
     // recovers no call arguments here: a System V variadic callee's overflow
     // is the stack its calls store.
-    sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch);
+    sizeVariadicOverflowFromStores(Result.MedFuncs, Img.Arch, Img.abiFormat());
   }
   // A tail call that forwards a multi-register return (`return g(x);`, an
   // import's stub) returns every register its callee returns, as in lift

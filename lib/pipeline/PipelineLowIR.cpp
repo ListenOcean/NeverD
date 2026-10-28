@@ -25,6 +25,7 @@
 #include "neverd/ir/low/ImportCallee.h"
 #include "neverd/ir/low/InternalNoReturn.h"
 #include "neverd/ir/low/LowIntrinsicEffects.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/med/LowToMed.h"
@@ -4093,10 +4094,25 @@ static LocalRegisterEffect summarizeRecoveredCallRegisters(
   // such call is summarized in place.
   std::optional<CallRegisterBody> Projection;
   size_t Work = limits::ir::kSourceFrameAnalysisRemaining;
+  std::optional<std::map<SourceCallOccurrenceKey, va_t>> ScalarTargets;
   if (!Img.IsRelocatable)
-    for (size_t B = 0; B < Body.Blocks.size(); ++B)
-      for (const auto &[Index, Target] :
-           resolveLowBlockCallTargets(Body.Blocks[B], Img.Arch, &Work)) {
+    for (size_t B = 0; B < Body.Blocks.size(); ++B) {
+      auto Targets =
+          resolveLowBlockCallTargets(Body.Blocks[B], Img.Arch, &Work);
+      for (size_t I = 0; I < Body.Blocks[B].Ops.size(); ++I)
+        if (const auto &Call = Body.Blocks[B].Ops[I];
+            !Targets.count(I) && Call.Opcode == NdOp::INDIR_CALL &&
+            Call.NumInputs == 1 && !Call.Inputs[0].isConst()) {
+          const auto Site = sourceCallOccurrenceKey(Call);
+          if (!Site)
+            continue;
+          if (!ScalarTargets)
+            ScalarTargets = constantRegisterCallTargets(Body);
+          if (const auto Found = ScalarTargets->find(*Site);
+              Found != ScalarTargets->end())
+            Targets.try_emplace(I, MedCallTarget{Found->second, false});
+        }
+      for (const auto &[Index, Target] : Targets) {
         if (Target.ThroughSlot ? importCalleeName(Img, Target.Address).empty()
                                : !Img.hasExecutableCodeOwnerAt(Target.Address))
           continue;
@@ -4114,6 +4130,7 @@ static LocalRegisterEffect summarizeRecoveredCallRegisters(
         Call.Opcode = Target.ThroughSlot ? NdOp::INDIR_CALL : NdOp::CALL;
         Call.Inputs[0] = NdVar::cst(Target.Address, Call.Inputs[0].Size);
       }
+    }
   return localRegisterEffect(
       Img, Projection ? CallRegisterBodyView(*Projection) : Body,
       &NoReturnTargets, &FixedCallReads, &ArgumentSources, &StackProbes);

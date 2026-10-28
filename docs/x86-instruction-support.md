@@ -2423,13 +2423,18 @@ The production LLVM release pin and submodule remain unchanged.
 ## Owned FEMMS completion
 
 The shared x87 selector contract now admits `0F 0E`. Its concrete transition
-clears all tags and all payload provenance, preserving the defined control,
-status and saved environment. Waiting exceptions and unknown incoming state
+clears TOP, all tags and all payload provenance, preserving the other control
+and status bits and saved environment. Logical FXSAVE slots rotate to retain
+physical register identity. Waiting exceptions and unknown incoming state
 refuse before mutation. MMX writes establish only the written physical slot;
 all eight must be known before exporting a complete raw snapshot. Native
 LLVM, HighC and LLVMC keep FEMMS within the existing context step. Restore and
 step constraints now name MM0–MM7 as well as ST0–ST7: LLVM does not model them
 as overlapping physical registers.
+
+The counts in the following historical records predate the
+[TOP-reset correction](#portable-owned-fnop-and-mmx-resets); they did not
+establish that transition.
 
 `NeverDX87MMXStateTests` checks all eight TOP values, three tag patterns,
 both strictness modes and both reset instructions, plus refusal, feature
@@ -2743,15 +2748,76 @@ The [qualification ledger](evidence/x86-x87-resets-2026-10-28.json) binds all
 results to their tested commits and artifacts. Each SDK passes 36 generated
 reset artifacts with 2,700 state observations and 576 original-instruction
 comparisons; the prior arithmetic fixture separately passes 36 artifacts with
-6,096 observations and 5,760 original comparisons. Native SDK integration
-passes 1,147 tests, with 49 native-AArch64-only tests explicitly skipped.
+6,096 observations and 5,760 original comparisons. Publication commit
+`710180d84eb925e6ee07fe6721774781055a0f20` passes 1,227 pinned-SDK and 1,225 full-SDK tests with no failures. Each skips 49 native
+AArch64 tests on the x64 host and one Windows-only single-step observer.
+The full SDK configuration excludes two Unicorn reference tests.
 The pinned suite's sole aggregate 3DNow timeout is repaired by giving each
 instruction/form its own ordinary CTest deadline: all 103 cases pass and keep
 all 960 objects. The existing QEMU guest consumes those exports and passes
 368,640 state and 4,080 fault comparisons, while its 1,440 pending-#MF and
 240 stack-#SS differentials remain unqualified.
 
-These additions do not inherit the historical ARM64 qualification. Physical
-FEMMS, privileged #NM behavior and complete architectural equivalence remain
+Native ARM64 [run 40680179646](https://github.com/NeverSight/NeverD/actions/runs/40680179646)
+executes all 36 new reset artifacts and 2,700 observations at the same publication
+commit. Its 225 distinct seeded state transitions match both local x64 SDKs.
+The later [run 40697970738](https://github.com/NeverSight/NeverD/actions/runs/40697970738)
+at `c27c87a9a1d2f816cf38392278d4017d96d7f832` also passes all seventeen native
+AArch64 translation tests. Reset sessions retain 450 observations and 882 direct
+JITLink objects, including eighteen refusal cases and completed-prefix checks.
+Both native host jobs and their comparison pass; independent downloaded-artifact
+audits confirm zero differences across 2,700 reset, 6,096 prior generated and
+57,888 arithmetic observations per host.
+
+The local pinned SDK passes 1,544 tests at `c27c87a9a1`; the full asserting SDK
+passes 1,542 at `05307e249b4f16b1f2d42821a296060dd7c34e3e`. Each skips 56
+platform/fixture-dependent tests. The latter commit only repairs the parameter
+count of a negative inline-assembly fixture so LLVM assertions allow the intended
+missing-clobber check to run. All nineteen pinned constant/control tests and both
+SDKs' generated reset/arithmetic checks pass after that repair. Physical FEMMS,
+privileged #NM behavior and complete architectural equivalence remain
 unqualified. LLVM release, production SDK pinning and the LLVM gitlink remain
 unchanged while the global instruction gaps are open.
+
+## Native x87 control-word interfaces
+
+LLVM `d6719fa9d041bb4b8f4f53ce9b8f8dfdf547923b` supplies the fixed
+`void llvm.x86.fnstcw(ptr)` and `void llvm.x86.fldcw(ptr)` interfaces. NeverC
+`2537751e7d19915010b32c2b8f71698977886b34` supplies
+`__builtin_ia32_fnstcw(unsigned short *)` and
+`__builtin_ia32_fldcw(const unsigned short *)`. Their native operations access
+exactly two bytes without assuming pointer alignment. FNSTCW is nonwaiting;
+FLDCW checks prior pending exceptions before accessing its operand. A control
+word that newly unmasks an exception leaves delivery to a subsequent waiting
+operation. The LLVM effects retain repeated calls and surrounding memory
+operations, and the machine descriptor retains FPCW/FPSW dependencies.
+
+NeverD uses these LLVM interfaces when registered. Its entry control read,
+HighC expressions and LLVM-C calls share the private X86 C rendering helper,
+which selects the NeverC builtin when available. The old r6 SDK and compilers
+without the new builtins keep the existing owned assembly path. One LLVM-call
+validator rejects malformed, retyped, aliased, defined, variadic or non-x86
+calls before function filtering. Combined constant-load assembly and the
+existing typed scalar/state contracts are unchanged; these interfaces do not
+establish full fault-PC equivalence for the lifted typed projection.
+
+The [qualification ledger](evidence/x86-x87-control-word-2026-10-28.json) records
+eight LLVM code-generation/effect tests, 111 NeverC x86 frontend tests, five
+backend tests and fifteen generator tests. LLVM checks i386/x64 ELF, COFF and
+Mach-O; NeverC checks its supported x64 targets. Six direct LLVM, NeverC and
+text-IR bridge O0/O2 profiles on the recorded Intel Linux host pass 6,912 state
+observations, 120 expected faults and 24 page-boundary accesses. Fault checks
+observe the actual opcode, saved CW/SW and completed prefix without resuming
+generated code. Independent negative controls reject missing stores, early
+operand reads, lost prefixes and widened memory accesses.
+
+At `5d9c6f1f876a0252a2da8e3e99ad05adddafdcad`, the pinned SDK passes 1,825
+tests and skips sixty; a separate successful NeverC run fills one of those
+skips, giving 1,826 passed and 59 skipped. The full SDK passes 1,827 and skips
+56. Both repeat the generated reset/arithmetic checks and capability audit.
+All 56 retained HighC/LLVM-C constant/control programs also compile through
+NeverC at O0/O2, require native control-word IR calls, and pass 86,016 exact
+binary80/control comparisons against original instructions. Physical
+qualification remains limited to the recorded x64 host; i386 runtime, #NM,
+alignment-check delivery and complete architectural equivalence are not
+claimed. The production SDK pin and LLVM gitlink remain unchanged.
