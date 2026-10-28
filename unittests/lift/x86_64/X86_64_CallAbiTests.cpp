@@ -446,24 +446,29 @@ int lane_e(int a) { return ep(a) + ef(a) * 3; }
 // arguments its conversions name, a double in the low lane of its vector
 // register, which AL counts.  Each call passes its doubles as doubles, the
 // ones `cvtsi2sd`, `mulsd` and `addsd` leave beside an upper lane the caller
-// never set as well as one `movsd` loads whole; as integer bits, C would pass
-// them in integer registers, where these routines read none.  sf hashes the
-// text snprintf formats.
+// never set as well as one `movsd` loads whole, and the constants pc and sf
+// load from read-only data, which C passes as their values; as integer bits,
+// C would pass them in integer registers, where these routines read none.
+// sf hashes the text snprintf formats.
 TEST_F(X86_64_CallAbi, AFormattedCallPassesItsDoublesAsDoubles) {
-  expectBothRoutesRunLikeSource(R"C(
+  expectBothRoutesRunLikeSource(
+      R"C(
 #include <stdio.h>
 char Buf[96];
 int gp(double x) __attribute__((noinline));
 int ep(int a) __attribute__((noinline));
 int pf(int a, const double *p) __attribute__((noinline));
+int pc(int a) __attribute__((noinline));
 int df(int a) __attribute__((noinline));
 int sf(int a) __attribute__((noinline));
 int gp(double x) { return printf("%f\n", x); }
 int ep(int a) { return gp(a * 0.5); }
 int pf(int a, const double *p) { return printf("%f %d\n", *p, a); }
+int pc(int a) { return printf("%f %d\n", 2.5, a); }
 int df(int a) { return dprintf(1, "%d %.2f %e\n", a, a * 2.5, a + 0.5); }
 int sf(int a) {
-  int n = snprintf(Buf, sizeof Buf, "%.3f|%d|%g", a * 2.5, a, a * 0.25);
+  int n = snprintf(Buf, sizeof Buf, "%.3f|%d|%g|%.2f", a * 2.5, a, a * 0.25,
+                   0.75);
   unsigned h = 0;
   for (int i = 0; i < n && i < (int)sizeof Buf; i++)
     h = h * 31 + (unsigned char)Buf[i];
@@ -471,12 +476,11 @@ int sf(int a) {
 }
 int fmt_e(int a) {
   double v[2] = {a * 0.75, a - 0.5};
-  return ep(a) + pf(a, &v[1]) * 3 + df(a) * 5 + sf(a) * 7;
+  return ep(a) + pf(a, &v[1]) * 3 + df(a) * 5 + sf(a) * 7 + pc(a) * 11;
 }
 )C",
-                                "fmt_e",
-                                {"fmt_e", "gp", "ep", "pf", "df", "sf", "Buf"},
-                                {0, 1, -1, 7, 1000});
+      "fmt_e", {"fmt_e", "gp", "ep", "pf", "pc", "df", "sf", "Buf"},
+      {0, 1, -1, 7, 1000});
 }
 
 // A pointer walking a string is compared against its end through `~W`, the

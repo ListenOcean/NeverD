@@ -7439,7 +7439,11 @@ keeps their reaching definitions through multiple predecessor blocks.
 A formatted call's MedIR inputs are every argument its format names, in the
 source's order, a floating one as the scalar in its vector register's low lane
 (`MedOp::ExactArguments`, `MedOp::ExactFloatInputs`); HighIR passes them as
-they are. Call recovery for LLVM takes the same inputs for a call that reaches
+they are. HighC prints a floating one as the value it is where no parameter
+types it: a constant the call loads from read-only data as its literal
+(`printf("%f %d\n", 2.5, a)`), not as the integer its bits make, which C
+would pass in an integer register.
+Call recovery for LLVM takes the same inputs for a call that reaches
 an import (`recoverCallAbi`), after its own scan has found the registers the
 function passes on, and the emitter passes a floating one into the routine's
 `...` as a `double`, which System V and AAPCS64 carry in a vector register.

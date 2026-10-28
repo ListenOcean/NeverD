@@ -2865,6 +2865,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         Source < ArityIntegers + ArityFloats)
       FloatParam =
           NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    // A floating argument no parameter types, such as a double a formatted
+    // call passes past its format (MedOp::ExactFloatInputs), passes as its
+    // own value: bits it reads from read-only data print as that constant
+    // (`2.5`).  The integer immediate the bits make would travel in an
+    // integer register.
+    if (!FloatParam && Op->Type && Op->Type->Kind == NdTypeKind::Float)
+      FloatParam = Op->Type;
     if (FloatParam && FloatParam->Kind == NdTypeKind::Float) {
       if (PointerArgument)
         PointerArgumentOperands.erase(PointerArgument);
