@@ -25,12 +25,16 @@ enum class X87ControlAccessKind { Read, Write };
 
 inline std::optional<X87ControlAccessKind>
 classifyX87ControlAccess(const llvm::CallBase &Call, Arch TheArch) {
-  const auto *Callee = Call.getCalledFunction();
+  // getCalledFunction() hides a named function when the call-site prototype
+  // differs. Such a call must still reach this contract's rejection.
+  const auto *Callee = llvm::dyn_cast<llvm::Function>(
+      Call.getCalledOperand()->stripPointerCastsAndAliases());
   if (!Callee || (Callee->getName() != "llvm.x86.fnstcw" &&
                   Callee->getName() != "llvm.x86.fldcw"))
     return std::nullopt;
   if ((TheArch != Arch::X86 && TheArch != Arch::X64) ||
       !llvm::isa<llvm::CallInst>(Call) || !Callee->isDeclaration() ||
+      Call.getCalledOperand() != Callee ||
       Call.getFunctionType() != Callee->getFunctionType() ||
       Call.getCallingConv() != llvm::CallingConv::C ||
       Callee->getCallingConv() != llvm::CallingConv::C ||

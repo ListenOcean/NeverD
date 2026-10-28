@@ -324,7 +324,7 @@ INSTANTIATE_TEST_SUITE_P(AllSeven, X87Constants,
 TEST(X87ControlContract,
      NativeCProjectionRejectsMalformedCallsBeforeFiltering) {
   for (const char *Name : {"llvm.x86.fnstcw", "llvm.x86.fldcw"})
-    for (unsigned Change = 0; Change < 10; ++Change)
+    for (unsigned Change = 0; Change < 11; ++Change)
       for (bool HideBody : {false, true}) {
         SCOPED_TRACE(testing::Message()
                      << Name << ':' << Change << ':' << HideBody);
@@ -363,6 +363,10 @@ TEST(X87ControlContract,
           Builder.SetInsertPoint(Unwind);
           Builder.CreateUnreachable();
           Builder.SetInsertPoint(Normal);
+        } else if (Change == 10) {
+          auto *Mismatched = llvm::FunctionType::get(
+              Void, {Builder.getInt16Ty()}, false);
+          Builder.CreateCall(Mismatched, Callee, {Builder.getInt16(0)});
         } else {
           auto *Call = Builder.CreateCall(Callee, Args);
           if (Change == 7) {
