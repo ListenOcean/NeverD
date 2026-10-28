@@ -2090,13 +2090,13 @@ bool MedLLVMEmitter::valueIsOpaqueRuntimeOffset(const MedVar &Value) const {
     const auto OwnerEnd = Img->mappedObjectOwnerEnd(VA);
     if (!Seg || !Seg->isReadable() || !Seg->isWritable() ||
         Seg->isExecutable() || Img->isCodeAddress(VA) ||
-        isReadOnlyAfterReloc(Seg) || Seg->Size > InvalidVA - Seg->VA ||
+        Img->readOnlyAfterRelocations(VA, Width) ||
+        Seg->Size > InvalidVA - Seg->VA ||
         !rangeInBounds(VA - Seg->VA, Width, Seg->Size) ||
         !rangeInBounds(VA - Seg->VA, Width, Seg->Data.size()) ||
         LayoutOwner == InvalidVA || !OwnerEnd || *OwnerEnd < VA + Width ||
         (OwnerVA != InvalidVA && OwnerVA != LayoutOwner) ||
-        (Sec && (!Sec->isWritable() || Sec->isExecutable() ||
-                 section_names::isReadOnlyAfterRelocSectionName(Sec->Name))))
+        (Sec && Sec->isExecutable()))
       return false;
     auto overlaps = [&](va_t Start, uint64_t Size) {
       return Size && (Start <= VA ? VA - Start < Size : Start - VA < Width);

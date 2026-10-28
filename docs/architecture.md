@@ -1315,21 +1315,37 @@ relocation proof. Cold reads charge the image metadata inventory against the
 existing evidence budget; repeated reads cache successes and failures within
 one CFG build. An unaffordable read leaves arithmetic-only proofs usable.
 If ordinary constant propagation cannot resolve a target, a bounded,
-straight-block symbolic query may prove that its full-width scalar expression
+straight-path symbolic query may prove that its full-width scalar expression
 is constant for every input. `LowScalarSymbolic` shares integer semantics with
 the jump-table resolver; exact MBA derivations, register-byte identity and
-instruction-local temporary lifetime are required. Separate loads remain
-separate observations, and opaque effects clear register facts. The query
+instruction-local temporary lifetime are required. This query borrows the
+same authenticated immutable image reads as numeric propagation; other loads
+remain separate observations, and opaque effects clear register facts. The query
 charges the same function evidence budget and owns finite operation, node,
 atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
 symbolic optimization or solver synthesis by default.
-Recovery revalidates the producer's basic block after discovering new paths.
+A target proved independent of the current block's incoming state is tested
+first, so unrelated predecessors cannot consume its proof budget.
+Register facts may cross a unique decoded direct predecessor edge. At the
+first join, each direct incoming path must independently prove the same target.
+Earlier joins remain arbitrary inputs rather than recursively enumerated paths.
+Independent roots and exceptional entries stop the walk, and recovered
+indirect edges cannot supply their own proof. Only the traversed direct-edge
+control operations leave the symbolic sequence; instruction guards remain.
+Recovery revalidates the complete producer path after discovering new edges.
 Lost or incomplete proofs retain the original indirect transfer. The native function
 disassembly API publishes these same instruction boundaries and targets; raw
 disassembly remains linear. The worker uses recovered bodies for function
 listings and replaces their linear reference-scan results, so skipped bytes do
 not swallow real code targets. Analyst Undefine overrides presentation inside
 a function without deleting the function or changing the original bytes.
+
+MedIR invariant and copy propagation share `canPropagateConstantToOperand`.
+A computed indirect-call target stays an SSA value even when its producer is
+constant: the legacy literal `INDIR_CALL` operand denotes pointer storage.
+Substituting the value's bits there would introduce an extra memory read.
+Direct calls and ordinary arguments retain constant propagation; the emitter
+does not infer another load from a propagated code value.
 
 Exact scalar transfers may reach backward or discontiguous blocks beyond a
 next-entry search bound. Known independent entries retain tail-call ownership
@@ -6484,10 +6500,13 @@ ELF GOT data identities come from the exact relocation symbol snapshot through
 relocation inventory owns addend rules; whether the slot is read-only once
 relocated owns whether a slot load can become a symbolic address, as
 `BinaryImage::readOnlyAfterRelocations` decides by the address: a read-only
-segment, a segment or section of relocated constants (`.data.rel.ro`,
-`__DATA_CONST`), or complete PT_GNU_RELRO coverage. An ELF load segment keeps
-its `LOAD_n` name, since it holds sections of both kinds; no decision reads a
-linked image's segment name. Writable slots retain
+segment, an explicit normalized loader protection guarantee, or complete
+PT_GNU_RELRO coverage in a linked ELF image. Names such as `.data.rel.ro` and
+`__DATA_CONST` never prove protection: `-z norelro` and a missing Mach-O
+SG_READ_ONLY flag retain writable storage. Relocation classification, scalar
+folding and LLVM data materialization share this address-specific authority.
+An ELF load segment keeps its `LOAD_n` name because it holds sections of both
+kinds. Writable slots retain
 addressable storage and a symbolic initializer. Undefined data uses an opaque
 assembly-name alias in C, avoiding invented types and system-header conflicts.
 Defined data uses its existing image backing. TLS and IFUNC records are excluded.
@@ -6499,6 +6518,8 @@ cannot erase the symbol values needed to relocate the mapped bytes.
 This contract also works without section headers. In sectionless ARM ELF,
 immutable executable bytes can supply scalar literal reads without classifying
 unreached bytes as instructions; overlapping relocations prevent folding.
+
+RELRO proof also requires a dynamic loader: a shared object without an independent process entry, or an executable with an interpreter. Bare static executables retain runtime loads. Incomplete final pages are excluded using `maximumELFProtectionPageSize`, the largest supported target base page, never the analysis host’s page. [glibc](https://github.com/bminor/glibc/blob/master/elf/dl-reloc.c), [Arm ABI](https://github.com/ARM-software/abi-aa/blob/main/sysvabi64/sysvabi64.rst).
 
 An absolute symbol relocation (`NEVERD_ELF_ABSOLUTE_SYMBOL`: `R_386_32`,
 `R_X86_64_64`, `R_ARM_ABS32`, `R_AARCH64_ABS64`) with no addend against a strong
@@ -7131,6 +7152,20 @@ source policy independently of analyst call-signature overrides. It supplies
 no dynamic callee result, native reconstruction contract or partially preserved
 vector-suffix proof. Ordinary LLVM undef/poison/freeze keep their own semantics.
 
+A floating argument's vector register is wider than the scalar most callees
+read in it. Parameter detection records the width of the scalar a vector
+argument register carries in its low lane where the function reads no other
+byte of it (`MedFunc::FPParamScalarBytes`), and call recovery gives each direct
+call to the function that width (`MedCallInfo::ArgReadBytes`). HighC passes
+the scalar alone. The LLVM route still declares such an x86 parameter as the
+whole register (`<2 x i64>`), so its call passes the scalar with zero above it
+(`emitCallOp`): a scalar instruction such as `cvtsi2sd` or `mulsd` keeps the
+upper lanes as the caller found them, its own unknown entry value where
+nothing set them, and the callee reads none of them.
+`int ep(int a) { return gp(a * 0.5); }` passes `gp` its double, where its LLVM
+C trapped before the call. A callee that reads the whole register, or an
+indirect one no recovery describes, still takes it whole.
+
 A call through a function-pointer variable passes the arguments of the routine
 the variable starts at (`collectPointerVariableCallees`): another module's
 routine, by the prototype the variable's absolute relocation names, or a
@@ -7222,6 +7257,43 @@ register the caller passes on untouched counts as not set, so a caller that
 passes its own argument on that way, as
 `long g(long a, long b) { return logv("x", b); }` does, passes zero where the
 program passes `b`, and its C takes no such parameter.
+
+System V's vector registers do not share it. A call that loads AL with a
+constant, in its own block (`lowByteConstantAtCall`, which gives
+`MedOp::VariadicVectorCount`), passes a routine that saves the vector
+registers for va_arg (its prologue tests AL and branches around their spills,
+`LocalRegisterEffect::SavesVectorArguments`) the low double of each of that
+many vector argument registers, and no other. The entry-read summary counts
+them as the call's reads (`RegisterStep::VectorCount`), so a register the
+caller passes on untouched is one it reads at its entry:
+`long gd(double x) { return logv("y", x); }`, which is
+`lea rdi; mov al, 1; jmp logv`, reads XMM0. Its callers pass that double as
+they pass any register a summary lists, and it takes it as a parameter, though
+no entry copy names the register (`detectSummaryVectorParams`). HighIR's scan
+of a call to the routine enters that parameter where the register reaches the
+call untouched, and call recovery for LLVM takes no vector register past the
+count, which holds only what earlier code left there. Where a callee's summary
+lists floating arguments, that recovery passes no integer register past those
+the summary counts, though the callee's own recovery took more as forwarded
+parameters: those positions pass zero, before the floating arguments. A call
+whose block loads AL with no constant gives no count, and nothing changes for
+it.
+
+Past its register save area, a System V variadic routine of the image takes
+one trailing stack parameter per slot its widest call stores from the call's
+stack pointer up (`finalizeVariadicCallees` for the LLVM route,
+`sizeVariadicOverflowFromStores` for HighC). A slot that holds only a scratch
+register's undefined incoming value is no stack argument
+(`holdsUndefinedIncomingScratch`): nothing in the caller defines that value
+and the caller takes no parameter in its register, so va_arg finds nothing
+there the program defines. That is the alignment `push rax` of
+`long gdc(void) { return logv("y") + 1; }`, or one above the longs a call
+pushes. Above the arguments such a slot is dropped; below one it keeps its
+place, as zero, as for the alignment `push eax` of an i386 call (below), and
+it is not the stack argument that shows every integer register of the call to
+be one. A slot a caller stores a value of its own in, such as a seventh
+variadic long, passes that value, and a call that stores fewer slots than the
+routine takes passes zero for the rest.
 
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
@@ -7362,6 +7434,20 @@ their distinct variadic policies. Register-only argument searches cross checked
 indexed memory operations without relaxing stack-slot alias barriers, and DCE
 keeps their reaching definitions through multiple predecessor blocks.
 
+A formatted call's MedIR inputs are every argument its format names, in the
+source's order, a floating one as the scalar in its vector register's low lane
+(`MedOp::ExactArguments`, `MedOp::ExactFloatInputs`); HighIR passes them as
+they are. Call recovery for LLVM takes the same inputs for a call that reaches
+an import (`recoverCallAbi`), after its own scan has found the registers the
+function passes on, and the emitter passes a floating one into the routine's
+`...` as a `double`, which System V and AAPCS64 carry in a vector register.
+The whole register its own scan found went there as integer bits, which C
+places in integer registers, where printf reads no floating argument:
+`printf("%f %d\n", G, a)` printed `0.000000`. A routine of the image keeps
+the arguments its own parameters take. Win64 binds no formatted call; its
+calls pass a variadic double's bits in the integer slot, where the routine
+reads it.
+
 Scalar floating return inference follows declared call results through complete
 low-byte views and PHI joins. A final integer result still takes precedence;
 merely computing a floating temporary does not change the return bank. An
@@ -7430,12 +7516,36 @@ unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
 written as they would be. An LLVM C unit leaves out a definition whose C
-throws the same way (`c-emission-failed; unsupported LLVM C cmpxchg shape` for
-an AArch64 CASP pair). So is one whose source requirements, checked before
-any rendering, fail (`c-emission-failed; immediate original memory requires a
-runtime GPR value or a complete occurrence-bound image span`): no rendering
-reads it, and its callers call it as a function outside the unit. Asked for
-alone, such a function still fails with that reason, and so does a unit
+throws the same way (`c-emission-failed; LLVM C constant is not supported: ptr
+blockaddress(...)` for an address inside a function's code). So is one whose
+source requirements, checked before any rendering, fail (`c-emission-failed;
+immediate original memory requires a runtime GPR value or a complete
+occurrence-bound image span`): no rendering reads it, and its callers call it
+as a function outside the unit. Before any C, a body the LLVM emitter refuses
+for a stale code or data address no longer discards its whole shard: the
+emitter names the body that wrote the refusal
+(`MedLLVMEmitter::refusedBodies`), the shard, or the serial module, is
+emitted again with that body masked off, and the LLVM C unit notes it first
+(`llvm-emission-failed; med_llvm_emitter: ambiguous pointer-table address
+... refusing stale-address fallback`). So does a body whose contract the
+emitter refuses before it builds any module, as an original SP memory
+operation with an image (`llvm-emission-failed; immediate original memory
+requires a runtime GPR value or a complete occurrence-bound image span`).
+The emitter names every refused body it writes before it throws the first
+one's reason. A shard checks only the bodies it writes, since the shards'
+masks partition the unit, and a retry only the bodies it keeps; a module
+that merely filters bodies out, as the SDK's view of one function, still
+checks every one (`setMaskedBodiesOwnedElsewhere`). A lift, whose IR names
+nothing it leaves out, and a patch, which rewrites every function it lifts,
+still fail at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Two
+functions that carry one name, as the local symbols of one Rust generic in
+two codegen units of a Mach-O, each keep their own LLVM function: the first
+named keeps the name and a later one takes its entry address after it
+(`write_str`, `write_str_10002F90C`). One shared function had taken the
+second body and its calls in a module, and two shards that each defined the
+name failed to link. Asked for alone,
+such a function still
+fails with that reason, and so does a unit
 rendered with a source map, recorded positions or source names, or one whose
 requirements fail under structured exception syntax, which writes funclets
 inside their parents, or in a function whose body fills another's `__finally`.
@@ -14162,10 +14272,17 @@ lifetimes, opaque-effect invalidation and one bounded work policy. Ambiguous
 original call occurrences or exhausted work publish no constant. The outgoing
 stack-write proof independently tracks affine addresses, expires temporaries
 at instruction boundaries and discards earlier writes across opaque effects.
-No cross-block values or implicit memory contents are introduced.
+The AL query remains block-local. Register-call targets may also use a bounded
+unique direct-predecessor chain before call summaries and SSA: incomplete
+bodies, independent roots, joins, cycles, exceptional edges and malformed
+terminal boundaries stop inheritance. No implicit memory contents are introduced.
+The local proof runs first; all prefix copying and evaluation share its work cap.
 
 `MedCallTarget` observes cached callable values through the Med ABI owner's
-exact address, width and overlap proof. The machine call-summary adapter,
+exact address, width and overlap proof. Finite-width constant address arithmetic
+is proved before call-register summaries and SSA consume its parameter reads;
+only definitions preceding that query can supply the value. A numeric code
+value and a loaded pointer slot retain distinct roles. The machine call-summary adapter,
 pre-SSA Low-to-Med conversion, ABI recovery and HighIR reuse this proof.
 An observation retains the original LOAD index, including through private SSA
 versions. HighIR names an imported call only when the same memory-reachability
@@ -14236,3 +14353,12 @@ keeps its retained words verbatim, so the deep simplifier walks them under the
 same work allowance before returning.
 
 `X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the memory operation; `INC/DEC` preserve CF. FS/GS address spaces remain attached. Other locked core arithmetic is refused until it has an ordered model. This is a LowIR lifting contract; emitted native alignment and fault behavior need their own qualification.
+
+LLVM C owns one cached pointer-type projection per emitted definition. Its
+parameter-location binding selects the same object/function pointer declarations
+for signatures and direct-call conversions, independently of module order.
+Selected external declarations and explicitly preserved call-site types keep
+their own contracts. Materialized record-member loads use the same pointer-to-
+integer bridge as inlined reads. Embedded CRT records reuse a target header
+only with size, field-offset and member-type checks; MSVCRT and UCRT sharing `_iobuf` does
+not establish layout compatibility.

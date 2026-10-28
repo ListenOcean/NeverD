@@ -191,6 +191,32 @@ eight spills, and the HighC still fails explicitly where it stores them. The
 Windows ARM64 and Apple arm64 builds save no vector register and take no
 floating parameter.
 
+`X86_64_CallAbi.AVariadicCallPassesOnTheDoublesALCounts` compiles System V
+forwarders that pass their own doubles on untouched to a variadic routine,
+below the count they load into `AL`: by a tail jump, by a call, and beside a
+double they set. Each takes them as parameters and its caller passes the
+doubles it computes, and the HighC runs like the kernel.
+`ALiftedVariadicCallPassesOnTheDoublesALCounts` runs the LLVM route's C of the
+same kernel, which holds a vector register whole: the upper lanes the caller's
+conversions leave unknown pass as zero, and the forwarder that calls aligns
+its stack with a `push rax` that passes no stack argument.
+`AnAlignmentPushPassesNoVariadicStackArgument` runs the C of both routes for
+calls to a variadic routine aligned by such a push: one with no stack argument
+and one with the push above two pushed longs. Neither slot is an argument,
+while a call that overwrites the pushed slot with a long and one that pushes
+three longs below a `sub rsp, 8` pass theirs, which va_arg reads.
+
+`X86_64_CallAbi.AScalarArgumentPassesOnlyItsLowLane` runs the C of both routes
+for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it
+before they jump to a callee reading only the double or the float. The
+conversions keep the register's upper lanes as the caller's entry value; the
+LLVM route's C passes zero there, and neither C reads an unknown value.
+`AFormattedCallPassesItsDoublesAsDoubles` runs the C of both routes for
+`printf`, `dprintf` and `snprintf` calls with constant formats that pass
+doubles: one loaded whole, and ones a conversion leaves beside an unknown upper
+lane. Each C passes them as doubles: every call returns the count the kernel's
+does, and a hash of the text `snprintf` formats matches.
+
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
 and separate unseeded cycles. Scaled allocation bounds also cover x86 and ARM,
@@ -408,6 +434,19 @@ emission and all 64 combinations of architecture, serial/sharded emission,
 optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
+`PipelineOutcome.RealShardedEmissionLeavesOutOnlyTheRefusedBody` and
+`LLVMDataPointerInvariantBoundary.NamesTheRefusedBodySoTheOthersEmitWithoutIt`
+(`NeverDLiftTests`) check that a body refusing a stale address is named with
+the error it wrote and declared only, while the shard's other functions keep
+their definitions; without `OmitRefusedLLVMBodies`, as in a lift, the run
+still fails, which the `JTE_*FailsClosed*` lift tests also hold.
+`RealShardedEmissionLeavesOutABodyItsContractRefuses` does the same for an
+AArch64 `ldapurb w8, [sp, #0x20]` with an image, which the emitter refuses
+before any module: a lift fails once, from the shard that owns the body.
+`ShardedEmissionKeepsBothFunctionsOfOneName` checks that two functions of one
+name keep both bodies in one module and in two shards. Decompile a whole
+x86-64 libsqlite3 or Rust binary, and an AArch64 Rust Mach-O, through `--llvm`
+after changing that retry: one such body used to fail the unit.
 
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
@@ -1071,6 +1110,14 @@ LLVM RMW operations with dead, single-use and repeated results, checking the
 subsequent load and callback against an independent scalar oracle at O0/O2.
 `MemoryExchangePreservesTypedPointerMemberBits` checks that exchanging a typed
 pointer field still returns the machine integer bits expected by its consumer.
+`LLVMCIntrinsicSemantics.CompareExchangeCarriesA128BitPair` executes both
+outcomes of each CASP ordering and LOCK CMPXCHG16B's at O0/O2, with values
+that differ only in one half (x64 hosts build it with `-mcx16`);
+`CompareExchangeRejectsUnrepresentableContracts` keeps refusing a 128-bit
+pair where pointers are 32-bit.
+`AArch64_Atomic.CaspLLVMCUsesStandardCompareExchangeAndCompiles` decompiles
+the four CASP forms through LLVM C and rebuilds them for AArch64+LSE as the
+same instructions.
 
 APX atomic qualification uses `NeverDX86APXAtomicSemanticTests` and
 `NeverDX86APXAtomicSourceTests`. The former owns decode/LowIR/concrete memory,
@@ -2036,7 +2083,10 @@ known targets remain tail calls with their original instruction address.
 Immutable scalar reads extend this matrix to all three architectures and
 formats, retaining mutable, ambiguous, relocated, ordered, segment-relative
 and unaffordable loads as runtime inputs. Revalidation shares a read cache
-throughout one CFG build. `NeverDReadOnlyBytesTests` checks scalar width,
+throughout one CFG build. Effective mapping protection owns immutability;
+section flags alone cannot make a read-only mapping writable. Writable
+mappings are checked with both read-only and writable section metadata.
+`NeverDReadOnlyBytesTests` checks scalar width,
 relocation identity and cold-read budget boundaries. `LowScalarConstant.*`
 in `NeverDSEHRuntimeMemoryTests` compares unary arithmetic and sign extension
 with concrete LowIR execution.
@@ -2045,13 +2095,33 @@ with concrete LowIR execution.
 COFF and Mach-O, and a similar nonconstant expression must retain its input
 dependence. Partial register writes, calls, opaque effects, separate memory
 reads, instruction-local temporary reuse, malformed records and exhausted
-budgets cannot publish an edge. The shared symbolic integer translator also
+budgets cannot publish an edge. Direct predecessor chains carry exact numeric
+and symbolic facts. Long irrelevant predecessor chains cannot invalidate a
+locally proved target by exhausting the work budget. A joined dispatch requires
+all incoming paths to agree;
+conflicting or undefined alternatives and independent continuation roots retain
+arbitrary incoming state. Repeated image loads participate in identities
+only with the shared immutable-byte proof; writable lookalikes stay dynamic.
+`NeverDConstantBranchSourceTests` executes x64/ARM64 PE, ELF and Mach-O source
+through HighC and LLVM C, with pipeline optimization enabled and disabled,
+O0/O2 compilation and UBSan. These host executions do not certify native ARM64
+hardware or Windows drivers. The shared symbolic integer translator also
 serves jump-table proofs; run `NeverDJumpTableTests` and
 `NeverDLowInstructionBoundaryTests` when changing it.
 
+`NeverDImageAnalysisBoundaryTests` checks that constant and copy propagation
+preserve indirect-call values, literal pointer slots and ordinary arguments,
+including Low-to-Med conversion on x86, x64, ARM32 and ARM64 across the three
+native formats. `NeverDIndirectCallValueSourceTests` compiles and executes
+x64/ARM64 HighC and LLVM C at O0/O2 with UBSan; the original-image LLVM C view
+also verifies that a code address never acquires an invented storage load.
+Those source views are syntax-checked, not executed without their image provider.
+
 `NeverDWorkerScalarBranchValues` checks cold listing navigation, references and
 both C routes for readonly loads, NOT, NEG, sign-extended target offsets and
-four mixed Boolean/arithmetic identities over unknown scalar inputs.
+four mixed Boolean/arithmetic identities over unknown scalar inputs, direct
+predecessor state transport, unanimous joined paths and identities containing
+immutable image loads.
 Independent native ELF x64 fixtures return a known result past an overlapping
 unreachable E9. HighC and LLVMC execute against that result at O0/O2 with UBSan;
 144 independent input pairs include zero, all ones, sign and alternating bits.
@@ -4770,9 +4840,12 @@ The same cache test checks a 20,008-line document across later pages using SDK
 call counters. The undecorated copy is retained as serialized JSON, with its
 string capacity counted in the existing cache budget; local-name refresh
 reconstructs that exact source without rerunning the engine. The GUI's
-20,000-line responsiveness check retains its 15-second loading and 500-ms event
-gap limits. Rename isolation checks wait for initial navigation to settle before
-observing signals caused by the edit.
+20,000-line responsiveness check keeps its 15-second loading limit and checks
+that the event loop turns while the pages arrive and that the view shows the
+first pages before the rest. It reports the largest event gap without a limit:
+a wall-clock gap measures the host's load as much as the code, and a busy host
+exceeded 500 ms for every build. Rename isolation checks wait for initial
+navigation to settle before observing signals caused by the edit.
 
 `X86Sgx.*` in `NeverDX86SystemStateTests` checks ENCLS/ENCLV input/output
 widths, ignored and forbidden prefixes, strict emulator refusal, leaf-dependent
@@ -4972,9 +5045,19 @@ rather than to the statement the engine's rows give it;
 `pseudocodeFunctionLinksStayInTheirWindow` double-clicks a call in C and LLVM
 C, moves in the callee as a click does, and checks that one Back returns the
 code to the call's line and column with the view scrolled as it was, and that
-Forward returns to where the callee was left; `historyStopsFollowTheCursor`
-moves between jumps and checks that Back skips those moves and Forward returns
-to them;
+Forward returns to where the callee was left;
+`restingOnACallShowsAnImportsType` rests the mouse on a call of an import and
+of a function of the image and checks the import's type and parameters'
+places, that the image's function and a keyword hint nothing, and that a hint
+the mouse left before the worker answered stays away;
+`historyStopsFollowTheCursor` moves between jumps and checks that Back skips
+those moves and Forward returns to them; `backAndForwardButtonsListTheirStops`
+opens the Back and Forward buttons' lists after three jumps and checks their
+stops, nearest first, and their names, that a pick goes two steps at once and
+keeps the stops beyond it, and that the Jump menu's commands stay plain;
+`bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
+brackets nested, lines apart and around a folded block, on brackets of a
+string and a comment, and just past a bracket, and checks which pair;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks
@@ -5572,7 +5655,11 @@ kernel's headers and `WindowsKernelRoutines.inc` agree on the bytes each
 parameter of a routine both know takes, and
 `ReturnContracts.ACallToAFunctionDeclaredVoidElsewhereHandsBackNoValue` and
 `AStubOfAnImportDeclaredVoidReturnsNoValue` cover the return contracts that
-read declarations. `known_routines.sys` also checks that `KeSetEvent` prints
+read declarations. Copied import addresses and callable values use the same
+bounded slot proof as call ABI recovery. The x86/x64/ARM32/ARM64 cases cover
+COFF, ELF and Mach-O, including numeric collisions, dynamic addresses, cycles,
+segment overrides and nonvoid declarations.
+`known_routines.sys` also checks that `KeSetEvent` prints
 the parameters its prototype declares and its code never reads, and that
 `neverd_decompile_all` takes the prototypes; the kernel inputs check
 `ZwCreateKey`'s seven parameters and that `FsRtlAllocatePool` stops at the
@@ -6909,6 +6996,12 @@ beside ordinary and volatile reads in the function body, even when the GUI
 folds declarations. Unknown pointers have no guessed text; disabling comments
 leaves the original storage representation. It also checks
 comment escaping and that aggregate storage cannot become a scalar edit type.
+
+Checked pointer call arguments use the same image-text annotations even when LLVM
+uses an integer address carrier. The cases cover x86/x64/ARM64 with COFF, ELF
+and Mach-O, including rejected declarations, numeric collisions, dynamic
+addresses, writable storage and disabled or escaped comments. The original
+address remains the argument; displayed initial bytes do not prove immutability.
 
 `NeverDMedLLVMDirectDataTests` covers finite native data accesses in pointer-bearing
 segments, unrelated code/data relocations, exact byte values, partial overlap,
@@ -13966,7 +14059,7 @@ Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes 
 
 Mixed exits from a single internal call site retain both outcomes: a checked bare near RET pops its own intact return PC and resumes the exact continuation, while an exit that discards that PC keeps its original control flow. `MixedExitsResumeOnlyTheMatchingInvocation` covers PE/ELF/Mach-O x64 and ELF i386, verifies optimized and unoptimized LLVM, and executes x64 C with sanitizers. Companion tests cover repeated invocations and reject multiple sites sharing a RET, independent or exceptional roots, new predecessors exposed by the continuation, open indirect exits, corrupted PCs, immediate-cleanup returns and language-runtime metadata. Each rebuilt CFG must revalidate the invocation; this does not authorize shared SEH callback returns. Nonlocal exits also prove the parent return slot separately: the outer RET must consume the original entry PC at the exact entry SP. Over-release and writes that corrupt or may alias that PC are refused; disjoint private writes remain valid.
 
-`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched, in a Mach-O image as in an ELF one; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
+`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched, in a Mach-O image as in an ELF one; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. `ADoubleAVariadicCallPassesOnIsAParameter` builds forwarders that load `AL` before they jump to or call a variadic routine that saves the vector registers: each that passes its own `XMM0` on untouched reads it at entry as a double parameter, which its caller passes; one that sets `XMM1` first does not read that register, and one that leaves `AL` alone reads no vector register.
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
 
@@ -16621,3 +16714,19 @@ names a site; `HighCPointerAddresses.ThenPredChainUndefSkipArmFoldsElse`,
 Run `NeverDHighControlFlowTests`, `NeverDHighCStoreForwardingTests`,
 `NeverDWindowsEHSourceTests` and `NeverDCPointerProjectionTests`. This is a
 HighIR structuring contract; it requires no external source interface.
+
+`NeverDReadOnlyProtectionSourceTests` executes read/write globals through HighC and LLVM C on host Clang at O0/O2 with UBSan, for x64/ARM64 input instructions across PE, ELF and Mach-O. Both pipeline optimization modes and misleading constant-section names are covered. `NeverDReadOnlyBytesTests` checks mapping authority, complete RELRO extents and malformed ranges; the native pointer boundary suite links the same ELF fixture with relro and norelro. Host execution of reconstructed C does not qualify native ARM64 or Windows kernel execution.
+
+`RelroKeepsPartialPagesAndStaticStartupWritable` checks x86, x64, ARM and ARM64 page boundaries and explicit loader guarantees. The native pointer owner executes independent Linux x64 partial-RELRO and bare-static fixtures that write then read the global. `NeverDDataSymbolBindingTests` checks complete pointer protection and both C routes. These checks do not certify native ARM page configurations.
+
+`NeverDLowScalarConstantTests` checks direct-chain call-target inheritance and
+refusal at malformed boundaries, alternate entries, joins, exceptional edges,
+cycles, clobbers and exhausted budgets. `NeverDIndirectCallValueSourceTests`
+executes forwarded arguments across the edge through HighC and LLVMC, with
+selected/whole projections, both pipeline optimization modes, x64/ARM64 and
+all three native containers. `NeverDLLVMCSourcePointerTests` executes object
+pointer and callback argument/result bridges at O0/O2 with UBSan, including
+caller-before-callee order, typedefs, selected externals and preserved LLVM
+prototypes. The native pointer suite compiles a complete public MinGW toy and
+checks both matching CRT layouts and rejection of mismatched MSVCRT/UCRT
+headers or same-offset fields of a different type. These source checks do not certify native kernel or ARM64 execution.

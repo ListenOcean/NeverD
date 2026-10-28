@@ -38,6 +38,7 @@
 #include "neverd/Limits.h"
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/MachineInstructionText.h"
+#include "neverd/backend/c/render/AArch64/AArch64ExclusiveC.h"
 #include "neverd/backend/c/render/AArch64/AArch64PAuthC.h"
 #include "neverd/backend/c/render/X86/X87ContextRender.h"
 #include "neverd/backend/c/render/X86/X87GuardedValueRender.h"
@@ -85,17 +86,17 @@
 
 namespace neverd {
 
-namespace {
-bool needsCallSiteCType(const llvm::CallBase &Call) {
+bool LLVMCWriter::needsCallSiteCType(const llvm::CallBase &Call) {
   const auto *Declared = llvm::dyn_cast<llvm::Function>(
       Call.getCalledOperand()->stripPointerCasts());
   return Declared && (Declared->getFunctionType() != Call.getFunctionType() ||
                       Declared->getCallingConv() != Call.getCallingConv());
 }
 
+namespace {
 std::string retainCallSiteCType(const llvm::CallBase &Call,
                                 llvm::StringRef Type, std::string Cast) {
-  if (!needsCallSiteCType(Call))
+  if (!LLVMCWriter::needsCallSiteCType(Call))
     return Cast;
   // Clang can lower a directly cast function designator using its original
   // declaration's non-variadic ABI, dropping Windows x64's floating GPR copy.
@@ -1606,7 +1607,8 @@ void LLVMCWriter::writeInstruction(llvm::Instruction &Inst, int Indent) {
   // Annotate only a read that emitted code. Forwarded or inlined reads must
   // not leave an orphan comment where their old instruction used to be.
   if (Load && OS.stream().tell() != Begin)
-    if (const auto Comment = imageLoadComment(*Load); !Comment.empty()) {
+    if (const auto Comment = imagePointerComment(Load->getPointerOperand());
+        !Comment.empty()) {
       emitIndent(Indent);
       OS << "/* " << Comment << " */\n";
     }
@@ -3838,9 +3840,15 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     const auto Success = Exchange->getSuccessOrdering();
     const auto Failure = Exchange->getFailureOrdering();
     // The C builtin requires native, naturally aligned objects in ordinary
-    // memory. Do not discard an address space or approximate a wider CAS.
-    if ((Bits != 8 && Bits != 16 && Bits != 32 && Bits != 64) ||
-        Exchange->getNewValOperand()->getType() != ValueType ||
+    // memory: 1, 2, 4 or 8 bytes, or 16 where C has a native 128-bit integer,
+    // as on the 64-bit targets whose pair compare-exchange (CASP, CMPXCHG16B)
+    // lifts to one. Atomic min/max already carries that width through the
+    // same builtin. Do not discard an address space or approximate a wider
+    // CAS.
+    const bool NativeWidth =
+        Bits == 8 || Bits == 16 || Bits == 32 || Bits == 64 ||
+        (Bits == 128 && !PointerType && Layout.getPointerSizeInBits() == 64);
+    if (!NativeWidth || Exchange->getNewValOperand()->getType() != ValueType ||
         Exchange->getPointerAddressSpace() != 0 ||
         (PointerType && (PointerType->getAddressSpace() != 0 ||
                          Layout.isNonIntegralPointerType(PointerType))) ||
@@ -4523,6 +4531,83 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   if (IID == llvm::Intrinsic::aarch64_clrex) {
     emitIndent(Indent);
     OS << "__builtin_arm_clrex();\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  // An exclusive load or store is the builtin HighC writes for it. A load
+  // still sets the monitor, and a store's status still reports, where
+  // nothing reads the result.
+  if (IID == llvm::Intrinsic::aarch64_ldxr ||
+      IID == llvm::Intrinsic::aarch64_ldaxr ||
+      IID == llvm::Intrinsic::aarch64_stxr ||
+      IID == llvm::Intrinsic::aarch64_stlxr) {
+    const bool Load = IID == llvm::Intrinsic::aarch64_ldxr ||
+                      IID == llvm::Intrinsic::aarch64_ldaxr;
+    const unsigned AddressArgument = Load ? 0 : 1;
+    llvm::Type *Element = Call.getParamElementType(AddressArgument);
+    const char *Type = Element && Element->isIntegerTy()
+                           ? aarch64ExclusiveAccessType(
+                                 Element->getIntegerBitWidth() / 8, nullptr)
+                           : nullptr;
+    if (Opts.TheArch != Arch::AArch64 || !Type ||
+        Call.arg_size() != AddressArgument + 1)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Address = valueStr(Call.getArgOperand(AddressArgument));
+    emitIndent(Indent);
+    OS << (Call.use_empty()
+               ? "(void)"
+               : getName(&Call) + " = (" + typeToCLLVM(Call.getType()) + ")")
+       << (Load ? aarch64ExclusiveLoadC(IID == llvm::Intrinsic::aarch64_ldaxr,
+                                        Type, Address)
+                : aarch64ExclusiveStoreC(IID == llvm::Intrinsic::aarch64_stlxr,
+                                         Type, valueStr(Call.getArgOperand(0)),
+                                         Address))
+       << ";\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  // A pair travels as one 128-bit access, as the builtin of that width
+  // selects LDXP or STXP: the low word at the lower address.
+  if (IID == llvm::Intrinsic::aarch64_ldxp ||
+      IID == llvm::Intrinsic::aarch64_ldaxp) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 1)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Pair = freshVar("exclusive_pair");
+    emitIndent(Indent);
+    OS << "{ __uint128_t " << Pair << " = "
+       << aarch64ExclusiveLoadC(IID == llvm::Intrinsic::aarch64_ldaxp,
+                                "__uint128_t", valueStr(Call.getArgOperand(0)))
+       << ";\n";
+    emitIndent(Indent + 1);
+    if (Call.use_empty()) {
+      OS << "(void)" << Pair << ";\n";
+    } else {
+      OS << getName(&Call) << aggregateMemberPath(Call.getType(), {0})
+         << " = (uint64_t)" << Pair << ";\n";
+      emitIndent(Indent + 1);
+      OS << getName(&Call) << aggregateMemberPath(Call.getType(), {1})
+         << " = (uint64_t)(" << Pair << " >> 64);\n";
+    }
+    emitIndent(Indent);
+    OS << "}\n";
+    HasCIntrinsics = true;
+    return true;
+  }
+  if (IID == llvm::Intrinsic::aarch64_stxp ||
+      IID == llvm::Intrinsic::aarch64_stlxp) {
+    if (Opts.TheArch != Arch::AArch64 || Call.arg_size() != 3)
+      throw std::runtime_error("unsupported LLVM C exclusive access shape");
+    const std::string Value =
+        "((__uint128_t)(uint64_t)(" + valueStr(Call.getArgOperand(1)) +
+        ") << 64 | (uint64_t)(" + valueStr(Call.getArgOperand(0)) + "))";
+    emitIndent(Indent);
+    OS << (Call.use_empty()
+               ? "(void)"
+               : getName(&Call) + " = (" + typeToCLLVM(Call.getType()) + ")")
+       << aarch64ExclusiveStoreC(IID == llvm::Intrinsic::aarch64_stlxp,
+                                 "__uint128_t", Value,
+                                 valueStr(Call.getArgOperand(2)))
+       << ";\n";
     HasCIntrinsics = true;
     return true;
   }
@@ -5855,8 +5940,15 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
         Expression += c_detail::sourceRecordValue(
             Hint->Signature.Parameters[I].Type,
             typeToCLLVM(Argument->getType()), Type, valueStr(Argument));
-      else
-        Expression += "(" + Type + ")(" + valueStr(Argument) + ")";
+      else {
+        std::string Projected = "(" + Type + ")(" + valueStr(Argument) + ")";
+        const bool Pointer =
+            Hint ? Hint->Signature.Parameters[I].Type->Kind == NdTypeKind::Ptr
+                 : Argument->getType()->isPointerTy();
+        Expression += Pointer
+                          ? imagePointerArgument(Argument, std::move(Projected))
+                          : std::move(Projected);
+      }
     }
     Expression += ")";
     if (Hint && Hint->Signature.ReturnType->Kind == NdTypeKind::Struct)
@@ -6058,9 +6150,22 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
           Integer || PointerSpelling || Operand->getType()->isPointerTy()
               ? "(uintptr_t)"
               : "";
-      Expr += "(" + declarationToC(cDisplayType(Type), "") + ")" + Bridge +
-              "(" + Argument + ")";
+      std::string Projected = "(" + declarationToC(cDisplayType(Type), "") +
+                              ")" + Bridge + "(" + Argument + ")";
+      Expr += Type->Kind == NdTypeKind::Ptr
+                  ? imagePointerArgument(Operand, std::move(Projected))
+                  : std::move(Projected);
       continue;
+    }
+    if (const auto *Callee = Call.getCalledFunction();
+        Callee && !needsCallSiteCType(Call)) {
+      const auto &Parameters = definitionPointerTypes(*Callee).Parameters;
+      if (ArgIdx < Parameters.size() && Parameters[ArgIdx].Type) {
+        Expr += imagePointerArgument(Operand,
+                                     "(" + Parameters[ArgIdx].declaration() +
+                                         ")(uintptr_t)(" + Argument + ")");
+        continue;
+      }
     }
     const bool HeaderInteger = Library && !Library.Prototype && Integer;
     const libc::LibCPrototype *Prototype =
@@ -6104,7 +6209,13 @@ std::string LLVMCWriter::callExpr(const llvm::CallBase &Call, bool Statement) {
              declaredParameterIsInteger(Call, CalleeName, ArgIdx))
       Argument = "(" + typeToCLLVM(Operand->getType()) + ")(uintptr_t)(" +
                  Argument + ")";
-    Expr += Argument;
+    const bool PointerArgument =
+        Prototype       ? libc::isPointerType(Param)
+        : HeaderInteger ? libc::isObjectPointerParameter(Library.Name, ArgIdx,
+                                                         libcVariant())
+                        : Operand->getType()->isPointerTy();
+    Expr += PointerArgument ? imagePointerArgument(Operand, std::move(Argument))
+                            : std::move(Argument);
   }
   Expr += ")";
   RenderingCalls.pop_back();

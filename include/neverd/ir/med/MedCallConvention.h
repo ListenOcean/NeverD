@@ -218,6 +218,16 @@ inline bool isUndefinedIncomingScratch(const TargetRegInfo &TRI, Arch TheArch,
          });
 }
 
+/// Whether \p V, a value \p Func stores before one of its calls, is only a
+/// scratch register's undefined incoming value (isUndefinedIncomingScratch
+/// under the convention of \p TheArch code in a \p Format image): no
+/// operation, join or call clobber of \p Func defines it, as MedSSA numbers a
+/// register's first write zero where no value enters in it, and \p Func takes
+/// no parameter in that register.  The stack slot it fills, as an alignment
+/// `push rax` fills one, passes the call nothing.
+bool holdsUndefinedIncomingScratch(const MedFunc &Func, Arch TheArch,
+                                   BinaryFormat Format, const MedVar &V);
+
 } // namespace neverd
 
 #endif // NEVERD_IR_MED_MEDCALLCONVENTION_H
