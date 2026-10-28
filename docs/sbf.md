@@ -667,6 +667,24 @@ inputs. This selects work only; unknown inputs supply no pointer inequality or
 target proof, and replacement still preserves the old caller transfer and
 target evidence.
 
+Schema 11 computes whether a decoded block can reach a matched guest return.
+A direct call needs both a returning callee and a returning continuation;
+a conditional branch admits either successor. The least fixed point cannot
+invent a base return after a mandatory recursion cycle. This uses the canonical
+MedIR calls and intraprocedural CFG. Unknown indirect calls, unsupported raw
+entries and runtime dispatch remain potentially returning, including syscalls
+catalogued as terminal: a host callback can still return.
+
+When recursion or call depth prevents summarizing a callee whose CFG cannot
+return, the edge records `proven_nonreturning_call` and stops that continuation.
+The ordinary callee analysis still retains caller-conditioned CALLX evidence
+executed before termination. A nonreturning callee's memory effects cannot
+invalidate a different returning sibling path. The work is included in the
+unchanged query budgets and reported as `return_reachability_instruction_visits`;
+its temporary dependency graph is released before context recovery. This does
+not prove that a particular host call terminates or that a reachable EXIT is
+feasible for every input.
+
 Unsigned branch comparisons can establish bounds on values carried affinely
 to a function's return. A nullable return retains the null alternative.
 Nonliteral address returns receive a report-local captured identity; its bounds

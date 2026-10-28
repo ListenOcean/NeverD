@@ -222,7 +222,7 @@ TEST(SBFCallXContexts, JoinsEveryFiniteCalleeReturnAndMemoryOutcome) {
           }
         EXPECT_TRUE(CompleteSet);
         const auto JSON = callXContextReportJSON(*Program, *Report);
-        EXPECT_EQ(JSON.getInteger("schema"), 10);
+        EXPECT_EQ(JSON.getInteger("schema"), 11);
         const auto *Frame = JSON.getObject("frame_coordinates");
         ASSERT_NE(Frame, nullptr);
         EXPECT_EQ(Frame->getString("namespace").value_or(""),
@@ -4329,6 +4329,112 @@ TEST(SBFCallXContexts, SameRegistersWithDifferentMemoryUseDifferentSummaries) {
   EXPECT_EQ(Raw->ReturnValue, 43u);
 }
 
+TEST(SBFCallXContexts, MandatoryGuestRecursionHasNoReturningContinuation) {
+  for (bool BaseCase : {false, true}) {
+    SCOPED_TRACE(BaseCase);
+    const uint32_t Abort = findSyscallByName("abort")->Hash;
+    auto Text = test::loadImm64(6, kBytecodeStart + 14 * 8);
+    for (const auto &I :
+         {encode(Opcode::ST_DW_REG, 10, 6, -8),
+          encode(Opcode::MOV64_IMM, 1, 0, 0, 0),
+          encode(Opcode::CALL_IMM, 0, 1, 0, 3),
+          encode(Opcode::LD_DW_REG, 6, 10, -8), encode(Opcode::CALL_REG, 6),
+          encode(Opcode::EXIT), encode(Opcode::CALL_IMM, 0, 0, 0, Abort),
+          encode(Opcode::CALL_IMM, 0, 1, 0, 1), encode(Opcode::EXIT),
+          BaseCase ? encode(Opcode::JEQ64_IMM, 1, 0, 1, 0)
+                   : encode(Opcode::MOV64_REG, 1, 1),
+          encode(Opcode::CALL_IMM, 0, 1, 0, -5), encode(Opcode::EXIT),
+          encode(Opcode::MOV64_IMM, 0, 0, 0, 42), encode(Opcode::EXIT)})
+      Text.push_back(I);
+    auto Program = analyze(test::makeImage(Text, {}));
+    ASSERT_TRUE(static_cast<bool>(Program))
+        << llvm::toString(Program.takeError());
+    auto Report = recoverCallXContexts(*Program);
+    ASSERT_TRUE(static_cast<bool>(Report))
+        << llvm::toString(Report.takeError());
+    checkSummaryReferences(*Report);
+    ASSERT_EQ(Report->UnresolvedCallXSlots.size(), 1u);
+    bool Continuation = false;
+    for (const auto &Site : Report->Contexts)
+      if (!Site.EntryPrefixOnly && Site.CallXSlot == 6)
+        Continuation = true;
+    EXPECT_EQ(Continuation, BaseCase);
+    for (const auto &Summary : Report->Summaries)
+      if (Summary.EntrySlot == 8 || Summary.EntrySlot == 11)
+        EXPECT_EQ(Summary.MayReturn, BaseCase);
+    ExecutionEnvironment Environment;
+    Environment.HostSyscall = [](uint32_t, const SyscallArguments &) {
+      return SyscallOutcome::returned(0);
+    };
+    auto Raw = executeRaw(*Program, Environment);
+    ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+    if (BaseCase) {
+      EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+      EXPECT_EQ(Raw->ReturnValue, 42u);
+    } else {
+      EXPECT_EQ(Raw->Fault, FaultCode::CallDepth);
+      EXPECT_FALSE(llvm::any_of(
+          Raw->Trace, [](const auto &Step) { return Step.Slot == 6; }));
+    }
+  }
+}
+
+TEST(SBFCallXContexts, NonReturningCalleeKeepsItsCallerTargetEvidence) {
+  auto Text = test::loadImm64(1, kBytecodeStart + 9 * 8);
+  for (const auto &I :
+       {encode(Opcode::CALL_IMM, 0, 1, 0, 1), encode(Opcode::EXIT),
+        encode(Opcode::MOV64_REG, 6, 1), encode(Opcode::CALL_REG, 6),
+        encode(Opcode::MOV64_REG, 1, 6), encode(Opcode::CALL_IMM, 0, 1, 0, -4),
+        encode(Opcode::EXIT), encode(Opcode::MOV64_IMM, 0, 0, 0, 42),
+        encode(Opcode::EXIT)})
+    Text.push_back(I);
+  auto Program = analyze(test::makeImage(Text, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  auto Report = recoverCallXContexts(*Program);
+  ASSERT_TRUE(static_cast<bool>(Report)) << llvm::toString(Report.takeError());
+  checkSummaryReferences(*Report);
+  EXPECT_TRUE(llvm::any_of(Report->Contexts, [](const auto &Site) {
+    return !Site.EntryPrefixOnly && Site.CallerSlot == 2 &&
+           Site.CallXSlot == 5 && Site.TargetSlot == 9;
+  }));
+  auto Raw = executeRaw(*Program);
+  ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+  EXPECT_EQ(Raw->Fault, FaultCode::CallDepth);
+  EXPECT_TRUE(llvm::any_of(Raw->Trace,
+                           [](const auto &Step) { return Step.Slot == 5; }));
+}
+
+TEST(SBFCallXContexts, NonReturningCalleeDoesNotHavocAReturningSibling) {
+  auto Text = test::loadImm64(2, kBytecodeStart + 18 * 8);
+  for (const auto &I :
+       {encode(Opcode::ST_DW_REG, 10, 2, -8),
+        encode(Opcode::CALL_IMM, 0, 1, 0, 3),
+        encode(Opcode::LD_DW_REG, 2, 10, -8), encode(Opcode::CALL_REG, 2),
+        encode(Opcode::EXIT), encode(Opcode::JEQ64_IMM, 3, 0, 2, 0),
+        encode(Opcode::CALL_IMM, 0, 1, 0, 2), encode(Opcode::EXIT),
+        encode(Opcode::EXIT), encode(Opcode::ST_DW_REG, 4, 5),
+        encode(Opcode::CALL_IMM, 0, 1, 0, 1), encode(Opcode::EXIT),
+        encode(Opcode::CALL_IMM, 0, 1, 0, -4), encode(Opcode::EXIT),
+        encode(Opcode::EXIT), encode(Opcode::EXIT),
+        encode(Opcode::MOV64_IMM, 0, 0, 0, 77), encode(Opcode::EXIT)})
+    Text.push_back(I);
+  auto Program = analyze(test::makeImage(Text, {}));
+  ASSERT_TRUE(static_cast<bool>(Program))
+      << llvm::toString(Program.takeError());
+  auto Report = recoverCallXContexts(*Program);
+  ASSERT_TRUE(static_cast<bool>(Report)) << llvm::toString(Report.takeError());
+  checkSummaryReferences(*Report);
+  EXPECT_TRUE(llvm::any_of(Report->Contexts, [](const auto &Site) {
+    return !Site.EntryPrefixOnly && Site.CallXSlot == 5 &&
+           Site.TargetSlot == 18;
+  }));
+  auto Raw = executeRaw(*Program);
+  ASSERT_TRUE(static_cast<bool>(Raw)) << llvm::toString(Raw.takeError());
+  EXPECT_EQ(Raw->Status, ExecutionStatus::Returned) << Raw->Error;
+  EXPECT_EQ(Raw->ReturnValue, 77u);
+}
+
 TEST(SBFCallXContexts, RecursiveCallsDoNotInventMemoryOrReturns) {
   auto Program = analyze(test::makeImage(
       {encode(Opcode::CALL_IMM, 0, 1, 0, 1), encode(Opcode::EXIT),
@@ -4342,7 +4448,7 @@ TEST(SBFCallXContexts, RecursiveCallsDoNotInventMemoryOrReturns) {
   ASSERT_TRUE(static_cast<bool>(Report)) << llvm::toString(Report.takeError());
   bool Recursive = false;
   for (const auto &Edge : Report->SummaryEdges)
-    Recursive |= Edge.Barrier == CallXSummaryBarrier::RecursiveCall;
+    Recursive |= Edge.Barrier == CallXSummaryBarrier::NonReturningCall;
   EXPECT_TRUE(Recursive);
   for (const auto &Context : Report->Contexts)
     EXPECT_FALSE(Context.TargetSlot);
