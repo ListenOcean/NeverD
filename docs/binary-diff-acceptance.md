@@ -52,6 +52,39 @@ Shared instructions and a wrapper's call relationship remain separate evidence.
 These contracts do not establish callee equivalence, source ancestry, arbitrary
 transformation recovery or patch presence.
 
+The consumed full OpenSSL release pair produced 68,727 call-conditioned native
+anchors and 3,637 hypotheses. Both public and private OBJ implementations have
+direct shared spans. The private NID implementation has direct spans; its public
+wrapper is inspectable through the original tail transfer at `0x242555`
+(`E9B6FDFFFF`) to `0x242310`. That wrapper still has no directly shared span with
+the old body. Fresh CLI/API results agree outside timings, and saved restoration
+is exact. The desktop workflow selects an initially uncached anchor above row
+46,000 and follows this same native caller witness. The separate 417-function
+fixture covers both unloaded hypothesis and unloaded anchor selection.
+
+Full FFmpeg inputs contain 17,556 / 17,557 functions and approximately 2.77
+million instructions per side. The default call-region search exhausts its
+1,048,576-seed allowance while indexing the primary input and retains zero
+anchors; that result remains explicitly resource limited. With caller-selected
+allowances of 4,194,304 seeds per input, 268,435,456 work units and 1,000,000
+anchors, the search completes with 264,971 anchors and 9,148 hypotheses.
+Exact saved restoration and the last anchor's original five instruction rows
+are checked separately. These are capacity, persistence and inspection results
+on consumed inputs, not new accuracy or transformation-truth qualification.
+The desktop retains saved native-region allowances and quality thresholds when
+the user compares again or changes the matched-call setting.
+
+Integration of upstream atomicity admission `77d94bfd0a` changes the native
+coverage of 385 distinct functions across the SQLite and FFmpeg inputs. All
+original instruction rows and accepted function pairs remain unchanged. Every
+added block boundary and removed fallthrough is accounted for by unsupported
+`LOCK OR` instructions, which must not become ordinary non-atomic stores.
+Five other known reports remain identical outside timings. The original full
+report equality check remains a failed equality check, accompanied by this
+coordinate-level adjudication; it is not relabelled as an identical result.
+The subsequent nine-report delivery replay is identical outside timings.
+The existing source-identity truth, exclusions and numeric gates are unchanged.
+
 Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
 sketches are too common. Direction/layout controls above the exhaustive-pair
 limit recover distinct bodies while retaining true duplicates as ambiguous.
