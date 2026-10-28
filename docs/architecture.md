@@ -7775,8 +7775,11 @@ unknown incoming state and unsupported effects stay explicit in that profile.
 
 The portable owner also executes FNOP, EMMS and FEMMS through the shared
 instruction table. The common preflight owns waiting exceptions and control
-validation; completion updates FNOP's guest FIP, empties EMMS/FEMMS tags and
-applies FEMMS payload invalidation. Concrete interpretation, Step V1 and the
+validation; completion updates FNOP's guest FIP, clears EMMS/FEMMS TOP and tags,
+and applies FEMMS payload invalidation. `lib/ir/low/X86/X87ContextState.h` owns
+the logical-slot rotation that preserves physical payload identity whenever
+TOP changes in portable execution or ordinary concrete MMX transitions.
+Concrete interpretation, Step V1 and the
 portable translation selector reuse this decision. These owned-state forms
 remain a separate capability class from typed state-only operations; portable
 admission must not imply a typed lift or general MMX data support.
@@ -9429,7 +9432,7 @@ JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
 The separately selected portable x87 profile adds only its admitted x64 owned
 instructions and authenticated extension on Linux AArch64. It does not widen
-these scalar object APIs, add a floating calling convention, or admit MMX,
+these scalar object APIs, add a floating calling convention, or admit MMX data,
 general environment operations, arbitrary memory instructions or other hosts.
 The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
 define that scope independently of complete state or formal proof.

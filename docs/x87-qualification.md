@@ -13,15 +13,20 @@ measurements and public capability surfaces have recorded evidence. Qualificatio
 is limited to the named profiles below; complete architectural and formal
 equivalence remain unknown.
 
+Portable FNOP/EMMS/FEMMS admission was added after those baseline records.
+The earlier X0–X4 results do not certify these additions on native ARM64 or
+establish physical FEMMS execution. Their generated-state and native x64
+reference checks remain separate from the historical cross-host qualification.
+
 ## Profiles and limits
 
 | Interface | Admitted scope | Explicit limits |
 | --- | --- | --- |
 | Native typed projection | i386 and x64 System V; selected x64 Microsoft typed cases; raw binary80 values, validated stack/call contracts and defined status | Complete architectural state remains unknown; typed BCD/pair guards trap outside their domain; processor-dependent results belong to the measured CPU |
 | Native owned context | x64 authenticated mutable state, native instruction/value/state replay, selected Linux fault boundaries | No arbitrary CPU/OS qualification; relocated/undefined fields and signal resumption are excluded |
-| Portable concrete | `intel64-architectural-masked-v1`, x64 owned state, explicitly listed operations and control/input domains | Unsupported nonfinite arithmetic, stack faults, unmasked data operations, MMX and general environment effects refuse; no native fallback |
+| Portable concrete | `intel64-architectural-masked-v1`, x64 owned state, explicitly listed operations and control/input domains | Unsupported nonfinite arithmetic, stack faults, unmasked data operations, MMX data and general environment effects refuse; no native fallback |
 | Portable LLVM/HighC/LLVM-C | Explicit C++ preparation and emission into Step V1; x64 owned integer source ABI; Linux little-endian x64/AArch64 | Source calls/floating ABIs, ordinary guest memory and x87 integer-flag forms are refused; ordinary decompilation does not select this interface |
-| Portable translation | Explicit C++ profile and authenticated logical extension; x64 to native Linux AArch64 ELF, checked memory/objects/credentials | Legacy C/Python/CLI translation object APIs stay scalar-only; no i386 translation, non-Linux runtime, floating ABI, MMX/general environment, arbitrary applications or termination proof |
+| Portable translation | Explicit C++ profile and authenticated logical extension; x64 to native Linux AArch64 ELF, checked memory/objects/credentials | Legacy C/Python/CLI translation object APIs stay scalar-only; no i386 translation, non-Linux runtime, floating ABI, MMX data/general environment, arbitrary applications or termination proof |
 | Symbolic/refinement | Conservative unknown for the unqualified x87 state/formal model | A native, differential or digest result cannot become a checked equivalence result |
 
 ## Recorded execution

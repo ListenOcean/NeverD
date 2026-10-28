@@ -94,8 +94,14 @@ TEST(X87PortableRuntime, ResetsNeedNoGuestMemoryAndRetainCompletionBoundaries) {
       auto Expected = Before;
       if (Selector == 0xd0d9)
         Expected.Image[9] = 0x40;
-      else
+      else {
+        Expected.Image[3] = 0;
         Expected.Image[4] = 0;
+        for (unsigned Physical = 0; Physical != 8; ++Physical)
+          std::copy_n(Before.Image.begin() + 32 +
+                          ((Physical + 8 - Top) & 7) * 16,
+                      16, Expected.Image.begin() + 32 + Physical * 16);
+      }
       if (Selector == 0x0e0f)
         Expected.KnownPayload = 0;
       expectUnchanged(Expected, State);

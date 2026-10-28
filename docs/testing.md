@@ -6307,9 +6307,11 @@ ctest --test-dir build-release \
 
 ## Owned x64 x87 context
 
-`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS tag and payload
+`NeverDX87MMXStateTests` checks the shared EMMS/FEMMS TOP, tag and payload
 provenance contract at every TOP, three tag patterns and both strictness
-modes. FEMMS must forget all retained payloads; subsequent MMX writes and
+modes. Both instructions reset TOP to zero while preserving physical register
+identity across the FXSAVE logical-slot rotation. FEMMS must forget all retained
+payloads; subsequent MMX writes and
 x87 loads establish only their own slots. Eight consecutive FLD m80 loads
 also prove that every tag was cleared. Pending exceptions and unknown
 incoming state refuse without mutation. Native feature preflight may refuse
@@ -6489,10 +6491,14 @@ The integer result publishes only on success, no guest memory is required,
 and the complete owned state must match the instruction's contract. Native
 x64 references execute only FNOP and EMMS, comparing CW, defined SW, tags and
 every binary80 payload; all four undefined FNOP condition bits are excluded.
+The EMMS comparison includes TOP clearing and physical payload preservation;
+Unicorn's incorrect TOP retention is not an accepted reference for this case.
 FEMMS invalidation is a provenance check, not physical FEMMS qualification.
 Set `NEVERD_X87_GENERATED_ARTIFACT_DIR` to retain the separate `x87-resets`
 sources, commands, objects and observations. The arithmetic freeze script
 continues to select only its original leaf/branch/loop test.
+The portable x87 workflow runs the reset test separately on both native hosts
+and retains its artifacts independently from the arithmetic qualification.
 
 `scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
 6,096 observations on native Linux x64/AArch64. It requires complete coverage,

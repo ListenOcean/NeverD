@@ -120,7 +120,10 @@ TEST(X87PortableContext, FnopAndMMXResetsKeepDistinctStateAndPayloadEffects) {
             for (unsigned I = 0; I != 8; ++I)
               Expected[8 + I] = GuestIP >> (I * 8);
           } else {
+            putWord(Expected, 2, 0x4725);
             Expected[4] = 0;
+            for (unsigned Physical = 0; Physical != 8; ++Physical)
+              put(Expected, Physical, bits(IntegerBit + Physical, 0x3fff));
           }
           // Retention of FNOP's undefined condition codes is the explicit
           // profile's choice, not a hardware equality claim.
@@ -181,7 +184,7 @@ TEST(X87PortableContext, FemmsPayloadsAreReestablishedOnlyByCompletedWrites) {
     auto Operand = bits(UINT64_C(0x8000000000001234), 0x7fff);
     for (unsigned I = 0; I != 8; ++I) {
       ASSERT_EQ(step(mem(0xdb, 5), S, Known, Operand), Outcome::Completed);
-      const unsigned Written = (Top + 7 - I) & 7;
+      const unsigned Written = 7 - I;
       EXPECT_EQ(Known & (1U << Written), 1U << Written);
       EXPECT_EQ(Known, S[4]);
       EXPECT_EQ(get(S, 0), Operand);
@@ -544,10 +547,10 @@ TEST(X87PortableContext, OriginalInstructionsMatchDefinedStateAcrossAllTOP) {
         Form.PortableOperation == X87PortableOperation::LoadControl ||
         Form.PortableOperation == X87PortableOperation::StoreStatus)
       continue;
-    // Haswell has no FEMMS. Its undefined payload contract is covered by the
-    // explicit provenance tests; this reference must not execute an absent
-    // instruction or compare the resulting arbitrary payload bits.
-    if (Form.Escape == 0x0f && Form.FirstModRM == 0x0e)
+    // Unicorn incorrectly retains TOP after EMMS; the generated-code suite
+    // compares this transition against original instructions on native x64.
+    // Haswell has no FEMMS, whose undefined payloads require provenance checks.
+    if (Form.PortableOperation == X87PortableOperation::ResetMMX)
       continue;
     for (unsigned Top = 0; Top != 8; ++Top)
       for (unsigned PC : {0U, 2U, 3U})
@@ -633,7 +636,7 @@ TEST(X87PortableContext, OriginalInstructionsMatchDefinedStateAcrossAllTOP) {
   RecordProperty("reference", "Unicorn x86-64 Haswell original instructions");
   RecordProperty("excluded",
                  "undefined C0/C2/C3/FOP/register FDP; QEMU C1, arithmetic "
-                 "exception flags and FDP serialization");
+                 "exception flags and FDP serialization; EMMS TOP; FEMMS");
 }
 #endif
 } // namespace

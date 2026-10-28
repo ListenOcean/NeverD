@@ -216,7 +216,12 @@ void executeReset(void *Symbol, unsigned Kind, llvm::ArrayRef<uint8_t> Bytes,
           for (unsigned I = 0; I != 8; ++I)
             Expected.Image[8 + I] = (kPortableX87FixtureEntry + 7) >> (8 * I);
         } else {
+          Expected.Image[3] = 0x47;
           Expected.Image[4] = 0;
+          for (unsigned Physical = 0; Physical != 8; ++Physical)
+            std::copy_n(Before.Image.begin() + 32 +
+                            ((Physical + 8 - Top) & 7) * 16,
+                        16, Expected.Image.begin() + 32 + Physical * 16);
         }
         if (Kind == 2)
           Expected.KnownPayload = 0;
