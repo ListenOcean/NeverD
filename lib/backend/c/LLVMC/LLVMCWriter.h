@@ -1152,6 +1152,10 @@ public:
   std::map<const llvm::AllocaInst *, std::string> ForwardedFieldArgs;
   /// Cleanup-return targets printed after the wrap. The resume goto is omitted.
   std::set<const llvm::BasicBlock *> OmitCleanupRetTo;
+  /// While a __try wraps every printed block, the flag a return out of it
+  /// sets first, as its __finally reads it: C counts that return as an
+  /// abnormal termination, as it does an exception.
+  std::string WrappedFinallyNormalExit;
   /// While printing a phi-fed call at an incoming edge, that slot's argument
   /// prints the value stored on the edge.
   const llvm::AllocaInst *PhiTailSlot = nullptr;

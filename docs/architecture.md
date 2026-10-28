@@ -421,7 +421,13 @@ the CFG and retains each block's complete ordered unwind chain. Independent
 handlers and a handler nested within a finally keep their own clauses. Normal
 edges assign PHIs before leaving the generated compounds; a block's finally
 executes the recovered cleanup only on unwind. Closed lexical ranges retain
-their compact rendering.
+their compact rendering. C also runs a `__finally` when its try falls through,
+where the source already holds the normal copy, so a compact finally runs the
+cleanup under `if (AbnormalTermination())`. C counts a return or a jump out of
+the try as abnormal too: a closed finally range that can leave before its end
+marker takes the block form, and a lexical one that still could is refused. A
+try that wraps every block for lack of range markers sets its normal-exit flag
+before each return and at its end.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 

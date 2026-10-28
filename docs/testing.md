@@ -214,6 +214,12 @@ a finally. Both O0/O2 Windows object builds retain the nested clauses; host
 execution checks the normal paths and cleanup count. Run the complete
 `COFFExceptionIR.LLVMC*` group to retain compact closed ranges and shared-handler
 loops. Host normal-path checks do not qualify native Windows exception dispatch.
+`LLVMCFinallyWrapContainsCleanupBody` and
+`LLVMCFinallyContinuationFollowsCleanup` keep a finally's cleanup off its
+normal exit; `LLVMCFinallyReturnInsideTheTrySkipsTheCleanup` and
+`LLVMCFinallyRangeLaidOutPastItsEndUsesTheExitFlag` move a range that returns
+or leaves its layout to the block form, and
+`LLVMCFinallyJumpPastItsEndMarkerIsRefused` refuses a jump no form can render.
 
 # Testing NeverD
 

@@ -8049,6 +8049,10 @@ void LLVMCWriter::writeCleanupRet(llvm::CleanupReturnInst &CR, int Indent) {
 }
 
 void LLVMCWriter::writeReturn(llvm::ReturnInst &Ret, int Indent) {
+  if (!WrappedFinallyNormalExit.empty()) {
+    emitIndent(Indent);
+    OS << WrappedFinallyNormalExit << " = 1;\n";
+  }
   emitIndent(Indent);
   if (InferredVoid) {
     OS << "return;\n";
