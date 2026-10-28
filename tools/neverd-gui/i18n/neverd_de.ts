@@ -9597,6 +9597,14 @@ Mehrdeutigkeiten und manuelle Entscheidungen gelten nur im jeweiligen Bericht. R
         <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
         <translation>Aufrufe in diesen gespeicherten Abschnitten beruhen auf den Funktionspaaren des Quellberichts. Sie beweisen kein gleichwertiges Verhalten der aufgerufenen Funktionen.</translation>
     </message>
+    <message>
+        <source>All native spans</source>
+        <translation>Alle nativen Abschnitte</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>Alle SSA-Abschnitte</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>

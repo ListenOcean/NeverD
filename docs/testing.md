@@ -3708,6 +3708,9 @@ projection controls cover ordinary and call-enabled evidence; Qt
 `nativeRegionCallConditionsSurviveReopen` checks both real native profiles,
 original anchor rows and the conditional-call notice through the ordinary
 source-evidence workflow. These remain unauthenticated saved coordinates.
+Ungrouped native/SSA controls retain all anchors with zero hypotheses,
+late and out-of-range pages, exact work boundaries and cancelled queries.
+The desktop all-span tabs retain the same call conditions after reopening.
 Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
 hypothesis and raw-anchor pages in a 417-function native fixture, then checks
 the original instruction address and call-context destination after loading.

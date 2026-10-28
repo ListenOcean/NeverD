@@ -9597,6 +9597,14 @@ Les ambiguïtés et décisions manuelles restent propres au rapport. Les hypoth�
         <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
         <translation>Les appels de ces fragments enregistrés reposent sur les paires de fonctions du rapport source. Ils ne prouvent pas l’équivalence du comportement des fonctions appelées.</translation>
     </message>
+    <message>
+        <source>All native spans</source>
+        <translation>Tous les fragments natifs</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>Tous les fragments SSA</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::LineageGraph</name>
