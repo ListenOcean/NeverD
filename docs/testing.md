@@ -12479,10 +12479,18 @@ boundaries, work/heap stops and DEX/library identity sharing. The API 28 source
 contract includes consumed string lengths and unchecked terminators; a symmetric
 round trip alone is insufficient. `AndroidJNI.Parcel*` runs ordinary/V/A calls
 at O0/O2 across relocation variants and available CPU backends.
-`ProcessPublic.AndroidParcelDataAndBoundariesMatchSDKAndCLI` compares 42 complete
-report pairs, including the next explicit interface-token/StrictMode boundary.
-Run full Dalvik, Android JNI and native/Linux Binder suites, plus the focused
-public test after changing this owner. These are original synthetic tests;
+`ProcessPublic.AndroidParcelDataAndBoundariesMatchSDKAndCLI` compares 54 complete
+report pairs, including token/name writes, explicit null-token refusal and the
+next `BinderProxy.transact` method-resolution boundary.
+Binder/token unit cases check exact gather-bit bytes, high/sign bits, raw UTF-16,
+empty descriptors, missing services, propagated service stops, budget admission,
+partial headers and DEX/library sharing. `AndroidJNI.BinderStrictMode*` checks
+ordinary/V/A calls, native thread isolation, fresh child policies and retained
+policy across JNI detach/reattach; it writes through one globally retained
+Parcel from parent and child threads. `ProcessPublic.AndroidBinderThreadPolicyMatchesSDKAndCLI`
+compares twelve complete reports in single-thread and scheduled modes at O0/O2.
+Run full Dalvik, Android JNI, thread/callback and native/Linux Binder suites,
+plus these focused public tests after changing this owner. These are original synthetic tests;
 they establish no live Binder service or whole-MVM restoration.
 
 `AndroidServiceManagerTest.*` covers slow/statistics record bytes, strict versus
@@ -13039,13 +13047,15 @@ widths, first/last lanes, sign extension, W-register upper clearing and XZR.
 Capstone's `HasNEONorSME` group is satisfied by baseline NEON; SME-only feature
 groups and unsupported register views remain rejected.
 
-`AArch64ReductionCases.def` records 34 independently assembled baseline forms of
-CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2 and UMAXV. Integer lane
+`AArch64ReductionCases.def` records 39 independently assembled baseline forms of
+CMEQ (register/zero and scalar/vector), UZP1, XTN/XTN2, UMAXV and UMINV. Integer lane
 oracles cover all admitted widths, unsigned high bits, narrowing truncation,
 upper clearing/preservation and source/destination aliases; the full vector,
 scalar and guard-memory state is checked at EL0 and EL1. Each malformed or SVE
 counterexample has a fresh CPU because a refused instruction terminates execution.
-Run the `NeverDAArch64FPTests` label after changing this admission boundary.
+Run the FP/SIMD, state, register-snapshot and execution-session targets after
+changing this admission boundary. The original O2 Binder policy/token fixture
+also exercises compiler-generated UMINV during independent wire-byte checking.
 The semantic reference is Arm's [instruction guide](https://documentation-service.arm.com/static/6245c734b059dc5ff9a8bdab),
 sections D6.15–16, D6.246 and D6.279–281.
 
