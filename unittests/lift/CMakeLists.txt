@@ -62,6 +62,11 @@ add_neverd_unittest(NeverDConstantBranchTests
   LINK_COMPONENTS IRLow Lift
 )
 
+add_neverd_unittest(NeverDConstantBranchSourceTests
+  core/ConstantBranchSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
 add_neverd_unittest(NeverDResumableTrapBoundaryTests
   core/ResumableTrapBoundaryTests.cpp
   core/ResumableTrapIdentityTests.cpp

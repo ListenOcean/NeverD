@@ -326,7 +326,10 @@ LLVM C also places recognized text beside ordinary and volatile image reads
 inside the function body, which remains visible when the GUI folds image
 declarations. Dynamic pointers and disabled comments stay unannotated.
 Exact scalar branches now reconnect discontiguous and backward code while
-preserving independently known tail calls. Worker navigation uses complete
+preserving independently known tail calls. Their numeric and symbolic proofs
+carry values across unique decoded direct predecessors and share authenticated
+immutable image reads. Joins, independent entries, writable memory and missing
+caller/VM state still need their own proofs. Worker navigation uses complete
 recovered instruction ownership to select the original function when a user
 lands on a fragment; it does not invent a new callable entry or its live-ins.
 Saved code items retain this bounded owner lookup on literal GUI navigation.

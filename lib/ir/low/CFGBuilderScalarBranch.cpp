@@ -9,9 +9,14 @@
 
 #include "LowScalarExpression.h"
 
+#include "neverd/Limits.h"
 #include "neverd/ir/low/CFGBuilder.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/loader/ReadOnlyBytes.h"
+
+#include "llvm/ADT/DenseSet.h"
+#include "llvm/ADT/SmallPtrSet.h"
+#include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
 #include <map>
@@ -48,6 +53,23 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
     }
     RemainingWork -= Work;
     return true;
+  };
+  // Numeric and symbolic walks borrow only the same authenticated image
+  // bytes. The cache is scoped to this unchanged-image CFG construction.
+  auto ReadImage = [&](const LowOp &Op,
+                       uint64_t Address) -> std::optional<uint64_t> {
+    if (Op.Opcode != NdOp::LOAD || Op.NumInputs != 1 || !Op.Output.Size ||
+        Op.Output.Size > sizeof(uint64_t) ||
+        Op.Inputs[0].Size < Img.getPointerSize() ||
+        Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return {};
+    const auto Key = std::make_pair(Address, Op.Output.Size);
+    auto [It, Inserted] = ImageScalars.try_emplace(Key);
+    if (Inserted)
+      It->second = readImmutableImageScalar(Img, Address, Op.Output.Size,
+                                            &RemainingWork);
+    return It->second;
   };
   auto Restore = [&](InsnRecord &Rec) {
     if (!Rec.ScalarBranchInput)
@@ -88,6 +110,68 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
            Terminator.RejectedScalarBranch ||
            !Terminator.JumpTableTargets.empty()))
         continue;
+      // A direct predecessor transports its register state without starting
+      // a new ABI invocation. Stop at joins and independent roots: their
+      // missing entry state must remain unknown. Do not borrow recovered
+      // indirect edges, which would make their own revalidation circular.
+      llvm::SmallVector<const LowBlock *, 8> Prefix{&Block};
+      llvm::SmallDenseSet<int, 8> Seen{Block.Id};
+      llvm::SmallPtrSet<const InsnRecord *, 8> DirectEdges;
+      while (true) {
+        const LowBlock &Current = *Prefix.back();
+        if (!Spend(1)) {
+          Complete = false;
+          break;
+        }
+        if (Current.StartAddr == Func.Entry || Current.Preds.size() != 1 ||
+            !Current.ExceptionalPreds.empty() ||
+            Func.ModuleAnalysisRoots.count(Current.StartAddr) ||
+            Func.OrdinaryModuleAnalysisRoots.count(Current.StartAddr))
+          break;
+        const int P = Current.Preds.front();
+        if (P < 0 || static_cast<size_t>(P) >= Func.Blocks.size() ||
+            !Seen.insert(P).second)
+          break;
+        const LowBlock &Previous = Func.Blocks[P];
+        if (Previous.InstructionBoundaries.empty())
+          break;
+        const auto Edge =
+            Insns.find(Previous.InstructionBoundaries.back().Address);
+        if (Edge == Insns.end())
+          break;
+        const InsnRecord &Transfer = Edge->second;
+        if (Transfer.IsCall || Transfer.IsRet || Transfer.IsIndirect ||
+            Transfer.ScalarBranchInput || Transfer.IsOpaqueTerminator ||
+            Transfer.IsInstructionGuard ||
+            (Transfer.IsBranch && Transfer.BranchTarget != Current.StartAddr &&
+             (!Transfer.IsCond || Previous.EndAddr != Current.StartAddr)) ||
+            (!Transfer.IsBranch && Previous.EndAddr != Current.StartAddr))
+          break;
+        DirectEdges.insert(&Transfer);
+        Prefix.push_back(&Previous);
+      }
+      if (!Complete)
+        break;
+      llvm::SmallVector<const InsnRecord *, 16> Instructions;
+      for (auto It = Prefix.rbegin(); It != Prefix.rend(); ++It) {
+        for (const LowInstructionBoundary &Boundary :
+             (*It)->InstructionBoundaries) {
+          if (!Spend(1)) {
+            Complete = false;
+            break;
+          }
+          const auto At = Insns.find(Boundary.Address);
+          if (At == Insns.end()) {
+            Complete = false;
+            break;
+          }
+          Instructions.push_back(&At->second);
+        }
+        if (!Complete)
+          break;
+      }
+      if (!Complete)
+        break;
       // Byte facts preserve architectural subregister overlap exactly. Temps
       // have identities, not byte offsets, and live for one instruction only.
       std::map<uint64_t, uint8_t> Registers;
@@ -114,19 +198,13 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         }
         return Result;
       };
-      for (const LowInstructionBoundary &Boundary :
-           Block.InstructionBoundaries) {
+      for (const InsnRecord *Instruction : Instructions) {
         if (!Spend(1 + Temps.size())) {
           Complete = false;
           break;
         }
         Temps.clear();
-        const auto At = Insns.find(Boundary.Address);
-        if (At == Insns.end()) {
-          Complete = false;
-          break;
-        }
-        const InsnRecord &Rec = At->second;
+        const InsnRecord &Rec = *Instruction;
         for (const LowOp &Op : Rec.Ops) {
           if (!Spend(1)) {
             Complete = false;
@@ -152,20 +230,9 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
           if (!Output.isReg() && !Output.isTemp())
             continue;
           auto Result = lowScalarConstantResult(Op, ValueOf);
-          if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1 && Output.Size &&
-              Output.Size <= sizeof(uint64_t) &&
-              Op.Inputs[0].Size >= Img.getPointerSize() &&
-              Op.MemoryOrdering == NdMemoryOrdering::None &&
-              Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
-            if (auto Address = ValueOf(Op.Inputs[0])) {
-              const auto Key = std::make_pair(*Address, Output.Size);
-              auto [It, Inserted] = ImageScalars.try_emplace(Key);
-              if (Inserted)
-                It->second = readImmutableImageScalar(
-                    Img, *Address, Output.Size, &RemainingWork);
-              Result = It->second;
-            }
-          }
+          if (Op.Opcode == NdOp::LOAD && Op.NumInputs == 1)
+            if (auto Address = ValueOf(Op.Inputs[0]))
+              Result = ReadImage(Op, *Address);
           if (!Spend(1 + Output.Size)) {
             Complete = false;
             break;
@@ -200,19 +267,37 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         break;
       }
       const auto Target = Targets.find(Terminator.Addr);
-      if (Target != Targets.end() && !Target->second)
-        for (size_t I = 0; I < Block.Ops.size(); ++I) {
-          const LowOp &Op = Block.Ops[I];
-          if (Op.Addr == Terminator.Addr && Op.NumInputs == 1 &&
-              (Op.Opcode == NdOp::INDIR_BR ||
-               (Op.Opcode == NdOp::BRANCH && Terminator.ScalarBranchInput))) {
-            Target->second = constantScalarExpression(
-                llvm::ArrayRef<LowOp>(Block.Ops).take_front(I),
-                Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
-                Terminator.Addr, RemainingWork);
-            break;
+      if (Target != Targets.end() && !Target->second) {
+        std::vector<LowOp> Operations;
+        bool Bounded = true;
+        for (const InsnRecord *Instruction : Instructions) {
+          for (const LowOp &Op : Instruction->Ops) {
+            if (Op.Addr == Terminator.Addr && Op.NumInputs == 1 &&
+                (Op.Opcode == NdOp::INDIR_BR ||
+                 (Op.Opcode == NdOp::BRANCH && Terminator.ScalarBranchInput))) {
+              Target->second = constantScalarExpression(
+                  Operations,
+                  Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
+                  Terminator.Addr, RemainingWork, ReadImage);
+              Bounded = false;
+              break;
+            }
+            // Prefix edges contribute no path predicate. Every value must
+            // hold for arbitrary input on this straight sequence.
+            if (DirectEdges.contains(Instruction) &&
+                (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR))
+              continue;
+            if (Operations.size() ==
+                limits::kMaxScalarBranchSymbolicOperations) {
+              Bounded = false;
+              break;
+            }
+            Operations.push_back(Op);
           }
+          if (!Bounded)
+            break;
         }
+      }
     }
     if (!Complete) {
       // No prefix of an incomplete proof can retain authority after new edges
