@@ -2344,6 +2344,14 @@ Double-click to go to the declaration.</translation>
         <source>Laying out graph…</source>
         <translation>Laying out graph…</translation>
     </message>
+    <message>
+        <source>From %1</source>
+        <translation>From %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>To %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::HexView</name>

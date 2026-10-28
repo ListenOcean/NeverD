@@ -4640,7 +4640,11 @@ check the toggles, register families and register-span ranges behind it.
 `WorkbenchTests::jumpDialogPreviewsWhereEnterGoes` types an address and a name
 into Jump anywhere and checks that the preview beside the matches lands on the
 typed address and on the chosen match, stays out of the keyboard focus, and
-empties for text that names nothing. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+empties for text that names nothing.
+`WorkbenchTests::graphEdgesSelectAndShowTheirOtherEnd` clicks an edge of
+function_6's graph and checks that it is selected, that a hover beside its
+arrow names the branching block and one near its start names the block it
+goes to, and that a click on a block lets the edge go. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.

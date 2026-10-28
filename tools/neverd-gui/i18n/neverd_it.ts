@@ -2344,6 +2344,14 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <source>Laying out graph…</source>
         <translation>Calcolo della disposizione del grafo…</translation>
     </message>
+    <message>
+        <source>From %1</source>
+        <translation>Da %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>Verso %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::HexView</name>

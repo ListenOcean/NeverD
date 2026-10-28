@@ -2364,6 +2364,14 @@ Double-click to go to the declaration.</source>
         <source>Laying out graph…</source>
         <translation>جارٍ تخطيط الرسم البياني…</translation>
     </message>
+    <message>
+        <source>From %1</source>
+        <translation>من %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>إلى %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::HexView</name>

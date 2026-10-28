@@ -114,6 +114,12 @@ inline constexpr double kGraphViewWholeGraphExtent = 9e8;
 inline constexpr qreal kGraphViewWheelZoomStep = 1.15;
 inline constexpr qreal kGraphViewArrowLength = 9.0;
 inline constexpr qreal kGraphViewArrowHalfWidth = 4.5;
+/// How near an edge's line, in screen pixels, a click selects it and a hover
+/// shows its other end.
+inline constexpr qreal kGraphViewEdgeReachPixels = 4.0;
+/// The rows an edge's hover shows of the block at its other end; a longer
+/// block shows its first and last rows.
+inline constexpr int kGraphViewEdgeHintRows = 12;
 
 // tools/neverd-gui/app/HexView.cpp
 inline constexpr int kHexViewMargin = 6;

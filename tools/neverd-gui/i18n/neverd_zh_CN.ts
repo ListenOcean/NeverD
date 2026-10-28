@@ -2339,6 +2339,14 @@ Double-click to go to the declaration.</source>
         <source>Laying out graph…</source>
         <translation>正在进行图形布局…</translation>
     </message>
+    <message>
+        <source>From %1</source>
+        <translation>来自 %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>去往 %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::HexView</name>

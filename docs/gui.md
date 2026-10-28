@@ -229,7 +229,11 @@ char **envp)`; a rename of the function still wins over that name.
 **Graph view** (Space) lays the current function out in layers with the
 conditional (green/red) and unconditional edges routed around blocks; panning
 and zooming are local, and text is dropped at low zoom. The graph overview
-shows the whole function and the visible area.
+shows the whole function and the visible area. As in IDA, a click on an edge
+selects it and draws it over the others until the next click, and resting the
+pointer on an edge shows the block at its far end: beside its arrow the block
+it comes from, named by its branching instruction, and elsewhere the block it
+goes to, a long block by its first and last rows.
 
 Opening a file or database starts with disassembly and keeps pseudocode and
 IR windows closed, including when a saved desktop had them open. Generate the

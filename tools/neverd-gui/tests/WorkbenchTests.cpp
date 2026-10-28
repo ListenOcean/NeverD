@@ -4880,6 +4880,91 @@ private slots:
     QVERIFY(locks.word(1).isEmpty());
   }
 
+  void graphEdgesSelectAndShowTheirOtherEnd() {
+    // As in IDA, a click on a graph edge selects it and a hover shows the
+    // block at its far end: where it comes from beside its arrow, where it
+    // goes elsewhere.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "fixture.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    // function_6 branches around a push and joins again.
+    assembly->navigate(Base + 0x60);
+    QTRY_COMPARE(assembly->currentFunction(),
+                 std::optional<Address>(Base + 0x60));
+    assembly->setGraphMode(true);
+    auto *graph = assembly->graph();
+    QTRY_VERIFY(assembly->graphMode() && graph->loaded());
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    graph->setFocus();
+    QTest::keyClick(graph, Qt::Key_1);
+    // The middle of the longest segment of an edge with both ends.
+    int chosen = -1;
+    QPointF first, second;
+    qreal longest = 0;
+    for (int e = 0; e < graph->edges().size(); ++e) {
+      const auto &edge = graph->edges()[e];
+      if (edge.from < 0 || edge.to < 0)
+        continue;
+      for (int i = 1; i < edge.points.size(); ++i) {
+        const QPointF step = edge.points[i] - edge.points[i - 1];
+        if (const qreal length = std::hypot(step.x(), step.y());
+            length > longest) {
+          longest = length;
+          chosen = e;
+          first = edge.points[i - 1];
+          second = edge.points[i];
+        }
+      }
+    }
+    QVERIFY(chosen >= 0 && longest > 20);
+    const auto edge = graph->edges()[chosen];
+    // A scene point, brought into view, in the graph's coordinates.
+    const auto widgetOf = [graph](QPointF scene) {
+      graph->centerOn(scene);
+      const QRectF view = graph->visibleScene();
+      const qreal scale = graph->width() / view.width();
+      return QPoint(qRound((scene.x() - view.left()) * scale),
+                    qRound((scene.y() - view.top()) * scale));
+    };
+    // A point on the edge a little way from \p end toward \p next.
+    const auto beside = [](QPointF end, QPointF next) {
+      QPointF along = next - end;
+      const qreal length = std::hypot(along.x(), along.y());
+      return end + along / length * std::min<qreal>(12, length / 2);
+    };
+    QTest::mouseClick(graph, Qt::LeftButton, Qt::NoModifier,
+                      widgetOf((first + second) / 2));
+    QCOMPARE(graph->selectedEdge(), std::optional<int>(chosen));
+
+    const auto &source = graph->nodes()[edge.from];
+    const auto &target = graph->nodes()[edge.to];
+    const QString from = graph->hintAt(widgetOf(
+        beside(edge.points.back(), edge.points[edge.points.size() - 2])));
+    QVERIFY2(from.startsWith(QStringLiteral("<b>From ")), qPrintable(from));
+    QVERIFY2(from.contains(source.rows.back().styled.text.toHtmlEscaped()),
+             qPrintable(from));
+    const QString to =
+        graph->hintAt(widgetOf(beside(edge.points.front(), edge.points[1])));
+    QVERIFY2(to.startsWith(QStringLiteral("<b>To ") +
+                           displayAddress(target.start, 16)),
+             qPrintable(to));
+    QVERIFY2(to.contains(target.rows.front().styled.text.toHtmlEscaped()),
+             qPrintable(to));
+    // A hover asks for the same hint.
+    const QPoint near = widgetOf(beside(edge.points.front(), edge.points[1]));
+    QHelpEvent help(QEvent::ToolTip, near, graph->mapToGlobal(near));
+    QApplication::sendEvent(graph, &help);
+    QVERIFY(help.isAccepted());
+
+    // A click on a block lets the edge go.
+    QTest::mouseClick(graph, Qt::LeftButton, Qt::NoModifier,
+                      widgetOf(source.box.center()));
+    QVERIFY(!graph->selectedEdge());
+  }
+
   void tabFromCodeUsesSelectedInstruction_data() {
     QTest::addColumn<QString>("representation");
     QTest::addColumn<bool>("native");
