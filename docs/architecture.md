@@ -7121,6 +7121,11 @@ passes a prologue save of a callee-saved or link register, a scratch register's
 undefined incoming value (an alignment `push rax`), a slot past a gap in its
 stack arguments, or the register that holds its own target, unless the routine
 takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
+HighIR drops the store itself when it lands in the function's own frame below
+the entry stack pointer: those bytes held no defined value before it and hold
+none after, so C does not read the register only to fail. A variadic
+function's register save area is not such a store; its registers carry what
+its callers pass.
 Recovery records where it ended the register arguments at the target
 (`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
 past it, since dead-code elimination leaves only stale earlier writes of that

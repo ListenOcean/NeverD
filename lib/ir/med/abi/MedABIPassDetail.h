@@ -135,24 +135,6 @@ struct AbiCallContext {
   const MedBlockIdIndex *Blocks = nullptr;
 };
 
-/// The incoming value of a scratch register that carries no argument is
-/// undefined where the convention says so: storing it, as an alignment
-/// `push rax` does, passes nothing (HighIR's CallArgCollection applies the same
-/// rule).
-inline bool isUndefinedIncomingScratch(const TargetRegInfo &TRI, Arch TheArch,
-                                       const CallArgumentConvention *Convention,
-                                       llvm::ArrayRef<uint64_t> ArgRegs,
-                                       const MedVar &V) {
-  if (!Convention || !Convention->UndefinedIncomingScratchRegisters ||
-      V.Kind != MedVar::Reg || V.SSAVer != 0 || TRI.isStackPointer(V.RegOff) ||
-      TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff))
-    return false;
-  const std::optional<unsigned> Family = gprFamilyOf(TheArch, V.RegOff);
-  return Family && llvm::none_of(ArgRegs, [&](uint64_t Reg) {
-           return gprFamilyOf(TheArch, Reg) == Family;
-         });
-}
-
 /// Outgoing scalar stores that agree along every predecessor path
 /// to a call. Unknown writes, calls, independent entries and cycles stop the
 /// proof. Offsets are relative to the call's SP, using its exact SSA basis.
