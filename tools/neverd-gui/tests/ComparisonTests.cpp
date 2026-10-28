@@ -2254,6 +2254,26 @@ private slots:
                                      ->rowCount() > 0,
                              Timeout);
     Impact->hide();
+    const auto Input = [&](const char *Base) {
+      return QJsonObject{{"path", Path},
+                         {"load_options", QJsonObject{{"loader", "binary"},
+                                                      {"processor", "x64"},
+                                                      {"base", Base}}}};
+    };
+    // The full FFmpeg workflow needs larger allowances than the defaults.
+    // Retain both custom capacity and quality settings through the ordinary
+    // desktop reopen and Compare actions, without exposing test-only controls.
+    Session.start(Input("0x1000"), Input("0x8000"),
+                  {{"regions", QJsonObject{{"calls", true},
+                                           {"max_seeds", 4194304},
+                                           {"max_work", 268435456},
+                                           {"max_anchors", 1000000},
+                                           {"min_instructions", 5},
+                                           {"min_repeated_instructions", 9}}}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 7, Timeout);
+    auto SavedRegions =
+        Session.summary()["settings"].toObject()["regions"].toObject();
     const auto Saved = Directory.filePath("call-regions.nddiff");
     Session.command("comparison_save", {{"path", Saved}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
@@ -2288,6 +2308,17 @@ private slots:
     QVERIFY(Selected);
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Calls->isChecked(), Timeout);
     QVERIFY(Regions->isChecked());
+    auto *Compare = View.findChild<QPushButton *>("comparisonStart");
+    QTest::mouseClick(Compare, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QCOMPARE(Session.summary()["settings"].toObject()["regions"].toObject(),
+             SavedRegions);
+    Calls->setChecked(false);
+    QTest::mouseClick(Compare, Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    SavedRegions.remove("calls");
+    QCOMPARE(Session.summary()["settings"].toObject()["regions"].toObject(),
+             SavedRegions);
     QCOMPARE(Failures.size(), 0);
   }
 
@@ -2464,6 +2495,9 @@ private slots:
     QVERIFY(Anchors->cachedPages() >= 2);
     QVERIFY(Anchors->cachedPages() <=
             ::neverd::limits::gui::kComparisonCachedPages);
+    QTRY_VERIFY_WITH_TIMEOUT(Table->viewport()->rect().contains(
+                                 Table->visualRect(Table->currentIndex())),
+                             Timeout);
     auto *Context = Regions->findChild<QPushButton *>("regionCallContext");
     QTRY_VERIFY_WITH_TIMEOUT(Context->isEnabled(), Timeout);
     Context->menu()->actions()[1]->trigger();

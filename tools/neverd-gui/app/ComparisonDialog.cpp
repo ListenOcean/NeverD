@@ -798,9 +798,15 @@ void ComparisonDialog::run(const QString &Restore) {
   }
   Status->setText(tr("Loading comparison inputs…"));
   RestoreSettings = !Restore.isEmpty();
-  QJsonObject NativeRegions{{"enabled", AnalyzeRegions->isChecked()}};
+  // Saved reports may carry caller-selected search thresholds and allowances.
+  // Keep those when rerunning; these controls own only enabled and calls.
+  auto NativeRegions =
+      Session.summary()["settings"].toObject()["regions"].toObject();
+  NativeRegions["enabled"] = AnalyzeRegions->isChecked();
   if (RegionCalls->isChecked())
     NativeRegions["calls"] = true;
+  else
+    NativeRegions.remove("calls");
   Session.start(
       Inputs[0], Inputs[1],
       {{"use_names", Names->isChecked()},

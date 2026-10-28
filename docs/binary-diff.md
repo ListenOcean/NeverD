@@ -248,7 +248,7 @@ resource exhaustion publishes only completed evidence with its stop reason.
 Saved binding validates call targets against the saved correspondence and exact
 native snapshots. The default `native-runs-v1` search and encoding are unchanged.
 
-Repeated runs shorter than the default eight instructions are omitted unless
+In the default profile, repeated runs shorter than eight instructions are omitted unless
 they cover at least half the eligible instructions of either function. This
 limits components formed from common short sequences; it is a heuristic
 abstention, not evidence that a transformation is absent. Unique seeds retain
@@ -264,6 +264,21 @@ No feature hash, score or region explanation is a semantic certificate.
 The **All shared spans (including unclassified)** filter and `--list region-anchors`
 also page anchors retained before grouping could finish. Use the saved report
 when revisiting a partial result: anchor indices belong to that exact result.
+
+For large inputs, pass explicit allowances with `--options large-regions.json`.
+For example, the following settings completed the retained full FFmpeg
+call-region search; they are a workload-specific configuration, not a change to
+the defaults or an accuracy guarantee:
+
+```json
+{"regions":{"calls":true,"max_seeds":4194304,"max_work":268435456,"max_anchors":1000000}}
+```
+
+Save that result with `--save comparison.nddiff` and reopen it in the desktop
+for bounded inspection. Its native-region thresholds and allowances survive
+Reopen and the next **Compare**, including when **Include matched calls** is
+toggled. The **All shared spans** view gives the full width to the spans and
+their original instructions.
 
 Select a shared span and use **Call context… → Primary / Secondary** to trace
 its callers through the same native call-path review. This also exposes a public
