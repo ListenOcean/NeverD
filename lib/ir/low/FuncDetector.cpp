@@ -1019,6 +1019,11 @@ bool FuncDetector::verifyFunctionDecode(const BinaryImage &Img, Decoder &Dec,
             return false;
           break;
         }
+        // Code that runs on into another function's authenticated entry has
+        // left this candidate: that function's exits are not its own.
+        if (NeedsCallableExit && Cur != Addr && Entries.count(Cur) &&
+            Img.hasAuthenticatedFunctionEntryAt(Cur))
+          break;
         if (Explored.size() >= kCFGProbeBudget)
           return !NeedsCallableExit;
 
