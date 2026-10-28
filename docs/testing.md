@@ -4636,7 +4636,11 @@ it, frees and relocks it with Ctrl+Alt+1 and Ctrl+Alt+0, locks a pseudocode
 word, lists the Lock highlight menu with its swatches and frees every color on
 close. `WorkbenchUnitTests::highlightLocksToggleAsIdaDoes`,
 `registerFamiliesShareTheirParts` and `highlightsCoverRegistersSharingTheWord`
-check the toggles, register families and register-span ranges behind it. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+check the toggles, register families and register-span ranges behind it.
+`WorkbenchTests::jumpDialogPreviewsWhereEnterGoes` types an address and a name
+into Jump anywhere and checks that the preview beside the matches lands on the
+typed address and on the chosen match, stays out of the keyboard focus, and
+empties for text that names nothing. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.

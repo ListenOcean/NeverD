@@ -109,6 +109,7 @@ public:
   InstanceServer &instanceServer() { return instances_; }
   /// The active disassembly view; Alt+Enter can open independent views.
   DisassemblyView *disassembly() const { return disassembly_; }
+  const AddressSpace &addressSpace() const { return space_; }
   ActionRegistry &actions() { return actions_; }
   /// The window's menus, which sit in its title bar when it draws its own
   /// frame.  This hides QMainWindow::menuBar(), which would replace that

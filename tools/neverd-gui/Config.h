@@ -122,6 +122,13 @@ inline constexpr int kHexViewMargin = 6;
 /// The colors IDA's Lock highlight offers, one word each.
 inline constexpr int kHighlightLockColors = 8;
 
+// tools/neverd-gui/app/JumpDialog.cpp
+/// The dialog's first size: the matches beside a preview of where Enter goes.
+inline constexpr int kJumpDialogWidth = 980;
+inline constexpr int kJumpDialogHeight = 480;
+/// The match list's first width; the preview takes the rest.
+inline constexpr int kJumpDialogListWidth = 320;
+
 // tools/neverd-gui/app/WheelInput.cpp
 inline constexpr int kTextViewWheelLinesPerNotch = 3;
 

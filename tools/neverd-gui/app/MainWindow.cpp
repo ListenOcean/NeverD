@@ -3302,7 +3302,7 @@ void MainWindow::jumpAnywhere() {
   const auto base = currentAddress();
   const QPointer<DisassemblyView> assembly = disassembly_;
   const bool hex = hexActive_;
-  auto *dialog = new JumpDialog(session_, commandView());
+  auto *dialog = new JumpDialog(session_, space_, base, commandView());
   dialog->setObjectName(QStringLiteral("jumpDialog"));
   connect(dialog, &QDialog::accepted, this,
           [this, dialog, epoch, base, assembly, hex] {

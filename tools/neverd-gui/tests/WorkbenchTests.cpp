@@ -13036,7 +13036,8 @@ private slots:
     });
     const QString recent = hexAddress(Base + 0x40);
     QSettings().setValue(QStringLiteral("jump/history"), QStringList{recent});
-    JumpDialog dialog(bench.session, bench.window.get());
+    JumpDialog dialog(bench.session, bench.window->addressSpace(),
+                      std::nullopt, bench.window.get());
     auto *input = dialog.findChild<QLineEdit *>();
     auto *matches = dialog.findChild<QListWidget *>();
     QVERIFY(input && matches);
@@ -13052,6 +13053,38 @@ private slots:
     input->setText(QStringLiteral("function_2"));
     QVERIFY2(!matches->currentItem(),
              "The previous expression kept its jump target.");
+  }
+
+  void jumpDialogPreviewsWhereEnterGoes() {
+    // Beside the matches the dialog previews where Enter goes: the chosen
+    // match, else the typed expression; text naming nothing shows nothing.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        bench.session.indexReady() && !bench.session.busy(), OpenTimeoutMs);
+    JumpDialog dialog(bench.session, bench.window->addressSpace(), Base,
+                      bench.window.get());
+    auto *input = dialog.findChild<QLineEdit *>();
+    auto *matches = dialog.findChild<QListWidget *>();
+    auto *preview =
+        dialog.findChild<ListingView *>(QStringLiteral("jumpPreview"));
+    QVERIFY(input && matches && preview);
+    QCOMPARE(preview->focusPolicy(), Qt::NoFocus);
+    input->setText(displayAddress(Base + 0x140, 16));
+    QTRY_COMPARE_WITH_TIMEOUT(preview->currentItem(),
+                              std::optional<Address>(Base + 0x140),
+                              OpenTimeoutMs);
+    input->setText(QStringLiteral("function_5"));
+    QTRY_VERIFY_WITH_TIMEOUT(matches->count() > 0, OpenTimeoutMs);
+    matches->setCurrentRow(0);
+    QCOMPARE(matches->item(0)->text(), QStringLiteral("function_5"));
+    QTRY_COMPARE_WITH_TIMEOUT(preview->currentItem(),
+                              std::optional<Address>(Base + 0x50),
+                              OpenTimeoutMs);
+    input->setText(QStringLiteral("no_such_name_anywhere"));
+    QTRY_VERIFY_WITH_TIMEOUT(!preview->currentItem(), OpenTimeoutMs);
   }
 
   void viewsFollowTheSessionAndNavigation() {

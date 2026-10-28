@@ -562,7 +562,10 @@ keys makes Copy take bytes again.
 **Imports**, **Exports**, **Names**, **Strings**, **Segments** and
 **Bookmarks** are choosers with a quick filter and sortable columns. **Jump
 anywhere** (G) takes an address, a name or an expression such as `main+0x10`
-and suggests names as you type. Cross references (X, Ctrl+X, Ctrl+J) list call
+and suggests names as you type. Beside the suggestions a disassembly preview
+shows where Enter goes, the chosen suggestion or else the typed expression, as
+in IDA; text that names nothing yet leaves the preview empty, and the typing
+stays in the field. Cross references (X, Ctrl+X, Ctrl+J) list call
 (`p`), jump (`j`), read (`r`), write (`w`) and offset (`o`) references from the
 worker's reference index.
 
