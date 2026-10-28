@@ -658,6 +658,8 @@ struct HighFunc {
   /// unchanged. Use only after every pad has become a C++ clause.
   std::vector<std::pair<MedVar, ExprPtr>> ItaniumCallFrameOffsets;
   bool HasUnresolvedSEHFrame = false;
+  /// MedFunc::SEHTerminationFrameBytes.
+  std::map<va_t, uint64_t> SEHTerminationFrameBytes;
   std::set<va_t> CxxContinuationTargets;
   unsigned StructuredExceptionRegions = 0;
   unsigned UnstructuredExceptionRegions = 0;

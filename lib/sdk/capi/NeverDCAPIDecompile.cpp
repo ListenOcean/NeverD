@@ -31,6 +31,7 @@
 #include "neverd/ir/NdOps.h"
 #include "neverd/ir/high/HighIRPrint.h"
 #include "neverd/ir/high/HighVariableEdits.h"
+#include "neverd/ir/high/X64SEHFinallyBodies.h"
 #include "neverd/loader/ARM/ARMModeCLIStrings.h"
 #include "neverd/loader/COFF/COFFException.h"
 #include "neverd/loader/LanguageRuntime.h"
@@ -566,8 +567,24 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     ByEntry[Func.Entry] = &Func;
   std::set<va_t> Included = {HF->Entry};
   std::vector<const HighFunc *> Needed = {HF};
+  // Termination handlers are out-of-line funclets gathered only so their
+  // bodies can fill a `__finally`; unlike C++ catch funclets they are not
+  // themselves printed in this view, so keep them out of the requested set.
+  std::set<va_t> SEHFuncletSources;
   for (size_t I = 0; I < Needed.size(); ++I)
     walkStmts(Needed[I]->Body, [&](const HighStmt &Stmt) {
+      if (Stmt.Kind == StmtKind::SEHTry) {
+        for (const auto &Clause : Stmt.EHClauses)
+          if (Clause.Kind == HighEHClauseKind::SEHFinally &&
+              Clause.FilterOrActionVA != FuncEntry)
+            if (auto It = ByEntry.find(Clause.FilterOrActionVA);
+                It != ByEntry.end() &&
+                Included.insert(Clause.FilterOrActionVA).second) {
+              Needed.push_back(It->second);
+              SEHFuncletSources.insert(Clause.FilterOrActionVA);
+            }
+        return;
+      }
       if (Stmt.Kind != StmtKind::CxxTry)
         return;
       for (const auto &Clause : Stmt.EHClauses) {
@@ -583,6 +600,7 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
   Related.reserve(Needed.size());
   for (const HighFunc *Func : Needed)
     Related.push_back(*Func);
+  attachSEHFinallyBodies(Related, S->Img.Arch);
   if (!PlainC)
     attachCxxFuncletBodies(Related);
   const HighFunc *Attached = nullptr;
@@ -595,8 +613,14 @@ static const char *decompileHighC(neverd_session_t Sess, neverd_va_t FuncEntry,
     Attached = HF;
 
   std::vector<HighFunc> Single = {*Attached};
-  if (PlainC)
-    Single = std::move(Related);
+  if (PlainC) {
+    // The plain-C view keeps every related function (e.g. C++ catch funclets)
+    // except termination handlers gathered only to fill a `__finally`.
+    Single.clear();
+    for (HighFunc &Func : Related)
+      if (!SEHFuncletSources.count(Func.Entry))
+        Single.push_back(std::move(Func));
+  }
   std::string Out;
   llvm::raw_string_ostream OS(Out);
 

@@ -409,10 +409,11 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     return Result;
   };
 
-  // An x64 SEH handler is entered by the unwinder with the protected frame's
-  // nonvolatile registers as they were when the exception was raised. Where
-  // no protected block writes one, that is the value live throughout the
-  // protected range, not the value the function was entered with.
+  // A Windows x64, ARM or AArch64 SEH handler is entered by the unwinder with
+  // the protected frame's nonvolatile registers as they were when the
+  // exception was raised. Where no protected block writes one, that is the
+  // value live throughout the protected range, not the value the function was
+  // entered with.
   std::map<int, std::vector<int>> SEHProtected;
   std::map<int, std::map<int, std::set<va_t>>> CxxProtectedCalls;
   std::set<int> SEHTrackedIds;
@@ -670,10 +671,27 @@ void LowToMedConverter::buildSsa(MedFunc &Func, const LowFunc &Low) {
     if (Func.HasUnresolvedSEHFrame)
       x86_seh::seedSourceEntries(Func, Low, LiveIn, VarOfId, TargetArch);
 
+    // ARM and AArch64 have no decoded-frame proof here. Their unwinder
+    // resumes an except handler with the protected frame's SP as well: the SP
+    // live throughout the protected range, where no protected operation
+    // moves it.
+    const bool ARMTableSEH =
+        (TargetArch == Arch::ARM || TargetArch == Arch::AArch64) &&
+        Low.ExceptionMetadata && Low.ExceptionMetadata->SEH;
+    if (ARMTableSEH)
+      for (int Root : Roots)
+        if (Root != 0 && llvm::any_of(Func.Blocks[Root].ExceptionalPreds,
+                                      [](const ExceptionalEdge &E) {
+                                        return E.Kind ==
+                                               ExceptionalEdgeKind::SEHHandler;
+                                      }))
+          SEHProtectedSPRoots.insert(Root);
+
     for (int Root : Roots) {
       if (Root != 0)
         NonEntryRootLiveIns.insert(LiveIn[Root].begin(), LiveIn[Root].end());
-      if (Root != 0 && (TargetArch == Arch::X64 || HasX86SEHFrame) &&
+      if (Root != 0 &&
+          (TargetArch == Arch::X64 || ARMTableSEH || HasX86SEHFrame) &&
           Low.ExceptionMetadata &&
           (Low.ExceptionMetadata->SEH || HasX86SEHFrame)) {
         const ExceptionFunction &EH = *Low.ExceptionMetadata;

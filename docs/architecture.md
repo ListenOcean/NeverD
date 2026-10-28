@@ -7810,6 +7810,17 @@ explicit masked-state slice to the existing context. It neither creates a
 parallel stack nor changes native/translation admission. Undefined CPU fields,
 unknown incoming state and unsupported effects stay explicit in that profile.
 
+The portable owner also executes FNOP, EMMS and FEMMS through the shared
+instruction table. The common preflight owns waiting exceptions and control
+validation; completion updates FNOP's guest FIP, clears EMMS/FEMMS TOP and tags,
+and applies FEMMS payload invalidation. `lib/ir/low/X86/X87ContextState.h` owns
+the logical-slot rotation that preserves physical payload identity whenever
+TOP changes in portable execution or ordinary concrete MMX transitions.
+Concrete interpretation, Step V1 and the
+portable translation selector reuse this decision. These owned-state forms
+remain a separate capability class from typed state-only operations; portable
+admission must not imply a typed lift or general MMX data support.
+
 `X87GuardedValue.h` shares the typed raw-value/control-word contract for BCD
 and the native FPTAN/FSINCOS/FXTRACT result pairs. The CFG owner proves source
 payload and destination-tag preconditions; native emission enforces the
@@ -9458,7 +9469,7 @@ JSON surface yet, and debugging remains separate and unsupported. The object
 APIs above remain useful without opting into native execution.
 The separately selected portable x87 profile adds only its admitted x64 owned
 instructions and authenticated extension on Linux AArch64. It does not widen
-these scalar object APIs, add a floating calling convention, or admit MMX,
+these scalar object APIs, add a floating calling convention, or admit MMX data,
 general environment operations, arbitrary memory instructions or other hosts.
 The [x87 contracts](x87-semantics.md) and [qualification record](x87-qualification.md)
 define that scope independently of complete state or formal proof.
@@ -12654,15 +12665,43 @@ Synchronous catches sample their retained throwing calls, so nonvolatile values
 come from the actual call rather than a neighbouring reindexed block. Missing
 source effects or throwing calls fail the conversion explicitly.
 
-An x64 SEH handler root gives each nonvolatile register the one SSA version it
-has on entry to every protected block when no protected operation writes it,
-and an unknown value otherwise (`MedSSA`). A termination handler's `__except`
+A Windows x64, ARM or AArch64 SEH handler root gives each nonvolatile register
+the one SSA version it has on entry to every protected block when no protected
+operation writes it, and an unknown value otherwise (`MedSSA`). ARM and AArch64
+have no decoded-frame proof, so their handler roots take the SP of the
+protected range the same way. A termination handler's `__except`
 arm thus keeps the RBP its prologue copied from RDX. HighC rebases `rdx + k`
 into the printed function's frame only in a clause body of a function without
 an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch
 and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
 for parameter, return and stored-result rendering; SEH and Itanium clause
 bodies are the function's own code.
+
+A Windows x64 `__finally` is an out-of-line termination handler the runtime
+calls with the parent's EstablisherFrame as its second argument and an
+abnormal-termination flag as its first; the handler reaches the parent's
+locals through `EstablisherFrame + k`. For a parent without a frame register
+that frame is the entry stack pointer less the prologue's fixed allocations,
+which `proveLowSEHTerminationFrame` (`lib/ir/low/SEHEstablisherFrame.cpp`)
+certifies from the normalized unwind codes cross-checked against the decoded
+prologue, refusing a frame register, a stack adjustment on any path into the
+guarded scope, or chained or incomplete unwind data. The bytes it returns ride
+`MedFunc::SEHTerminationFrameBytes` to HighIR, where `attachSEHFinallyBodies`
+(`lib/ir/high/structure/X86/X64SEHFinallyBodies.cpp`) projects the handler's
+body into the empty `__finally` clause: the establisher parameter is rebased
+onto the parent's entry stack pointer, each home-slot load becomes the
+parameter it holds, and the abnormal argument becomes `AbnormalTermination()`.
+Because a C `__finally` runs on the normal exit too, the compiler's inline
+normal-path copy must not run twice: when the handler ignores the abnormal flag
+and its statements equal that copy, the copy is removed and the clause holds
+the whole body; otherwise the copy stays and the clause holds only the abnormal
+work under `if (AbnormalTermination())`. A handler whose frame is not certified,
+whose body is unavailable or has its own exception scope, or whose `__try`
+transfers control out, nests another region or calls `_local_unwind` keeps its
+address comment: the machine runs the handler on such an exit while C would
+not, so the clause stays out of line until that call becomes a structured
+jump. The projection runs in the plain-C view as well as the C++ one, because
+SEH is C.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 

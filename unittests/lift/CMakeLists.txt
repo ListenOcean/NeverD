@@ -2003,6 +2003,16 @@ target_compile_definitions(NeverDCOFFExceptionIRTests PRIVATE
   NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
 )
 
+# Windows x64 termination handlers: the certified establisher frame of an
+# out-of-line __finally callback and the bodies the C routes print from it.
+add_neverd_unittest(NeverDSEHTerminationHandlerTests
+  eh/SEHTerminationHandlerTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+target_include_directories(NeverDSEHTerminationHandlerTests PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
 # Pins the format-neutral distinction between an explicitly returned semantic
 # value producer and an incidental call result left in the native return
 # register.  Keeping this focused avoids relinking the full lift suite.
