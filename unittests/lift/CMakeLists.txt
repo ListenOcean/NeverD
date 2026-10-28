@@ -244,6 +244,7 @@ add_neverd_unittest(NeverDLiftTests
   aarch64/AArch64_SVEStateTests.cpp
   aarch64/AArch64_SVEStoreTests.cpp
   aarch64/AArch64_StructReturnTests.cpp
+  aarch64/AArch64_VariadicSaveAreaTests.cpp
   aarch64/AArch64_WSPTests.cpp
   aarch64/AArch64_MulDivTests.cpp
   aarch64/AArch64DivisionSemanticTests.cpp

@@ -7187,6 +7187,32 @@ count (`MedCallInfo::VarArgFixedCount`), so an LLVM declaration of a routine
 the module does not emit stays variadic. A declaration made from one call's
 arguments would cut another call's.
 
+An AAPCS64 register save area also spills q0-q7, which carry only the floating
+and vector arguments a caller passes. Where the function's va_arg reads none of
+them, MedIR drops those spills (`unreadAAPCS64VectorSpills`,
+`MedVariadicAArch64.cpp`), so neither C route writes the registers' unknown
+entry values. The evidence is the area itself, q(first) through q7 saved at
+entry to consecutive 16-byte slots, and one va_list whose va_start points
+`__vr_top` just past it, `__stack` into the incoming arguments and `__gr_top`
+past the integer half, and sets both offsets. No load may read the area,
+`__vr_top` or `__vr_offs`, which only va_arg of a floating or vector argument
+and a copied or passed-on va_list read; and a frame address may reach memory
+only as the pointer va_start stores in each of those three fields, and no call
+or return in an argument register. Loads through the pointers va_arg reads from
+`__stack` and `__gr_top` are taken to stay in their areas, as the va_list
+convention keeps them. A function whose va_arg reads a double keeps the spills,
+whose unknown values still fail where it stores them. Windows ARM64 passes
+floating varargs in integer registers and Apple's arm64 every vararg on the
+stack; neither saves a vector register for va_arg.
+
+A call to a variadic routine of the image passes zero for each save-area
+register its caller does not set, as va_arg reads no more arguments than a
+caller passes. This is a limitation, which System V x86-64 calls share: a
+register the caller passes on untouched counts as not set, so a caller that
+passes its own argument on that way, as
+`long g(long a, long b) { return logv("x", b); }` does, passes zero where the
+program passes `b`, and its C takes no such parameter.
+
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
 the call at a call that may change the register (`callClobbersRegister`, the

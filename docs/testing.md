@@ -173,6 +173,23 @@ entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
 fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
 require a homed incoming pointer plus a reload or an advanced-pointer read;
 Darwin's register-only walk remains independently recognizable without a home.
+`MedVariadic.AAPCS64DropsTheVectorSaveAreaNoReadObserves` drops q0-q7's spills
+only where the area is whole and one va_list's va_start initializes
+`__vr_top`, `__vr_offs` and the rest, whatever the format. It keeps them where
+a load reads either field or the area, a frame address reaches a call, a
+return, a vector register, an intrinsic, other memory or a va_list pointer
+other than the one va_start stores there, a load's frame address has no fixed
+offset or an edge is exceptional, and where Apple's arm64 recognizer, which
+reads no save area, applies.
+
+`AArch64_VariadicSaveArea` compiles AAPCS64 variadic routines. One whose
+va_arg reads ints only leaves its vector half unread: MedIR keeps no q0-q7
+spill, and both C routes are free of unknown values, its LLVM C running like
+the kernel (`AArch64_HighCExecution.AVariadicCalleeReadsItsStackArgumentsInPlace`
+runs its HighC). Ones reading doubles, or longs between doubles, keep all
+eight spills, and the HighC still fails explicitly where it stores them. The
+Windows ARM64 and Apple arm64 builds save no vector register and take no
+floating parameter.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
