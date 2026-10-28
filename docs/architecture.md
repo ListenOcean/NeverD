@@ -7248,7 +7248,23 @@ the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
 `RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
 missing with no word. The reason is the audit's disposition and its evidence,
 as `--func` reports it for that function (`rejected-incomplete; decode failure
-at 0xC`).
+at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
+unstructured SEH region without its native handler body, is left out of the
+unit the same way and noted after those (`c-emission-failed; unstructured SEH
+view requires the original native handler body`); the other definitions are
+written as they would be. Asked for alone, such a function still fails with
+that reason, and so does a unit rendered with a source map, recorded
+positions or source names.
+
+HighC writes a unit's headers, helpers, declarations and image objects on the
+calling thread, then its function definitions on worker threads, each with a
+copy of the writer those declarations prepared, and joins the definitions in
+order. A definition reads only what the declarations prepared and resets its
+own state, so its text does not depend on the thread or on the definitions
+written before it; the first definition that fails, in order, fails the unit
+as in one pass. A unit of fewer than `kMinParallelCFunctionDefinitions`
+definitions, or one rendered with a source map, recorded positions or source
+names, which follow the text as one pass prints it, is written on one thread.
 
 An x86 function whose whole body is one direct unconditional jump, after an
 optional `endbr` marker, passes its caller's return address, stack and

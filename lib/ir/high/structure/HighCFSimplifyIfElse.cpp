@@ -5342,11 +5342,19 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             if (!DidCompose)
               return std::optional<std::vector<bool>>(
                   std::vector<bool>(Stmt.Body.size(), false));
-            return composedPrefixDrops(Stmt.Body, InnerI, Pred,
-                                       RefuseReadCalls, Substituted);
+            return composedPrefixDrops(Stmt.Body, InnerI, Pred, RefuseReadCalls,
+                                       Substituted);
           };
           std::optional<std::vector<bool>> DropsB;
-          if (auto Rest = dropAndPrefix(OuterForPeel, Inner.Cond, SameTempId)) {
+          auto Rest = dropAndPrefix(OuterForPeel, Inner.Cond, SameTempId);
+          // A remainder keeps the composed spelling, so the prefix calls it
+          // substituted run there. One whose value has another reader keeps
+          // the test uncomposed.
+          std::optional<std::vector<bool>> DropsR;
+          if (Rest && !isConstTrue(*Rest) &&
+              !(DropsR = PrefixDrops(*Rest, true)))
+            Rest.reset();
+          if (Rest) {
             if (isConstTrue(*Rest)) {
               const std::vector<bool> DropsA = *PrefixDrops(PredForDce, false);
               std::vector<HighStmt> Prefix;
@@ -5363,9 +5371,22 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
               Stmt.Body = std::move(Prefix);
             } else {
               Inner.Cond = std::move(*Rest);
-              Stmt.Body[InnerI] = std::move(Inner);
-              NestedChanged |=
-                  dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
+              std::vector<HighStmt> Kept;
+              Kept.reserve(Stmt.Body.size());
+              size_t KeptInnerI = 0;
+              for (size_t K = 0; K < Stmt.Body.size(); ++K) {
+                if (K == InnerI) {
+                  KeptInnerI = Kept.size();
+                  Kept.push_back(std::move(Inner));
+                  continue;
+                }
+                if (DidCompose && K < InnerI && (*DropsR)[K])
+                  continue;
+                Kept.push_back(std::move(Stmt.Body[K]));
+              }
+              Stmt.Body = std::move(Kept);
+              NestedChanged |= dropUnusedTrailingAssigns(Stmt.Body, KeptInnerI,
+                                                         PredForDce, Med);
             }
             Changed = true;
           } else if (!SideEffectPrefix && (InnerI == 0 || FoldPrefix) &&

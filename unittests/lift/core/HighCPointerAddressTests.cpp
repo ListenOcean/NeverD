@@ -32738,6 +32738,52 @@ bool everyReadTempIsAssigned(const HighFunc &Func) {
                        Read.end());
 }
 
+TEST(HighCPointerAddresses, RepeatedOuterTestRunsComposedCallOnce) {
+  // `if (a) { t = probe(b); if (a && t) work(a); }`: the inner test repeats
+  // the outer one, and what remains of it takes the composed probe call.
+  // The prefix call is that execution, with or without a call site, so it
+  // runs once. A later reader of t keeps the inner test uncomposed.
+  for (int Variant = 0; Variant < 3; ++Variant) {
+    HighFunc Func;
+    Func.Name = "repeated_outer_test";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    const MedVar Probed = temporary(40, 0, 4);
+    ExprPtr Probe = HighExpr::makeCall("probe", 0x140002300, {parameter(1)});
+    if (Variant == 1)
+      Probe->CallSiteAddr = 0x140001010;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Cond = HighExpr::makeBinop(
+        NdOp::BOOL_AND,
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                            HighExpr::makeConst(0, 8)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Probed),
+                            HighExpr::makeConst(0, 4)));
+    Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                     HighExpr::makeConst(0, 8));
+    Outer.Body = {assignTo(Probed, std::move(Probe)), Inner};
+    Func.Body = {Outer};
+    if (Variant == 2)
+      Func.Body.push_back(
+          callStmt("use", 0x140002400, {HighExpr::makeVar(Probed)}));
+    structureIfElse(Func, 8);
+    EXPECT_TRUE(everyReadTempIsAssigned(Func)) << Variant;
+    const std::string Source = emitFunctions({Func});
+    const auto BodyAt = Source.find("void repeated_outer_test");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t ProbeCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("probe(", Pos)) != std::string::npos; Pos += 6)
+      ++ProbeCount;
+    EXPECT_EQ(ProbeCount, 1u) << Variant << "\n" << Source;
+    EXPECT_NE(Source.find("work(", BodyAt), std::string::npos) << Source;
+  }
+}
+
 TEST(HighCPointerAddresses, TrailingLoadReadAsLaterCallArgumentStays) {
   // `t27` feeds only the third argument of a call before the inner test.
   HighFunc Func;

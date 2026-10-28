@@ -23,23 +23,31 @@ two busy threads, so the serial stretches matter as much as the CPU hotspots.
 These items meet their entry condition. Each change still needs a same-base
 A/B with identical output.
 
-1. **C emission is serial.** `HighCWriter::writeAll`
-   (`lib/backend/c/HighC/HighCEmitter.cpp:4672`) writes every function on the
-   caller's thread. On the Rust runs it held one thread for about a third of
-   the wall time; on a whole-image run of the x64 libsqlite3 it held one
-   thread for more than half of it. Most of that is per-function projection
-   (`writeFunctionProjection`, `lib/backend/c/HighC/HighCFuncWriter.cpp:5827`),
-   which could run in per-worker writer copies writing per-function buffers,
-   joined in order.
-   - Audit first. `HighCWriter` (`lib/backend/c/HighC/HighCWriter.h:118`) has
-     about 235 members. Those reset when `writeFunctionProjection` starts are
-     per-function; the rest are prepared before the loop. Find any member
-     written inside the loop and read by a later function.
-   - `SourceRecorder->positionDefinition(..., OS.tell())`
-     (`lib/backend/c/HighC/HighCEmitter.cpp:4761`) must be rebased onto the
-     joined output.
-   - `writeForwardDecls` (`:4752`) is a separate serial cost that a
-     per-function split does not touch.
+1. **C emission's unit preparation is serial.** `writeFunctionsInParallel`
+   (`lib/backend/c/HighC/HighCEmitter.cpp`) writes a unit's function
+   definitions on worker threads, each with a copy of the writer `writeAll`
+   prepared, joined in order. Its text is byte-identical to the serial loop:
+   a same-binary A/B over the regression inputs, 2 to 20 threads, and a
+   serial/parallel sweep of the Windows EH corpus. Wall time fell 17% to 39%
+   on the Rust and whole-image runs. What stays on the caller's thread is
+   everything `writeAll` does before the definitions: `prepareRecordDefinitions`,
+   `prepareFunctionIdentifiers`, `collectImageObjects`, `collectMemoryTypes`,
+   `writeIncludes` and `writeForwardDecls`. On the whole-image libsqlite3 run
+   that was about a third of `writeAll`'s CPU samples.
+   - Those passes walk every expression of every function. Collecting per
+     function on workers and merging in function order must reproduce the
+     serial walk, including the allocation order of
+     `GlobalIdentifierAllocator`.
+   - Renderings with a source map, recorded positions or source names (GUI,
+     SDK dialect output) still write definitions serially:
+     `SourceRecorder->positionDefinition(..., OS.tell())` and the per-function
+     source-map updates would need rebasing and an ordered merge.
+   - Reading CPU time on the 6P+8E host: the same definitions take about 2.3x
+     their serial CPU time on 20 threads (E-cores, hyperthreads, a lower
+     all-core clock) and equal it on 2. So whole-image A/B CPU rose 12% to 18%
+     while no work was added; the writer copies cost about 0.5 s over 20
+     threads on whole-image libstdc++. Check a CPU rise at 2 threads before
+     calling it overhead.
 2. **Restricted runs read omitted callees serially.**
    `omittedDirectCalleeSignatures` (`lib/pipeline/PipelineCallAbi.cpp:655`) is
    called under `recoverModuleCallAbi` (`:1388`). It lifts and converts the
@@ -119,10 +127,13 @@ A/B with identical output.
    `eliminateDeadStmts` (`lib/ir/high/pass/HighDCE.cpp:749`, about thirty
    passes) after each of its six phases that rewrote, and once more at the
    end.
-   - On the whole-image libsqlite3 run, these reruns took about two thirds of
-     the samples under `eliminateDeadStmts` and about a tenth of all CPU.
-     The largest functions, which form the HighIR tail (item 6), spend most of
-     their MedToHigh time here.
+   - On the whole-image libsqlite3 run at 4c991c2416, these reruns took about
+     two thirds of the samples under `eliminateDeadStmts` and about a tenth of
+     all CPU. At 6361fc7c9b all of `eliminateDeadStmts` was 1.7% of that run's
+     samples, so re-profile before starting. What remains is the tail: one
+     x64 libstdc++ function (`time_get::_M_extract_via_format`, 401 blocks)
+     spent 4.8 s of its 5.2 s MedToHigh in DCE (`NEVERD_HIGHIR_DETAIL=1`
+     splits it into pre, iterative and post).
    - The phase comment asks only that dead copies between a jump and its label
      be cleared. Find what each later phase needs from the cleanup; a
      narrower pass must still give byte-identical output on the regression
