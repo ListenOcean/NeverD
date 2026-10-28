@@ -427,7 +427,10 @@ cleanup under `if (AbnormalTermination())`. C counts a return or a jump out of
 the try as abnormal too: a closed finally range that can leave before its end
 marker takes the block form, and a lexical one that still could is refused. A
 try that wraps every block for lack of range markers sets its normal-exit flag
-before each return and at its end.
+before each return and at its end. The native lowering numbers a range's
+markers, their boundary provenance and the blocks it appends for returns in
+block layout order, never pointer order, so the C it prints is the same from
+run to run.
 HighIR adds this recovery for positional register/stack conventions. Independent
 register banks retain their source variadic and floating-return preparation.
 
