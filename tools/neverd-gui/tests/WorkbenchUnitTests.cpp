@@ -529,12 +529,12 @@ private slots:
     QCOMPARE(copy.spans.size(), line.spans.size());
   }
 
-  void cWordsSplitMemberAccessesAtTheirDot() {
+  void pseudocodeWordsSplitMemberAccessesAtTheirDot() {
     const QString access = QStringLiteral("stack_storage.var_m8 = 1.5;");
     // A listing's or IR's names keep their dots.
     QCOMPARE(tokenRange(access, 3), (std::pair{0, 20}));
     QVERIFY(tokenOccurrences(access, QStringLiteral("var_m8")).isEmpty());
-    // C splits a member access and keeps a decimal number whole.
+    // Pseudocode splits a member access and keeps a decimal number whole.
     QCOMPARE(tokenRange(access, 3, TokenDots::Split), (std::pair{0, 13}));
     QCOMPARE(tokenRange(access, 16, TokenDots::Split), (std::pair{14, 20}));
     QCOMPARE(tokenRange(access, 24, TokenDots::Split), (std::pair{23, 26}));

@@ -2502,9 +2502,9 @@ QString CodeText::tokenAt(int line, int column) const {
 }
 
 TokenDots CodeText::tokenDots() const {
-  const Dialect dialect = dialectOf(representation_, pageLanguage_);
-  return dialect == Dialect::C || dialect == Dialect::Cpp ? TokenDots::Split
-                                                          : TokenDots::Join;
+  return sourceDialect(dialectOf(representation_, pageLanguage_))
+             ? TokenDots::Split
+             : TokenDots::Join;
 }
 
 std::optional<Address> CodeText::globalReferenceAt(int line, int column) const {
