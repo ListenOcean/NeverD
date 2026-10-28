@@ -12999,6 +12999,58 @@ TEST(LLVMDataPointerInvariantBoundary,
       }
 }
 
+// The emitter names the body that refused, with the error it wrote, so that
+// a whole unit can declare that function only and emit every other one.
+TEST(LLVMDataPointerInvariantBoundary,
+     NamesTheRefusedBodySoTheOthersEmitWithoutIt) {
+  constexpr Arch TargetArch = Arch::X64;
+  for (BinaryFormat Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF}) {
+    SCOPED_TRACE(formatTraceName(Format));
+    BinaryImage Image = makeSpilledConstTableImage(TargetArch, Format);
+    MedFunc Plain;
+    Plain.Entry = TextVA + 0x600;
+    Plain.Name = "plain_leaf";
+    Plain.ReturnType = NdType::makeVoid();
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Plain.Entry;
+    Block.EndAddr = Plain.Entry + 4;
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(std::move(Return));
+    Plain.Blocks.push_back(std::move(Block));
+    const std::vector<MedFunc> Funcs = {
+        Plain, makeDifferentBaseRematerializedRecurrentTableLookup(TargetArch)};
+
+    llvm::LLVMContext Context;
+    MedLLVMEmitter Emitter;
+    testing::internal::CaptureStderr();
+    auto Refused = Emitter.emit(Funcs, Context, "refused-body", TargetArch, {},
+                                &Image, Format);
+    (void)testing::internal::GetCapturedStderr();
+    EXPECT_EQ(Refused.get(), nullptr);
+    ASSERT_EQ(Emitter.refusedBodies().size(), 1u);
+    EXPECT_EQ(Emitter.refusedBodies()[0].Index, 1u);
+    const std::string &Reason = Emitter.refusedBodies()[0].Reason;
+    EXPECT_NE(Reason.find("refusing stale-address fallback"), std::string::npos)
+        << Reason;
+    EXPECT_NE(Reason.find(Funcs[1].Name), std::string::npos) << Reason;
+
+    const std::vector<char> Mask = {1, 0};
+    auto Module = MedLLVMEmitter().emit(Funcs, Context, "refused-body",
+                                        TargetArch, {}, &Image, Format,
+                                        /*MergeableGlobals=*/false, &Mask);
+    ASSERT_NE(Module, nullptr);
+    const llvm::Function *Lookup = Module->getFunction(Funcs[1].Name);
+    ASSERT_NE(Lookup, nullptr);
+    EXPECT_TRUE(Lookup->isDeclaration());
+    const llvm::Function *Kept = Module->getFunction(Plain.Name);
+    ASSERT_NE(Kept, nullptr);
+    EXPECT_FALSE(Kept->isDeclaration());
+  }
+}
+
 TEST(LLVMDataPointerInvariantBoundary,
      RejectsNumericCoincidenceAsRematerializedTableBase) {
   for (BinaryFormat Format :

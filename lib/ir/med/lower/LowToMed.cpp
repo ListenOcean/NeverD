@@ -303,37 +303,6 @@ void splitEntryLoopHeader(MedFunc &Func) {
   }
 }
 
-/// The constant the low byte of \p Register holds where the call at
-/// \p CallIndex of \p Ops reads it: the last write of that byte before the
-/// call, through extensions of the register itself (`xor eax, eax` writes
-/// EAX and zero-extends it into RAX).  Nullopt where another kind of write,
-/// an earlier call or the block's start comes first.
-std::optional<uint8_t> lowByteConstantAtCall(llvm::ArrayRef<LowOp> Ops,
-                                             size_t CallIndex,
-                                             uint64_t Register) {
-  for (size_t I = std::min(CallIndex, Ops.size()); I-- > 0;) {
-    const LowOp &Op = Ops[I];
-    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL)
-      return std::nullopt;
-    const NdVar &Out = Op.Output;
-    // A write that leaves the byte alone, such as one to AH.
-    if (!Out.isReg() || Out.Size == 0 || Out.Offset > Register ||
-        Out.Offset + Out.Size <= Register)
-      continue;
-    if (Out.Offset != Register)
-      return std::nullopt;
-    if (Op.Opcode == NdOp::COPY && Op.NumInputs >= 1 && Op.Inputs[0].isConst())
-      return static_cast<uint8_t>(Op.Inputs[0].Offset & 0xFF);
-    if ((Op.Opcode == NdOp::INT_ZEXT || Op.Opcode == NdOp::INT_SEXT ||
-         Op.Opcode == NdOp::COPY) &&
-        Op.NumInputs >= 1 && Op.Inputs[0].isReg() &&
-        Op.Inputs[0].Offset == Register)
-      continue;
-    return std::nullopt;
-  }
-  return std::nullopt;
-}
-
 } // namespace
 
 bool LowToMedConverter::bindFormattedCall(MedBlock &MB, MedOp &MOp,

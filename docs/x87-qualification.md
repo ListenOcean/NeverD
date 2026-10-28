@@ -15,12 +15,15 @@ equivalence remain unknown.
 
 Portable FNOP/EMMS/FEMMS admission was added after those baseline records.
 The [reset qualification ledger](evidence/x86-x87-resets-2026-10-28.json)
-records their later checks at `710180d84eb925e6ee07fe6721774781055a0f20`: both
+records their later generated checks at `710180d84eb925e6ee07fe6721774781055a0f20`: both
 local x64 SDKs and native ARM64 execute 36 generated artifacts and 2,700 state
 observations per profile. All 225 distinct seeded state transitions agree.
 Native x64 supplies 576 original FNOP/EMMS comparisons per SDK. These results
-are separate from the historical X0–X4 records; they do not establish physical
-FEMMS execution or reset-specific native translation-session qualification.
+are separate from the historical X0–X4 records. The subsequent seventeen-test
+translation gate and reset-aware cross-host comparison passed at
+`c27c87a9a1d2f816cf38392278d4017d96d7f832` in
+[run 40697970738](https://github.com/NeverSight/NeverD/actions/runs/40697970738).
+Physical FEMMS execution remains unqualified.
 
 ## Profiles and limits
 
@@ -106,8 +109,21 @@ The reset fixture enumerates 225 instruction/state cases at O0/O2, retaining
 450 observations and 882 direct JITLink input objects. It independently checks
 full logical state, untouched extensions/memory, the completed MOV prefix on
 refusal, and production-session agreement. Its eighteen refusals cover unknown
-environment, pending exceptions and invalid control words. These are required
-checks; the historical thirteen-test records do not certify the additions.
+environment, pending exceptions and invalid control words. All seventeen tests
+passed without skips on native Linux AArch64 in run 40697970738. Downloaded
+manifests, all 2,034 baseline/reset ELF objects and their architecture were
+independently checked. The same run's x64/ARM64 comparison passed with zero
+differences across 2,700 reset, 6,096 prior generated and 57,888 arithmetic
+observations per host; an independent local replay of the comparison agrees.
+
+The pinned SDK passes 1,544 local tests at `c27c87a9a1`; the full asserting LLVM
+passes 1,542 at `05307e249b4f16b1f2d42821a296060dd7c34e3e`. Each skips 52
+ARM-only tests, one Windows observer and three unavailable public SEH fixtures.
+The latter commit repairs only an invalid negative-test assembly constraint:
+two arguments now have two input constraints, allowing the intended missing
+clobber rejection to run. The original failure is retained. All nineteen pinned
+constant/control tests pass after the repair, and both SDKs repeat the strict
+generated reset and prior arithmetic checks successfully.
 
 Three fixed arithmetic seeds (`0x871677`, `0x871678`, `0x871679`) produce 57,888
 observations per host. Native x64 and ARM64 results match the native x64 original

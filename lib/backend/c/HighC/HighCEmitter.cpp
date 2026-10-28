@@ -39,7 +39,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
-#include "neverd/ir/high/X64SEHFinallyBodies.h"
+#include "neverd/ir/high/SEHFinallyBodies.h"
 #include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"

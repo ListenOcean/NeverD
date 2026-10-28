@@ -52,6 +52,9 @@ void detectFPParams(
 
 // ---- x86-specific helpers (MedCallingConvX86.cpp) ----
 void detectCdeclStackParams(MedFunc &Func, Arch TargetArch);
+void detectSummaryVectorParams(MedFunc &Func, const TargetRegInfo &TRI,
+                               const GPRReadWidths &Summary, Arch TargetArch,
+                               BinaryFormat Fmt);
 
 // ---- variadic (...) prologue detection (MedVariadic.cpp) ----
 void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
@@ -1423,6 +1426,17 @@ void LowToMedConverter::detectCc(MedFunc &Func, Arch TheArch,
     // promoted to double, and va_arg reads them from the area.
     if (!Func.IsVariadic) {
       detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
+      // Where a summary gives the floating arguments each in the next
+      // vector register (System V x86-64), it lists those a variadic call
+      // reads too, which no entry copy shows.
+      if (Summary && Convention->VectorArgumentsFromCalleeSummary &&
+          !Convention->PositionalArgumentSlots &&
+          !(Convention->PrototypeArgCount &&
+            Convention->PrototypeArgCount(Func.Name)) &&
+          !(Convention->SummaryListsNoParameters &&
+            Convention->SummaryListsNoParameters(*Summary)))
+        detectSummaryVectorParams(Func, TRI, *Summary, TargetArch,
+                                  TargetFormat);
     } else if (Func.takesVectorArgumentRegisters()) {
       detectFPParams(Func, Entry, TRI, RegVarMap, TargetArch, TargetFormat);
       const auto VectorRegs = TRI.floatingParamRegs(TargetFormat);

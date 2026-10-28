@@ -109,6 +109,14 @@ protected:
     Stream.flush();
     return Text;
   }
+  std::string sidecarRows() const {
+    std::string Text;
+    llvm::raw_string_ostream Stream(Text);
+    Stream.SetBuffered();
+    writePatchSidecarRows(Stream, Overlay);
+    Stream.flush();
+    return Text;
+  }
 };
 
 TEST_F(BytePatch, SignatureNamesStayStableButDerivedNoReturnIsWithdrawn) {
@@ -244,6 +252,7 @@ TEST_F(BytePatch, SerializedRowsKeepProtocolAndSidecarBytes) {
   EXPECT_EQ(Serialize(2), "[]");
   EXPECT_EQ(compactRows(), "[]");
   EXPECT_EQ(compactRanges(), "[]");
+  EXPECT_EQ(sidecarRows(), "[]");
   ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1004, {0xff}, PatchKind::Bytes));
   ASSERT_FALSE(Overlay.apply(Img, *Input, 0x1000, {0x90}, PatchKind::Nop));
   const std::string Compact =
@@ -271,6 +280,7 @@ TEST_F(BytePatch, SerializedRowsKeepProtocolAndSidecarBytes) {
   EXPECT_EQ(Serialize(0), Compact);
   EXPECT_EQ(compactRows(), Compact);
   EXPECT_EQ(Serialize(2), Sidecar);
+  EXPECT_EQ(sidecarRows(), Sidecar);
   auto Parsed = parsePatchRows(Sidecar);
   ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
   EXPECT_TRUE(std::equal(Parsed->begin(), Parsed->end(), Overlay.rows().begin(),
@@ -354,6 +364,8 @@ TEST_F(BytePatch, SerializedAddressesKeepEveryHexadecimalDigit) {
       writePatchRows(Output, Overlay);
       if (Indent == 0)
         EXPECT_EQ(compactRows(), Text);
+      if (Indent == 2)
+        EXPECT_EQ(sidecarRows(), Text);
       auto Parsed = llvm::json::parse(Text);
       ASSERT_TRUE(bool(Parsed)) << llvm::toString(Parsed.takeError());
       const auto *Array = Parsed->getAsArray();
@@ -438,6 +450,18 @@ TEST_F(BytePatch, SerializedRowsKeepIndependentSchemaAndNestedFormatting) {
   const llvm::json::Value ExpectedValue(std::move(ExpectedJSON));
   const auto Compact = compactRows();
   EXPECT_EQ(Compact, llvm::formatv("{0}", ExpectedValue).str());
+  const auto Sidecar = llvm::formatv("{0:2}", ExpectedValue).str();
+  EXPECT_EQ(sidecarRows(), Sidecar);
+  // Exercise the raw-value wrapper and owner newline used by SDK saves.
+  std::string Saved;
+  {
+    llvm::raw_string_ostream Stream(Saved);
+    llvm::json::OStream Output(Stream, 2);
+    Output.rawValue(
+        [&](llvm::raw_ostream &Raw) { writePatchSidecarRows(Raw, Overlay); });
+    Stream << '\n';
+  }
+  EXPECT_EQ(Saved, Sidecar + '\n');
   EXPECT_EQ(
       compactRanges(),
       llvm::formatv("{0}", llvm::json::Value(std::move(ExpectedRanges))).str());

@@ -425,7 +425,9 @@ int neverd_byte_patches_save(neverd_session_t Sess) {
           project_files::path(S->projectInputPath(),
                               project_files::File::Patches),
           [&](llvm::json::OStream &Output) {
-            patch::writePatchRows(Output, S->BytePatches);
+            Output.rawValue([&](llvm::raw_ostream &Stream) {
+              patch::writePatchSidecarRows(Stream, S->BytePatches);
+            });
           },
           "byte patches"))
     return -1;

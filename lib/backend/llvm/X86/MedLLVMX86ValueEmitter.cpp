@@ -545,12 +545,16 @@ llvm::Value *MedLLVMEmitter::emitX87ControlRead(llvm::IRBuilder<> &Builder) {
                                  CurFunc->getEntryBlock().begin());
   auto *Word =
       EntryBuilder.CreateAlloca(Builder.getInt16Ty(), nullptr, "x87_control");
-  auto *Type = llvm::FunctionType::get(
-      Builder.getVoidTy(), {llvm::PointerType::get(*Ctx, 0)}, false);
-  auto *Asm =
-      llvm::InlineAsm::get(Type, "fnstcw ($0)", X87ControlConstraints, true);
-  auto *Call = Builder.CreateCall(Asm, {Word});
-  Call->setMetadata(X87ConstantAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+  if (const auto ID = llvm::Intrinsic::lookupIntrinsicID("llvm.x86.fnstcw")) {
+    Builder.CreateIntrinsic(Builder.getVoidTy(), ID, {Word});
+  } else {
+    auto *Type = llvm::FunctionType::get(
+        Builder.getVoidTy(), {llvm::PointerType::get(*Ctx, 0)}, false);
+    auto *Asm =
+        llvm::InlineAsm::get(Type, "fnstcw ($0)", X87ControlConstraints, true);
+    auto *Call = Builder.CreateCall(Asm, {Word});
+    Call->setMetadata(X87ConstantAsmMetadata, llvm::MDNode::get(*Ctx, {}));
+  }
   return Builder.CreateLoad(Builder.getInt16Ty(), Word);
 }
 
@@ -803,6 +807,12 @@ llvm::Value *MedLLVMEmitter::emitX86IntrinsicValue(const MedOp &Op,
     llvm::AllocaInst *Value = nullptr;
     Builder.CreateStore(
         getVar(Op.Inputs[IC == I::X87LoadConstant ? 2 : 1], Builder), Word);
+    if (IC == I::X87WriteControl)
+      if (const auto ID =
+              llvm::Intrinsic::lookupIntrinsicID("llvm.x86.fldcw")) {
+        Builder.CreateIntrinsic(Builder.getVoidTy(), ID, {Word});
+        return nullptr;
+      }
     if (IC == I::X87LoadConstant) {
       Value = EntryBuilder.CreateAlloca(Builder.getIntNTy(80), nullptr,
                                         "x87_constant");

@@ -170,6 +170,12 @@ struct PipelineOptions {
   /// instead leaves each refused one out and names it in its audit, as a
   /// whole-image run does.
   bool OmitRefusedFunctions = false;
+  /// A unit that names each function it leaves out (a whole LLVM C unit)
+  /// declares a function only when the LLVM emitter refuses its body for a
+  /// stale code or data address, and emits the others, recording why in the
+  /// function's audit (LLVMDiagnostic). Lifting and patching, whose output
+  /// names nothing it leaves out, fail at such a body instead.
+  bool OmitRefusedLLVMBodies = false;
   /// The user's function edits: an address made the entry of a function
   /// (true) or no longer one (false).  Whole-program detection follows them;
   /// a restricted run lifts its OnlyFunctionEntries.
@@ -296,6 +302,10 @@ struct PipelineFunctionAudit {
   bool HasLLVMDefinition = false;
   /// Why MedIR refused the function (MedIRFailed); empty otherwise.
   std::string Diagnostic;
+  /// Why the LLVM module declares the function only: its body refused a
+  /// stale code or data address, and the others were emitted without it.
+  /// Empty otherwise.
+  std::string LLVMDiagnostic;
 };
 
 /// Signature bodies of the direct callees a set of functions leaves out.
@@ -817,7 +827,8 @@ private:
       const DebugContext *Dbg = nullptr, const SourceViewOptions &View = {},
       const std::set<va_t> *PrototypeArgumentCallees = nullptr,
       bool PreserveUnknownSourceValues = false,
-      llvm::ArrayRef<MedFunc> SourceCalleeDeclarations = {});
+      llvm::ArrayRef<MedFunc> SourceCalleeDeclarations = {},
+      bool OmitRefusedBodies = false);
 
   /// Execute the common shard lifecycle. The emitter creates each module in
   /// its worker's context; only a complete linked module is returned in the

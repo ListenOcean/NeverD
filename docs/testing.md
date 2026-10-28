@@ -173,6 +173,33 @@ entry-SP identity, ambiguous definitions, PHIs, per-root depth limits and
 fresh queries after edits across x86, x64, ARM and AArch64. The i386 cases
 require a homed incoming pointer plus a reload or an advanced-pointer read;
 Darwin's register-only walk remains independently recognizable without a home.
+`MedVariadic.AAPCS64DropsTheVectorSaveAreaNoReadObserves` drops q0-q7's spills
+only where the area is whole and one va_list's va_start initializes
+`__vr_top`, `__vr_offs` and the rest, whatever the format. It keeps them where
+a load reads either field or the area, a frame address reaches a call, a
+return, a vector register, an intrinsic, other memory or a va_list pointer
+other than the one va_start stores there, a load's frame address has no fixed
+offset or an edge is exceptional, and where Apple's arm64 recognizer, which
+reads no save area, applies.
+
+`AArch64_VariadicSaveArea` compiles AAPCS64 variadic routines. One whose
+va_arg reads ints only leaves its vector half unread: MedIR keeps no q0-q7
+spill, and both C routes are free of unknown values, its LLVM C running like
+the kernel (`AArch64_HighCExecution.AVariadicCalleeReadsItsStackArgumentsInPlace`
+runs its HighC). Ones reading doubles, or longs between doubles, keep all
+eight spills, and the HighC still fails explicitly where it stores them. The
+Windows ARM64 and Apple arm64 builds save no vector register and take no
+floating parameter.
+
+`X86_64_CallAbi.AVariadicCallPassesOnTheDoublesALCounts` compiles System V
+forwarders that pass their own doubles on untouched to a variadic routine,
+below the count they load into `AL`: by a tail jump, by a call, and beside a
+double they set. Each takes them as parameters and its caller passes the
+doubles it computes, and the HighC runs like the kernel.
+`ALiftedVariadicCallPassesOnTheDoublesALCounts` runs the LLVM route's C of the
+jumping forwarders. Its caller loads each double whole, since that C holds a
+vector register whole and an upper lane a scalar conversion left unknown would
+fail there.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
@@ -391,6 +418,14 @@ emission and all 64 combinations of architecture, serial/sharded emission,
 optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
+`PipelineOutcome.RealShardedEmissionLeavesOutOnlyTheRefusedBody` and
+`LLVMDataPointerInvariantBoundary.NamesTheRefusedBodySoTheOthersEmitWithoutIt`
+(`NeverDLiftTests`) check that a body refusing a stale address is named with
+the error it wrote and declared only, while the shard's other functions keep
+their definitions; without `OmitRefusedLLVMBodies`, as in a lift, the run
+still fails, which the `JTE_*FailsClosed*` lift tests also hold. Decompile a
+whole x86-64 libsqlite3 or Rust binary through `--llvm` after changing that
+retry: one such body used to fail the unit.
 
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
@@ -5949,6 +5984,12 @@ ends its path, and a statement that the target returns decides over both.
 `InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
 imported from the Universal CRT ends its caller's block, and that the same name
 imported from another module does not.
+`InternalNoReturn.LeafWithoutAnUnwindEntryIsScreenedByItsStraightLineFlow`
+and `AArch64FastFailStubWithoutUnwindDataEndsItsBlock` check that a leaf callee
+of an x64 or ARM64 PE image, which needs no unwind entry, such as a
+`__fastfail` stub, still reaches the proof when straight-line flow from its
+entry ends at a trap that never resumes; a branch first, `brk #0xf000`, or an
+x86 image keeps the caller's fall-through.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
@@ -13976,7 +14017,7 @@ Return-slot checks reject overlapping, unknown, atomic and opaque-callee writes 
 
 Mixed exits from a single internal call site retain both outcomes: a checked bare near RET pops its own intact return PC and resumes the exact continuation, while an exit that discards that PC keeps its original control flow. `MixedExitsResumeOnlyTheMatchingInvocation` covers PE/ELF/Mach-O x64 and ELF i386, verifies optimized and unoptimized LLVM, and executes x64 C with sanitizers. Companion tests cover repeated invocations and reject multiple sites sharing a RET, independent or exceptional roots, new predecessors exposed by the continuation, open indirect exits, corrupted PCs, immediate-cleanup returns and language-runtime metadata. Each rebuilt CFG must revalidate the invocation; this does not authorize shared SEH callback returns. Nonlocal exits also prove the parent return slot separately: the outer RET must consume the original entry PC at the exact entry SP. Over-release and writes that corrupt or may alias that PC are refused; disjoint private writes remain valid.
 
-`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched, in a Mach-O image as in an ELF one; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps.
+`NeverDSysVCallContractTests` covers x86-64 System V call contracts on the shapes of QtXml's `QDomNode::save` and `QDomNode::isDocument`. A direct callee whose summary reads an argument register receives the caller's value of it, including an incoming `this` passed through untouched, in a Mach-O image as in an ELF one; a virtual call takes the object a dominating block loaded into `RDI`; a method that returns without writing `RAX` on one path while only passing callee results on the others is void; and a byte written to `AL` before a comparison chain is the value returned on every path. The emitted programs run at `-O0` and `-O2` under AddressSanitizer and undefined-behavior traps. `ADoubleAVariadicCallPassesOnIsAParameter` builds forwarders that load `AL` before they jump to or call a variadic routine that saves the vector registers: each that passes its own `XMM0` on untouched reads it at entry as a double parameter, which its caller passes; one that sets `XMM1` first does not read that register, and one that leaves `AL` alone reads no vector register.
 
 `ObjCCallHints.CIImageAffineValueKeepsProviderAndPhysicalCopyCarrier` checks the CoreImage provider, CIImage factory, complete 48-byte logical record and x2 pointer, rejecting missing or wrong providers, x86_64 and conflicting declarations. `ObjCImageValueCopy.OriginalFrameAndCompleteBodyAuthorizePublication` retains the original call independently of result assignments at the same machine address. `RejectsChangedCopyCallBodyAndCurrentImage` rejects 24 edits to receipts, arguments, stores, frames, metadata, imports, duplicate calls and saved IR, including consistent edits to both MedIR and HighIR. `GeneratedCExecutesAgainstIndependentPhysicalCopyABI` executes unchanged generated C at O0/O2 on ARM64 against a callee accepting the independently compiler-observed x2 pointer, checking all six floating bit patterns, selector/receiver identity, one evaluation, returned object, legal copy writes, unchanged inputs and boundary guards. Other hosts skip this physical ABI execution test.
 
@@ -14449,9 +14490,20 @@ under `if (AbnormalTermination())` with the `100` copy kept,
 clause and removes the matching copy, and `FrameRegisterHandlerKeepsTheComment`,
 `LocalUnwindInTheProtectedBodyKeepsTheComment` and
 `NestedExceptInTheProtectedBodyKeepsTheComment` keep the address comment where
-the projection is unsound. Run the Windows SEH corpus and the xcpt4
-wine check after a change here; the latter recompiles the decompiled source and
-reruns it, exercising the filled `__finally` bodies end to end.
+the projection is unsound. Its `ARMSEHFinallyBodyTests.cpp` builds AArch64 and
+Thumb parents whose handler reads them through callee-saved registers:
+`ARMSEHFinallyRegisters.*` publishes a frame address set before the range, an
+incoming argument and a constant, the establisher frame only when the unwind
+codes allocate exactly the range's frame and x29 holds it too, finds a Thumb leaf handler that only
+the scope table names, and publishes nothing for a register written in the
+range, one the parent never set, or a copy of an argument register that a
+PHI joins; `ARMSEHFinallyBody.*` stores `99` to the
+parent's own local, through its parameter or through the establisher frame
+under `if (AbnormalTermination())`, fills a finally nested in an `__except`
+and both of two nested finallys, and keeps the comment for the unpublished
+registers and a contradicted frame. Run the Windows SEH corpus and the xcpt4
+wine check after a change here; the latter recompiles the decompiled source
+and reruns it, exercising the filled `__finally` bodies end to end.
 `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
@@ -16004,7 +16056,11 @@ every hexadecimal digit width, and round-trip complete rows at each indentation.
 Compact inventory output also matches independently constructed JSON objects
 across every patch kind, all byte values, decimal size boundaries and high
 addresses. Nested output retains its surrounding fields at indentation 0, 2
-and 4; the compact and general stream entry points share the row schema.
+and 4; the compact, canonical sidecar and general stream entry points share
+the row schema. The fixed sidecar writer matches independent two-space JSON
+bytes, including empty arrays, and the SDK raw-value wrapper supplies exactly
+one owner newline. Native adapter tests retain exact persisted bytes, stale
+digest refusals and failed-write preservation of the previous sidecar.
 Compact range JSON retains file-offset ordering across nonmonotonic virtual
 addresses and split runs. Its exact bytes are checked against independent
 objects across hexadecimal address and decimal size boundaries, including an
