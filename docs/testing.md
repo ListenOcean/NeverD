@@ -595,7 +595,8 @@ members remain raw bits. The independent callback poisons record return padding.
 On macOS, `NeverDArm64eSourceCallSDK` loads a real arm64e dylib through the
 public C API, declares named integer/pointer records, a padded pair, a nested
 HFA and signed/unsigned 128-bit values, and applies complete call prototypes.
-Both C routes must compile all eight argument/result shapes at O0/O2.
+Both C routes must compile all ten argument/result shapes at O0/O2, including
+record names matching the renderer's preferred temporary names.
 Packed/union values and indirect copies/results must refuse explicitly.
 These compiler checks execute no arm64e fixture code.
 `NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
@@ -645,6 +646,22 @@ these do not admit 128-bit analyst call prototypes or aggregate spills.
 Automatic complete prototype recovery, aggregate/HFA transport, authenticated
 special-language and whole-image ABI, native signed unwinding, native Apple
 CPA2 execution and exact fault ESR/PC remain outside this qualification.
+
+The [wide/aggregate call receipt](evidence/arm64e-wide-aggregate-call-abi-2026-10-28.json)
+extends the supplied-prototype profile to 200 groups, including signed/unsigned
+128-bit arguments and results, supported direct records and nested HFAs.
+All 608 selected ABI/entry/SDK C++ cases pass, along with six additional LLVM
+and header-record controls. Four Linux-only HFA runtime controls skip on macOS.
+The public SDK integration test compiles 20 source projections at O0/O2 and
+requires eight explicit refusals. All 40 environment admission tests and all
+30 controlled model guests pass: 24,000 valid original/projected pairs and
+57,600 invalid-signature pairs. The 15,360 known C O0 exception-class differences
+remain separately counted. All 2,541 exports are identical after integration,
+including the previous 1,041 files. Public SDK named-record tests establish
+admission and compilability; the model executes the separately exported
+200-group matrix. Arbitrary/indirect aggregates, automatic complete recovery,
+whole images, native Apple CPA2, native signed unwinding and exact fault PC/ESR
+remain unqualified.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
@@ -1494,8 +1511,8 @@ including NaN payloads and signed zero; output sentinels bound every write.
 ARM64 explicitly stores both fields, so the test does not infer a wrapper's
 source return type from unused scratch registers. The shared placement suite
 covers one through four float/double HFA members on COFF/ELF/Mach-O, including
-whole-record COFF/ELF stack placement, and rejects incomplete, padded,
-over-aligned and unsupported Mach-O stack layouts.
+whole-record COFF/ELF/Mach-O stack placement and natural Darwin stack offsets,
+and rejects incomplete, padded and over-aligned HFA layouts.
 `RecordCallContract.WindowsStackedHFAsPreserveGroupsAndFollowingArguments`
 and `RecordCallContract.WindowsStackedHFAImportSlotsPreserveCompleteCalls`
 use an independent header/provider and linked ARM64 PE fixtures for one through
@@ -1508,7 +1525,8 @@ result member and output sentinel is observed, including signed zero and NaN
 payloads; malformed stack offsets and source groups fail the bound validator.
 LLVM parameters must retain HFA arrays instead of flattened or struct operands.
 `LLVMCValues.HFAArrayBoundariesRequireOrdinaryAAPCS64Parameters` rejects other
-architectures, nested/oversized arrays, unproved mixed array classes, array
+architectures, nested/oversized arrays, unproved mixed array classes outside
+the explicit Darwin direct-value profile, array
 returns, variadic calls and special ABI attributes. The scalar/aggregate
 nonfinite constant test also checks exact quiet/signaling NaN, infinity and
 signed-zero bits. Native Windows/ARM64 execution and unobserved wrapper

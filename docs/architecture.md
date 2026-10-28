@@ -3100,9 +3100,10 @@ integer on AArch64. Locally supplied header records get complete value
 definitions; records supplied by an included header are not redefined.
 LLVM C uses its validated import prototype for the record conversions even
 when a call through an import slot has no separate debug-function identity.
-Padded or over-aligned HFAs, special conventions and Apple stack packing remain
-outside this adapter. A source aggregate return for an untyped wrapper still
-needs independent source or caller evidence.
+Padded or over-aligned HFAs and special conventions remain outside this adapter.
+Shared placement also describes natural Darwin stack packing; explicit Darwin
+call prototypes use the source ABI path above. A source aggregate return for an
+untyped wrapper still needs independent source or caller evidence.
 
 LLVM-C also uses `integerCallArguments` to admit fixed scalar header import
 signatures. Every printed call of a symbol must agree before the writer uses
