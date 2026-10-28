@@ -39,6 +39,7 @@
 #include "neverd/ir/high/HighSourceFlow.h"
 #include "neverd/ir/high/HighSwiftErrorProjection.h"
 #include "neverd/ir/high/ItaniumHandlers.h"
+#include "neverd/ir/high/X64SEHFinallyBodies.h"
 #include "neverd/ir/high/X86/X86FPStateShape.h"
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
@@ -2215,6 +2216,11 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
     // A compiler builtin (`__builtin_alloca`) needs no declaration, and one
     // would conflict with the compiler's own.
     if (llvm::StringRef(Name).starts_with("__builtin_"))
+      continue;
+    // `AbnormalTermination()` in a projected `__finally` is an <excpt.h>
+    // intrinsic, included wherever an SEH region is printed; declaring it
+    // would conflict with that header.
+    if (Name == "AbnormalTermination")
       continue;
 
     std::string CleanName = Name;
@@ -5015,6 +5021,9 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
     if (Opts.RefusedDefinitions)
       Opts.RefusedDefinitions->clear();
     std::vector<HighFunc> Working = Funcs;
+    // MSVC SEH `__try`/`__finally` is plain C, so a termination handler's body
+    // fills its `__finally` in the plain-C view as well as the C++ one.
+    attachSEHFinallyBodies(Working, Opts.TheArch);
     if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);
       for (HighFunc &Func : Working) {

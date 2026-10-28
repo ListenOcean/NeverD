@@ -14318,7 +14318,23 @@ termination handler that guards its own `__try`: its second argument, the
 parent's establisher frame, keeps its name in the `__except` arm. A setjmp
 provider executes the HighC output at O0/O2, and both paths must reach the
 parent's slot; an attached C++ catch body still names the printed function's
-`var_m8`. `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
+`var_m8`. `NeverDSEHTerminationHandlerTests`
+(`unittests/lift/eh/SEHTerminationHandlerTests.cpp`, built from decoded x64
+bytes) covers the certified `__finally` EstablisherFrame and the projected
+clause: `SEHTerminationFrame.*` proves the frame bytes from the prologue and
+unwind codes, agrees with the in-function `__except` frame, and refuses a stack
+adjustment into the scope, a frame register, unwind data the prologue
+contradicts, a handler of no scope, and an exhausted budget;
+`SEHFinallyBody.GuardsTheAbnormalWorkAndKeepsTheNormalCopy` shows bar1's `99`
+under `if (AbnormalTermination())` with the `100` copy kept,
+`FlagIndependentHandlerFillsTheClauseAndDropsTheCopy` fills a flag-independent
+clause and removes the matching copy, and `FrameRegisterHandlerKeepsTheComment`,
+`LocalUnwindInTheProtectedBodyKeepsTheComment` and
+`NestedExceptInTheProtectedBodyKeepsTheComment` keep the address comment where
+the projection is unsound. Run the Windows SEH corpus and the xcpt4
+wine check after a change here; the latter recompiles the decompiled source and
+reruns it, exercising the filled `__finally` bodies end to end.
+`StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its
 `.file` record is dropped, and a static function's own record names it.

@@ -12649,6 +12649,32 @@ and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
 for parameter, return and stored-result rendering; SEH and Itanium clause
 bodies are the function's own code.
 
+A Windows x64 `__finally` is an out-of-line termination handler the runtime
+calls with the parent's EstablisherFrame as its second argument and an
+abnormal-termination flag as its first; the handler reaches the parent's
+locals through `EstablisherFrame + k`. For a parent without a frame register
+that frame is the entry stack pointer less the prologue's fixed allocations,
+which `proveLowSEHTerminationFrame` (`lib/ir/low/SEHEstablisherFrame.cpp`)
+certifies from the normalized unwind codes cross-checked against the decoded
+prologue, refusing a frame register, a stack adjustment on any path into the
+guarded scope, or chained or incomplete unwind data. The bytes it returns ride
+`MedFunc::SEHTerminationFrameBytes` to HighIR, where `attachSEHFinallyBodies`
+(`lib/ir/high/structure/X86/X64SEHFinallyBodies.cpp`) projects the handler's
+body into the empty `__finally` clause: the establisher parameter is rebased
+onto the parent's entry stack pointer, each home-slot load becomes the
+parameter it holds, and the abnormal argument becomes `AbnormalTermination()`.
+Because a C `__finally` runs on the normal exit too, the compiler's inline
+normal-path copy must not run twice: when the handler ignores the abnormal flag
+and its statements equal that copy, the copy is removed and the clause holds
+the whole body; otherwise the copy stays and the clause holds only the abnormal
+work under `if (AbnormalTermination())`. A handler whose frame is not certified,
+whose body is unavailable or has its own exception scope, or whose `__try`
+transfers control out, nests another region or calls `_local_unwind` keeps its
+address comment: the machine runs the handler on such an exit while C would
+not, so the clause stays out of line until that call becomes a structured
+jump. The projection runs in the plain-C view as well as the C++ one, because
+SEH is C.
+
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
 The LLVM emitter reuses completed default-budget frame-slot queries only within the current immutable MedFunc. Entry-SP requirements and complete value identity partition the answers. A bound query keeps its own default budget, so its answer is reused only for the same bindings in the same order. A shared-budget walk reads the budget only to stop, and fails once the budget is spent: a walk that needs N nodes repeats under any budget of at least N and runs out, spending all of it, under a smaller one. Complete walks replay with their answer, nodes and cache hits; a walk that ran out records only that it needs more than its budget, and replays its running out for any budget no larger. The answer and the remaining budget are always those of a fresh walk; a replayed run-out does not reproduce the cache-hit counter. Feasible-edge rebuilds and module emission clear all three caches, and a query spanning a rebuild cannot publish its result.
