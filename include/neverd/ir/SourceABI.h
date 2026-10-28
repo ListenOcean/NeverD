@@ -43,6 +43,11 @@ struct SourceAggregateMember {
 /// Nested records retain their declared layout. Other mixtures fail.
 std::vector<SourceAggregateMember> sourceAggregateMembers(const TypeRef &Type);
 
+/// Scalar pieces of a supported logical source value. A 128-bit integer
+/// contributes two unsigned machine words; records retain their leaf types.
+/// Offsets describe source bytes independently of their physical locations.
+std::vector<SourceAggregateMember> sourceABIValueMembers(const TypeRef &Type);
+
 struct SourceABIParameter {
   size_t ParameterIndex = 0;
   uint16_t ByteOffset = 0;

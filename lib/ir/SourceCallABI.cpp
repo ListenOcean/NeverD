@@ -24,6 +24,9 @@
 #include <tuple>
 using namespace neverd;
 namespace {
+#define SOURCE_ABI_CARRIER_TEXT(Name, Text) constexpr char Name[] = Text;
+#include "SourceABICarriers.def"
+
 bool scalar(const TypeRef &T) {
   return T && (T->Size == 1 || T->Size == 2 || T->Size == 4 || T->Size == 8) &&
          (T->Kind == NdTypeKind::Int || T->Kind == NdTypeKind::Float ||
@@ -71,6 +74,18 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
            Signature.Parameters.size()))
     return refuse(Error, "A variadic call-site needs a nonempty fixed prefix "
                          "within its actual operands");
+  if (Architecture == Arch::AArch64 && Format == BinaryFormat::MachO &&
+      Hint.AnalystFixedCount < 0) {
+    Signature.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
+    if (!assignDarwinFixedSourceABI(Signature, Architecture, Error))
+      return false;
+    if (hasIndirectSourceParameters(Signature))
+      return refuse(Error, kIndirectAnalystCopy);
+    if (Signature.ReturnLocation.Kind ==
+        SourceABICarrierKind::IndirectResultPointer)
+      return refuse(Error, kIndirectAnalystResult);
+    return true;
+  }
   if ((Architecture != Arch::X64 && Architecture != Arch::AArch64) ||
       (Format != BinaryFormat::COFF && Format != BinaryFormat::ELF &&
        Format != BinaryFormat::MachO) ||
@@ -181,7 +196,9 @@ bool neverd::sourceCallStackArgumentsDefined(const LowFunc &Function,
   if (Hint.AnalystSite)
     return sourceCallStackArgumentsDefined(Function, Hint, *Hint.AnalystSite,
                                            Architecture, Bias, Error);
-  for (const auto &Parameter : Hint.Signature.Parameters)
+  if (!validateSourceABI(Hint.Signature, Error))
+    return false;
+  for (const auto &Parameter : sourceABIParameters(Hint.Signature))
     if (Parameter.Location.Kind == SourceABICarrierKind::Stack)
       return refuse(Error,
                     "The stack arguments have no original call occurrence");
@@ -192,8 +209,11 @@ bool neverd::sourceCallStackArgumentsDefined(
     const LowFunc &Function, const SourceCallTypeHint &Hint,
     const SourceCallOccurrenceKey &OriginalSite, Arch Architecture,
     int64_t Bias, std::string &Error) {
+  if (!validateSourceABI(Hint.Signature, Error))
+    return false;
+  const auto Parameters = sourceABIParameters(Hint.Signature);
   bool HasStack = false;
-  for (const auto &P : Hint.Signature.Parameters)
+  for (const auto &P : Parameters)
     HasStack |= P.Location.Kind == SourceABICarrierKind::Stack;
   if (!HasStack)
     return true;
@@ -228,7 +248,7 @@ bool neverd::sourceCallStackArgumentsDefined(
         if (!CurrentSP)
           return refuse(Error, "The call's stack pointer is not a complete "
                                "constant-offset value");
-        for (const auto &P : Hint.Signature.Parameters)
+        for (const auto &P : Parameters)
           if (P.Location.Kind == SourceABICarrierKind::Stack) {
             const int64_t Offset =
                 *CurrentSP + P.Location.EntryStackOffset - Bias;
