@@ -1681,6 +1681,15 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
 
   if (Callee) {
     auto *CalleeTy = Callee->getFunctionType();
+    // A formatted call's recovered arguments are the inputs its format
+    // names, in the source's order (MedOp::ExactArguments).
+    const auto ExactFloatingInput = [&](int Index) {
+      return Op.ExactArguments && CI && Index >= 0 && Index < 64 &&
+             static_cast<size_t>(Index) < CI->Args.size() &&
+             static_cast<unsigned>(Index) + 1 < Op.NumInputs &&
+             ((Op.ExactFloatInputs >> Index) & 1) &&
+             CI->Args[Index] == Op.Inputs[Index + 1];
+    };
     std::vector<llvm::Value *> CoercedArgs;
     for (size_t AI = 0; AI < Args.size(); ++AI) {
       llvm::Value *AV = Args[AI];
@@ -1777,6 +1786,16 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
             }
           }
         }
+      } else if (CalleeTy->isVarArg() &&
+                 ExactFloatingInput(ArgumentIndices[AI]) &&
+                 AV->getType()->isIntegerTy(64)) {
+        // A variadic argument keeps its own type.  A formatted call's
+        // floating one is the scalar its routine's conversion reads
+        // (MedOp::ExactFloatInputs): pass that value, which the convention
+        // carries in a vector register.  Its integer bits would travel in an
+        // integer register, where the routine reads no floating argument.
+        AV = Builder.CreateBitCast(AV, llvm::Type::getDoubleTy(*Ctx),
+                                   "formatted_double");
       }
       CoercedArgs.push_back(AV);
     }

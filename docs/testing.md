@@ -206,6 +206,11 @@ for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it
 before they jump to a callee reading only the double or the float. The
 conversions keep the register's upper lanes as the caller's entry value; the
 LLVM route's C passes zero there, and neither C reads an unknown value.
+`AFormattedCallPassesItsDoublesAsDoubles` runs the C of both routes for
+`printf`, `dprintf` and `snprintf` calls with constant formats that pass
+doubles: one loaded whole, and ones a conversion leaves beside an unknown upper
+lane. Each C passes them as doubles: every call returns the count the kernel's
+does, and a hash of the text `snprintf` formats matches.
 
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives

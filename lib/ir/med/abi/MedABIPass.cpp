@@ -3413,6 +3413,22 @@ void recoverCallAbi(
                   Lane != It->second.end() && Lane->second <= Arg.Size)
                 CI.ArgReadBytes[I] = Lane->second;
         }
+      // A formatted call's inputs are every argument it passes, in the
+      // source's order (MedOp::ExactArguments), a floating one as the scalar
+      // in its vector register's low lane, which the routine's conversion
+      // reads alone (MedOp::ExactFloatInputs).  An import takes exactly
+      // those, as HighIR passes them; the scan above, which keeps a vector
+      // register whole, still finds the registers this function passes on.
+      // A routine of the image takes what its own parameters do.
+      if (Op.ExactArguments &&
+          (IsDirectImport || IsIndirectImport || IsRelocExtern)) {
+        CI.Args.assign(Op.Inputs.begin() + 1, Op.Inputs.begin() + Op.NumInputs);
+        CI.ArgReadBytes.clear();
+        CI.IntegerRegisterArgCount = -1;
+        CI.FloatingRegisterArgCount = -1;
+        CI.StackArgumentOffsets.clear();
+        CI.StackArgumentSlotBytes = 0;
+      }
       Func.CallInfos.push_back(std::move(CI));
       if (!CallLaneOps.empty())
         Pending.push_back(

@@ -7418,6 +7418,20 @@ their distinct variadic policies. Register-only argument searches cross checked
 indexed memory operations without relaxing stack-slot alias barriers, and DCE
 keeps their reaching definitions through multiple predecessor blocks.
 
+A formatted call's MedIR inputs are every argument its format names, in the
+source's order, a floating one as the scalar in its vector register's low lane
+(`MedOp::ExactArguments`, `MedOp::ExactFloatInputs`); HighIR passes them as
+they are. Call recovery for LLVM takes the same inputs for a call that reaches
+an import (`recoverCallAbi`), after its own scan has found the registers the
+function passes on, and the emitter passes a floating one into the routine's
+`...` as a `double`, which System V and AAPCS64 carry in a vector register.
+The whole register its own scan found went there as integer bits, which C
+places in integer registers, where printf reads no floating argument:
+`printf("%f %d\n", G, a)` printed `0.000000`. A routine of the image keeps
+the arguments its own parameters take. Win64 binds no formatted call; its
+calls pass a variadic double's bits in the integer slot, where the routine
+reads it.
+
 Scalar floating return inference follows declared call results through complete
 low-byte views and PHI joins. A final integer result still takes precedence;
 merely computing a floating temporary does not change the return bank. An
