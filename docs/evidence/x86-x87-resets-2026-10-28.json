@@ -14,7 +14,8 @@
     "production_sdk_commit": "06788fb19109851e6a6b9f109a2b8027a606f0c6",
     "production_llvm_gitlink": "03270359c2ed8f6806533d3832a947bf883a6f69",
     "release_and_pins_changed": false,
-    "neverd_sharded_tests": "38088f01ec8c996b7460bea141b2151f20998ff6"
+    "neverd_sharded_tests": "38088f01ec8c996b7460bea141b2151f20998ff6",
+    "neverd_publication": "710180d84eb925e6ee07fe6721774781055a0f20"
   },
   "host": {
     "platform": "Linux-7.0.0-38-generic-x86_64-with-glibc2.43",
@@ -290,7 +291,7 @@
   ],
   "unqualified": [
     "physical FEMMS execution",
-    "new reset-generated paths on native AArch64",
+    "new reset-specific native AArch64 translation sessions",
     "i386 and typed/unowned FNOP/EMMS/FEMMS",
     "privileged #NM behavior and arbitrary CPUs or operating systems",
     "complete architectural or formal x87 equivalence"
@@ -410,5 +411,238 @@
       ],
       "configure_inputs_sha256": "0d185e80e033e56c739f8efa6c9652c56f7005bd399558403138262879bfc48c"
     }
-  ]
+  ],
+  "publication_validation": {
+    "source_commit": "710180d84eb925e6ee07fe6721774781055a0f20",
+    "profiles": {
+      "pinned": {
+        "validation": {
+          "path": "pinned-publication-validation.json",
+          "sha256": "145f374891e08490df065a2b289c09b3f8130fc879e84b6fd51880acc7167a20"
+        },
+        "tests": {
+          "path": "pinned-publication-tests.xml",
+          "sha256": "fc28a3cc3a48dbb0802ad29b9a32c6370265a5ce08cfe91dc68a0a91fed26d04",
+          "tests": 1277,
+          "passed": 1227,
+          "failed": 0,
+          "skipped": 50,
+          "skip_reasons": {
+            "native_aarch64_on_x64_host": 49,
+            "windows_x64_single_step_observer_on_linux": 1
+          }
+        },
+        "build_receipt": {
+          "path": "pinned-publication-build-receipt.json",
+          "sha256": "bf3683ab8dce74f514e27e8b3540e155fb0f0d6d6e9bd2397af3057de47564f8"
+        },
+        "reset_generated": {
+          "path": "pinned-reset-qualified-2/record.json",
+          "sha256": "014cce32069be2aac35f173bf2f1a354f7d3db380d8e134498bad896b8fd4ea6",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 2700,
+            "distinct_cases": 225,
+            "native_x64_original_comparisons": 576,
+            "statuses": {
+              "0": 2592,
+              "2": 36,
+              "6": 36,
+              "5": 36
+            },
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "arithmetic_generated": {
+          "path": "pinned-arithmetic-qualified-2/record.json",
+          "sha256": "48fff60f98ac0dd8087a833dc1973af84ecee243faa7d406c26b0d748b044b28",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 5760,
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "reset_input_inventory": {
+          "path": "pinned-publication-reset-input-inventory.json",
+          "sha256": "2d153c2dca91ad1e160bd7ca9f7e78ff53c4adb40217b9120ebf1ed73b848256",
+          "artifacts": 36,
+          "observations": 2700,
+          "distinct_cases": 225,
+          "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+          "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+        }
+      },
+      "native": {
+        "validation": {
+          "path": "native-publication-validation.json",
+          "sha256": "f5de1169dace6460d8526cf2c87437c4e92751c452cdff0eba63164617248fdd"
+        },
+        "tests": {
+          "path": "native-publication-tests.xml",
+          "sha256": "94c3b396546ba25bdcbd2c7e85bd343c3b0242b16b8e029964b72e5b783b5cd7",
+          "tests": 1275,
+          "passed": 1225,
+          "failed": 0,
+          "skipped": 50,
+          "skip_reasons": {
+            "native_aarch64_on_x64_host": 49,
+            "windows_x64_single_step_observer_on_linux": 1
+          }
+        },
+        "build_receipt": {
+          "path": "native-publication-build-receipt.json",
+          "sha256": "6a4e27c21d74976b07e1cad68799c5ef86722d459efecff0797383ebeb5428ec"
+        },
+        "reset_generated": {
+          "path": "native-reset-qualified-2/record.json",
+          "sha256": "2362bbc11c2cc323a0ecaa97a942b03d1344b9ebd4a16a7f9c69b1bc369f0c1f",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 2700,
+            "distinct_cases": 225,
+            "native_x64_original_comparisons": 576,
+            "statuses": {
+              "0": 2592,
+              "2": 36,
+              "6": 36,
+              "5": 36
+            },
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "arithmetic_generated": {
+          "path": "native-arithmetic-qualified-2/record.json",
+          "sha256": "a8b55756be4804f15309ed5a055b86323d6c34d64f6f43d18c8aa8d0b8ff5503",
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 5760,
+            "cross_route_and_optimization_agreement": true
+          }
+        },
+        "reset_input_inventory": {
+          "path": "native-publication-reset-input-inventory.json",
+          "sha256": "edbf68b9096f034d39e347797d2d0fc6bc7e7adf959d305be74879fcf5163b6e",
+          "artifacts": 36,
+          "observations": 2700,
+          "distinct_cases": 225,
+          "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+          "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+        }
+      }
+    },
+    "native_sdk_configuration_exclusions": [
+      "Two Unicorn reference tests are enabled only in the pinned SDK profile."
+    ],
+    "aarch64_ci": {
+      "path": "ci-aarch64-publication-audit.json",
+      "sha256": "4abf1a1f17aa9a984066a720800ec7cdbdeb2ba0642340e91e5ce6f73d895761",
+      "run_url": "https://github.com/NeverSight/NeverD/actions/runs/40680179646",
+      "job_id": 122788624811,
+      "conclusion": "success",
+      "generated_reset": {
+        "path": "ci-aarch64-reset-input-inventory.json",
+        "sha256": "0a2b2c6ac620b9ff8f64f78e9666faa4486e43048f41252fb09abc78092838ce",
+        "architecture": "aarch64",
+        "artifacts": 36,
+        "observations": 2700,
+        "distinct_cases": 225,
+        "native_x64_original_comparisons": 0,
+        "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+        "script_sha256": "e88c450fa1a06f7ff84057cfb7360fd1dee33b18872ac4e65d9540ebcfa5e2c5"
+      },
+      "baseline_reports": {
+        "evidence": {
+          "files_verified": 116,
+          "record_sha256": "5cc476647a4b88fade18f1cb39d224dec1fd506a6e00a14c462e879d54eb709b",
+          "passed": true,
+          "execution_completed": null,
+          "coverage": {
+            "artifacts": 36,
+            "observations": 6096,
+            "distinct_cases": 508,
+            "statuses": {
+              "0": 5772,
+              "2": 36,
+              "6": 36,
+              "5": 36,
+              "9": 36,
+              "10": 36,
+              "12": 36,
+              "13": 36,
+              "1": 72
+            },
+            "native_x64_original_comparisons": 0,
+            "cross_route_and_optimization_agreement": true
+          },
+          "environment": {
+            "platform": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39",
+            "machine": "aarch64",
+            "python": "3.12.15"
+          }
+        },
+        "translation-evidence": {
+          "files_verified": 1159,
+          "record_sha256": "0586756149e1391350892e4abb324212ddef4ba64ef1f4c56ebecc4963bfb16c",
+          "passed": true,
+          "execution_completed": null,
+          "coverage": {
+            "cases": 96,
+            "observations": 192,
+            "objects": 1152,
+            "session_and_block_agreement": true,
+            "optimization_agreement": true
+          },
+          "environment": {
+            "platform": "Linux-6.17.0-1022-azure-aarch64-with-glibc2.39",
+            "machine": "aarch64"
+          }
+        },
+        "arithmetic-evidence": {
+          "files_verified": 10,
+          "record_sha256": "65c0c87d11a06ed6e573f436538091e7f7de55f739c06a59f868eb0bd66f45ee",
+          "passed": null,
+          "execution_completed": true,
+          "coverage": null,
+          "environment": null
+        }
+      },
+      "reset_translation_limit": "Existing arithmetic translation fixtures passed; new reset-specific translation sessions are not certified by this run."
+    },
+    "cross_host_reset_agreement": {
+      "canonical_state_sha256": "3362158a3de5e339d298621e4d396102f9d96ae28035fbeb097955cd362047c0",
+      "distinct_cases": 225,
+      "profiles": [
+        "local pinned SDK x64",
+        "local full SDK x64",
+        "native CI AArch64"
+      ],
+      "scope": "All 528 bytes of the explicitly seeded portable state; no physical FEMMS or complete architectural claim."
+    }
+  }
 }
