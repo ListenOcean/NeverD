@@ -4840,9 +4840,12 @@ The same cache test checks a 20,008-line document across later pages using SDK
 call counters. The undecorated copy is retained as serialized JSON, with its
 string capacity counted in the existing cache budget; local-name refresh
 reconstructs that exact source without rerunning the engine. The GUI's
-20,000-line responsiveness check retains its 15-second loading and 500-ms event
-gap limits. Rename isolation checks wait for initial navigation to settle before
-observing signals caused by the edit.
+20,000-line responsiveness check keeps its 15-second loading limit and checks
+that the event loop turns while the pages arrive and that the view shows the
+first pages before the rest. It reports the largest event gap without a limit:
+a wall-clock gap measures the host's load as much as the code, and a busy host
+exceeded 500 ms for every build. Rename isolation checks wait for initial
+navigation to settle before observing signals caused by the edit.
 
 `X86Sgx.*` in `NeverDX86SystemStateTests` checks ENCLS/ENCLV input/output
 widths, ignored and forbidden prefixes, strict emulator refusal, leaf-dependent

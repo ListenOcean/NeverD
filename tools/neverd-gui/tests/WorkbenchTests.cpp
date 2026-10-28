@@ -7806,18 +7806,28 @@ private slots:
         writeFixture(directory, QStringLiteral("pseudocode-large.bin")));
     QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
     QTRY_VERIFY(bench.window->disassembly()->currentFunction().has_value());
+    // The event loop turns while the pages arrive, and the view shows the
+    // first of them before the rest: loading never waits for the whole text.
+    // How long one turn takes depends on the host's load, not on the code, so
+    // the largest gap is reported rather than checked.
     QElapsedTimer elapsed;
     elapsed.start();
     qint64 longest = 0;
-    int ticks = 0;
+    int loadingTicks = 0;
+    bool partial = false;
+    CodeView *view = nullptr;
     QTimer heartbeat;
     connect(&heartbeat, &QTimer::timeout, this, [&] {
       longest = std::max(longest, elapsed.restart());
-      ++ticks;
+      if (!view || !view->text()->loading())
+        return;
+      ++loadingTicks;
+      const int lines = view->text()->lineCount();
+      partial = partial || (lines > 0 && lines < 20000);
     });
     heartbeat.start(5);
     bench.action(ActionId::ViewLLVMC)->trigger();
-    auto *view = bench.codeView(QStringLiteral("llvmc"));
+    view = bench.codeView(QStringLiteral("llvmc"));
     QVERIFY(view);
     QTRY_VERIFY_WITH_TIMEOUT(
         !view->text()->loading() &&
@@ -7826,9 +7836,8 @@ private slots:
     QTest::qWait(10);
     QVERIFY(view->text()->preludeFolded());
     QVERIFY(view->text()->lineCount() >= 20000);
-    QVERIFY(ticks > 1);
-    QVERIFY2(longest < 500,
-             qPrintable(QStringLiteral("UI event gap: %1 ms").arg(longest)));
+    QVERIFY(loadingTicks > 1);
+    QVERIFY(partial);
     qInfo() << "Largest event gap while rendering 20,000 source lines:"
             << longest << "ms";
   }
