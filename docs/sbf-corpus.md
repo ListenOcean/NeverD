@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 8 covers complete function CFGs,
+every site retains dynamic fallback. Schema 9 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -135,6 +135,19 @@ from a complete relative cell, in either direction, through the shared
 typed-cell owner. Reports expose the bound in `frame_coordinates`; manual
 frames remain unbounded. A translated interval that can overlap still loses
 its facts, including frame-relative arithmetic reaching heap addresses.
+Summary-local frame inputs can be normalized at a known singleton entry r10,
+with literal bits and captured identities unchanged. Returned frame-valued r0
+and typed cells are rebound to the actual caller. Relative typed stores and
+copies share their range validation, including representable coordinates below
+the numeric stack region; wrapped windows and frame-based image reads remain
+unsupported. `frame_coordinates` declares the summary and instantiated-proof
+namespaces, and `canonicalized_frame_inputs` counts normalization work.
+Opaque cached recursion cuts can be reconsidered when their non-self callee is
+no longer active, with the same transfer/target retention checks and four-variant
+limit. `unblocked_recursion_retries` counts successful work selections, not
+target recoveries. Unknown members of a repeated literal-image binding cluster
+do not prevent exploring a new literal binding; they still supply no target
+or alias proof.
 Full finite target proofs from this path do not by themselves establish
 complete candidate-callee summaries or execution coverage. Expression nodes
 and proof steps consume the existing output, retained-state and work budgets.
