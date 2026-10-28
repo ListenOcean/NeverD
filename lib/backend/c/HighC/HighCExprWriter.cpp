@@ -7911,8 +7911,8 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
 
 std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::sizedObjectAt(va_t Addr) const {
-  const auto &SizedObjects = DataObjects->SizedObjects;
-  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
+  const auto &SizedObjects = dataObjects().SizedObjects;
+  const auto &SizedObjectReach = dataObjects().SizedObjectReach;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
@@ -7946,9 +7946,9 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
   if (!Size || Size > std::numeric_limits<va_t>::max() - Begin)
     return std::nullopt;
   va_t End = Begin + Size;
-  const auto &SizedObjects = DataObjects->SizedObjects;
-  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
-  const auto &DataSymbolStarts = DataObjects->DataSymbolStarts;
+  const auto &SizedObjects = dataObjects().SizedObjects;
+  const auto &SizedObjectReach = dataObjects().SizedObjectReach;
+  const auto &DataSymbolStarts = dataObjects().DataSymbolStarts;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
