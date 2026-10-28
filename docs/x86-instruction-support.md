@@ -2761,7 +2761,20 @@ all 960 objects. The existing QEMU guest consumes those exports and passes
 Native ARM64 [run 40680179646](https://github.com/NeverSight/NeverD/actions/runs/40680179646)
 executes all 36 new reset artifacts and 2,700 observations at the same publication
 commit. Its 225 distinct seeded state transitions match both local x64 SDKs.
-This is new generated-code evidence; reset-specific translation sessions,
-physical FEMMS, privileged #NM behavior and complete architectural equivalence
-remain unqualified. LLVM release, production SDK pinning and the LLVM gitlink
-remain unchanged while the global instruction gaps are open.
+The later [run 40697970738](https://github.com/NeverSight/NeverD/actions/runs/40697970738)
+at `c27c87a9a1d2f816cf38392278d4017d96d7f832` also passes all seventeen native
+AArch64 translation tests. Reset sessions retain 450 observations and 882 direct
+JITLink objects, including eighteen refusal cases and completed-prefix checks.
+Both native host jobs and their comparison pass; independent downloaded-artifact
+audits confirm zero differences across 2,700 reset, 6,096 prior generated and
+57,888 arithmetic observations per host.
+
+The local pinned SDK passes 1,544 tests at `c27c87a9a1`; the full asserting SDK
+passes 1,542 at `05307e249b4f16b1f2d42821a296060dd7c34e3e`. Each skips 56
+platform/fixture-dependent tests. The latter commit only repairs the parameter
+count of a negative inline-assembly fixture so LLVM assertions allow the intended
+missing-clobber check to run. All nineteen pinned constant/control tests and both
+SDKs' generated reset/arithmetic checks pass after that repair. Physical FEMMS,
+privileged #NM behavior and complete architectural equivalence remain
+unqualified. LLVM release, production SDK pinning and the LLVM gitlink remain
+unchanged while the global instruction gaps are open.
