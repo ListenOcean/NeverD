@@ -13,7 +13,7 @@ were understood.
 | --- | --- | --- |
 | Reproducible same-ISA native comparison | Shared `lib/diff`, input/analysis identities, strict saved binding, x86/x64 and AArch64 readers, ambiguous candidate inventories, exact weighted large-block alignment, caller-selected candidate measurement, conservative call-position anchors, and separate observed changes/reference uncertainty | Additional ISA/format and compiler/transformation qualification; adjudication of unlabelled real-program mappings |
 | CLI and GUI workflow | C ABI and Qt-free worker; bounded pages, CFG/source inspection, edits and undo/redo, save/reopen, input/restore/query/edit cancellation, NDDB project inputs | Continue scenario-based usability and large-input latency qualification; support advanced areas below through the same surfaces |
-| A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
+| A: transformations and regional matching | Native instruction-run and finite SSA region hypotheses; optional call-conditioned runs with transactional mapping updates; split/merge/clone/inline/outline/tail evidence; qualified loop progress profiles through v7 | Broad CFG/dataflow transformations and cross-module movement; independent compiler, LTO, PGO and obfuscation qualification; explicit qualified cross-ISA profiles |
 | B: security-fix triage and review | Local change observations, native call-path context, bounded import-effect context, input-bound analyst cases/history and references, and source-line localization of a public curl fix | Ranked security-fix datasets, interprocedural parameter/return/alias effects, path feasibility, automated patch/backport/revert evidence and reviewer report qualification |
 | C: optional semantic validation | Bounded pure scalar-return profile with explicit models, budgets, non-success outcomes and native provenance | Additional memory/call/loop profiles, precondition and coverage qualification; no general equivalence or vulnerability-elimination claim |
 | D: version and branch lineage | Offline snapshot graph, direct/indirect/parallel/cyclic associations, grouped conflicts, exact-byte reuse, report-local assessments, CLI/Python/GUI persistence, release aliases with declared chronology/parents, real release-report integration, and a reproducible synthetic scale harness | Package-wide graphs, automated patch/backport/revert evidence and broader real-corpus quality/latency; annotation application remains #99 |
@@ -39,6 +39,18 @@ separate. These diagnostic runs do not close F's real-corpus, fairness,
 performance or statistical acceptance requirements.
 
 ## Verification record boundaries
+
+The optional `native-call-runs-v1` profile conditions direct-call coordinates
+on the current accepted function pairs. Unknown, indirect, unpaired and changed
+targets remain barriers; original scalar and register operands still constrain
+the surrounding run. Short repeated call fragments require distinct mapped
+targets or a shared terminal cleanup boundary, alongside the existing length
+and frequency checks. Mapping edits and undo recompute these regions
+transactionally, and saved binding checks them against the saved correspondence.
+The GUI exposes the same native call-path context from a selected region.
+Shared instructions and a wrapper's call relationship remain separate evidence.
+These contracts do not establish callee equivalence, source ancestry, arbitrary
+transformation recovery or patch presence.
 
 Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
 sketches are too common. Direction/layout controls above the exhaustive-pair
