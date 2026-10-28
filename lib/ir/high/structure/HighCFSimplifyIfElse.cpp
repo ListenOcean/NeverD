@@ -5347,13 +5347,19 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           };
           std::optional<std::vector<bool>> DropsB;
           auto Rest = dropAndPrefix(OuterForPeel, Inner.Cond, SameTempId);
-          // A remainder keeps the composed spelling, so the prefix calls it
-          // substituted run there. One whose value has another reader keeps
-          // the test uncomposed.
+          // A remainder the uncomposed test already leaves keeps reading the
+          // prefix, so every prefix call still runs where it did. Otherwise
+          // the dropped test held the outer test's own call: its prefix copy
+          // goes, and a value with another reader keeps the test uncomposed.
           std::optional<std::vector<bool>> DropsR;
-          if (Rest && !isConstTrue(*Rest) &&
-              !(DropsR = PrefixDrops(*Rest, true)))
-            Rest.reset();
+          if (Rest && !isConstTrue(*Rest) && DidCompose) {
+            auto Plain =
+                dropAndPrefix(OuterForPeel, OriginalInnerCond, SameTempId);
+            if (Plain && !isConstTrue(*Plain))
+              Rest = std::move(Plain);
+            else if (!(DropsR = PrefixDrops(*Rest, true)))
+              Rest.reset();
+          }
           if (Rest) {
             if (isConstTrue(*Rest)) {
               const std::vector<bool> DropsA = *PrefixDrops(PredForDce, false);
@@ -5380,7 +5386,7 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                   Kept.push_back(std::move(Inner));
                   continue;
                 }
-                if (DidCompose && K < InnerI && (*DropsR)[K])
+                if (DropsR && K < InnerI && (*DropsR)[K])
                   continue;
                 Kept.push_back(std::move(Stmt.Body[K]));
               }
