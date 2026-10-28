@@ -5815,8 +5815,10 @@ std::string HighCWriter::unknownVarUse(const HighExpr &E,
       !(CurrentFunc &&
         isSyntheticEntryStackPointer(E.Var, *CurrentFunc, Opts.TheArch))) {
     const auto &TRI = getTargetRegInfo(Opts.TheArch);
-    if (Opts.TheArch == Arch::AArch64 && E.Var.Kind == MedVar::Reg &&
-        TRI.isLinkRegister(E.Var.RegOff) && E.Var.Size == TRI.PointerSize)
+    // The link register's full entry value is the return address, as the
+    // LLVM route reads it: AArch64 x30 and ARM LR alike (x86 has none).
+    if (E.Var.Kind == MedVar::Reg && TRI.isLinkRegister(E.Var.RegOff) &&
+        E.Var.Size == TRI.PointerSize)
       return "(uintptr_t)__builtin_return_address(0)";
     if (x87HelperFor(E) == X87CHelper::ControlWord)
       return useX87Helper(X87CHelper::ControlWord) + "()";
