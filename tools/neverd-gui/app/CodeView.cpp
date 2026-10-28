@@ -1862,8 +1862,8 @@ void CodeText::keepPlace(Address address) {
   if (keptPlaces_.size() >=
       qsizetype(::neverd::limits::gui::kDisassemblyViewMaxHistory))
     keptPlaces_.removeFirst();
-  keptPlaces_.append({address, *function_, representation_, sourceOptions_,
-                      currentPlace()});
+  keptPlaces_.append(
+      {address, *function_, representation_, sourceOptions_, currentPlace()});
 }
 
 bool CodeText::returnToPlace(Address address) {
@@ -2143,8 +2143,7 @@ QString CodeText::selectedText() const {
 
 QString CodeText::cursorWord() const {
   if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
-      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
-           .isEmpty())
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_)).isEmpty())
     return {};
   if (const auto name = sourceNameAt(cursorLine_, cursorColumn_))
     return name->first;
@@ -2156,8 +2155,7 @@ QString CodeText::copyText() const {
     return selectedText();
   // A folded summary copies the code it stands for.
   if (cursorLine_ >= 0 && cursorLine_ < lines_.size() &&
-      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_))
-           .isEmpty())
+      !library_.regionAt(displayPosition(cursorLine_, cursorColumn_)).isEmpty())
     return selectedText();
   return cursorWord();
 }

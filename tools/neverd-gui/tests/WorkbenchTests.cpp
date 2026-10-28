@@ -4548,10 +4548,11 @@ private slots:
       return QPoint(qRound(left + metrics.horizontalAdvance(text.left(at))), y);
     };
     const auto on = [&](const QString &text, int at, int y) {
-      return QPoint(qRound(left + (metrics.horizontalAdvance(text.left(at)) +
-                                   metrics.horizontalAdvance(text.left(at + 1))) /
-                                      2),
-                    y);
+      return QPoint(
+          qRound(left + (metrics.horizontalAdvance(text.left(at)) +
+                         metrics.horizontalAdvance(text.left(at + 1))) /
+                            2),
+          y);
     };
     const auto click = [viewport](Qt::MouseButton button, QPoint at) {
       QTest::mouseClick(viewport, button, Qt::NoModifier, at);
@@ -4594,8 +4595,7 @@ private slots:
     click(Qt::LeftButton, on(prefix, colon, y));
     QCOMPARE(listing->selectedText(), listing->currentLineText());
     QCOMPARE(copied(), kept);
-    click(Qt::LeftButton,
-          on(prefix + QLatin1Char(' '), int(prefix.size()), y));
+    click(Qt::LeftButton, on(prefix + QLatin1Char(' '), int(prefix.size()), y));
     QCOMPARE(listing->selectedText(), listing->currentLineText());
     QCOMPARE(copied(), kept);
 
@@ -4720,10 +4720,10 @@ private slots:
     const auto found = words(current);
     const int blank = blankColumn(current);
     QVERIFY2(found.size() >= 2 && blank > 0, qPrintable(current));
-    const QString first = current.mid(found[0].first,
-                                      found[0].second - found[0].first);
-    const QString second = current.mid(found[1].first,
-                                       found[1].second - found[1].first);
+    const QString first =
+        current.mid(found[0].first, found[0].second - found[0].first);
+    const QString second =
+        current.mid(found[1].first, found[1].second - found[1].first);
     // The caret's place at a column of the row, reached by keys.
     const auto place = [&](int column) {
       home();
@@ -4804,8 +4804,8 @@ private slots:
     auto *view = bench.codeView(QStringLiteral("source"));
     QVERIFY(view);
     auto *code = view->text();
-    QTRY_VERIFY_WITH_TIMEOUT(code->complete() && code->allText().contains(access),
-                             OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->complete() && code->allText().contains(access), OpenTimeoutMs);
     // Ctrl+C with the cursor in the row holding the access, at a column of
     // \p needle.
     const auto copyAt = [&](const QString &needle, int offset) {
@@ -4904,13 +4904,14 @@ private slots:
     QCOMPARE(locks.word(0), QStringLiteral("rbx"));
 
     // Search > Lock highlight lists the commands, each color with its swatch.
-    auto *menu = bench.window->findChild<QMenu *>(
-        QStringLiteral("menuLockHighlight"));
+    auto *menu =
+        bench.window->findChild<QMenu *>(QStringLiteral("menuLockHighlight"));
     QVERIFY(menu);
     QStringList commands;
     for (auto *action : menu->actions())
       if (!action->isSeparator()) {
-        commands.append(action->shortcut().toString(QKeySequence::PortableText));
+        commands.append(
+            action->shortcut().toString(QKeySequence::PortableText));
         QVERIFY(!action->icon().isNull());
       }
     QCOMPARE(commands, (QStringList{"Ctrl+Alt+0", "Ctrl+Alt+1", "Ctrl+Alt+2",
@@ -11869,8 +11870,8 @@ private slots:
       QTRY_COMPARE(disassembly->currentAddress(),
                    std::optional<Address>(address));
     };
-    const Address start = Base + 0x50, called = Base + 0x140,
-                  read = called + 2, reread = called + 4, next = Base + 0x180;
+    const Address start = Base + 0x50, called = Base + 0x140, read = called + 2,
+                  reread = called + 4, next = Base + 0x180;
     disassembly->navigate(start);
     at(start);
     disassembly->navigate(called);
@@ -13241,8 +13242,8 @@ private slots:
     });
     const QString recent = hexAddress(Base + 0x40);
     QSettings().setValue(QStringLiteral("jump/history"), QStringList{recent});
-    JumpDialog dialog(bench.session, bench.window->addressSpace(),
-                      std::nullopt, bench.window.get());
+    JumpDialog dialog(bench.session, bench.window->addressSpace(), std::nullopt,
+                      bench.window.get());
     auto *input = dialog.findChild<QLineEdit *>();
     auto *matches = dialog.findChild<QListWidget *>();
     QVERIFY(input && matches);
