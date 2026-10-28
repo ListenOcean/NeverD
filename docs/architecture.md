@@ -1312,6 +1312,8 @@ remain separate observations, and opaque effects clear register facts. The query
 charges the same function evidence budget and owns finite operation, node,
 atom and rewrite caps in `neverd/Limits.h`. It does not enable source-wide
 symbolic optimization or solver synthesis by default.
+A target proved independent of the current block's incoming state is tested
+first, so unrelated predecessors cannot consume its proof budget.
 Register facts may cross a unique decoded direct predecessor edge. At the
 first join, each direct incoming path must independently prove the same target.
 Earlier joins remain arbitrary inputs rather than recursively enumerated paths.

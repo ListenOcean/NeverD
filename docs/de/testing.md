@@ -2349,3 +2349,5 @@ Bei Änderungen dieser Speicher-Nachbedingung gemeinsam `NeverDSymbolicCallEffec
 ## Prüfung skalarer Sprünge
 
 `NeverDConstantBranchTests` prüft x86/x64/ARM64 mit PE, ELF und Mach-O: direkte Vorgänger, übereinstimmende Zusammenführungen und unveränderliche Lesezugriffe. Widersprüche, undefinierte Eingaben, durch Aufrufe zerstörte Register und unabhängige Einstiege bleiben dynamisch. `NeverDConstantBranchSourceTests` kompiliert und führt beide C-Wege für x64/ARM64 mit und ohne Pipeline-Optimierung bei O0/O2 und mit UBSan aus. Reine Ganzzahl-Funktionskörper verwenden Standardheader des Hosts; dies zertifiziert weder natives ARM64 noch Windows-Treiber. Der Worker-Vergleich mit unabhängigem ELF-x64-Maschinencode prüft außerdem kalte Navigation, Referenzen und übersprungene E9-Bytes.
+
+Ein bereits im aktuellen Block bewiesenes Ziel wird zuerst geprüft, damit irrelevante Vorgänger sein Budget nicht verbrauchen. Ein Regressionstest mit langem Präfix prüft diese Grenze.

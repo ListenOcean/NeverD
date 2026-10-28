@@ -2348,3 +2348,5 @@ Pour modifier cette postcondition mémoire, exécuter ensemble `NeverDSymbolicCa
 ## Validation des branches scalaires
 
 `NeverDConstantBranchTests` couvre x86/x64/ARM64 et PE, ELF, Mach-O : prédécesseurs directs, jonctions unanimes et lectures immuables. Les conflits, entrées indéfinies, registres détruits par un appel et entrées indépendantes restent dynamiques. `NeverDConstantBranchSourceTests` compile et exécute les deux voies C x64/ARM64, avec et sans optimisation du pipeline, à O0/O2 avec UBSan. Les corps purement entiers utilisent les en-têtes standard de l’hôte ; cela ne certifie ni ARM64 natif ni les pilotes Windows. La comparaison du worker avec du code machine ELF x64 indépendant vérifie aussi la navigation à froid, les références et les octets E9 ignorés.
+
+Une cible prouvée dans le bloc courant est examinée d’abord : des prédécesseurs sans rapport ne peuvent épuiser son budget. Une régression avec un long préfixe vérifie cette limite.

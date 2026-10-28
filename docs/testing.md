@@ -2016,7 +2016,9 @@ COFF and Mach-O, and a similar nonconstant expression must retain its input
 dependence. Partial register writes, calls, opaque effects, separate memory
 reads, instruction-local temporary reuse, malformed records and exhausted
 budgets cannot publish an edge. Direct predecessor chains carry exact numeric
-and symbolic facts. A joined dispatch requires all incoming paths to agree;
+and symbolic facts. Long irrelevant predecessor chains cannot invalidate a
+locally proved target by exhausting the work budget. A joined dispatch requires
+all incoming paths to agree;
 conflicting or undefined alternatives and independent continuation roots retain
 arbitrary incoming state. Repeated image loads participate in identities
 only with the shared immutable-byte proof; writable lookalikes stay dynamic.

@@ -344,6 +344,30 @@ TEST(ConstantBranch, ArithmeticTargetSkipsUnreachableOpcode) {
     }
 }
 
+TEST(ConstantBranch, LocalTargetProofDoesNotWalkAnUnrelatedPrefix) {
+  // These direct predecessors do not contribute to the final dispatch. Walking
+  // their register writes would consume the function's evidence budget before
+  // the cheap independent target can be revalidated after discovery.
+  std::vector<uint8_t> Bytes;
+  for (unsigned I = 0; I != 4096; ++I)
+    Bytes.insert(Bytes.end(),
+                 {0x49, 0xba, 0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23,
+                  0x01,               // mov r10,0x123456789abcdef
+                  0xeb, 0x01, 0xcc}); // jmp past one unreachable byte
+  const va_t Target = 0x1000 + Bytes.size() + 8;
+  const size_t Dispatch = Bytes.size();
+  Bytes.insert(Bytes.end(), {0xb8, 0, 0, 0, 0,         // mov eax,target
+                             0xff, 0xe0, 0xe9, 0xc3}); // jmp rax; db E9; ret
+  writeLE<uint32_t>(Bytes.data() + Dispatch + 1, static_cast<uint32_t>(Target));
+  for (auto Format :
+       {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO}) {
+    SCOPED_TRACE(unsigned(Format));
+    const auto Function = build(Bytes, Arch::X64, Format);
+    EXPECT_TRUE(addresses(Function).count(Target));
+    EXPECT_TRUE(Function.UnsafeIndirectBranchAddresses.empty());
+  }
+}
+
 TEST(ConstantBranch, ADirectPredecessorCarriesTheComputedTarget) {
   // The dispatch register is defined before a direct edge and adjusted in
   // its successor. No entry value or guessed memory is needed for the target.

@@ -2046,3 +2046,5 @@ Los metadatos de excepciones conocidos excluyen esta declaración antes de leer 
 ## Recuperación exacta de saltos escalares
 
 La recuperación CFG compartida propaga hechos de registros por aristas directas ya decodificadas. En la primera unión, cada ruta entrante debe demostrar por separado el mismo destino. Las uniones anteriores conservan entradas arbitrarias, sin enumeración recursiva de rutas. Las entradas independientes, las de excepción y las aristas indirectas ya recuperadas no aportan estado predecesor. Al descubrir una arista se vuelve a comprobar toda la ruta. La consulta simbólica y la propagación numérica comparten la prueba de lectura inmutable y el presupuesto existente; las demás lecturas siguen siendo observaciones desconocidas distintas.
+
+Primero se comprueba el destino demostrable en el bloque actual, evitando que predecesores irrelevantes agoten su presupuesto. Una regresión con un prefijo largo verifica este límite.

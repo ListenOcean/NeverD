@@ -2047,3 +2047,5 @@ Bekannte Ausnahmemetadaten schließen diese Deklaration bereits vor dem Lesen de
 ## Exakte Wiederherstellung skalarer Sprünge
 
 Die gemeinsame CFG-Wiederherstellung überträgt Registerfakten entlang dekodierter direkter Vorgängerkanten. An der ersten Zusammenführung muss jeder eingehende Pfad unabhängig dasselbe Ziel beweisen. Frühere Zusammenführungen behalten beliebige Eingaben, ohne rekursive Pfadaufzählung. Unabhängige Einstiege, Ausnahmeeinstiege und bereits rekonstruierte indirekte Kanten liefern keinen Vorgängerzustand. Neue Kanten erfordern die erneute Prüfung des gesamten Pfads. Symbolische Abfrage und numerische Weitergabe teilen den Nachweis unveränderlicher Bilddaten und das bestehende Arbeitsbudget; andere Lesezugriffe bleiben getrennte unbekannte Beobachtungen.
+
+Ein bereits im aktuellen Block bewiesenes Ziel wird zuerst geprüft, damit irrelevante Vorgänger sein Budget nicht verbrauchen. Ein Regressionstest mit langem Präfix prüft diese Grenze.

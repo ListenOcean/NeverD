@@ -2043,3 +2043,5 @@ I metadati di eccezione noti escludono questa dichiarazione prima di leggere il 
 ## Ripristino esatto dei salti scalari
 
 Il ripristino CFG condiviso trasferisce i fatti sui registri lungo gli archi diretti decodificati. Alla prima confluenza, ogni percorso entrante deve dimostrare indipendentemente la stessa destinazione. Le confluenze precedenti mantengono ingressi arbitrari, senza enumerare ricorsivamente i percorsi. Gli ingressi indipendenti, quelli eccezionali e gli archi indiretti già ripristinati non forniscono lo stato precedente. Ogni nuovo arco richiede di riverificare l’intero percorso. La ricerca simbolica e la propagazione numerica condividono la prova di lettura immutabile e il budget esistente; le altre letture rimangono osservazioni sconosciute distinte.
+
+Si verifica prima la destinazione dimostrabile nel blocco corrente, evitando che predecessori irrilevanti ne esauriscano il budget. Una regressione con un prefisso lungo verifica questo limite.

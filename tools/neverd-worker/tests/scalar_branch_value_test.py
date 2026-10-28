@@ -43,6 +43,9 @@ INPUTS = (0, 1, 2, 3, 7, 255, 256, 0x5555555555555555,
 
 CASES = (
     ("load", "mov ecx,DWORD PTR[rip+.Ldelta]", 19),
+    ("local-target-long-prefix", ".rept 4096\nmov r10,0x123456789abcdef\n"
+     "jmp 1f\n.byte 0xcc\n1:\n.endr\nmov ecx,DWORD PTR[rip+.Ldelta]",
+     4096 * 13 + 19),
     ("joined-prefix", "test rdi,rdi\njz .Lother\nmov ecx,DWORD PTR[rip+.Ldelta]\n"
      "jmp .Lcontinued\n.Lother:\nmov ecx,DWORD PTR[rip+.Ldelta]\n.Lcontinued:", 32),
     ("direct-prefix", "mov ecx,DWORD PTR[rip+.Ldelta]\njmp .Lcontinued\n"

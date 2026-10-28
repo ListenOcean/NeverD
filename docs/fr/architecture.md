@@ -2053,3 +2053,5 @@ Les métadonnées d’exception connues excluent cette déclaration avant la lec
 ## Récupération exacte des branches scalaires
 
 La récupération CFG commune transporte les faits de registre le long des arêtes directes décodées. À la première jonction, chaque chemin entrant doit prouver indépendamment la même cible. Les jonctions antérieures gardent des entrées arbitraires, sans énumération récursive des chemins. Les entrées indépendantes, les entrées exceptionnelles et les arêtes indirectes déjà récupérées ne fournissent pas cet état. Toute nouvelle arête impose de revérifier le chemin entier. La requête symbolique partage avec la propagation numérique la preuve de lecture immuable et le budget existant ; les autres lectures restent des observations inconnues distinctes.
+
+Une cible prouvée dans le bloc courant est examinée d’abord : des prédécesseurs sans rapport ne peuvent épuiser son budget. Une régression avec un long préfixe vérifie cette limite.

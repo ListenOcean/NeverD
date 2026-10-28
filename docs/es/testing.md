@@ -2334,3 +2334,5 @@ Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallE
 ## Validación de saltos escalares
 
 `NeverDConstantBranchTests` cubre x86/x64/ARM64 con PE, ELF y Mach-O: predecesores directos, uniones unánimes y lecturas inmutables. Los conflictos, entradas indefinidas, registros alterados por llamadas y entradas independientes siguen siendo dinámicos. `NeverDConstantBranchSourceTests` compila y ejecuta ambas rutas C de x64/ARM64, con y sin optimización del pipeline, en O0/O2 con UBSan. Los cuerpos de enteros usan cabeceras estándar del anfitrión; esto no certifica ARM64 nativo ni controladores Windows. La comparación del worker con código máquina ELF x64 independiente también comprueba navegación en frío, referencias y bytes E9 omitidos.
+
+Primero se comprueba el destino demostrable en el bloque actual, evitando que predecesores irrelevantes agoten su presupuesto. Una regresión con un prefijo largo verifica este límite.

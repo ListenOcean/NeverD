@@ -318,8 +318,14 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
       ScalarPath Path;
       Path.Blocks.push_back(&Block);
       Path.Seen.insert(Block.Id);
-      ExtendPath(Path);
+      // Prefer a target proved independent of the block's incoming state.
+      // Unrelated predecessors must not spend a local proof's work budget.
       auto Target = EvaluatePath(Path);
+      if (Complete && !Target) {
+        ExtendPath(Path);
+        if (Path.Blocks.size() > 1)
+          Target = EvaluatePath(Path);
+      }
       const LowBlock &Join = *Path.Blocks.back();
       if (Complete && !Target && Join.Preds.size() > 1 && !Independent(Join)) {
         // A single join can contribute a value only when every direct incoming
