@@ -14439,9 +14439,20 @@ under `if (AbnormalTermination())` with the `100` copy kept,
 clause and removes the matching copy, and `FrameRegisterHandlerKeepsTheComment`,
 `LocalUnwindInTheProtectedBodyKeepsTheComment` and
 `NestedExceptInTheProtectedBodyKeepsTheComment` keep the address comment where
-the projection is unsound. Run the Windows SEH corpus and the xcpt4
-wine check after a change here; the latter recompiles the decompiled source and
-reruns it, exercising the filled `__finally` bodies end to end.
+the projection is unsound. Its `ARMSEHFinallyBodyTests.cpp` builds AArch64 and
+Thumb parents whose handler reads them through callee-saved registers:
+`ARMSEHFinallyRegisters.*` publishes a frame address set before the range, an
+incoming argument and a constant, the establisher frame only when the unwind
+codes allocate exactly the range's frame and x29 holds it too, finds a Thumb leaf handler that only
+the scope table names, and publishes nothing for a register written in the
+range, one the parent never set, or a copy of an argument register that a
+PHI joins; `ARMSEHFinallyBody.*` stores `99` to the
+parent's own local, through its parameter or through the establisher frame
+under `if (AbnormalTermination())`, fills a finally nested in an `__except`
+and both of two nested finallys, and keeps the comment for the unpublished
+registers and a contradicted frame. Run the Windows SEH corpus and the xcpt4
+wine check after a change here; the latter recompiles the decompiled source
+and reruns it, exercising the filled `__finally` bodies end to end.
 `StaticSymbolTableTest.MinGWImageNamesNoSectionOrFileRecord` reads
 `unittests/loader/fixtures/mingw_sections.exe` (its Makefile rebuilds it with
 MinGW-w64 GCC): GNU ld's section symbols stay as bounds that name nothing, its

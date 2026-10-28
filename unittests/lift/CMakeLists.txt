@@ -2004,10 +2004,12 @@ target_compile_definitions(NeverDCOFFExceptionIRTests PRIVATE
   NEVERD_RUNTIME_FIXTURE_COMPILER="${NEVERD_HOST_RUNTIME_FIXTURE_COMPILER_EXECUTABLE}"
 )
 
-# Windows x64 termination handlers: the certified establisher frame of an
-# out-of-line __finally callback and the bodies the C routes print from it.
+# Windows termination handlers: the certified x64 establisher frame of an
+# out-of-line __finally callback, the ARM parent registers it reads, and the
+# bodies the C routes print from them.
 add_neverd_unittest(NeverDSEHTerminationHandlerTests
   eh/SEHTerminationHandlerTests.cpp
+  eh/ARMSEHFinallyBodyTests.cpp
   LINK_COMPONENTS Pipeline BackendC
 )
 target_include_directories(NeverDSEHTerminationHandlerTests PRIVATE
