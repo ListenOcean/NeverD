@@ -153,14 +153,25 @@ TEST_F(X86_64_PipelineE2E,
       if (Selected)
         Args.push_back("--func=test_lea_rip_relative");
       auto Result = exec(ndBin(), Args);
+      std::ifstream File(Out);
+      std::ostringstream Content;
+      Content << File.rdbuf();
+      if (!Selected) {
+        // The whole unit leaves the definition out and names why.
+        ASSERT_EQ(Result.exitCode, 0) << Result.err;
+        EXPECT_NE(Content.str().find(
+                      "/* neverd.not-decompiled: test_lea_rip_relative at "
+                      "0x100: c-emission-failed; LLVM C constant is not "
+                      "supported: ptr blockaddress(@test_lea_rip_relative"),
+                  std::string::npos)
+            << Content.str();
+        continue;
+      }
       ASSERT_NE(Result.exitCode, 0);
       EXPECT_TRUE(Result.errContains("LLVM C constant is not supported"))
           << Result.err;
       EXPECT_TRUE(Result.errContains("blockaddress(@test_lea_rip_relative"))
           << Result.err;
-      std::ifstream File(Out);
-      std::ostringstream Content;
-      Content << File.rdbuf();
       EXPECT_EQ(Content.str(), Sentinel);
     }
 }
