@@ -134,10 +134,12 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   if (Result.OmittedCallees)
     for (const auto &Func : Result.OmittedCallees->Bodies)
       Callees.try_emplace(Func->Entry, Func.get());
-  for (MedFunc &Func : Result.MedFuncs)
+  for (MedFunc &Func : Result.MedFuncs) {
     if (Complete.count(Func.Entry))
       markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
                                         Callees);
+    markUnreadUndefinedScratchStores(Func, Image.Arch, Image.abiFormat());
+  }
 }
 
 void omitRefusedFunctions(PipelineResult &Result,

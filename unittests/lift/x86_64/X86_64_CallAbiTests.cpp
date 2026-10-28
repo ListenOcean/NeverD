@@ -692,6 +692,39 @@ int slots_e(int a) { return (int)(gdc() + g6(a) * 3 + g7(a) * 5 + g8(a) * 7); }
                                 {0, 1, -1, 7, 1000});
 }
 
+// ef reserves its local double's slot with `push rax`, which stores RAX's
+// incoming value there, and overwrites it before it passes the slot's
+// address to pf; ep passes its local's address to put, which writes it.
+// RAX holds nothing at entry and neither function reads the slot back, so
+// neither C stores an unknown value there.
+TEST_F(X86_64_CallAbi, AnUnreadAlignmentPushStoresNoUnknownValue) {
+  expectBothRoutesRunLikeSource(R"C(
+int Sink;
+void put(int *p, int a) __attribute__((noinline));
+int pf(int a, const double *p) __attribute__((noinline));
+int ef(int a) __attribute__((noinline));
+int ep(int a) __attribute__((noinline));
+void put(int *p, int a) {
+  *p = a * 7 + 1;
+  Sink += a;
+}
+int pf(int a, const double *p) { return (int)(*p * 2.0) + a; }
+int ef(int a) {
+  double v = a * 0.75;
+  return pf(a, &v);
+}
+int ep(int a) {
+  int x;
+  put(&x, a);
+  return Sink;
+}
+int slot_e(int a) { return ef(a) + ep(a) * 3; }
+)C",
+                                "slot_e",
+                                {"slot_e", "Sink", "put", "pf", "ef", "ep"},
+                                {0, 1, -1, 7, 1000});
+}
+
 static const char *const VariadicForwarders = R"C(
 #include <stdarg.h>
 static int vsum(int n, va_list ap) __attribute__((noinline));

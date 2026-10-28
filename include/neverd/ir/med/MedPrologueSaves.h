@@ -43,6 +43,17 @@ void markUnobservedBorrowedFrameStores(
     MedFunc &Func, Arch Architecture, BinaryFormat Format,
     const std::map<va_t, const MedFunc *> &Callees);
 
+/// After call argument recovery, omit each store of a scratch register's
+/// undefined incoming value (holdsUndefinedIncomingScratch), as an alignment
+/// `push rax` makes one, into the function's own frame below the entry stack
+/// pointer, where no load or stack variable of the function reads those
+/// bytes: they held no defined value before the store and hold none after
+/// it.  A store whose bytes the function reads back stays, so that the read
+/// fails where it uses the value.  A variadic function's register save area
+/// and a function an exception dispatcher enters keep theirs.
+void markUnreadUndefinedScratchStores(MedFunc &Func, Arch Architecture,
+                                      BinaryFormat Format);
+
 /// In source mode, mark each store that saves a callee-saved register's entry
 /// value into prologue storage as a PrologueSave.  Prologue storage is the
 /// function's own frame below the entry stack pointer, or on Win64 the home

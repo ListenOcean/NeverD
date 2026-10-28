@@ -205,6 +205,11 @@ calls to a variadic routine aligned by such a push: one with no stack argument
 and one with the push above two pushed longs. Neither slot is an argument,
 while a call that overwrites the pushed slot with a long and one that pushes
 three longs below a `sub rsp, 8` pass theirs, which va_arg reads.
+`AnUnreadAlignmentPushStoresNoUnknownValue` runs the C of both routes for
+functions that reserve a local's slot with such a push: one overwrites it with
+a double before it passes the slot's address on, and one passes the address to
+a routine that writes it. Neither reads the slot back, and neither C stores
+RAX's unknown incoming value there.
 
 `X86_64_CallAbi.AScalarArgumentPassesOnlyItsLowLane` runs the C of both routes
 for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it

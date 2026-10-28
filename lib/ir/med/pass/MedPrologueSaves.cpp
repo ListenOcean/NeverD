@@ -13,6 +13,7 @@
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 
@@ -1161,6 +1162,61 @@ void markUnobservedBorrowedFrameStores(
     if (Read == Reads->end() || !Store.overlaps(Read->first, Read->second))
       Store.Op->PrologueSave = true;
   }
+}
+
+void markUnreadUndefinedScratchStores(MedFunc &Func, Arch Architecture,
+                                      BinaryFormat Format) {
+  // A variadic prologue spills what its callers pass in argument registers,
+  // AL's vector count among them, and an exception dispatcher enters blocks
+  // with registers no predecessor sets.
+  if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame ||
+      Func.FrameSize <= 0 || Func.IsVariadic || Func.ExceptionMetadata ||
+      llvm::any_of(Func.Blocks, [](const MedBlock &Block) {
+        return !Block.ExceptionalPreds.empty() ||
+               !Block.ExceptionalSuccs.empty();
+      }))
+    return;
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Architecture, Format);
+  if (!Convention || !Convention->UndefinedIncomingScratchRegisters)
+    return;
+  const auto UndefinedStore = [&](const MedOp &Op) {
+    return Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 && !Op.PrologueSave &&
+           holdsUndefinedIncomingScratch(Func, Architecture, Format,
+                                         Op.Inputs[1]);
+  };
+  if (llvm::none_of(Func.Blocks, [&](const MedBlock &Block) {
+        return llvm::any_of(Block.Ops, UndefinedStore);
+      }))
+    return;
+  std::vector<FrameAccess> Loads, Stores;
+  frameAccessesOf(Func, Architecture, Format, Func.EntryKind, Loads, Stores);
+  // The bytes a load or a stack variable of the function reads.
+  std::vector<std::pair<int64_t, int64_t>> Reads;
+  for (const FrameAccess &Load : Loads)
+    Reads.emplace_back(Load.Offset, Load.Offset + Load.Size);
+  const auto StackRead = [&](const MedVar &V) {
+    if (V.Kind == MedVar::Stack && V.Size)
+      Reads.emplace_back(V.StackOff, V.StackOff + V.Size);
+  };
+  for (const MedBlock &Block : Func.Blocks) {
+    for (const PhiNode &Phi : Block.Phis)
+      for (const auto &Incoming : Phi.Args)
+        StackRead(Incoming.second);
+    for (const MedOp &Op : Block.Ops)
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        StackRead(Op.Inputs[I]);
+  }
+  const auto ReadBack = [&](const FrameAccess &Store) {
+    return llvm::any_of(Reads, [&](const std::pair<int64_t, int64_t> &Read) {
+      return Store.overlaps(Read.first, Read.second);
+    });
+  };
+  for (const FrameAccess &Store : Stores)
+    if (Store.Offset >= -Func.FrameSize && Store.Offset < 0 &&
+        int64_t(Store.Size) <= -Store.Offset && UndefinedStore(*Store.Op) &&
+        !ReadBack(Store))
+      Store.Op->PrologueSave = true;
 }
 
 } // namespace neverd
