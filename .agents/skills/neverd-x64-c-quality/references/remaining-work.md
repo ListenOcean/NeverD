@@ -34,6 +34,16 @@ observer. This interface still requires a native environment for unsupported
 system effects. Ordinary source recovery still needs a proof connecting a
 service selector and its physical transfer frame to a source call contract;
 the shared dispatcher's union of machine-register reads cannot provide it.
+
+LLVM C compare-exchange now retains the old value, success flag and memory
+effect at the original instruction position. Native 8/16/32/64-bit integers
+and ordinary pointers retain weak/strong, volatile and memory-order semantics;
+unrepresentable width, alignment, address-space, synchronization-scope and
+ordering contracts fail explicitly. The intrinsic semantic suite executes
+both outcomes, unused results and observers that overwrite the cell at O0/O2,
+with a separate translation unit for the scalar oracle. Frame-address operands
+and pointer snapshots have dedicated controls.
+
 x87 context propagation retains a definite nested use across unresolved or
 recursive sibling calls. Complete-function cache admission uses the same
 requirement, and both call orders have public cross-format regressions.

@@ -344,6 +344,50 @@
         <translation>Vai all&apos;occorrenza successiva dell&apos;identificatore evidenziato</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>Blocca o s&amp;blocca</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>Mantieni evidenziata la parola evidenziata nel primo colore libero, oppure sbloccala</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>Colore &amp;1</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>Colore &amp;2</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>Colore &amp;3</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>Colore &amp;4</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>Colore &amp;5</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>Colore &amp;6</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>Colore &amp;7</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>Colore &amp;8</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>Blocca la parola evidenziata in questo colore, oppure libera il colore</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>Trova nella &amp;vista...</translation>
     </message>
@@ -1612,6 +1656,10 @@
         <translation>&amp;Cerca</translation>
     </message>
     <message>
+        <source>&amp;Lock highlight</source>
+        <translation>B&amp;locca evidenziazione</translation>
+    </message>
+    <message>
         <source>&amp;View</source>
         <translation>&amp;Visualizza</translation>
     </message>
@@ -2295,6 +2343,14 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Laying out graph…</source>
         <translation>Calcolo della disposizione del grafo…</translation>
+    </message>
+    <message>
+        <source>From %1</source>
+        <translation>Da %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>Verso %1</translation>
     </message>
 </context>
 <context>
@@ -6807,6 +6863,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 Identità dei riferimenti: non risolte. Alcune destinazioni di chiamate o dati non possono essere confrontate. Questo da solo non dimostra una modifica.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>Includi chiamate associate</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>Estende le regioni condivise oltre le chiamate dirette con destinazioni associate. I risultati dipendono dalle coppie di funzioni attuali e vengono ricalcolati quando cambiano. Il comportamento delle chiamate non viene convalidato.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7959,6 +8023,30 @@ I produttori degli input esterni non vengono confrontati né conteggiati come co
 SSA recipe: %1</source>
         <translation>
 Metodo SSA: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+Le chiamate usano le coppie di funzioni attuali; il comportamento non è convalidato.</translation>
+    </message>
+    <message>
+        <source>Call context…</source>
+        <translation>Contesto delle chiamate…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Primario</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Secondario</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 funzioni primarie / %2 secondarie · %3 intervalli condivisi
+Copertura: %4% / %5% delle istruzioni ammesse, incluse le chiamate dirette associate. Queste evidenze dipendono dalle coppie di funzioni; il comportamento non è convalidato.</translation>
     </message>
 </context>
 <context>
@@ -9504,6 +9592,18 @@ Ambiguità e decisioni manuali rimangono locali al rapporto. Le ipotesi di regio
     <message>
         <source>Releases</source>
         <translation>Rilasci</translation>
+    </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>Le chiamate in questi frammenti salvati si basano sulle coppie di funzioni del rapporto originale. Non dimostrano l’equivalenza del comportamento delle funzioni chiamate.</translation>
+    </message>
+    <message>
+        <source>All native spans</source>
+        <translation>Tutti i frammenti nativi</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>Tutti i frammenti SSA</translation>
     </message>
 </context>
 <context>

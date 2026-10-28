@@ -325,9 +325,12 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
 /// Confirm caller-observed return shapes in omitted local callees. Uses the
 /// signature reader's complete lifts, conversion memo and work bounds; support
 /// bodies never become output functions. Candidates with no proof are removed.
+/// A target outside \p FirstWordObserved had only second-word readers, so an
+/// argument register its body never writes supplies no field.
 void confirmOmittedStructReturns(
     const BinaryImage &Image, const PipelineResult &Result,
-    std::map<va_t, std::vector<MedReturnReg>> &Candidates);
+    std::map<va_t, std::vector<MedReturnReg>> &Candidates,
+    const std::set<va_t> &FirstWordObserved);
 
 /// Read the signature bodies of \p Functions into
 /// \p Summaries.CalleeSignatureMemo as a restricted run under \p Summaries'

@@ -13,6 +13,7 @@
 #include "../CDeferredValue.h"
 #include "../CDisplayFieldPath.h"
 #include "../CDisplayFrameRecord.h"
+#include "LLVMCAtomicOrdering.h"
 #include "LLVMCFrameLayout.h"
 #include "LLVMCStorage.h"
 #include "LLVMCVariableEdits.h"
@@ -4266,27 +4267,7 @@ std::string LLVMCWriter::atomicRMWText(const llvm::AtomicRMWInst &AI) {
   default:
     llvm::report_fatal_error("unsupported atomicrmw operation");
   }
-  const char *Ord = nullptr;
-  switch (AI.getOrdering()) {
-  case llvm::AtomicOrdering::Unordered:
-  case llvm::AtomicOrdering::Monotonic:
-    Ord = "__ATOMIC_RELAXED";
-    break;
-  case llvm::AtomicOrdering::Acquire:
-    Ord = "__ATOMIC_ACQUIRE";
-    break;
-  case llvm::AtomicOrdering::Release:
-    Ord = "__ATOMIC_RELEASE";
-    break;
-  case llvm::AtomicOrdering::AcquireRelease:
-    Ord = "__ATOMIC_ACQ_REL";
-    break;
-  case llvm::AtomicOrdering::SequentiallyConsistent:
-    Ord = "__ATOMIC_SEQ_CST";
-    break;
-  default:
-    llvm::report_fatal_error("unsupported atomic ordering");
-  }
+  const char *Ord = llvmCAtomicOrderingToken(AI.getOrdering());
   HasCIntrinsics = true;
   std::string Ptr = valueStr(AI.getPointerOperand());
   bool TypedPointer = false;

@@ -897,11 +897,6 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
   Out.Reviews = Saved.Reviews;
   Out.Warnings = Saved.Warnings;
   Out.Timings = Saved.Timings;
-  Control.report("regions");
-  if (auto Error = validateRegions(Saved.Regions, Saved.Settings.Regions,
-                                   Primary, Secondary, Control))
-    return Fail(BindFailure::StaleAnalysis, *Error);
-  Out.Regions = Saved.Regions;
   if (Saved.Settings.FlowRegions.Enabled &&
       Saved.State == ComparisonState::Complete &&
       Saved.FlowRegions.State != ComparisonState::Complete)
@@ -969,6 +964,11 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
     Out.PrimaryMatch[Out.Matches[I].Primary] = I;
     Out.SecondaryMatch[Out.Matches[I].Secondary] = I;
   }
+  Control.report("regions");
+  if (auto Error = validateRegions(Saved.Regions, Saved.Settings.Regions,
+                                   Primary, Secondary, Control, Out.Matches))
+    return Fail(BindFailure::StaleAnalysis, *Error);
+  Out.Regions = Saved.Regions;
   // A saved report is evidence to check, not authority for decoded facts.
   // Reuse the final correspondence and the same measurement as a fresh run.
   std::vector<uint32_t> PMap(Primary.Functions.size(), NoIndex),

@@ -492,10 +492,10 @@ void LLVMCWriter::planExpressionMaterialization(llvm::Function &Fn) {
   // The bounded walk also keeps this planning linear in the instruction count.
   for (const auto &BB : Fn) {
     for (const auto &I : BB) {
-      // An RMW's result is the snapshot produced at this position. Expanding
+      // An atomic update's result is the snapshot produced here. Expanding
       // a single-use result at its consumer can move the write past a load
       // or call, or give C permission to evaluate other operands first.
-      if (llvm::isa<llvm::AtomicRMWInst>(&I)) {
+      if (llvm::isa<llvm::AtomicRMWInst, llvm::AtomicCmpXchgInst>(&I)) {
         MaterializedExpressions.insert(&I);
         continue;
       }
@@ -1067,6 +1067,56 @@ TypeRef debugCallArgPointer(const FunctionSym &FS, unsigned Index,
   return isNamedPointerDisplay(Arg) ? Arg : TypeRef{};
 }
 
+/// Whether the SEH range that unwinds to \p PadBlock can leave other than at
+/// its end marker. A lexical try spans the blocks laid out from its begin
+/// marker to its end marker, and C counts a return or a jump out of it as an
+/// abnormal termination, as it does an exception. Nested handlers print
+/// inside the try, so the normal code they return to counts as well.
+bool sehRangeLeavesEarly(const llvm::Function &Fn,
+                         const llvm::BasicBlock *PadBlock) {
+  auto Marker = [&](const llvm::BasicBlock &BB,
+                    llvm::Intrinsic::ID ID) -> const llvm::InvokeInst * {
+    const auto *Invoke = llvm::dyn_cast<llvm::InvokeInst>(BB.getTerminator());
+    const llvm::Function *Callee =
+        Invoke ? Invoke->getCalledFunction() : nullptr;
+    return Callee && Callee->getIntrinsicID() == ID &&
+                   Invoke->getUnwindDest() == PadBlock
+               ? Invoke
+               : nullptr;
+  };
+  llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Span, Seen;
+  // Each block with whether it belongs to a nested handler funclet.
+  llvm::SmallVector<std::pair<const llvm::BasicBlock *, bool>, 16> Work;
+  bool Inside = false;
+  for (const llvm::BasicBlock &BB : Fn) {
+    if (const auto *Begin = Marker(BB, llvm::Intrinsic::seh_try_begin)) {
+      Work.emplace_back(Begin->getNormalDest(), false);
+      Inside = true;
+      continue;
+    }
+    if (Inside)
+      Span.insert(&BB);
+    if (Marker(BB, llvm::Intrinsic::seh_try_end))
+      Inside = false;
+  }
+  while (!Work.empty()) {
+    const auto [BB, Funclet] = Work.pop_back_val();
+    if (BB == PadBlock || !Seen.insert(BB).second)
+      continue;
+    if (!Funclet && !Span.count(BB))
+      return true;
+    const llvm::Instruction *Term = BB->getTerminator();
+    if (!Funclet && Marker(*BB, llvm::Intrinsic::seh_try_end))
+      continue;
+    if (llvm::isa<llvm::ReturnInst>(Term))
+      return true;
+    const bool ToNormal = llvm::isa<llvm::CatchReturnInst>(Term);
+    for (const llvm::BasicBlock *Succ : llvm::successors(BB))
+      Work.emplace_back(Succ, !ToNormal && (Funclet || Succ->isEHPad()));
+  }
+  return false;
+}
+
 } // namespace
 
 std::vector<LLVMCWriter::EHWrapClause>
@@ -1355,14 +1405,34 @@ void LLVMCWriter::writeEHWrapClose(const EHWrapClause &Clause, int Indent) {
     OS << "}\n";
     break;
   case EHWrapClause::Kind::SEHFinally: {
+    // A cleanup pad runs only while an exception unwinds the try. A C
+    // __finally also runs when the try falls through, where the source path
+    // already holds its own copy of the termination code. A range try leaves
+    // only by falling through or by an exception, which
+    // renderFunctionProjection checks, so AbnormalTermination() tells the two
+    // apart. A try around every block also returns, and its returns set the
+    // normal-exit flag.
+    if (!WrappedFinallyNormalExit.empty()) {
+      emitIndent(Indent + 1);
+      OS << WrappedFinallyNormalExit << " = 1;\n";
+    }
     OS << "} __finally {\n";
+    emitIndent(Indent + 1);
+    if (WrappedFinallyNormalExit.empty())
+      OS << "if (AbnormalTermination()) {\n";
+    else
+      OS << "if (!" << WrappedFinallyNormalExit << ") {\n";
     // Unwinding to the caller is implicit at the end of a structured finally.
     // An explicit return here would suppress unwinding and skip continuation.
     const bool AlreadyOmitted = OmitCleanupRetTo.count(nullptr);
     OmitCleanupRetTo.insert(nullptr);
+    ++Indent;
     WriteBody();
+    --Indent;
     if (!AlreadyOmitted)
       OmitCleanupRetTo.erase(nullptr);
+    emitIndent(Indent + 1);
+    OS << "}\n";
     emitIndent(Indent);
     OS << "}\n";
     break;
@@ -2588,6 +2658,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   EHMovedContinuationBlocks.clear();
   EHFallthroughLabelCandidates.clear();
   OmitCleanupRetTo.clear();
+  WrappedFinallyNormalExit.clear();
   PhiTailSlot = nullptr;
   PhiTailIncoming = nullptr;
 
@@ -9442,13 +9513,20 @@ std::optional<SEHBlockScopes> planSEHBlockScopes(const llvm::Function &Fn) {
       }
   }
   // Keep the lexical renderer for a single closed range. This plan owns
-  // fragmented or independently nested ranges whose block order is immaterial.
-  if (Plan.Clauses.empty() || !Begins || !Ends || (Begins == 1 && Ends == 1))
+  // fragmented or independently nested ranges whose block order is immaterial,
+  // and a finally range that leaves before its end: only the per-block
+  // normal-exit flag tells that exit from an exception.
+  const bool CleanupLeavesEarly =
+      llvm::any_of(Plan.Clauses, [&](const auto &Entry) {
+        return Entry.second.Cleanup && sehRangeLeavesEarly(Fn, Entry.first);
+      });
+  if (Plan.Clauses.empty() || !Begins || !Ends ||
+      (Begins == 1 && Ends == 1 && !CleanupLeavesEarly))
     return std::nullopt;
   // The existing lexical renderer also owns one closed finally nested in
   // one closed except. Preserve that compact source form when each clause
   // has exactly one marker pair.
-  if (Plan.Clauses.size() == 2 &&
+  if (!CleanupLeavesEarly && Plan.Clauses.size() == 2 &&
       llvm::count_if(Plan.Clauses,
                      [](const auto &Entry) {
                        return Entry.second.Dispatch != nullptr;
@@ -9540,11 +9618,8 @@ std::optional<SEHBlockScopes> planSEHBlockScopes(const llvm::Function &Fn) {
     if (llvm::isa<llvm::CatchSwitchInst, llvm::CatchReturnInst,
                   llvm::CleanupReturnInst, llvm::IndirectBrInst>(Term))
       return std::nullopt;
-    if (llvm::isa<llvm::ReturnInst>(Term) &&
-        llvm::any_of(Incoming, [&](const auto *Scope) {
-          return Plan.Clauses.at(Scope).Cleanup != nullptr;
-        }))
-      return std::nullopt;
+    // A return inside a finally scope sets the normal-exit flag first, as an
+    // edge out of it does.
     for (const auto *Next : llvm::successors(BB))
       Work.emplace_back(Next, Incoming);
   }
@@ -10373,6 +10448,17 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
   }
 
+  // A range __finally guards its cleanup with AbnormalTermination(), which C
+  // also sets when the try returns or jumps out. planSEHBlockScopes owns the
+  // ranges that can, so refuse a range try that still could.
+  if (UseRanges)
+    for (const EHWrapClause &Clause : EHWraps)
+      if (Clause.Kind == EHWrapClause::Kind::SEHFinally &&
+          sehRangeLeavesEarly(Fn, PadBlock(Clause)))
+        throw std::runtime_error("LLVMC lexical __finally cannot tell a "
+                                 "return or jump out of its try from an "
+                                 "exception");
+
   for (const llvm::BasicBlock &BB : Fn) {
     const auto *Br = llvm::dyn_cast<llvm::UncondBrInst>(BB.getTerminator());
     if (!Br || !Br->getSuccessor(0))
@@ -10479,6 +10565,12 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
         emitIndent(Indent);
         OS << "}\n";
       } else {
+        // A return leaves the try normally, as an edge does: that path holds
+        // its own copy of the termination code.
+        if (InCleanup && llvm::isa<llvm::ReturnInst>(Term)) {
+          emitIndent(Indent);
+          OS << NormalExit << " = 1;\n";
+        }
         writeInstruction(*Term, Indent);
       }
       for (const auto *Entry : llvm::reverse(Scope->second)) {
@@ -10541,6 +10633,17 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (!SkipInTry.contains(&BB) && !AfterWrap.contains(&BB) &&
           SehRangeInvoke(BB, llvm::Intrinsic::seh_try_end))
         EHBoundaryBlocks.insert(&BB);
+    // These wraps hold every printed block, so a __finally among them also
+    // sees the function's returns.
+    if (llvm::any_of(EHWraps, [](const EHWrapClause &Clause) {
+          return Clause.Kind == EHWrapClause::Kind::SEHFinally;
+        })) {
+      WrappedFinallyNormalExit = "neverd_seh_normal";
+      while (!UsedNames.insert(WrappedFinallyNormalExit).second)
+        WrappedFinallyNormalExit += "_";
+      emitIndent(1);
+      OS << "volatile unsigned char " << WrappedFinallyNormalExit << " = 0;\n";
+    }
     for (const EHWrapClause &Clause : EHWraps) {
       writeEHWrapOpen(Clause, 1 + EHTryDepth);
       ++EHTryDepth;
@@ -10573,6 +10676,7 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       writeEHWrapClose(EHWraps[static_cast<size_t>(EHTryDepth)],
                        1 + EHTryDepth);
     }
+    WrappedFinallyNormalExit.clear();
     auto ClearPhiImmediates = [&](const llvm::BasicBlock &BB) {
       for (const llvm::Instruction &Inst : BB) {
         const auto *Phi = llvm::dyn_cast<llvm::PHINode>(&Inst);

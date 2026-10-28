@@ -369,15 +369,19 @@ private:
         return Debug->ReturnType->Kind == NdTypeKind::Void;
     if (isMsvcDestructorName(Func.Name))
       return true;
+    // The program's prototype of a definition is resolveFunction's, which
+    // refuses one an alias the linker folded with it contradicts (KeClearEvent
+    // and KeResetEvent): the name alone does not choose between them.
     if (!Img.functionHasBytePatch(Func.Entry))
-      return namedNoValue(Func.Name);
+      return namedNoValue(Func.Name, /*ByProgramPrototype=*/false);
     return std::nullopt;
   }
 
   /// Whether a routine called \p Name returns nothing by its prototype, the
-  /// libc tables' or one the program's types declare, or as an MSVC
-  /// destructor.  None when none knows it.
-  std::optional<bool> namedNoValue(llvm::StringRef Name) const {
+  /// libc tables' or, with \p ByProgramPrototype, one the program's types
+  /// declare, or as an MSVC destructor.  None when none knows it.
+  std::optional<bool> namedNoValue(llvm::StringRef Name,
+                                   bool ByProgramPrototype = true) const {
     if (Name.empty())
       return std::nullopt;
     if (isMsvcDestructorName(Name))
@@ -396,7 +400,7 @@ private:
     if (const std::optional<bool> Returns =
             libc::libcReturnsValue(CName, libc::libcVariantOf(Img)))
       return !*Returns;
-    if (Dbg)
+    if (Dbg && ByProgramPrototype)
       if (const std::optional<FunctionSym> Declared =
               Dbg->resolvePrototype(CName);
           Declared && Declared->ReturnType)
@@ -435,10 +439,11 @@ private:
       Target = Own;
       Slot.reset();
     }
-    // A callee's declaration decides, then a prototype of its name, then
-    // what this pass settled for it.  One this pass does not decompile is
-    // declared as the C writers read it, by the debug information or a
-    // prototype of its name: the call they print returns nothing then.
+    // A callee's declaration decides, then what its name says, then what
+    // this pass settled for it; the program's prototype of a definition is
+    // its declaration's.  One this pass does not decompile is declared as the
+    // C writers read it, by the debug information or a prototype of its
+    // name: the call they print returns nothing then.
     if (Target) {
       if (const auto Declaration = Declared.find(*Target);
           Declaration != Declared.end())
@@ -449,7 +454,8 @@ private:
           return Debug->ReturnType->Kind == NdTypeKind::Void;
       if (const auto Name = Names.find(*Target);
           Name != Names.end() && !Img.functionHasBytePatch(*Target))
-        if (const std::optional<bool> None = namedNoValue(Name->second))
+        if (const std::optional<bool> None =
+                namedNoValue(Name->second, /*ByProgramPrototype=*/false))
           return *None;
       if (const auto Known = NoValue.find(*Target); Known != NoValue.end())
         return Known->second;

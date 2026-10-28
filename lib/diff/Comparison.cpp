@@ -1257,6 +1257,7 @@ ComparisonResult compare(const Program &Primary, const Program &Secondary,
     throw std::invalid_argument("unsupported comparison profile pair");
   ComparisonResult R;
   R.Settings = Settings;
+  R.Regions.Calls = Settings.Regions.Calls;
   R.FlowRegions.Profile = flowRegionProfile(Settings.DataFlow.Profile,
                                             Settings.FlowRegions.Fragments)
                               .str();
@@ -1265,7 +1266,8 @@ ComparisonResult compare(const Program &Primary, const Program &Secondary,
   Matcher(Primary, Secondary, Settings, Control, R).run(Overrides);
   if (Settings.Regions.Enabled && R.State == ComparisonState::Complete) {
     const auto Begin = std::chrono::steady_clock::now();
-    R.Regions = findRegions(Primary, Secondary, Settings.Regions, Control);
+    R.Regions =
+        findRegions(Primary, Secondary, Settings.Regions, Control, R.Matches);
     R.Timings.push_back(
         {"regions", std::chrono::duration<double, std::milli>(
                         std::chrono::steady_clock::now() - Begin)
@@ -1420,6 +1422,24 @@ std::vector<uint32_t> dependentsOf(const Program &P,
   return Out;
 }
 
+void refreshCallRegions(ComparisonResult &R, const Program &Primary,
+                        const Program &Secondary,
+                        const ComparisonControl &Control) {
+  if (!R.Settings.Regions.Enabled || !R.Settings.Regions.Calls)
+    return;
+  auto Regions =
+      findRegions(Primary, Secondary, R.Settings.Regions, Control, R.Matches);
+  if (Regions.State == ComparisonState::Cancelled ||
+      Regions.State == ComparisonState::TimedOut)
+    throw ComparisonInterrupted(*Regions.State);
+  if (R.State == ComparisonState::Complete ||
+      llvm::StringRef(R.StoppedPhase).starts_with("regions:")) {
+    R.State = *Regions.State;
+    R.StoppedPhase = Regions.StoppedPhase;
+  }
+  R.Regions = std::move(Regions);
+}
+
 std::optional<std::string>
 applyOverrideInPlace(ComparisonResult &R, const Program &Primary,
                      const Program &Secondary, const Override &O,
@@ -1559,6 +1579,8 @@ applyOverrideInPlace(ComparisonResult &R, const Program &Primary,
         E.Added = M;
     }
     Control.report("measure", Ordered.size(), Ordered.size());
+    if (!ChangedP.empty())
+      refreshCallRegions(R, Primary, Secondary, Control);
   }
   R.Overrides.push_back(O);
   summarize(R, Primary, Secondary);
@@ -1613,6 +1635,7 @@ void revertOverrideInPlace(ComparisonResult &R, const Program &Primary,
     for (const FunctionMatch &Before : E.Remeasured)
       if (const uint32_t I = R.PrimaryMatch[Before.Primary]; I != NoIndex)
         R.Matches[I] = Before;
+    refreshCallRegions(R, Primary, Secondary, Control);
   }
   if (!R.Overrides.empty() && R.Overrides.back() == E.Applied)
     R.Overrides.pop_back();

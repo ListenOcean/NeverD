@@ -92,6 +92,13 @@ public:
   /// row mapped to it and mark the others, without unfolding, waiting or
   /// reporting an instruction no row maps. Neither move says locationChanged.
   void revealAddress(Address address);
+  /// Keep the cursor's row and column and the first shown row as the place
+  /// to come back to at \p address, the jump history's stop for it.
+  void keepPlace(Address address);
+  /// Go back to the place kept at \p address, as Hex-Rays' Esc does: now, or
+  /// once the text on its way completes. Only the same function, shown the
+  /// same way, has that place; false otherwise.
+  bool returnToPlace(Address address);
   QString currentToken() const;
   /// The selected source name's image address or declared-local identity.
   std::optional<QJsonObject> renameTarget() const;
@@ -136,6 +143,8 @@ public:
   /// for, or, as in IDA, the name or word under the cursor, which the
   /// highlight marks; nothing on blank space.
   QString copyText() const;
+  /// The source name or token under the cursor; none in a folded summary.
+  QString cursorWord() const;
   QString allText() const;
   bool findText(const QString &text, bool forward);
   /// Source coordinates, independent of the current fold projection.
@@ -149,6 +158,7 @@ public:
   void selectAll();
   /// The displayed line the cursor is on.
   int cursorLine() const { return cursorLine_; }
+  int cursorColumn() const { return cursorColumn_; }
   int lineCount() const { return int(lines_.size()); }
   /// Recognized library operations that can fold into one-line summaries.
   int foldableCount() const { return library_.foldableCount(); }
@@ -265,8 +275,6 @@ private:
   int epilogueLine() const;
   /// The token at a line and column; in LLVM IR, a name with its sigil.
   QString tokenAt(int line, int column) const;
-  /// The source name or token under the cursor; none in a folded summary.
-  QString cursorWord() const;
   /// How this page's words take dots: pseudocode, in any of its languages,
   /// splits member accesses; IR keeps dotted names.
   TokenDots tokenDots() const;
@@ -320,6 +328,17 @@ private:
     int cursorLine = 0, cursorColumn = 0, topLine = 0;
   };
   std::optional<SourcePlace> placeAfterLoad_;
+  /// The places keepPlace kept, newest last, with the text they were in.
+  struct KeptPlace {
+    Address address = 0, function = 0;
+    QString representation;
+    QJsonObject options;
+    SourcePlace place;
+  };
+  QVector<KeptPlace> keptPlaces_;
+  SourcePlace currentPlace() const;
+  /// The first shown line at or after a source line.
+  int shownLine(int sourceLine) const;
   QString representation_, status_, highlight_;
   ViewSearchQuery SearchHighlight;
   /// Why the source on its way is not the one asked for (showOrdinary).

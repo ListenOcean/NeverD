@@ -452,6 +452,8 @@ CodeText::CodeText(Session &session, QWidget *parent)
     updateMetrics();
     viewport()->update();
   });
+  connect(&session_.highlightLocks(), &HighlightLocks::changed, viewport(),
+          qOverload<>(&QWidget::update));
   connect(&session_, &Session::revisionChanged, this, [this] {
     if (!function_)
       return;
@@ -562,6 +564,7 @@ void CodeText::clear() {
   cancel();
   selectedAddress_.reset();
   placeAfterLoad_.reset();
+  keptPlaces_.clear();
   source_.clear();
   sourceBytes_ = renderedChars_ = renderedRows_ = widestLine_ = 0;
   interrupted_ = false;
@@ -622,11 +625,7 @@ void CodeText::load(Address function, const QString &representation,
     selectAllAfterLoad_ = false;
   } else if (!placeAfterLoad_ && !loading_ && !interrupted_ &&
              cursorLine_ < lines_.size())
-    placeAfterLoad_ =
-        SourcePlace{lines_[cursorLine_].sourceLine, cursorColumn_,
-                    lines_[std::clamp(verticalScrollBar()->value(), 0,
-                                      int(lines_.size()) - 1)]
-                        .sourceLine};
+    placeAfterLoad_ = currentPlace();
   cancel();
   selectedAddress_.reset();
   if (nameRefresh)
@@ -851,18 +850,11 @@ void CodeText::request(int offset, quint64 serial) {
           placeAfterLoad_.reset();
         } else if (const auto place = std::exchange(placeAfterLoad_, {});
                    place && !lines_.isEmpty()) {
-          // The first shown line at or after a source line.
-          const auto shown = [this](int source) {
-            for (int i = 0; i < lines_.size(); ++i)
-              if (lines_[i].sourceLine >= source)
-                return i;
-            return int(lines_.size()) - 1;
-          };
-          cursorLine_ = shown(place->cursorLine);
+          cursorLine_ = shownLine(place->cursorLine);
           cursorColumn_ =
               std::clamp(place->cursorColumn, 0,
                          int(lines_[cursorLine_].styled.text.size()));
-          verticalScrollBar()->setValue(shown(place->topLine));
+          verticalScrollBar()->setValue(shownLine(place->topLine));
         }
         const auto mapping = payload.value("mapping_status").toString();
         status_ = session_.metadata().value("analyzed").toBool()
@@ -1671,20 +1663,31 @@ void CodeText::paintEvent(QPaintEvent *) {
     painter.setClipRect(QRect(
         gutterRight, y, std::max(0, area.width() - gutterRight), lineHeight_));
     auto &layout = lines_[i].styled.layout(font, styleStamp_, codeColor);
-    if ((!SearchHighlight.Text.isEmpty() || !highlight_.isEmpty()) &&
-        layout.lineCount()) {
+    if (layout.lineCount()) {
       const QTextLine textLine = layout.lineAt(0);
-      const bool searching = !SearchHighlight.Text.isEmpty();
-      const auto matches =
-          searching ? SearchHighlight.matches(lines_[i].styled.text)
-                    : tokenOccurrences(lines_[i].styled.text, highlight_, dots);
-      const int length =
-          searching ? SearchHighlight.Text.size() : highlight_.size();
-      for (const int at : matches) {
-        const qreal x0 = textLine.cursorToX(at);
-        const qreal x1 = textLine.cursorToX(at + length);
+      const auto fill = [&](int first, int last, ColorRole role) {
+        const qreal x0 = textLine.cursorToX(first);
+        const qreal x1 = textLine.cursorToX(last);
         painter.fillRect(QRectF(left + x0, y, x1 - x0, lineHeight_),
-                         theme.color(ColorRole::ListingHighlight));
+                         theme.color(role));
+      };
+      if (!SearchHighlight.Text.isEmpty()) {
+        for (const int at : SearchHighlight.matches(lines_[i].styled.text))
+          fill(at, at + int(SearchHighlight.Text.size()),
+               ColorRole::ListingHighlight);
+      } else {
+        // Locked words keep their colors under the cursor's highlight.
+        const auto mark = [&](const QString &word, ColorRole role) {
+          for (const auto &[first, last] :
+               highlightRanges(lines_[i].styled, word, std::nullopt, dots))
+            fill(first, last, role);
+        };
+        const auto &locks = session_.highlightLocks();
+        for (int slot = 0; slot < HighlightLocks::Colors; ++slot)
+          if (const QString word = locks.word(slot); !word.isEmpty())
+            mark(word, highlightLockRole(slot));
+        if (!highlight_.isEmpty())
+          mark(highlight_, ColorRole::ListingHighlight);
       }
     }
     QList<QTextLayout::FormatRange> selection;
@@ -1833,6 +1836,60 @@ void CodeText::revealAddress(Address address) {
     selectedAddress_ = address;
   marked_ = rows;
   viewport()->update();
+}
+
+CodeText::SourcePlace CodeText::currentPlace() const {
+  return {lines_[cursorLine_].sourceLine, cursorColumn_,
+          lines_[std::clamp(verticalScrollBar()->value(), 0,
+                            int(lines_.size()) - 1)]
+              .sourceLine};
+}
+
+int CodeText::shownLine(int sourceLine) const {
+  // Folding keeps the source order, so the shown lines' source lines rise.
+  const auto shown = std::partition_point(
+      lines_.cbegin(), lines_.cend(),
+      [sourceLine](const Line &line) { return line.sourceLine < sourceLine; });
+  return shown == lines_.cend() ? int(lines_.size()) - 1
+                                : int(shown - lines_.cbegin());
+}
+
+void CodeText::keepPlace(Address address) {
+  if (!function_ || loading_ || interrupted_ || cursorLine_ >= lines_.size())
+    return;
+  keptPlaces_.removeIf(
+      [address](const KeptPlace &kept) { return kept.address == address; });
+  if (keptPlaces_.size() >=
+      qsizetype(::neverd::limits::gui::kDisassemblyViewMaxHistory))
+    keptPlaces_.removeFirst();
+  keptPlaces_.append({address, *function_, representation_, sourceOptions_,
+                      currentPlace()});
+}
+
+bool CodeText::returnToPlace(Address address) {
+  const auto kept = std::find_if(
+      keptPlaces_.cbegin(), keptPlaces_.cend(),
+      [address](const KeptPlace &kept) { return kept.address == address; });
+  // Another function, representation or option set lays out other lines.
+  if (kept == keptPlaces_.cend() || kept->function != function_ ||
+      kept->representation != representation_ ||
+      kept->options != sourceOptions_ || interrupted_)
+    return false;
+  if (loading_) {
+    placeAfterLoad_ = kept->place;
+    return true;
+  }
+  if (lines_.isEmpty())
+    return false;
+  const auto place = kept->place;
+  {
+    const QScopedValueRollback<bool> following(following_, true);
+    moveCursor(shownLine(place.cursorLine), place.cursorColumn, false);
+  }
+  verticalScrollBar()->setValue(shownLine(place.topLine));
+  if (lines_[cursorLine_].addresses.contains(address))
+    selectedAddress_ = address;
+  return true;
 }
 
 QString CodeText::currentToken() const {

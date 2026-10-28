@@ -13,6 +13,19 @@
 #include <set>
 
 namespace neverd {
+namespace {
+/// Whether ELF's PT_GNU_RELRO covers the \p Width bytes at \p Addr.
+bool coveredByGnuRelro(const BinaryImage &Image, va_t Addr, uint64_t Width) {
+  if (Image.ELFMetadata)
+    for (const ELFProgramHeader &Header : Image.ELFMetadata->ProgramHeaders)
+      if (Header.Type == llvm::ELF::PT_GNU_RELRO &&
+          Addr >= Header.VirtualAddress &&
+          Addr - Header.VirtualAddress <= Header.MemorySize &&
+          Width <= Header.MemorySize - (Addr - Header.VirtualAddress))
+        return true;
+  return false;
+}
+} // namespace
 
 bool BinaryImage::readOnlyAfterRelocations(va_t Addr, uint64_t Width) const {
   const Segment *Seg = getSegmentFor(Addr);
@@ -26,17 +39,25 @@ bool BinaryImage::readOnlyAfterRelocations(va_t Addr, uint64_t Width) const {
       (section_names::isReadOnlyAfterRelocSectionName(Sec->Name) ||
        section_names::isReadOnlyAfterRelocSectionName(Sec->SegmentName)))
     return true;
-  if (ELFMetadata)
-    for (const ELFProgramHeader &Header : ELFMetadata->ProgramHeaders)
-      if (Header.Type == llvm::ELF::PT_GNU_RELRO &&
-          Addr >= Header.VirtualAddress &&
-          Addr - Header.VirtualAddress <= Header.MemorySize &&
-          Width <= Header.MemorySize - (Addr - Header.VirtualAddress))
-        return true;
-  return false;
+  return coveredByGnuRelro(*this, Addr, Width);
 }
 
 namespace {
+/// Whether relocation processing protects the \p Width bytes at \p Addr
+/// whatever the flags of their segment \p Seg and section \p Sec say: the
+/// loader read the protection (Segment::ReadOnlyAfterRelocations), or an ELF
+/// image keeps them in `.data.rel.ro` or under PT_GNU_RELRO. A name proves
+/// nothing in the other formats: Mach-O's `__DATA_CONST` turns read-only only
+/// with the SG_READ_ONLY flag that sets ReadOnlyAfterRelocations.
+bool relroProtected(const BinaryImage &Image, const Segment &Seg,
+                    const Section &Sec, va_t Addr, uint64_t Width) {
+  if (Seg.ReadOnlyAfterRelocations)
+    return true;
+  return Image.Format == BinaryFormat::ELF &&
+         (section_names::isDataRelRoSectionName(Sec.Name) ||
+          coveredByGnuRelro(Image, Addr, Width));
+}
+
 bool supportedImage(const BinaryImage &Image) {
   return Image.Format == BinaryFormat::MachO && Image.Bits == Bitness::Bits64 &&
          supportsImmutableImageReads(Image);
@@ -100,7 +121,10 @@ const uint8_t *mappedBytes(const BinaryImage &Image, va_t Address,
       (RequireReadable && (!Section->isReadable() || !Segment->isReadable())) ||
       Image.isCodeAddress(Address) != Code ||
       (Code && (!Section->isExecutable() || !Segment->isExecutable())) ||
-      (Immutable && !Image.readOnlyAfterRelocations(Address, Extent)) ||
+      // Storage its section or segment calls writable stays writable unless
+      // relocation processing then protects it.
+      (Immutable && (Section->isWritable() || Segment->isWritable()) &&
+       !relroProtected(Image, *Segment, *Section, Address, Extent)) ||
       Section->Size > InvalidVA - Section->VA ||
       Segment->Size > InvalidVA - Segment->VA || Section->VA < Segment->VA ||
       !rangeInBounds(Address - Section->VA, Extent, Section->Size) ||

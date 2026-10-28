@@ -1538,6 +1538,12 @@ cl::opt<bool> DiffRegions(
     "regions",
     cl::desc("Analyze overlapping native region and transformation hypotheses"),
     cl::sub(DiffCmd));
+cl::opt<bool> DiffRegionCalls(
+    "region-calls",
+    cl::desc(
+        "Include direct calls using current function pairs (enables regions; "
+        "not semantic validation)"),
+    cl::sub(DiffCmd));
 cl::opt<bool>
     DiffDataFlow("dataflow",
                  cl::desc("Capture bounded native SSA dependency evidence"),

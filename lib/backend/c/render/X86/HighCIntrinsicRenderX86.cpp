@@ -133,11 +133,6 @@ const char *x87CHelperName(X87CHelper Helper) {
   llvm_unreachable("unknown x87 C helper");
 }
 
-bool isX87ControlWord(Arch TheArch, const MedVar &V) {
-  return (TheArch == Arch::X86 || TheArch == Arch::X64) &&
-         V.Kind == MedVar::Reg && V.RegOff == x86reg::FPU_CW && V.Size == 2;
-}
-
 /// The operands the x87 value instruction of \p Helper reads.
 static unsigned x87ValueHelperOperands(X87CHelper Helper) {
   switch (Helper) {

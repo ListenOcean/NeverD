@@ -128,6 +128,8 @@ inline constexpr size_t kHighDeadStoreElimNarrowSourceConcatLocalsBudget =
 inline constexpr size_t kHighDeadStoreElimBudget = 200000;
 inline constexpr size_t kHighDeadStoreElimElimUnreadPrivateFrameStoresBudget =
     100000;
+inline constexpr size_t
+    kHighDeadStoreElimElimUndefinedEntryScratchStoresBudget = 100000;
 
 // lib/ir/high/pass/HighDemandedBytes.cpp
 inline constexpr size_t kHighDemandedBytesVisitBudget = 2000000;

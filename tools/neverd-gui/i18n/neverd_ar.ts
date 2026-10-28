@@ -344,6 +344,50 @@
         <translation>الانتقال إلى التكرار التالي للمعرّف المميَّز</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>قفل أو إلغاء القفل(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>إبقاء الكلمة المميزة مميزة بأول لون متاح، أو إلغاء قفلها</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>اللون 1(&amp;1)</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>اللون 2(&amp;2)</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>اللون 3(&amp;3)</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>اللون 4(&amp;4)</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>اللون 5(&amp;5)</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>اللون 6(&amp;6)</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>اللون 7(&amp;7)</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>اللون 8(&amp;8)</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>قفل الكلمة المميزة بهذا اللون، أو إلغاء قفل اللون</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>البحث في العرض(&amp;F)...</translation>
     </message>
@@ -1612,6 +1656,10 @@
         <translation>بحث(&amp;S)</translation>
     </message>
     <message>
+        <source>&amp;Lock highlight</source>
+        <translation>قفل التمييز(&amp;L)</translation>
+    </message>
+    <message>
         <source>&amp;View</source>
         <translation>عرض(&amp;V)</translation>
     </message>
@@ -2315,6 +2363,14 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Laying out graph…</source>
         <translation>جارٍ تخطيط الرسم البياني…</translation>
+    </message>
+    <message>
+        <source>From %1</source>
+        <translation>من %1</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>إلى %1</translation>
     </message>
 </context>
 <context>
@@ -6951,6 +7007,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 هويات المراجع: غير محسومة. لا يمكن مقارنة بعض أهداف الاستدعاءات أو البيانات. وهذا وحده لا يثبت حدوث تغيير.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>تضمين الاستدعاءات المتطابقة</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>توسيع المناطق المشتركة عبر الاستدعاءات المباشرة التي تمت مطابقة أهدافها. تعتمد النتائج على أزواج الدوال الحالية ويعاد حسابها عند تغير الأزواج. لا يتحقق هذا من سلوك الاستدعاءات.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -8103,6 +8167,30 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 طريقة SSA: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+تستخدم الاستدعاءات أزواج الدوال الحالية؛ لم يتم التحقق من السلوك.</translation>
+    </message>
+    <message>
+        <source>Call context…</source>
+        <translation>سياق الاستدعاءات…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>الأساسي</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>الثانوي</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 دوال أساسية / %2 دوال ثانوية · %3 نطاقات مشتركة
+التغطية: %4% / %5% من التعليمات المؤهلة، بما فيها الاستدعاءات المباشرة المتطابقة. يعتمد هذا الدليل على أزواج الدوال؛ لم يتم التحقق من السلوك.</translation>
     </message>
 </context>
 <context>
@@ -9648,6 +9736,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
     <message>
         <source>Releases</source>
         <translation>الإصدارات</translation>
+    </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>تستند الاستدعاءات في هذه المقاطع المحفوظة إلى أزواج الدوال في التقرير المصدر. وهي لا تثبت تكافؤ سلوك الدوال المستدعاة.</translation>
+    </message>
+    <message>
+        <source>All native spans</source>
+        <translation>كل المقاطع الأصلية</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>كل مقاطع SSA</translation>
     </message>
 </context>
 <context>

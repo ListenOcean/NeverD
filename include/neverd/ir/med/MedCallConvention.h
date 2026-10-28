@@ -29,6 +29,7 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <cstddef>
@@ -193,6 +194,28 @@ const CallArgumentConvention *callArgumentConvention(Arch A, BinaryFormat F);
 inline bool isIncomingRegisterSave(const TargetRegInfo &TRI, const MedVar &V) {
   return V.Kind == MedVar::Reg && V.SSAVer == 0 &&
          (TRI.isCalleeSaveReg(V.RegOff) || TRI.isLinkRegister(V.RegOff));
+}
+
+/// The incoming value of a scratch register that carries no argument is
+/// undefined where the convention says so: storing it, as an alignment
+/// `push rax` does, passes nothing and defines no byte (call-argument
+/// recovery and HighIR dead-store elimination apply the same rule).  Only a
+/// general-purpose register qualifies; vector argument registers keep their
+/// values.  The incoming value is version 0 of the register, which no
+/// renaming made a local: HighIR's renamed locals are version 0 as well.
+inline bool isUndefinedIncomingScratch(const TargetRegInfo &TRI, Arch TheArch,
+                                       const CallArgumentConvention *Convention,
+                                       llvm::ArrayRef<uint64_t> ArgRegs,
+                                       const MedVar &V) {
+  if (!Convention || !Convention->UndefinedIncomingScratchRegisters ||
+      V.Kind != MedVar::Reg || V.SSAVer != 0 || V.RenameTag >= 0 ||
+      TRI.isStackPointer(V.RegOff) || TRI.isCalleeSaveReg(V.RegOff) ||
+      TRI.isLinkRegister(V.RegOff))
+    return false;
+  const std::optional<unsigned> Family = gprFamilyOf(TheArch, V.RegOff);
+  return Family && llvm::none_of(ArgRegs, [&](uint64_t Reg) {
+           return gprFamilyOf(TheArch, Reg) == Family;
+         });
 }
 
 } // namespace neverd

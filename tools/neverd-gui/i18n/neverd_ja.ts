@@ -344,6 +344,50 @@
         <translation>ハイライトされた識別子の次の出現位置へ移動します</translation>
     </message>
     <message>
+        <source>Lock or &amp;unlock</source>
+        <translation>ロックまたはロック解除(&amp;U)</translation>
+    </message>
+    <message>
+        <source>Keep the highlighted word highlighted in the first free color, or unlock it</source>
+        <translation>ハイライトされた単語を最初の空いている色でハイライトしたままにするか、ロックを解除します</translation>
+    </message>
+    <message>
+        <source>Color &amp;1</source>
+        <translation>色 1(&amp;1)</translation>
+    </message>
+    <message>
+        <source>Color &amp;2</source>
+        <translation>色 2(&amp;2)</translation>
+    </message>
+    <message>
+        <source>Color &amp;3</source>
+        <translation>色 3(&amp;3)</translation>
+    </message>
+    <message>
+        <source>Color &amp;4</source>
+        <translation>色 4(&amp;4)</translation>
+    </message>
+    <message>
+        <source>Color &amp;5</source>
+        <translation>色 5(&amp;5)</translation>
+    </message>
+    <message>
+        <source>Color &amp;6</source>
+        <translation>色 6(&amp;6)</translation>
+    </message>
+    <message>
+        <source>Color &amp;7</source>
+        <translation>色 7(&amp;7)</translation>
+    </message>
+    <message>
+        <source>Color &amp;8</source>
+        <translation>色 8(&amp;8)</translation>
+    </message>
+    <message>
+        <source>Lock the highlighted word in this color, or unlock the color</source>
+        <translation>ハイライトされた単語をこの色でロックするか、この色のロックを解除します</translation>
+    </message>
+    <message>
         <source>&amp;Find in view...</source>
         <translation>ビュー内を検索(&amp;F)...</translation>
     </message>
@@ -1612,6 +1656,10 @@
         <translation>検索(&amp;S)</translation>
     </message>
     <message>
+        <source>&amp;Lock highlight</source>
+        <translation>ハイライトのロック(&amp;L)</translation>
+    </message>
+    <message>
         <source>&amp;View</source>
         <translation>表示(&amp;V)</translation>
     </message>
@@ -2290,6 +2338,14 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Laying out graph…</source>
         <translation>グラフをレイアウト中…</translation>
+    </message>
+    <message>
+        <source>From %1</source>
+        <translation>%1 から</translation>
+    </message>
+    <message>
+        <source>To %1</source>
+        <translation>%1 へ</translation>
     </message>
 </context>
 <context>
@@ -6771,6 +6827,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 参照の識別情報：未解決。一部の呼び出し先またはデータ参照先を比較できません。これだけでは変更があったとは判断できません。</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>対応付け済みの呼び出しを含める</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>呼び出し先が対応付けられた直接呼び出しをまたいで共有領域を拡張します。結果は現在の関数の対応付けに依存し、対応付けが変わると再計算されます。呼び出しの動作は検証しません。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7923,6 +7987,30 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 SSA 分析方式: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+呼び出しは現在の関数の対応付けに基づきます。動作は未検証です。</translation>
+    </message>
+    <message>
+        <source>Call context…</source>
+        <translation>呼び出しコンテキスト…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>主入力の関数 %1 / 副入力の関数 %2 · 共有範囲 %3
+対象命令のカバレッジ：%4% / %5%（対応付け済みの直接呼び出しを含む）。この証拠は関数の対応付けを前提とし、動作は未検証です。</translation>
     </message>
 </context>
 <context>
@@ -9468,6 +9556,18 @@ Ambiguities and manual decisions remain report-local. Region hypotheses retain t
     <message>
         <source>Releases</source>
         <translation>リリース</translation>
+    </message>
+    <message>
+        <source>Calls in these saved spans rely on the source report's function pairs. They do not prove equivalent callee behavior.</source>
+        <translation>保存された区間内の呼び出しは、元のレポートの関数対応に基づきます。呼び出し先の動作の等価性を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>All native spans</source>
+        <translation>すべてのネイティブ区間</translation>
+    </message>
+    <message>
+        <source>All SSA spans</source>
+        <translation>すべての SSA 区間</translation>
     </message>
 </context>
 <context>
