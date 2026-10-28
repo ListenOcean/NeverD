@@ -1701,16 +1701,16 @@ void HighCWriter::writeStmtImpl(const HighStmt &Stmt, int Indent) {
     emitIndent(Indent);
     if (Clause.Kind == HighEHClauseKind::SEHFinally) {
       OS << "} __finally {\n";
+      // Keep the termination handler's address visible whether or not its
+      // body was projected into the clause.
+      emitIndent(Indent + 1);
+      OS << "/* finally handler @ 0x"
+         << llvm::utohexstr(Clause.FilterOrActionVA) << " */\n";
       {
         const bool SavedHandler = InEHClauseBody;
         InEHClauseBody = true;
         writeStmtsIsolated(Stmt.EHClauseBodies.front(), Indent + 1);
         InEHClauseBody = SavedHandler;
-      }
-      if (Stmt.EHClauseBodies.front().empty()) {
-        emitIndent(Indent + 1);
-        OS << "/* finally handler @ 0x"
-           << llvm::utohexstr(Clause.FilterOrActionVA) << " */\n";
       }
     } else {
       OS << "} __except (";

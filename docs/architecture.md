@@ -6558,6 +6558,13 @@ follows its `bx lr`: the PC then equals a literal-pool address, and treating it
 as a reference to that word made the rebuilt access depend on where the copied
 code sat.
 
+ARM and Thumb control comes from the decoded instruction
+(`ARMLifter::classifyControl`). A load of PC returns only when it pops:
+`pop {..., pc}`, an LDM from SP, or `ldr pc, [sp], #N` with N a positive
+multiple of four. MSVC uses that last form to release the register arguments
+a function homed above its saved return address. Any other load of PC is an
+indirect branch.
+
 After ARM call-arity recovery, MedIR propagates a proven pointer parameter
 through direct calls only when the argument is the exact incoming parameter;
 computed register versions do not inherit that role. HighC uses the same
@@ -12652,6 +12659,32 @@ an SEH scope table or Itanium LSDA, where `attachCxxFuncletBodies` places catch
 and cleanup funclets. `exceptionClausesUseFunctionFrame` owns this distinction
 for parameter, return and stored-result rendering; SEH and Itanium clause
 bodies are the function's own code.
+
+A Windows x64 `__finally` is an out-of-line termination handler the runtime
+calls with the parent's EstablisherFrame as its second argument and an
+abnormal-termination flag as its first; the handler reaches the parent's
+locals through `EstablisherFrame + k`. For a parent without a frame register
+that frame is the entry stack pointer less the prologue's fixed allocations,
+which `proveLowSEHTerminationFrame` (`lib/ir/low/SEHEstablisherFrame.cpp`)
+certifies from the normalized unwind codes cross-checked against the decoded
+prologue, refusing a frame register, a stack adjustment on any path into the
+guarded scope, or chained or incomplete unwind data. The bytes it returns ride
+`MedFunc::SEHTerminationFrameBytes` to HighIR, where `attachSEHFinallyBodies`
+(`lib/ir/high/structure/X86/X64SEHFinallyBodies.cpp`) projects the handler's
+body into the empty `__finally` clause: the establisher parameter is rebased
+onto the parent's entry stack pointer, each home-slot load becomes the
+parameter it holds, and the abnormal argument becomes `AbnormalTermination()`.
+Because a C `__finally` runs on the normal exit too, the compiler's inline
+normal-path copy must not run twice: when the handler ignores the abnormal flag
+and its statements equal that copy, the copy is removed and the clause holds
+the whole body; otherwise the copy stays and the clause holds only the abnormal
+work under `if (AbnormalTermination())`. A handler whose frame is not certified,
+whose body is unavailable or has its own exception scope, or whose `__try`
+transfers control out, nests another region or calls `_local_unwind` keeps its
+address comment: the machine runs the handler on such an exit while C would
+not, so the clause stays out of line until that call becomes a structured
+jump. The projection runs in the plain-C view as well as the C++ one, because
+SEH is C.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 
