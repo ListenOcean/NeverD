@@ -73,7 +73,7 @@ enum class CallXInputExpressionKind : uint8_t {
   InputRegister,
   Constant,
   Instruction,
-  /// A complete union of affine entry-input/constant leaves.
+  /// A complete bounded union of entry-input expression alternatives.
   InputAlternatives,
 };
 
@@ -145,6 +145,7 @@ struct CallXSummaryEdge {
   bool PreservedOlderFrames = false;
   bool AppliedMemoryEffects = false;
   size_t AppliedStoredValues = 0;
+  bool InstantiatedReturnInputExpression = false;
   std::optional<size_t> InstantiatedCopySlot;
   uint64_t InstantiatedCopyBytes = 0;
   bool GeneralizedInputs = false;
@@ -233,6 +234,7 @@ struct CallXContextReport {
   std::vector<CallXInputMemoryGuard> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
   size_t InstantiatedStoredValueInputExpressions = 0;
+  size_t InstantiatedReturnInputExpressions = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.

@@ -408,6 +408,15 @@ and frame-tagged values cannot become literal code addresses. Schema 8 adds
 `instantiated_stored_value_input_expressions` for applied field expressions.
 The existing work, retained-state and output budgets remain in force.
 
+Schema 10 also evaluates a live generic return expression against the actual
+caller's pre-call parameters and scratch, before invalidating callee writes.
+This uses the same guarded expression evaluator as target and output-field
+instantiation; a target-only overlay does not supply the return fact. Every
+union member must evaluate completely, including captured-load timing and
+alias invalidation. Summary edges expose `instantiated_return_input_expression`,
+and `instantiated_return_input_expressions` counts successful computations
+(including solver contexts later reclaimed), separately from target coverage.
+
 The symbolic origin lane uses the same complete finite domain as concrete
 registers. A register selecting several entry parameters can feed a common
 store or return after the join; nested summaries substitute every origin and
@@ -427,6 +436,12 @@ proof records their complete union. Unknown bindings and more than four values
 supply no proof. An unbound affine leaf can be rejected before evaluating a
 transfer. Target-expression evidence retains the generic callee's conservative
 return and memory effects.
+
+Schema 10 additionally accepts complete loaded-expression members at CFG,
+return and full-width output-field joins. Each member retains its preceding
+write guard, and unary transfers can consume a nested union. The same
+four-alternative limit applies throughout; an unknown member still absorbs
+the complete expression.
 
 Blocks join every remaining CFG predecessor, including the initial loop entry.
 A conditional successor is excluded only when every value alternative agrees
@@ -543,7 +558,7 @@ still makes that carrier live. Block-entry joins project register values,
 origins and expression carriers through the same input mask, retaining the
 frame anchor. They retain scratch and stored postconditions; only a deferred
 read's preceding-write bookkeeping can be dropped when no future input-memory
-read is possible. Differing loaded roots and unsupported affine
+read is possible. Unknown loaded members and unsupported affine
 substitutions remain unknown. This composition supplies target templates; it
 does not specialize a generic callee's return or memory result with a target
 overlay.
