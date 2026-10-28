@@ -98,8 +98,10 @@ the code or the disassembly, add none, so Back returns to where the jump began
 and Forward to where the user left. The arrow beside the Back or Forward
 toolbar button lists the stops it reaches, nearest first, as IDA's does: each
 names its place, `main+1DA (2A2A)` or a segment and address outside a
-function, then the instruction or data the listing shows there. Picking one
-goes that many steps at once, and the stops on both sides stay. Imports and
+function, then the instruction or data the listing shows there. With a code
+window in focus, a stop it left names the line Back returns it to, numbered as
+its margin numbers it: `main:83 (2A2A)`. Picking one goes that many steps at
+once, and the stops on both sides stay. Imports and
 global objects continue to open at their addresses in the disassembly or hex
 view.
 Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the

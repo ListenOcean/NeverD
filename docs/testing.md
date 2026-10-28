@@ -5084,6 +5084,9 @@ those moves and Forward returns to them; `backAndForwardButtonsListTheirStops`
 opens the Back and Forward buttons' lists after three jumps and checks their
 stops, nearest first, and their names, that a pick goes two steps at once and
 keeps the stops beyond it, and that the Jump menu's commands stay plain;
+`historyListsNameTheCodeLineBackReturnsTo` double-clicks a call in C and checks
+that the Back list names the call's line, and the listing's place once the code
+shows LLVM C or the disassembly has focus;
 `bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
 brackets nested, lines apart and around a folded block, on brackets of a
 string and a comment, and just past a bracket, and checks which pair;
