@@ -4581,11 +4581,11 @@ pseudocode views. Without a selection, Ctrl+C and Edit Copy take the clicked
 word, the word an arrow key reaches and a right-clicked word. Blank space
 leaves the clipboard as it was, and a selection still wins. Keys move the
 listing's highlight with the copied word.
-`WorkbenchTests::cPseudocodeSplitsMemberAccesses` copies each word of
-`Device->Links.Flink` in C pseudocode, and
-`WorkbenchUnitTests::cWordsSplitMemberAccessesAtTheirDot` checks the word
-bounds and whole-word highlights behind it, dotted names kept whole outside
-C. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+`WorkbenchTests::pseudocodeSplitsMemberAccesses` copies each word of
+`Device->Links.Flink` in C pseudocode and of `main.main` in Go pseudocode, and
+`WorkbenchUnitTests::pseudocodeWordsSplitMemberAccessesAtTheirDot` checks the
+word bounds and whole-word highlights behind it, dotted names kept whole
+outside pseudocode. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
