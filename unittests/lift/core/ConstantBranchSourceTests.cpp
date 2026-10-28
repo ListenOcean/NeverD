@@ -111,9 +111,12 @@ TEST(ConstantBranchSource, DirectAndJoinedEdgesKeepTheTargetInsideItsFunction) {
             Options.OnlyFunctionEntries = {Image.Entry};
             auto Result = Pipeline().run(Image, Context, Options);
             ASSERT_TRUE(Result.Success) << Result.Error;
-            std::string Source;
+            // Execute the scalar body on the host without requiring target
+            // platform headers (notably Windows intrin.h on Linux).
+            std::string Source = "#include <stdint.h>\n#include <string.h>\n";
             llvm::raw_string_ostream Output(Source);
             CEmitterOptions COptions;
+            COptions.EmitIncludes = false;
             COptions.TheArch = Architecture;
             COptions.Format = Format;
             COptions.Image = &Image;
