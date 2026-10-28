@@ -2226,4 +2226,6 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 
 `NeverDSymbolicCallEffectTests` は両分岐、先行する呼び出し効果、繰り返し呼び出し、経路合流後の完全な条件を提供者が受け取ることも検査します。矛盾した効果は後続の操作と提供者呼び出しを停止します。これはソルバーを使わない探索回帰であり、外部 API 契約の検証ではありません。
 
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` と交換の対照テストは O0/O2 と UBSan で両 C 経路を実行し、x64 の全4幅、非整列アドレス、旧値、隣接バイトを確認します。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` は元の LLVM IR も実行し、未使用結果の書き込みを保持し、変更されたアセンブリ契約を拒否します。FS/GS はコンパイルのみでホスト TLS に触れません。実行には x64 ホストが必要で、競合やハードウェア障害の認証ではありません。
+
 `X86LegacyAtomic.LockedArithmetic*` は x86/x64 の幅、独立した算術フラグ、入力レジスタとキャリーの保持、符号付き即値、非整列の隣接バイト、読み取り専用・部分マッピング、FS/GS、ロックなしの対照を検証します。未対応のロック付き演算を通常のストアに変換しません。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` は四種類の命令の特化と、順序付きメモリの証明拒否を確認します。

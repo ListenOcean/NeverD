@@ -1556,8 +1556,13 @@ std::string HighCWriter::renderUnaryOp(const HighExpr &E, int ParentPrec) {
         return exprStr(*Call, ParentPrec);
     }
     auto &Inner = *E.Operands[0];
-    if (Inner.Kind == ExprKind::Const)
-      return exprStr(Inner, ParentPrec);
+    // A literal printed negative would convert by sign extension; it takes
+    // the unsigned view below instead.
+    if (Inner.Kind == ExprKind::Const) {
+      std::string Literal = exprStr(Inner, ParentPrec);
+      if (!llvm::StringRef(Literal).ltrim('(').starts_with("-"))
+        return Literal;
+    }
     if (Inner.Type && E.Type && Inner.Type->Size == E.Type->Size)
       return exprStr(Inner, ParentPrec);
     if (isPlainInteger(E.Type) && printsTruthValue(Inner))
@@ -2878,9 +2883,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
     // A bare -1 is an int; default argument promotions cannot make it a
     // 64-bit all-ones value. Keep the complete expression, including any
     // narrowing or zero/sign extension, before selecting its wide C carrier.
+    // Only a negative literal changes value this way. A non-negative literal
+    // takes a C type wide enough for its value, and a string or an address
+    // already passes as the pointer it names: both keep their spelling.
     if (Imm && !PointerArgument && !DefinedParam &&
         (!Prototype || I >= Prototype->ParamCount) && Op->Type &&
-        Op->Type->Kind == NdTypeKind::Int && Op->Type->Size > 4)
+        Op->Type->Kind == NdTypeKind::Int && Op->Type->Size > 4 &&
+        llvm::StringRef(Arg).starts_with("-"))
       Arg = "(" + typeToC(Op->Type) + ")" + castOperand(exprStr(*Op));
     if (!Imm && !PointerArgument && Op->Type && Op->Type->Size >= 4 &&
         (!DefinedParam || (DefinedParam->Kind == NdTypeKind::Int &&
@@ -3627,8 +3636,7 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
     if (auto Backing = imageBackingAddress(*VA))
       return *Backing;
   }
-  const HighExpr *Inner =
-      ProjectImageBacking ? &E : &intrinsicOperandExpr(E);
+  const HighExpr *Inner = ProjectImageBacking ? &E : &intrinsicOperandExpr(E);
   if (!Inner)
     Inner = &E;
   if (Inner->Kind == ExprKind::BinOp &&
@@ -5944,6 +5952,20 @@ TypeRef HighCWriter::fixedCalleeFunctionType(const FunctionSym &Callee) const {
   return hasCSpelling(NdType::makePtr(Function)) ? Function : nullptr;
 }
 
+std::string
+HighCWriter::authenticatedCalleeStr(const HighExpr &E,
+                                    llvm::StringRef FunctionPointerType) {
+  if (E.Kind != ExprKind::Call || E.IntrinsicId != Intrinsic::A64_AuthBranch ||
+      E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
+      !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
+      E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
+      Opts.TheArch != Arch::AArch64)
+    throw std::invalid_argument(kAArch64PAuthMalformedCall);
+  return aarch64PAuthAuthenticatedCalleeC(
+      FunctionPointerType, exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
+      exprStr(*E.Operands[2]));
+}
+
 std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                            const TypeRef &ReturnType,
                                            const TypeRef &FunctionType) {
@@ -5957,17 +5979,9 @@ std::string HighCWriter::indirectCalleeStr(const HighExpr &E,
                                                 : NdType::makeVoid(),
                                      "(*)()")) +
       ")";
-  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch) {
-    if (E.Operands.size() != 3 || !E.Operands[0] || !E.Operands[1] ||
-        !E.Operands[2] || E.Operands[1]->Kind != ExprKind::Const ||
-        E.Operands[1]->ConstVal > kAArch64PAuthKeyIB ||
-        Opts.TheArch != Arch::AArch64)
-      throw std::invalid_argument(kAArch64PAuthMalformedCall);
-    return aarch64PAuthAuthenticatedCalleeC(
-        llvm::StringRef(CalleeType).drop_front().drop_back(),
-        exprStr(*E.Operands[0]), exprStr(*E.Operands[1]),
-        exprStr(*E.Operands[2]));
-  }
+  if (E.Kind == ExprKind::Call && E.IntrinsicId == Intrinsic::A64_AuthBranch)
+    return authenticatedCalleeStr(
+        E, llvm::StringRef(CalleeType).drop_front().drop_back());
   if (FunctionType)
     if (auto Pointer =
             implicitPointerConversion(E, NdType::makePtr(FunctionType)))
@@ -7897,8 +7911,8 @@ const HighExpr *HighCWriter::indexedImageBase(const HighExpr &Address) const {
 
 std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::sizedObjectAt(va_t Addr) const {
-  const auto &SizedObjects = DataObjects->SizedObjects;
-  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
+  const auto &SizedObjects = dataObjects().SizedObjects;
+  const auto &SizedObjectReach = dataObjects().SizedObjectReach;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
@@ -7932,9 +7946,9 @@ HighCWriter::indexedObjectAt(va_t Addr) const {
   if (!Size || Size > std::numeric_limits<va_t>::max() - Begin)
     return std::nullopt;
   va_t End = Begin + Size;
-  const auto &SizedObjects = DataObjects->SizedObjects;
-  const auto &SizedObjectReach = DataObjects->SizedObjectReach;
-  const auto &DataSymbolStarts = DataObjects->DataSymbolStarts;
+  const auto &SizedObjects = dataObjects().SizedObjects;
+  const auto &SizedObjectReach = dataObjects().SizedObjectReach;
+  const auto &DataSymbolStarts = dataObjects().DataSymbolStarts;
   const auto After = llvm::upper_bound(
       SizedObjects, Addr,
       [](va_t A, const std::pair<va_t, uint64_t> &O) { return A < O.first; });
@@ -8878,8 +8892,8 @@ bool HighCWriter::stmtHiddenFromC(const HighStmt &Stmt) const {
     return HideEHRuntimeMemory && Space == NdMemoryAddressSpace::X86FS;
   };
   auto IsForeignFuncletParam = [&](const HighExpr &E) {
-    if (!InEHClauseBody || !CurrentFunc ||
-        exceptionClausesUseFunctionFrame() || !isParamCopy(E))
+    if (!InEHClauseBody || !CurrentFunc || exceptionClausesUseFunctionFrame() ||
+        !isParamCopy(E))
       return false;
     const HighExpr *Src = unwrapIntegerView(&E);
     if (!Src)

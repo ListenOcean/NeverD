@@ -14,7 +14,9 @@ struct LowFunc;
 struct LowBlock;
 struct LowOp;
 
-/// Consume a checked source call's cleanup before forming stack SSA.
+/// Consume a checked source call's cleanup before forming stack SSA: the one
+/// a complete registration proof binds to this call, or else a direct
+/// callee's proven return cleanup (RegistrationStateAnalysis::CalleeStacks).
 std::optional<uint32_t> registrationCallStackPop(const LowFunc &Func,
                                                  const LowBlock &Block,
                                                  const LowOp &Call);

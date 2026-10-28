@@ -2327,4 +2327,6 @@ Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallE
 
 `NeverDSymbolicCallEffectTests` comprueba también las condiciones de ambas ramas, efectos anteriores, llamadas repetidas y la disyunción completa tras fusionar rutas. Un efecto contradictorio bloquea las operaciones y callbacks posteriores. Estas regresiones sin solver no validan contratos de API externas.
 
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` y los controles de intercambio ejecutan ambas rutas C con O0/O2 y UBSan: cuatro anchos x64, direcciones desalineadas, valor anterior y bytes vecinos. `LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` ejecutan también el IR LLVM original, conservan escrituras con resultado sin usar y rechazan contratos alterados. FS/GS solo se compila, sin acceder al TLS anfitrión. La ejecución requiere x64 y no certifica contención ni fallos de hardware.
+
 `X86LegacyAtomic.LockedArithmetic*` comprueba anchos x86/x64, banderas independientes, registros fuente y acarreo, inmediatos con signo, bytes vecinos desalineados, mapeos truncados o de solo lectura, FS/GS y controles sin bloqueo. Las operaciones bloqueadas no admitidas no pueden producir escrituras ordinarias. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` verifica las cuatro formas y conserva el rechazo de pruebas para memoria ordenada.

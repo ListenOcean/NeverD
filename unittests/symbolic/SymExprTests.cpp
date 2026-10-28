@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <array>
 #include <random>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1235,6 +1236,59 @@ TEST(SymExpr, NativeAssociativeEvaluationMatchesFullWidthArithmetic) {
         }
       }
     }
+  }
+}
+
+TEST(SymExpr, WideConstantSlotsSurviveInterruptedInputLookup) {
+  for (unsigned Width : {8u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto Literal =
+        llvm::APInt(Width, 7) | llvm::APInt::getOneBitSet(Width, Width - 3);
+    const auto Root = Ctx.mkAdd(X, Ctx.mkConst(Literal));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_THROW(Plan.evalWith([](uint32_t) -> const llvm::APInt * {
+      throw std::runtime_error("interrupted lookup");
+    }),
+                 std::runtime_error);
+    for (const auto &Value : {llvm::APInt(Width, 5), llvm::APInt(Width, 0),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 1)}) {
+      const auto Actual = Plan.evalWith([&](uint32_t Id) {
+        EXPECT_EQ(Id, Ctx.varId(X));
+        return &Value;
+      });
+      ASSERT_EQ(Actual, Value + Literal);
+    }
+  }
+}
+
+TEST(SymExpr, EvaluationPlansKeepInterleavedConstantSlots) {
+  for (unsigned Width : {8u, 16u, 64u, 65u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    const auto X = Ctx.mkVar("x", Width);
+    const auto K = llvm::APInt::getOneBitSet(Width, Width - 1) | 7;
+    const llvm::APInt L(Width, 19), Three(Width, 3);
+    const auto Root =
+        Ctx.mkXor(Ctx.mkAdd(X, Ctx.mkConst(K)),
+                  Ctx.mkMul(Ctx.mkConst(Three), Ctx.mkXor(X, Ctx.mkConst(L))));
+    SymEvalPlan Plan(Ctx, Root);
+    EXPECT_EQ(Plan.numSteps(), Ctx.dagSize(Root));
+    for (const auto &Value : {llvm::APInt(Width, 0), llvm::APInt(Width, 5),
+                              llvm::APInt::getAllOnes(Width),
+                              llvm::APInt::getOneBitSet(Width, Width - 2)}) {
+      const auto Expected = (Value + K) ^ (Three * (Value ^ L));
+      EXPECT_EQ(Plan.evalWith([&](uint32_t) { return &Value; }), Expected);
+      if (Width <= 64)
+        EXPECT_EQ(
+            Plan.evalU64With([&](uint32_t) { return Value.getZExtValue(); }),
+            Expected.getZExtValue());
+    }
+    EXPECT_EQ(
+        Plan.evalWith([](uint32_t) -> const llvm::APInt * { return nullptr; }),
+        K ^ (Three * L));
   }
 }
 

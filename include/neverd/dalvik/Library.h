@@ -95,7 +95,9 @@ enum LibraryOperation {
   BinderAllowBlocking,
   BinderQueryLocalInterface,
   ServiceAsBinder,
-  StatLoggerRecord
+  StatLoggerRecord,
+  EventLogWrite,
+  ParcelData
 };
 struct LibraryMethod {
   const char *Class, *Name, *Signature;

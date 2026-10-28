@@ -105,9 +105,14 @@ bool neverd::assignAnalystCallABI(SourceCallTypeHint &Hint, Arch Architecture,
   }
   Signature.Origin = SourceFunctionTypeHint::OriginKind::ExplicitSource;
   Signature.Architecture = Architecture;
-  if (Hint.AnalystFixedCount >= 0 && Format == BinaryFormat::MachO)
-    return assignDarwinVariadicSourceABI(Signature, Hint.AnalystFixedCount,
-                                         Architecture, Error);
+  if (Format == BinaryFormat::MachO) {
+    if (Hint.AnalystFixedCount >= 0)
+      return assignDarwinVariadicSourceABI(Signature, Hint.AnalystFixedCount,
+                                           Architecture, Error);
+    // Fixed and variadic source calls share Darwin's scalar extension and
+    // packed-stack contract with recovered native declarations.
+    return assignDarwinScalarSourceABI(Signature, Architecture, Error);
+  }
   if (Hint.AnalystFixedCount >= 0 && Architecture == Arch::X64 &&
       Format == BinaryFormat::ELF)
     return assignSysVX64VariadicSourceABI(Signature, Hint.AnalystFixedCount,

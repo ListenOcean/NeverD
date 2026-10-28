@@ -2322,4 +2322,6 @@ Per modificare questa postcondizione di memoria, eseguire insieme `NeverDSymboli
 
 `NeverDSymbolicCallEffectTests` verifica anche le condizioni di entrambi i rami, gli effetti precedenti, le chiamate ripetute e la disgiunzione completa dopo l’unione dei percorsi. Un effetto contraddittorio blocca operazioni e callback successivi. Queste regressioni senza solver non convalidano contratti di API esterne.
 
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` e i controlli di scambio eseguono entrambe le vie C con O0/O2 e UBSan: quattro larghezze x64, indirizzi non allineati, vecchio valore e byte adiacenti. `LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` eseguono anche l’IR LLVM originale, conservano scritture con risultato inutilizzato e rifiutano contratti alterati. FS/GS viene solo compilato, senza accedere al TLS host. L’esecuzione richiede x64 e non certifica contesa o guasti hardware.
+
 `X86LegacyAtomic.LockedArithmetic*` verifica larghezze x86/x64, flag indipendenti, registri sorgente e riporto, immediati con segno, byte adiacenti non allineati, mapping troncati o in sola lettura, FS/GS e controlli senza blocco. Le operazioni bloccate non supportate non possono produrre store ordinari. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` controlla le quattro forme e mantiene il rifiuto delle prove sulla memoria ordinata.

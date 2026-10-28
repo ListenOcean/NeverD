@@ -42,6 +42,7 @@
 #include "llvm/ADT/DenseMap.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/Support/Compiler.h"
 
 #include <algorithm>
 #include <array>
@@ -352,19 +353,14 @@ bool agreeOnAssignments(const SymContext &Ctx,
   return true;
 }
 
-// Cancel only identical complete addends, with their multiplicities, in the
-// same modular ring. The remaining sums have exactly the same difference at
-// every assignment; no sampling is used to establish the cancellation itself.
-std::optional<bool> agreeAfterCancelingAddends(const SymContext &Ctx, SymRef A,
-                                               SymRef B, unsigned Samples) {
-  if (Ctx.op(A) != SymOp::Add || Ctx.op(B) != SymOp::Add ||
-      Ctx.width(A) != Ctx.width(B))
-    return std::nullopt;
+bool splitCommonOperands(const SymContext &Ctx, SymRef A, SymRef B,
+                         llvm::SmallVectorImpl<SymRef> &Common,
+                         llvm::SmallVectorImpl<SymRef> &LeftRest,
+                         llvm::SmallVectorImpl<SymRef> &RightRest) {
   llvm::SmallVector<SymRef, 8> Left(Ctx.operands(A)), Right(Ctx.operands(B));
   // Canonical additions order scaled terms by their base, not their full node.
   llvm::sort(Left);
   llvm::sort(Right);
-  llvm::SmallVector<SymRef, 8> Common, LeftRest, RightRest;
   size_t I = 0, J = 0;
   while (I < Left.size() && J < Right.size()) {
     if (Left[I] == Right[J]) {
@@ -376,10 +372,158 @@ std::optional<bool> agreeAfterCancelingAddends(const SymContext &Ctx, SymRef A,
       RightRest.push_back(Right[J++]);
     }
   }
-  if (Common.empty())
-    return std::nullopt;
   LeftRest.append(Left.begin() + I, Left.end());
   RightRest.append(Right.begin() + J, Right.end());
+  return !Common.empty();
+}
+
+// A product's unchanged factors need evaluating only if the two remaining
+// products differ at this assignment. They are never canceled from equality:
+// an even common factor can annihilate a nonzero modular difference.
+std::optional<bool>
+agreeAfterFactoringProducts(const SymContext &Ctx, SymRef A, SymRef B,
+                            unsigned Samples,
+                            llvm::ArrayRef<SymRef> Canceled = {},
+                            llvm::ArrayRef<SymRef> LeftAddends = {},
+                            llvm::ArrayRef<SymRef> RightAddends = {}) {
+  if (Ctx.op(A) != SymOp::Mul || Ctx.op(B) != SymOp::Mul ||
+      Ctx.width(A) != Ctx.width(B))
+    return std::nullopt;
+  llvm::SmallVector<SymRef, 8> Common, LeftRest, RightRest;
+  if (!splitCommonOperands(Ctx, A, B, Common, LeftRest, RightRest))
+    return std::nullopt;
+  // A small intersection cannot justify splitting the larger changed DAGs
+  // into per-factor plans. Keep their internal sharing in the complete-plan
+  // path; factoring is useful when unchanged factors dominate the remainder.
+  if (Common.size() < LeftRest.size() + RightRest.size())
+    return std::nullopt;
+
+  const uint32_t Width = Ctx.width(A);
+  llvm::SmallVector<uint32_t, 16> Vars;
+  for (SymRef R : Canceled)
+    Ctx.collectVars(R, Vars);
+  for (SymRef R : Common)
+    Ctx.collectVars(R, Vars);
+  bool Native = Width <= 64 && llvm::all_of(Vars, [&](uint32_t Id) {
+                  return Ctx.varInfo(Id).Width <= 64;
+                });
+  std::vector<SymEvalPlan> CommonPlans, LeftPlans, RightPlans, LeftSumPlans,
+      RightSumPlans;
+  auto Compile = [&](llvm::ArrayRef<SymRef> Factors,
+                     std::vector<SymEvalPlan> &Plans) {
+    Plans.reserve(Factors.size());
+    for (SymRef R : Factors) {
+      SymEvalPlan &Plan = Plans.emplace_back(Ctx, R);
+      Native &= Plan.fitsU64();
+      Vars.append(Plan.vars().begin(), Plan.vars().end());
+    }
+  };
+  Compile(LeftRest, LeftPlans);
+  Compile(RightRest, RightPlans);
+  Compile(LeftAddends, LeftSumPlans);
+  Compile(RightAddends, RightSumPlans);
+  // Keep every original input in the assignment stream, but lower unchanged
+  // factors only if a nonzero sampled difference actually reaches them.
+  auto CommonPlan = [&](size_t I) -> SymEvalPlan & {
+    if (CommonPlans.size() == I) {
+      if (!I)
+        CommonPlans.reserve(Common.size());
+      CommonPlans.emplace_back(Ctx, Common[I]);
+    }
+    return CommonPlans[I];
+  };
+  return agreeOnAssignments(
+      Ctx, Vars, Samples, Native,
+      [&](auto &&Lookup) {
+        uint64_t Rest = 0;
+        for (SymEvalPlan &Plan : LeftSumPlans)
+          Rest += Plan.evalU64With(Lookup);
+        for (SymEvalPlan &Plan : RightSumPlans)
+          Rest -= Plan.evalU64With(Lookup);
+        uint64_t Left = 1, Right = 1;
+        for (SymEvalPlan &Plan : LeftPlans)
+          Left *= Plan.evalU64With(Lookup);
+        for (SymEvalPlan &Plan : RightPlans)
+          Right *= Plan.evalU64With(Lookup);
+        const uint64_t Mask = ~uint64_t(0) >> (64 - Width);
+        uint64_t Difference = (Left - Right) & Mask;
+        for (size_t I = 0; I < Common.size() && Difference; ++I) {
+          SymEvalPlan &Plan = CommonPlan(I);
+          uint64_t Value;
+          if (Plan.fitsU64()) {
+            Value = Plan.evalU64With(Lookup);
+          } else {
+            // All inputs fit a native word, but an unchanged factor can
+            // contain a wider intermediate. Preserve that operation's AP
+            // semantics while using the same native input assignments.
+            llvm::APInt Input(1, 0);
+            Value = Plan.evalWith([&](uint32_t Id) -> const llvm::APInt * {
+                          Input =
+                              llvm::APInt(Ctx.varInfo(Id).Width, Lookup(Id));
+                          return &Input;
+                        })
+                        .getZExtValue();
+          }
+          Difference = (Difference * Value) & Mask;
+        }
+        return ((Difference + Rest) & Mask) == 0;
+      },
+      [&](auto &&Lookup) {
+        llvm::APInt Rest(Width, 0);
+        for (SymEvalPlan &Plan : LeftSumPlans)
+          Rest += Plan.evalWith(Lookup);
+        for (SymEvalPlan &Plan : RightSumPlans)
+          Rest -= Plan.evalWith(Lookup);
+        llvm::APInt Left(Width, 1), Right(Width, 1);
+        for (SymEvalPlan &Plan : LeftPlans)
+          Left *= Plan.evalWith(Lookup);
+        for (SymEvalPlan &Plan : RightPlans)
+          Right *= Plan.evalWith(Lookup);
+        llvm::APInt Difference = Left - Right;
+        for (size_t I = 0; I < Common.size() && !Difference.isZero(); ++I)
+          Difference *= CommonPlan(I).evalWith(Lookup);
+        return (Difference + Rest).isZero();
+      });
+}
+
+// Cancel only identical complete addends, with their multiplicities, in the
+// same modular ring. The remaining sums have exactly the same difference at
+// every assignment; no sampling is used to establish the cancellation itself.
+LLVM_ATTRIBUTE_NOINLINE
+std::optional<bool> agreeAfterCancelingAddends(const SymContext &Ctx, SymRef A,
+                                               SymRef B, unsigned Samples) {
+  if (Ctx.op(A) != SymOp::Add || Ctx.op(B) != SymOp::Add ||
+      Ctx.width(A) != Ctx.width(B))
+    return std::nullopt;
+  llvm::SmallVector<SymRef, 8> Common, LeftRest, RightRest;
+  splitCommonOperands(Ctx, A, B, Common, LeftRest, RightRest);
+  // Isolate one n-ary product beside an additive tail. Splitting a sum of
+  // several n-ary products into separate plans would lose shared subterms;
+  // that shape keeps the complete DAG evaluation instead.
+  auto IsolatedProduct = [&](llvm::ArrayRef<SymRef> Terms) {
+    size_t Best = Terms.size();
+    for (size_t I = 0; I < Terms.size(); ++I) {
+      if (Ctx.op(Terms[I]) == SymOp::Mul && Ctx.numOperands(Terms[I]) > 2) {
+        if (Best != Terms.size())
+          return Terms.size();
+        Best = I;
+      }
+    }
+    return Best;
+  };
+  const size_t LeftProduct = IsolatedProduct(LeftRest),
+               RightProduct = IsolatedProduct(RightRest);
+  if (LeftProduct != LeftRest.size() && RightProduct != RightRest.size()) {
+    llvm::SmallVector<SymRef, 8> OtherLeft(LeftRest), OtherRight(RightRest);
+    OtherLeft.erase(OtherLeft.begin() + LeftProduct);
+    OtherRight.erase(OtherRight.begin() + RightProduct);
+    if (auto Agrees = agreeAfterFactoringProducts(
+            Ctx, LeftRest[LeftProduct], RightRest[RightProduct], Samples,
+            Common, OtherLeft, OtherRight))
+      return Agrees;
+  }
+  if (Common.empty())
+    return std::nullopt;
 
   llvm::SmallVector<uint32_t, 16> Vars;
   for (SymRef R : Common)
@@ -569,6 +713,8 @@ bool agreeOnSamples(const SymContext &Ctx, SymRef A, SymRef B,
   if (!Samples)
     return true;
   if (auto Agrees = agreeAfterCancelingAddends(Ctx, A, B, Samples))
+    return *Agrees;
+  if (auto Agrees = agreeAfterFactoringProducts(Ctx, A, B, Samples))
     return *Agrees;
   SymEvalPlan PlanA(Ctx, A);
   SymEvalPlan PlanB(Ctx, B);

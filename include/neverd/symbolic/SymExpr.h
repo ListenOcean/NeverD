@@ -640,29 +640,34 @@ public:
   /// True when every node fits in 64 bits, so \c evalU64 is usable.
   bool fitsU64() const { return FitsU64; }
 
-  /// Steps one evaluation performs — the cost model the solver budgets with.
-  size_t numSteps() const { return Steps.size(); }
+  /// Lowered DAG nodes, including constants: the solver's conservative cost
+  /// model remains unchanged when immutable slots need no repeated work.
+  size_t numSteps() const { return Steps.size() + ConstantSlots.size(); }
 
   SymRef root() const { return Root; }
 
 private:
   /// One node lowered to its operator, width and operand slots.  Slots are
-  /// positions in the scratch buffer, which is also the step order, so a
-  /// step's operands are always at strictly smaller indices.
+  /// positions in the scratch buffer. Operands precede the output slot;
+  /// constants occupy slots but need no repeated evaluation step.
   struct Step {
     SymOp Op;
     uint32_t Width;
     uint64_t Aux;
     uint32_t FirstArg;
     uint32_t NumArgs;
-    /// The node this step came from, needed to recover a wide literal and to
-    /// hand the node back to \c evalNodeAP for the general cases.
+    /// The node this step came from, passed back to \c evalNodeAP for the
+    /// general operator cases.
     SymRef Node;
+    uint32_t OutputSlot;
   };
 
   const SymContext &Ctx;
   SymRef Root;
   llvm::SmallVector<Step, limits::symbolic::kSymEvalPlanInlineSteps> Steps;
+  llvm::SmallVector<std::pair<uint32_t, SymRef>,
+                    limits::symbolic::kSymEvalPlanInlineSteps>
+      ConstantSlots;
   /// Concatenated operand slot lists, indexed by Step::FirstArg.
   llvm::SmallVector<uint32_t, limits::symbolic::kSymEvalPlanInlineOperands>
       ArgSlots;

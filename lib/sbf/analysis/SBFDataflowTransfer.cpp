@@ -140,21 +140,26 @@ void applyStore(const MedInstruction &Instruction, MachineState &State,
     return;
   }
   State.Scratch.Values.invalidate(*Address, ByteWidth);
+  if (TrackValues && ByteWidth == sizeof(uint64_t) &&
+      State.Scratch.Values.canModelRange(*Address, ByteWidth))
+    State.Scratch.Values.writeValues(*Address, Value);
   if (Address->ValueKind == RegisterValue::Kind::SymbolicAddress) {
-    if (TrackValues && ByteWidth == sizeof(uint64_t))
-      State.Scratch.Values.writeValues(*Address, Value);
     State.Scratch.Memory.clear();
     return;
   }
   const va_t Number = Address->Value;
-  if (!isScratchAddress(Number))
-    return;
-  if (!isScratchRange(Number, ByteWidth)) {
-    State.Scratch.clear();
+  if (!isScratchAddress(Number)) {
+    if (TrackValues && Address->ValueKind == RegisterValue::Kind::StackAddress)
+      State.Scratch.Memory.clear();
     return;
   }
-  if (TrackValues && ByteWidth == sizeof(uint64_t))
-    State.Scratch.Values.writeValues(*Address, Value);
+  if (!isScratchRange(Number, ByteWidth)) {
+    if (TrackValues && Address->ValueKind == RegisterValue::Kind::StackAddress)
+      State.Scratch.Memory.clear();
+    else
+      State.Scratch.clear();
+    return;
+  }
   if (const auto Bytes = storedBytes(Value, ByteWidth))
     State.Scratch.Memory.write(Number, *Bytes);
   else
@@ -248,8 +253,10 @@ modelMemoryTransfer(const MedInstruction &Instruction,
   const auto Length = constantArgument(State, SyscallArgument::Arg3);
   if (!Destination || !Length || *Length == 0 ||
       *Length > kMaxModeledScratchBytes ||
-      (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress &&
-       !isScratchRange(Destination->Value, *Length)))
+      (TrackValues
+           ? !State.Scratch.Values.canModelRange(*Destination, *Length)
+           : (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress &&
+              !isScratchRange(Destination->Value, *Length))))
     return std::nullopt;
   ModeledMemoryTransfer Transfer{*Destination, *Length, {}, {}};
   Transfer.Values.setSymbolicAddresses(
@@ -258,7 +265,8 @@ modelMemoryTransfer(const MedInstruction &Instruction,
     const auto Fill = constantArgument(State, SyscallArgument::Arg2);
     if (!Fill)
       return std::nullopt;
-    if (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress)
+    if (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress &&
+        isScratchRange(Destination->Value, *Length))
       Transfer.Bytes.assign(*Length, static_cast<uint8_t>(*Fill));
     uint64_t Word = 0;
     for (unsigned Byte = 0; Byte < sizeof(Word); ++Byte)
@@ -284,11 +292,10 @@ modelMemoryTransfer(const MedInstruction &Instruction,
       Bytes = readProven(State, Image, Source->Value, *Length);
   }
   if (Bytes.empty() &&
-      (!TrackValues ||
-       (Source->ValueKind != RegisterValue::Kind::SymbolicAddress &&
-        !isScratchRange(Source->Value, *Length))))
+      (!TrackValues || !State.Scratch.Values.canModelRange(*Source, *Length)))
     return std::nullopt;
-  if (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress)
+  if (Destination->ValueKind != RegisterValue::Kind::SymbolicAddress &&
+      isScratchRange(Destination->Value, *Length))
     Transfer.Bytes.assign(Bytes.begin(), Bytes.end());
   if (TrackValues)
     Transfer.Values.copyFrom(State.Scratch.Values, *Source, *Destination,

@@ -102,175 +102,175 @@
             "skips": [
               {
                 "test": "X86VirtualizationSource.QualifiedSdkUsesNativeVirtualizationCalls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1212\nrequires the qualified native virtualization SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1212\nrequires the qualified native virtualization SDK\n"
               },
               {
                 "test": "X86VirtualizationSource.NeverCCompilesBothRoutesToNativeIntrinsics",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1970\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1970\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SystemRegisterSource.NativeCallsRequireExactRegisterModeAndEffects",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1890\nrequires the native control/debug register SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1890\nrequires the native control/debug register SDK\n"
               },
               {
                 "test": "X86DescriptorStateSource.NativeCallsRequireExactControlsTypesAndEffects",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1650\nrequires the explicit descriptor-state address SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1650\nrequires the explicit descriptor-state address SDK\n"
               },
               {
                 "test": "X86DescriptorStateSource.NativeAddressControlsCompileAcrossFormats",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3037\nrequires the explicit descriptor-address SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3037\nrequires the explicit descriptor-address SDK\n"
               },
               {
                 "test": "X86ScalarSystemSource.NativeCallsRequireExactTypesAndEffects",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1834\nrequires the scalar MSR/port intrinsic SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1834\nrequires the scalar MSR/port intrinsic SDK\n"
               },
               {
                 "test": "X86SystemStateSource.QualifiedSdkUsesNativeSystemCalls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2339\nrequires the qualified native system SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2339\nrequires the qualified native system SDK\n"
               },
               {
                 "test": "X86SystemStateSource.SmapPreservesMemoryAccessOrderAcrossBothControls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2370\nrequires the qualified native system SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2370\nrequires the qualified native system SDK\n"
               },
               {
                 "test": "X86SystemStateSource.TransactionCommitRetainsSurroundingMemory",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2475\nrequires the qualified native system SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2475\nrequires the qualified native system SDK\n"
               },
               {
                 "test": "X86SystemStateSource.NeverCCompilesBothRoutesToNativeSystemCalls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2865\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2865\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SystemStateSource.NativeCallsCannotLoseModeResultsOrEffects",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2902\nrequires the qualified native system SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2902\nrequires the qualified native system SDK\n"
               },
               {
                 "test": "X86SystemStateSource.NativeDescriptorAddressControlsCompileAcrossFormats",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3037\nrequires the explicit descriptor-address SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3037\nrequires the explicit descriptor-address SDK\n"
               },
               {
                 "test": "X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3393\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3393\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SgxSource.NeverCCompletionMatchesOriginalRegistersAndFlags",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4724\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4724\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SgxSource.NativeContractsRejectLostEffectsAndMode",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4747\nnative SGX completion requires the qualified fork\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4747\nnative SGX completion requires the qualified fork\n"
               },
               {
                 "test": "X86SgxSource.NeverCCompilesNativeCompletionAndCombinedAmxFeatures",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4791\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4791\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86AmxSource.NativeContractsRejectLostEffectsAndControls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5238\nlinked SDK predates explicit AMX controls\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5238\nlinked SDK predates explicit AMX controls\n"
               },
               {
                 "test": "X86AmxSource.NeverCCompilesBothRoutesWithoutAssembly",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5310\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5310\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86AmxSource.NativeTileRowsAndFaultContinuationMatchOriginalBytes",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5557\nHost does not provide AMX-TILE; native restart unqualified\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5557\nHost does not provide AMX-TILE; native restart unqualified\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR16",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR32",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR64",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL16",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL32",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL64",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               }
             ],
             "failed_tests": [
@@ -509,127 +509,127 @@
             "skips": [
               {
                 "test": "X86VirtualizationSource.NeverCCompilesBothRoutesToNativeIntrinsics",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1970\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1970\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SystemStateSource.NeverCCompilesBothRoutesToNativeSystemCalls",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2865\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:2865\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86ImplicitMsrSource.NeverCRetainsNativeCompletionAndRestart",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3393\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3393\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SgxSource.NeverCCompletionMatchesOriginalRegistersAndFlags",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4724\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4724\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86SgxSource.NeverCCompilesNativeCompletionAndCombinedAmxFeatures",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4791\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4791\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86AmxSource.NeverCCompilesBothRoutesWithoutAssembly",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5310\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5310\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "X86AmxSource.NativeTileRowsAndFaultContinuationMatchOriginalBytes",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5557\nHost does not provide AMX-TILE; native restart unqualified\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:5557\nHost does not provide AMX-TILE; native restart unqualified\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1325\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.NeverCCompilesBothRoutesToNativeIntrinsics/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1328\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1458\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.DescriptorStateUsesNeverCNativeBuiltins/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1461\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X86MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1780\nNeverC targets x64\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64ELF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64COFF",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "NativeFormats/X86SystemRegisterAccess.ScalarMsrAndPortsUseNeverCNativeIntrinsics/X64MachO",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1783\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR16",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR32",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LAR64",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL16",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL32",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               },
               {
                 "test": "DescriptorWidths/X86DescriptorQueryCompletion.NeverCResultsAndFlagsMatchOriginalInstructions/LSL64",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:4077\nset NEVERD_TEST_NEVERC to the qualified NeverC compiler\n"
               }
             ],
             "failed_tests": [
@@ -863,11 +863,11 @@
             "skips": [
               {
                 "test": "X86DescriptorStateSource.NativeCallsRequireExactControlsTypesAndEffects",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1681\nrequires the explicit descriptor-state address SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:1681\nrequires the explicit descriptor-state address SDK\n"
               },
               {
                 "test": "X86DescriptorStateSource.NativeAddressControlsCompileAcrossFormats",
-                "message": "/home/ad/code/NeverD-worktrees/x86-instruction-completion/unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3068\nrequires the explicit descriptor-address SDK\n"
+                "message": "unittests/lift/x86_64/X86VirtualizationSourceTests.cpp:3068\nrequires the explicit descriptor-address SDK\n"
               }
             ],
             "failed_tests": [],

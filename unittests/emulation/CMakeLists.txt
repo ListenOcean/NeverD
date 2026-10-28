@@ -53,6 +53,7 @@ target_include_directories(NeverDAArch64StateTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/emulation)
 
 add_neverd_unittest(NeverDAArch64FPTests
+  aarch64/AArch64FloatConversionTests.cpp
   aarch64/AArch64FPStateTests.cpp
   aarch64/AArch64SIMDTests.cpp
   aarch64/AArch64ProbeExecutionTests.cpp

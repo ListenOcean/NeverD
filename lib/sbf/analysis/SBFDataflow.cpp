@@ -485,6 +485,84 @@ void StoredRegisterMemory::discardFrameCoordinates() {
   });
 }
 
+bool StoredRegisterMemory::translateFrameCoordinates(int64_t Delta) {
+  if (Delta == 0)
+    return true;
+  const auto TranslateKey =
+      [Delta](uint64_t Address) -> std::optional<uint64_t> {
+    const uint64_t Bits = std::bit_cast<uint64_t>(Delta);
+    if (Delta >= 0) {
+      if (Bits > UINT64_MAX - Address)
+        return std::nullopt;
+      if (sizeof(uint64_t) > UINT64_MAX - (Address + Bits))
+        return std::nullopt;
+      return Address + Bits;
+    }
+    const uint64_t Magnitude = uint64_t{0} - Bits;
+    if (Address < Magnitude)
+      return std::nullopt;
+    return Address - Magnitude;
+  };
+  for (const auto &[Key, Stored] : Values) {
+    if (Key.first == 1 && !TranslateKey(Key.second))
+      return false;
+    for (const auto &Value : Stored.values()) {
+      int64_t Offset;
+      if (Value.ValueKind == RegisterValue::Kind::StackAddress &&
+          llvm::AddOverflow(Value.Offset, Delta, Offset))
+        return false;
+    }
+  }
+  decltype(Values) Translated;
+  while (!Values.empty()) {
+    auto Node = Values.extract(Values.begin());
+    if (Node.key().first == 1)
+      Node.key().second = *TranslateKey(Node.key().second);
+    std::optional<ProvenValueSet> Stored;
+    for (auto Value : Node.mapped().values()) {
+      if (Value.ValueKind == RegisterValue::Kind::StackAddress)
+        Value.Offset += Delta;
+      if (!Stored)
+        Stored = Value;
+      else
+        Stored->join(Value);
+    }
+    Node.mapped() = std::move(*Stored);
+    Translated.insert(std::move(Node));
+  }
+  Values = std::move(Translated);
+  return true;
+}
+
+bool StoredRegisterMemory::canModelRange(const RegisterValue &Address,
+                                         uint64_t Size) const {
+  if (Size == 0 || Size > kMemoryRegionSize)
+    return false;
+  const auto Key = memoryAddress(Address);
+  if (!Key)
+    return false;
+  if (Key->ValueKind == RegisterValue::Kind::SymbolicAddress)
+    return true;
+  if (Key->ValueKind != RegisterValue::Kind::StackAddress)
+    return isScratchRange(Key->Value, Size);
+  if (Size > UINT64_MAX - Key->Value)
+    return false;
+  const auto Translation = frameTranslationBound();
+  if (!Translation)
+    return true;
+  const auto Starts = llvm::ConstantRange::getNonEmpty(
+      llvm::APInt(64, Key->Value),
+      llvm::APInt(64, Key->Value + *Translation + 1));
+  for (const auto Region : {kStackStart, kHeapStart}) {
+    const auto Valid = llvm::ConstantRange::getNonEmpty(
+        llvm::APInt(64, Region),
+        llvm::APInt(64, Region + kMemoryRegionSize - Size + 1));
+    if (!Starts.intersectWith(Valid).isEmptySet())
+      return true;
+  }
+  return false;
+}
+
 uint64_t StoredRegisterMemory::retainedByteEstimate() const {
   constexpr uint64_t NodeOverhead = 6 * sizeof(void *);
   uint64_t Allocated = 0;

@@ -7,6 +7,7 @@
 /// JNI method identities and value-based Java operations. Unknown method
 /// bodies remain unsupported; resolving a name never supplies a canned result.
 //===----------------------------------------------------------------------===//
+#include "../../../arch/aarch64/AArch64FloatConversion.h"
 #include "AndroidArguments.h"
 
 #include "neverd/dalvik/Library.h"
@@ -183,7 +184,8 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
   }
   const auto Types = parameters(Signature);
   if (Return == 'F' || Return == 'D' ||
-      std::find(Types.begin(), Types.end(), 'F') != Types.end() ||
+      (DexMethod &&
+       std::find(Types.begin(), Types.end(), 'F') != Types.end()) ||
       std::find(Types.begin(), Types.end(), 'D') != Types.end())
     return unsupportedImport(Call);
   std::vector<uint64_t> Values;
@@ -203,6 +205,29 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       if (auto E = CPU.read(A[First] + I * 8, Bytes))
         return std::move(E);
       V = llvm::support::endian::read64le(Bytes);
+    } else if (Types[I] == 'F') {
+      auto Argument = Arguments.nextFloating();
+      if (!Argument)
+        return Argument.takeError();
+      auto Control = CPU.readRegister(CPURegister::AArch64FPCR);
+      if (!Control)
+        return Control.takeError();
+      const auto Converted = narrowAArch64Double(*Argument, (*Control)[0]);
+      if (!Converted) {
+        Result.Stop = ProcessStopReason::UnsupportedService;
+        Result.Diagnostic =
+            "JNI promoted float conversion has unsupported FPCR controls";
+        return std::optional<BionicValue>();
+      }
+      if (Converted->Raised) {
+        auto Status = CPU.readRegister(CPURegister::AArch64FPSR);
+        if (!Status)
+          return Status.takeError();
+        (*Status)[0] |= Converted->Raised;
+        if (auto E = CPU.writeRegister(CPURegister::AArch64FPSR, *Status))
+          return std::move(E);
+      }
+      V = Converted->Bits;
     } else {
       auto Argument =
           Arguments.next(Types[I] == 'L' || Types[I] == 'J' ? 8 : 4);
@@ -219,7 +244,7 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       V = uint32_t(int32_t(std::bit_cast<int8_t>(uint8_t(V))));
     if (Types[I] == 'S')
       V = uint32_t(int32_t(std::bit_cast<int16_t>(uint16_t(V))));
-    if (Types[I] == 'I')
+    if (Types[I] == 'I' || Types[I] == 'F')
       V = uint32_t(V);
     Values.push_back(V);
   }

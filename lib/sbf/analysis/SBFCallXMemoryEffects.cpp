@@ -37,6 +37,15 @@ bool isOwnOrChildFrame(const RegisterValue &Address,
          Address.Offset >= -static_cast<int64_t>(Program.Config.StackFrameSize);
 }
 
+bool admitsPostconditionWord(const RegisterValue &Address) {
+  int64_t End;
+  return ((Address.ValueKind == RegisterValue::Kind::StackAddress ||
+           Address.ValueKind == RegisterValue::Kind::SymbolicAddress) &&
+          !llvm::AddOverflow(Address.Offset, int64_t{sizeof(uint64_t)}, End)) ||
+         (Address.ValueKind == RegisterValue::Kind::Constant &&
+          isScratchRange(Address.Value, sizeof(uint64_t)));
+}
+
 } // namespace
 
 RegisterState symbolicInputs() {
@@ -318,13 +327,7 @@ void MemoryPostconditions::invalidate(const RegisterValue &Address,
 void MemoryPostconditions::store(const RegisterValue &Address, uint64_t Size,
                                  const ProvenValueSet &Value) {
   invalidate(Address, Size);
-  int64_t End;
-  if (Size == sizeof(uint64_t) &&
-      (((Address.ValueKind == RegisterValue::Kind::StackAddress ||
-         Address.ValueKind == RegisterValue::Kind::SymbolicAddress) &&
-        !llvm::AddOverflow(Address.Offset, static_cast<int64_t>(Size), End)) ||
-       (Address.ValueKind == RegisterValue::Kind::Constant &&
-        isScratchRange(Address.Value, Size))) &&
+  if (Size == sizeof(uint64_t) && admitsPostconditionWord(Address) &&
       !Value.unknown() &&
       std::all_of(Value.values().begin(), Value.values().end(),
                   [](const auto &Alternative) {
@@ -343,13 +346,59 @@ void MemoryPostconditions::store(const RegisterValue &Address, uint64_t Size,
 ProvenValueSet MemoryPostconditions::read(const RegisterValue &Address) const {
   const auto Found =
       Values.find({Address.ValueKind, Address.Value, Address.Offset});
-  return Found == Values.end() ? ProvenValueSet{} : Found->second;
+  if (Found == Values.end())
+    return {};
+  const auto *Origins = std::get_if<ProvenValueSet>(&Found->second);
+  return Origins ? *Origins : ProvenValueSet{};
+}
+
+void MemoryPostconditions::storeExpression(const RegisterValue &Address,
+                                           size_t Expression) {
+  invalidate(Address, sizeof(uint64_t));
+  if (admitsPostconditionWord(Address))
+    Values[{Address.ValueKind, Address.Value, Address.Offset}] = Expression;
+}
+
+std::optional<size_t>
+MemoryPostconditions::readExpression(const RegisterValue &Address) const {
+  const auto Found =
+      Values.find({Address.ValueKind, Address.Value, Address.Offset});
+  if (Found == Values.end())
+    return std::nullopt;
+  const auto *Expression = std::get_if<size_t>(&Found->second);
+  return Expression ? std::optional<size_t>(*Expression) : std::nullopt;
+}
+
+void MemoryPostconditions::discardExpressions() {
+  std::erase_if(Values, [](const auto &Cell) {
+    return std::holds_alternative<size_t>(Cell.second);
+  });
+}
+
+size_t MemoryPostconditions::expressionCount() const {
+  return llvm::count_if(Values, [](const auto &Cell) {
+    return std::holds_alternative<size_t>(Cell.second);
+  });
+}
+
+void MemoryPostconditions::visitValues(
+    llvm::function_ref<void(const RegisterValue &, const ProvenValueSet &,
+                            std::optional<size_t>)>
+        Visit) const {
+  const ProvenValueSet Unknown;
+  for (const auto &[Cell, Value] : Values) {
+    const auto &[Kind, Base, Offset] = Cell;
+    if (const auto *Origins = std::get_if<ProvenValueSet>(&Value))
+      Visit({Kind, Base, Offset}, *Origins, std::nullopt);
+    else
+      Visit({Kind, Base, Offset}, Unknown, std::get<size_t>(Value));
+  }
 }
 
 void MemoryPostconditions::copyFrom(const RegisterValue &Source,
                                     const RegisterValue &Destination,
                                     uint64_t Size, const SBFProgram &Program) {
-  std::vector<std::pair<RegisterValue, ProvenValueSet>> Copied;
+  std::vector<std::pair<RegisterValue, StoredValue>> Copied;
   for (const auto &[Cell, Value] : Values) {
     const auto &[Kind, Base, Offset] = Cell;
     if (Kind != Source.ValueKind ||
@@ -397,16 +446,41 @@ void MemoryPostconditions::recordInputCopy(const RegisterValue &Source,
     Copies.push_back(Copy);
 }
 
-void MemoryPostconditions::meet(const MemoryPostconditions &Other) {
+void MemoryPostconditions::meet(const MemoryPostconditions &Other,
+                                ExpressionJoin MergeExpression) {
   llvm::erase_if(Copies, [&](const InputCopy &Copy) {
     return std::find(Other.Copies.begin(), Other.Copies.end(), Copy) ==
            Other.Copies.end();
   });
   for (auto It = Values.begin(); It != Values.end();) {
     const auto Found = Other.Values.find(It->first);
-    if (Found != Other.Values.end())
-      It->second.join(Found->second);
-    if (Found == Other.Values.end() || It->second.unknown())
+    bool Keep = Found != Other.Values.end() &&
+                It->second.index() == Found->second.index();
+    if (Keep) {
+      if (auto *Origins = std::get_if<ProvenValueSet>(&It->second)) {
+        Origins->join(std::get<ProvenValueSet>(Found->second));
+        Keep = !Origins->unknown();
+      } else {
+        Keep = It->second == Found->second;
+      }
+    }
+    if (!Keep && MergeExpression && Found != Other.Values.end() &&
+        (std::holds_alternative<size_t>(It->second) ||
+         std::holds_alternative<size_t>(Found->second))) {
+      const auto *Left = std::get_if<ProvenValueSet>(&It->second);
+      const auto *Right = std::get_if<ProvenValueSet>(&Found->second);
+      const auto Combined = MergeExpression(
+          Left ? *Left : ProvenValueSet{},
+          Left ? std::nullopt : std::optional(std::get<size_t>(It->second)),
+          Right ? *Right : ProvenValueSet{},
+          Right ? std::nullopt
+                : std::optional(std::get<size_t>(Found->second)));
+      if (Combined) {
+        It->second = *Combined;
+        Keep = true;
+      }
+    }
+    if (!Keep)
       It = Values.erase(It);
     else
       ++It;
@@ -443,9 +517,44 @@ void MemoryPostconditions::include(
   for (const auto &[Cell, Value] : Callee.Values) {
     const auto &[Kind, Base, Offset] = Cell;
     const RegisterValue Address{Kind, Base, Offset};
-    store(substituteOrigins(Address, Entry, Program).singleton(),
-          sizeof(uint64_t), substituteOrigins(Value, Entry, Program));
+    const auto Destination =
+        substituteOrigins(Address, Entry, Program).singleton();
+    if (const auto *Origins = std::get_if<ProvenValueSet>(&Value))
+      store(Destination, sizeof(uint64_t),
+            substituteOrigins(*Origins, Entry, Program));
+    else
+      storeExpression(Destination, std::get<size_t>(Value));
   }
+}
+
+size_t applyStoredWord(ScratchState &Scratch, const RegisterValue &Address,
+                       const ProvenValueSet &Stored,
+                       const SBFProgram &Program) {
+  if (Address.ValueKind == RegisterValue::Kind::Unknown || Stored.unknown())
+    return 0;
+  MedInstruction Store;
+  Store.Op = Operation::Store;
+  Store.Form = OperandForm::StoreReg;
+  Store.Dst = 0;
+  Store.Src = 1;
+  Store.Width = Store.Semantics.MemoryWidth = kDoubleWordBitWidth;
+  std::optional<ScratchState> Output;
+  for (const auto &Alternative : Stored.values()) {
+    MachineState State;
+    State.Scratch = Scratch;
+    State.Registers[Store.Dst] = Address;
+    State.Registers[Store.Src] = Alternative;
+    applyTransfer(Store, State, Program.ExecutableImage,
+                  ScratchLoadPolicy::ProvenValues);
+    if (!Output)
+      Output = std::move(State.Scratch);
+    else {
+      Output->Memory.meet(State.Scratch.Memory);
+      Output->Values.joinValues(State.Scratch.Values);
+    }
+  }
+  Scratch = std::move(*Output);
+  return !Scratch.Values.readValues(Address).unknown();
 }
 
 size_t MemoryPostconditions::apply(
@@ -462,48 +571,23 @@ size_t MemoryPostconditions::apply(
           substituteOrigins(Copy.Destination, Entry, Program).singleton();
       if (memoryAddress(From) && memoryAddress(To)) {
         const auto Destination = memoryAddress(To);
-        if (Destination->ValueKind == RegisterValue::Kind::SymbolicAddress ||
-            isScratchRange(Destination->Value, Copy.Size))
+        if (Scratch.Values.canModelRange(*Destination, Copy.Size))
           Scratch.Values.copyFrom(Source.Values, From, To, Copy.Size);
         else
           Scratch.clear();
       }
     }
-  MedInstruction Store;
-  Store.Op = Operation::Store;
-  Store.Form = OperandForm::StoreReg;
-  Store.Dst = 0;
-  Store.Src = 1;
-  Store.Width = Store.Semantics.MemoryWidth = kDoubleWordBitWidth;
   size_t Applied = 0;
   for (const auto &[Cell, Value] : Values) {
     const auto &[Kind, Base, Offset] = Cell;
     const auto Address =
         substituteOrigins(RegisterValue{Kind, Base, Offset}, Entry, Program)
             .singleton();
-    const auto Stored = substituteOrigins(Value, Entry, Program);
-    if (Address.ValueKind == RegisterValue::Kind::Unknown || Stored.unknown())
-      continue;
-    std::optional<ScratchState> Output;
-    for (const auto &Alternative : Stored.values()) {
-      MachineState State;
-      State.Scratch = Scratch;
-      State.Registers[Store.Dst] = Address;
-      State.Registers[Store.Src] = Alternative;
-      // Reuse the store owner for scratch-range checks, coordinate aliasing,
-      // pointer tags and byte serialization after substituting real inputs.
-      applyTransfer(Store, State, Program.ExecutableImage,
-                    ScratchLoadPolicy::ProvenValues);
-      if (!Output)
-        Output = std::move(State.Scratch);
-      else {
-        Output->Memory.meet(State.Scratch.Memory);
-        Output->Values.joinValues(State.Scratch.Values);
-      }
-    }
-    Scratch = std::move(*Output);
-    if (!Scratch.Values.readValues(Address).unknown())
-      ++Applied;
+    const auto *Origins = std::get_if<ProvenValueSet>(&Value);
+    if (Origins)
+      Applied +=
+          applyStoredWord(Scratch, Address,
+                          substituteOrigins(*Origins, Entry, Program), Program);
   }
   return Applied;
 }
@@ -532,8 +616,13 @@ void MemoryPostconditions::transformSymbols(
         Address.ValueKind != RegisterValue::Kind::StackAddress &&
         Address.ValueKind != RegisterValue::Kind::SymbolicAddress)
       continue;
+    if (const auto *Expression = std::get_if<size_t>(&Value)) {
+      Transformed[{Address.ValueKind, Address.Value, Address.Offset}] =
+          *Expression;
+      continue;
+    }
     std::optional<ProvenValueSet> Stored;
-    for (auto Alternative : Value.values()) {
+    for (auto Alternative : std::get<ProvenValueSet>(Value).values()) {
       if (Alternative.ValueKind == RegisterValue::Kind::SymbolicAddress)
         Alternative = Map(Alternative);
       if (!Stored)
@@ -552,7 +641,8 @@ uint64_t MemoryPostconditions::retainedByteEstimate() const {
   for (const auto &Copy : Copies)
     Allocated += Copy.Before.Writes.capacity() * sizeof(MemoryWrite);
   for (const auto &[Cell, Value] : Values)
-    Allocated += Value.allocatedBytes();
+    if (const auto *Origins = std::get_if<ProvenValueSet>(&Value))
+      Allocated += Origins->allocatedBytes();
   return Allocated + Values.size() * (sizeof(decltype(Values)::value_type) +
                                       4 * sizeof(void *));
 }

@@ -66,13 +66,14 @@ enum class CallXInputGeneralization : uint8_t {
   ResourceBudget,
   EquivalentGenericInputs,
   EquivalentSpecializedInputs,
+  ReplacedRecursiveContext,
 };
 
 enum class CallXInputExpressionKind : uint8_t {
   InputRegister,
   Constant,
   Instruction,
-  /// A complete union of affine entry-input/constant leaves.
+  /// A complete bounded union of entry-input expression alternatives.
   InputAlternatives,
 };
 
@@ -131,6 +132,7 @@ enum class CallXSummaryBarrier : uint8_t {
   UnknownTarget,
   UnsupportedRawEntry,
   SummaryBudget,
+  NonReturningCall,
 };
 
 struct CallXSummaryEdge {
@@ -144,6 +146,7 @@ struct CallXSummaryEdge {
   bool PreservedOlderFrames = false;
   bool AppliedMemoryEffects = false;
   size_t AppliedStoredValues = 0;
+  bool InstantiatedReturnInputExpression = false;
   std::optional<size_t> InstantiatedCopySlot;
   uint64_t InstantiatedCopyBytes = 0;
   bool GeneralizedInputs = false;
@@ -201,6 +204,7 @@ struct CallXFunctionSummary {
   size_t InputScratchWords = 0;
   size_t OutputScratchWords = 0;
   size_t OutputParameterizedWords = 0;
+  size_t OutputFieldValueExpressions = 0;
   size_t OutputMemoryCopies = 0;
 };
 
@@ -220,14 +224,19 @@ struct CallXContextReport {
   size_t InputDependencyVisits = 0;
   size_t SummaryCacheEvictions = 0;
   size_t GeneralizedPublishedSummaries = 0;
+  size_t UnblockedRecursionRetries = 0;
   size_t EquivalentGenericReuses = 0;
   size_t EquivalentSpecializedReuses = 0;
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;
+  size_t CanonicalizedFrameInputs = 0;
   std::vector<UnsignedValueRange> CapturedAddresses;
   std::vector<CallXInputExpression> InputExpressions;
   std::vector<CallXInputMemoryGuard> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
+  size_t InstantiatedStoredValueInputExpressions = 0;
+  size_t InstantiatedReturnInputExpressions = 0;
+  size_t ReturnReachabilityVisits = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.

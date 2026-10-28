@@ -8,6 +8,7 @@
 #define NEVERD_IR_MED_MEDSTACKALIGNMENT_H
 
 #include "neverd/ir/med/MedIR.h"
+#include "neverd/ir/med/MedIntegerReturnRange.h"
 
 #include "llvm/ADT/ArrayRef.h"
 
@@ -63,7 +64,8 @@ struct EntryStackOffsetRange {
 std::vector<std::optional<EntryStackOffsetRange>>
 entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                        Arch Architecture, BinaryFormat Format,
-                       StackEntryKind Entry = StackEntryKind::Call);
+                       StackEntryKind Entry = StackEntryKind::Call,
+                       const MedCallReturnRanges *CallReturns = nullptr);
 
 /// The largest displacement from entry SP each of \p Values can have, where
 /// copies, bounded displacements, alignment masks and joins define it and no
@@ -72,7 +74,8 @@ entryStackOffsetRanges(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
 std::vector<std::optional<int64_t>>
 entryStackOffsetUpperBounds(const MedFunc &Func, llvm::ArrayRef<MedVar> Values,
                             Arch Architecture, BinaryFormat Format,
-                            StackEntryKind Entry = StackEntryKind::Call);
+                            StackEntryKind Entry = StackEntryKind::Call,
+                            const MedCallReturnRanges *CallReturns = nullptr);
 
 /// Full-width SP definitions in the entry block that align an authenticated
 /// entry-stack offset. Each definition is a distinct frame origin; this does

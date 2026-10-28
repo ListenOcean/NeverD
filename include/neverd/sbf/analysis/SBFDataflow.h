@@ -174,6 +174,10 @@ public:
   void setSymbolicAddresses(std::shared_ptr<const SymbolicAddressSpace> Space);
   const std::shared_ptr<const SymbolicAddressSpace> &symbolicAddresses() const;
   std::optional<uint64_t> frameTranslationBound() const;
+  /// Whether this window can hold typed facts in a scratch region. Frame
+  /// coordinates may need translation; this proves neither validity nor
+  /// separation of a runtime address.
+  bool canModelRange(const RegisterValue &Address, uint64_t Size) const;
   void writeValues(const RegisterValue &Address, ProvenValueSet Value);
   const ProvenValueSet &readValues(const RegisterValue &Address) const;
   void invalidate(const RegisterValue &Address, uint64_t Size);
@@ -208,6 +212,9 @@ public:
                       MemoryCoordinate Coordinate = MemoryCoordinate::Absolute);
   /// Keep only absolute values independent of a symbolic frame anchor.
   void discardFrameCoordinates();
+  /// Translate typed frame keys and values without shifting literal VM bits.
+  /// Leave the complete memory unchanged if any translation is unrepresentable.
+  bool translateFrameCoordinates(int64_t Delta);
   void clear() { Values.clear(); }
   bool empty() const { return Values.empty(); }
   uint64_t retainedByteEstimate() const;

@@ -2216,4 +2216,6 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 
 `NeverDSymbolicCallEffectTests`는 양쪽 분기, 이전 호출 효과, 반복 호출 및 경로 병합 후의 전체 조건이 제공자에게 전달되는지도 검사합니다. 모순된 효과는 후속 연산과 제공자 호출을 중단합니다. 이는 솔버 없이 수행하는 탐색 회귀 검사이며 외부 API 계약 검증은 아닙니다.
 
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes`와 교환 대조 검사는 O0/O2 및 UBSan에서 두 C 경로를 실행하여 x64의 네 폭, 비정렬 주소, 이전 값과 인접 바이트를 확인합니다. `LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*`는 원래 LLVM IR도 실행하고 미사용 결과의 쓰기를 보존하며 변경된 어셈블리 계약을 거부합니다. FS/GS는 호스트 TLS 접근 없이 컴파일만 합니다. 실행에는 x64 호스트가 필요하며 경합이나 하드웨어 오류를 인증하지 않습니다.
+
 `X86LegacyAtomic.LockedArithmetic*`는 x86/x64 너비, 독립 산술 플래그, 원본 레지스터와 캐리 보존, 부호 있는 즉시 값, 비정렬 인접 바이트, 읽기 전용·잘린 매핑, FS/GS 및 잠금 없는 대조군을 검사합니다. 지원하지 않는 잠금 연산은 일반 저장을 게시할 수 없습니다. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof`는 네 가지 잠금 산술의 특화와 순서 메모리 증명 거부를 확인합니다.

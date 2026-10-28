@@ -415,6 +415,51 @@ class HistoryAllowance:
 
 HISTORY_ALLOWED: tuple[HistoryAllowance, ...] = (
     HistoryAllowance(
+        path="docs/evidence/x86-skinit-2026-10-27.json",
+        rule="private-path",
+        commits=frozenset({
+            "89fd592fae65cc3d6011a386814543ad60270e40",
+            "f567cd547e7aa8ed5702791ad9a17642a547d3ee",
+        }),
+        line="",
+        reason=(
+            "Reviewed removal of checkout prefixes from SKINIT skipped-case "
+            "messages. Source locations, skip reasons, test outcomes and "
+            "artifact hashes are unchanged. Only these exact historical "
+            "line digests in the publication and cleanup commits are covered; "
+            "current and future private paths remain findings."
+        ),
+        line_sha256=frozenset({
+            "1616dea1c69c35a2c2b63af91ee86b047aa38403249e317318800b79fb788dcb",
+            "1f6208a2e5eff91636c09dc93852387008f817c0c6e279f4747cf6bc6ce22ad2",
+            "3220ef15c634898edf30928b12872cf84cbeb8d14459b4a86ebb8cbb2db9ca4b",
+            "42167ebeecac407625a1c7f3553ac6df792c634b36bedfcdfe4aa30c6436e605",
+            "49f895b9427262357e4b77780394489705a41eaf5a033ee9ad02ab5800b4fe37",
+            "4c41031d7b3885420d02096e6796b51e83283ce8e31c4c215a122b1f0ff8b7e3",
+            "552befd583b5ebf452743f5e9bccc2c9119680ecb8cb4eddfe1e8a188aa8d5fd",
+            "5cdb7fc8338a02c60cda0a23c91131b522b53d77af58ae2c48f8a9e9c77bc090",
+            "6816e320eaf388a54f0dc56fc2aea6369050ef2455a1304be460d38b8755818d",
+            "7535687e00d4001bb82b56bdaff94c9c0fdb4cdd81600eff08c1936c9fd44e20",
+            "77dc532743e5e997eb0d97ba226da3434bcdc7be90f4dffd10680a3d3925b13a",
+            "93efac8e567e28f2d2f4da25f06838fdb94ab045f39c825151c07db97ee9dc67",
+            "940189e4783a0423129632ca8c2c1aa575a2e179daab23dc0bc995305a071d34",
+            "955343cf2e9a4e7e73eb97d2aaede111afe2bda529b003cbac31426227e25242",
+            "9c42b609f7a473c24e69b7c185b35c64065edcb6f2e0230a2b9dbeb803cfe301",
+            "9d1b2c151ea34bd138622651ecf0bd3099b18effdd47b23aa28d6c822ddf4c70",
+            "9e315de9fdce824ffe35b6fc697b7f1a5b05d33cfc8e61e061ec12765119cd4f",
+            "a04cb518faa72299b766eb950cb65b23be55c6d2acedf0afaf8c0af5f36f646a",
+            "a57098a114bdba70e2b83bc5cc63871055efe91507224c8f0d836ce509af2747",
+            "aff779e43b1ff16b6e8d4c08b828f3593d1fc7893726b646b17689a8754e0dc4",
+            "b27a9918016de3ebafd65e3ecb45f049d6a7e20c31e47d76b555cf7d80446a26",
+            "bd8b3e465fd9b677f54dc0c6bbcc64c0f6b37f2bc8bf16e6bf7cfa4c2271b861",
+            "beaae86f84f08af106a0f8fc17705338e957bb545eacb555e89a8a99bec0c257",
+            "cf4e718d01cbe113d54036d03b41fe4a6c16ddfd32e8af326945e2647b916b0e",
+            "d66899d7df5977d965abe712498269b9defecba85bed1101fa89f45ac02df9c6",
+            "f8237aaf336d79fdafedfd3237f6d6fa1b66aa77122b8fc3605de38808ab0294",
+            "fac973982fbbab41f04ab3909f478956abe409e88bc1b986642e5eabae4a55b6",
+        }),
+    ),
+    HistoryAllowance(
         path="docs/evidence/x86-atomic-segments-2026-10-27.json",
         rule="private-path",
         commits=frozenset({

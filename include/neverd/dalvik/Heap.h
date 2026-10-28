@@ -50,6 +50,8 @@ public:
   // length. Allocates zero primitive bytes or null reference elements.
   std::shared_ptr<Object> allocateArray(std::string_view type, uint32_t length);
   std::shared_ptr<Object> get(uint64_t identity) const;
+  // Resize retained storage only after admitting its growth to the heap budget.
+  bool resizeBytes(Object &object, uint64_t size);
   bool replaceBytes(Object &object, std::vector<uint8_t> bytes);
   bool replaceMapEntries(Object &object, std::vector<Object::MapEntry> entries);
   std::shared_ptr<Object> classObject(std::string_view name);
