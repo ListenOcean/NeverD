@@ -3692,6 +3692,26 @@ Call-argument projection checks backward/forward dependencies missing from raw
 call operands, exact owner/span binding, preserved clobber inputs, absent versus
 zero-argument summaries and schema-2 round trips. The compiled CLI fixture also
 requires retained recovered argument records through the real native pipeline.
+`BinaryDiff.CallRegions*` and `ShortRepeatedCallRegionsNeedDistinctMappedTargets`
+check optional direct-call runs, duplicate destinations, reverse direction,
+unpaired/indirect targets, distinct-target support for short repeated fragments,
+cleanup tails beside changed calls without crossing those changed calls,
+strict settings and saved evidence, cancelled edits, undo and bounded work.
+`BinaryDiffSDK.CallRegionsRebindTargetsAcrossEditsAndRestore` and the CLI/Qt
+fixtures exercise real x64 call bytes, shared pages, cache invalidation,
+save/reopen and settings restoration. They qualify conditional correspondence
+evidence, not callee semantics or arbitrary region transformations. The AArch64
+SDK fixture also retains the exact native BL row across save/reopen.
+Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
+hypothesis and raw-anchor pages in a 417-function native fixture, then checks
+the original instruction address and call-context destination after loading.
+`retainedLargeCallRegionWorkflow` accepts
+`NEVERD_DIFF_CALL_REGIONS_REPORT` and `NEVERD_DIFF_REGION_WORKFLOW` for an
+opt-in retained corpus check. It restores more than ten thousand anchors,
+selects an uncached shared body and follows its secondary call context to the
+public wrapper, comparing the original tail-transfer witness with the native
+API receipt. It exercises paging and evidence navigation; it does not turn a
+wrapper's call relationship into shared instructions or semantic equivalence.
 `BinaryDiffFlowRegions` checks split/merge/inline/outline alternatives, nested
 overlap versus actual one-to-many node mappings, origin and frequency admission,
 coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region
@@ -5969,6 +5989,10 @@ unaligned seeds, forced memory homes and unresolved or malformed reads.
 Long chains retain the same homes in both block orders while querying each
 eligible address at most once. Run this owner and the calling-convention
 contract tests when changing the stack-home closure algorithm.
+`MedCallingConvStackParams.SharedStackPointerPhisAreTracedOnce` traces an
+incoming stack read through thirty SP diamonds. SEH handler roots joining the
+protected range with the normal path build such webs. Each value's entry-SP
+offset is computed once.
 
 `NeverDFPParameterMaskTests` runs the shared ABI suite and `FPParameterMask.*`.
 The mask controls retain live bytes, earlier stores, ambiguous definitions and
@@ -14329,6 +14353,10 @@ with `fninit`, whose x87 context handle the CFG builder begins at each root.
 `TheHandlerBeginsTheX87ContextBeforeUsingIt` and
 `OnlyTheX87ContextHandleIsAdmitted` refuse a handler that reads the handle
 before beginning it and a handle copied into an ordinary register.
+`MedSEHHandlerEntry.AArch64HandlerResumesWithTheProtectedRegisters` checks
+that an AArch64 `__except` body reads x19 as the protected range left it,
+through the frame its prologue set. A range that writes x19 leaves x19
+unknown.
 `MedSEHHandlerEntry.AHandlerResumingAtANopEndsTheArmThere` ends an `__except`
 arm that resumes at a `nop` without a jump, and
 `X86_64_PipelineE2E.DecompileC_MinGWStartupSEHWithX87Callee` decompiles
