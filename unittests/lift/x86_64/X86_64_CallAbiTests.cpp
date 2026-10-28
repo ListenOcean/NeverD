@@ -602,44 +602,14 @@ TEST_F(X86_64_CallAbi, AVariadicCallPassesOnTheDoublesALCounts) {
       {"fwd_e", "gd", "gdc", "gm", "g2d", "logv"}, {0, 1, -1, 7, 1000});
 }
 
-static const char *const ForwardedLoadedDoubles = R"C(
-long logv(const char *f, ...) __attribute__((noinline));
-long gd(double x) __attribute__((noinline));
-long gm(double x) __attribute__((noinline));
-long g2d(double a, double b) __attribute__((noinline));
-long gd(double x) { return logv("y", x); }
-long gm(double x) { return logv("z", x, 2.5); }
-long g2d(double a, double b) { return logv("w", a, b); }
-long logv(const char *f, ...) {
-  __builtin_va_list ap;
-  __builtin_va_start(ap, f);
-  long s = f[0];
-  if (s == 'y') {
-    s += (long)(__builtin_va_arg(ap, double) * 4);
-  } else {
-    double a = __builtin_va_arg(ap, double);
-    s += (long)(a * (s == 'z' ? 8 : 16) - __builtin_va_arg(ap, double) * 2);
-  }
-  __builtin_va_end(ap);
-  return s;
-}
-volatile double Scale[4] = {0.5, 0.25, 1.5, -2.0};
-int fwd_e(int a) {
-  Scale[3] = a;
-  return (int)(gd(Scale[0] * Scale[3]) + gm(Scale[1]) * 5 +
-               g2d(Scale[2], Scale[3]) * 7);
-}
-)C";
-
-// The LLVM route's C passes them alike.  Its caller loads each double whole
-// (`movsd xmm0, [mem]`): that C holds a vector register whole, and an upper
-// lane a scalar conversion left as the caller's entry value would be an
-// unknown value there.
+// The LLVM route's C passes them alike, though it holds a vector register
+// whole: the upper lanes a scalar conversion leaves as fwd_e's entry value
+// pass as zero, and gdc's alignment `push rax` passes logv nothing.
 TEST_F(X86_64_CallAbi, ALiftedVariadicCallPassesOnTheDoublesALCounts) {
   LLVMC = true;
   expectHighCRunsLikeSource(
-      {"-target", "x86_64-linux-gnu"}, ForwardedLoadedDoubles, "fwd_e",
-      {"fwd_e", "gd", "gm", "g2d", "logv", "Scale"}, {0, 1, -1, 7, 1000});
+      {"-target", "x86_64-linux-gnu"}, ForwardedDoubles, "fwd_e",
+      {"fwd_e", "gd", "gdc", "gm", "g2d", "logv"}, {0, 1, -1, 7, 1000});
 }
 
 static const char *const VariadicStackIntegers = R"C(
@@ -676,6 +646,46 @@ TEST_F(X86_64_CallAbi, AVariadicCalleeTakesItsStackArguments) {
 // caller left unset, as the callee takes them in that order.
 TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsStackArguments) {
   expectLiftedRunsLikeSource(VariadicStackIntegers, "vsum_big", "sb");
+}
+
+// gdc aligns its stack for the call with `push rax`, which stores RAX's
+// incoming value where a stack argument would go, and g7 with one above the
+// two longs it pushes.  RAX holds nothing at entry, so neither slot passes
+// logv an argument.  g6 overwrites its pushed slot with its sixth long and g8
+// pushes three below a `sub rsp, 8`: each passes its own, which logv's
+// va_arg reads.
+TEST_F(X86_64_CallAbi, AnAlignmentPushPassesNoVariadicStackArgument) {
+  expectBothRoutesRunLikeSource(R"C(
+long logv(const char *f, ...) __attribute__((noinline));
+long gdc(void) __attribute__((noinline));
+long g6(long a) __attribute__((noinline));
+long g7(long a) __attribute__((noinline));
+long g8(long a) __attribute__((noinline));
+long gdc(void) { return logv("y") + 1; }
+long g6(long a) {
+  return logv("llllll", a, a + 1, a + 2, a + 3, a + 4, a * 5) + 1;
+}
+long g7(long a) {
+  return logv("lllllll", a, a + 1, a + 2, a + 3, a + 4, a * 5, a ^ 6) + 1;
+}
+long g8(long a) {
+  return logv("llllllll", a, a + 1, a + 2, a + 3, a + 4, a * 5, a ^ 6, a - 7) +
+         1;
+}
+long logv(const char *f, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, f);
+  long s = 0;
+  for (const char *p = f; *p; ++p)
+    s = s * 31 + (*p == 'l' ? __builtin_va_arg(ap, long) : 1);
+  __builtin_va_end(ap);
+  return s;
+}
+int slots_e(int a) { return (int)(gdc() + g6(a) * 3 + g7(a) * 5 + g8(a) * 7); }
+)C",
+                                "slots_e",
+                                {"slots_e", "gdc", "g6", "g7", "g8", "logv"},
+                                {0, 1, -1, 7, 1000});
 }
 
 static const char *const VariadicForwarders = R"C(
