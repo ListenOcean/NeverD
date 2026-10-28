@@ -554,8 +554,7 @@ size_t MemoryPostconditions::apply(
           substituteOrigins(Copy.Destination, Entry, Program).singleton();
       if (memoryAddress(From) && memoryAddress(To)) {
         const auto Destination = memoryAddress(To);
-        if (Destination->ValueKind == RegisterValue::Kind::SymbolicAddress ||
-            isScratchRange(Destination->Value, Copy.Size))
+        if (Scratch.Values.canModelRange(*Destination, Copy.Size))
           Scratch.Values.copyFrom(Source.Values, From, To, Copy.Size);
         else
           Scratch.clear();
