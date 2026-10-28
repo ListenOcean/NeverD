@@ -84,7 +84,9 @@ sourceABIParameters(const SourceFunctionTypeHint &Hint);
 TypeRef sourceABICallResultType(const SourceFunctionTypeHint &Hint);
 
 /// Assign Darwin's ordinary fixed scalar calling convention, including a
-/// 128-bit integer result in two registers (parameters remain at most 64 bits).
+/// 128-bit integer result in two registers. AArch64 parameters also admit
+/// complete 128-bit integers, including consecutive odd-register pairs and
+/// aligned whole-value stack spills.
 /// This describes
 /// the requested scalar signature; it does not establish that a binary had
 /// that declaration. Inferred native hints must retain their observed

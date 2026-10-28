@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceCallValue.h"
 #include "neverd/backend/llvm/LLVMSourceMap.h"
 #include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
@@ -935,12 +936,9 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
         continue;
       }
       const bool Floating = Members.front().Type->Kind == NdTypeKind::Float;
-      auto *Element = Floating ? mapNdtype(Members.front().Type) : I64Ty;
-      const unsigned Count =
-          Floating ? Members.size()
-                   : (Parameter.Type->Size + kSourceCallWordBytes - 1) /
-                         kSourceCallWordBytes;
-      auto *Array = llvm::ArrayType::get(Element, Count);
+      auto *Array = llvm::cast<llvm::ArrayType>(
+          llvmSourceCallValueType(*Ctx, Parameter.Type, /*Parameter=*/true));
+      const unsigned Count = Array->getNumElements();
       llvm::Value *Value = llvm::PoisonValue::get(Array);
       for (unsigned I = 0; I < Count; ++I) {
         auto *Part =
@@ -961,19 +959,10 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
       return;
     }
     std::vector<llvm::Type *> Prefix(Types.begin(), Types.begin() + Fixed);
-    auto *ReturnType = mapNdtype(Hint.Signature.ReturnType);
+    auto *ReturnType = llvmSourceCallValueType(*Ctx, Hint.Signature.ReturnType,
+                                               /*Parameter=*/false);
     const auto ReturnMembers =
         sourceAggregateMembers(Hint.Signature.ReturnType);
-    if (!ReturnMembers.empty()) {
-      std::vector<llvm::Type *> Elements;
-      const bool Floating =
-          ReturnMembers.front().Type->Kind == NdTypeKind::Float;
-      const auto Count = Floating ? ReturnMembers.size()
-                                  : Hint.Signature.ReturnComponents.size();
-      for (size_t I = 0; I < Count; ++I)
-        Elements.push_back(Floating ? mapNdtype(ReturnMembers[I].Type) : I64Ty);
-      ReturnType = llvm::StructType::get(*Ctx, Elements);
-    }
     auto *FT = llvm::FunctionType::get(ReturnType, Prefix,
                                        Hint.AnalystFixedCount >= 0);
     llvm::Value *Callable = Target;

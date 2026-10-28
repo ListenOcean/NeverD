@@ -64,8 +64,17 @@ bool equalTypes(const TypeRef &Left, const TypeRef &Right, unsigned Depth,
   case NdTypeKind::Float:
     return Left->Size == 4 || Left->Size == 8;
   case NdTypeKind::Ptr:
-    return Left->Size == 8 &&
-           equalTypes(Left->Pointee, Right->Pointee, Depth + 1, Remaining);
+    if (Left->Size != 8 || !Left->Pointee || !Right->Pointee)
+      return false;
+    // A named opaque pointee supplies identity, not a by-value layout.
+    if (Left->Pointee->Kind == NdTypeKind::Struct &&
+        Right->Pointee->Kind == NdTypeKind::Struct && !Left->Pointee->IsEnum &&
+        !Right->Pointee->IsEnum && Left->Pointee->Fields.empty() &&
+        Right->Pointee->Fields.empty() && !Left->Pointee->SourceName.empty() &&
+        !Right->Pointee->SourceName.empty())
+      return Left->Pointee->SourceName == Right->Pointee->SourceName &&
+             Left->Pointee->Size == Right->Pointee->Size;
+    return equalTypes(Left->Pointee, Right->Pointee, Depth + 1, Remaining);
   case NdTypeKind::Struct: {
     const auto Layout = NdType::makeStruct(Left->Fields);
     if (!Layout || Left->Size != Layout->Size || Right->Size != Layout->Size ||

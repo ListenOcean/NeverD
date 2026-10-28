@@ -18,14 +18,32 @@
 
 #include "neverd/backend/c/CEmitterOptions.h"
 #include "neverd/ir/IntegerCallArguments.h"
+#include "neverd/ir/SourceABI.h"
 
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
+#include "llvm/Support/FormatVariadic.h"
 
 #include <stdexcept>
 #include <string>
 
 namespace neverd::c_detail {
+#define NEVERD_C_RECORD_TEXT(Name, Text) inline constexpr char Name[] = Text;
+#include "CRecordCall.def"
+
+/// Copy each logical member once between complete C value representations.
+/// The validated source layout owns the offsets. Padding never becomes an
+/// integer value, including when a C record result uses raw LLVM word fields.
+inline std::string sourceRecordValue(const TypeRef &Record,
+                                     llvm::StringRef From, llvm::StringRef To,
+                                     llvm::StringRef Expression) {
+  std::string Copies;
+  for (const auto &Member : sourceAggregateMembers(Record))
+    Copies += llvm::formatv(kSourceRecordFieldCopy, Member.ByteOffset,
+                            Member.Type->Size)
+                  .str();
+  return llvm::formatv(kSourceRecordValue, To, From, Expression, Copies).str();
+}
 
 inline std::string recordCallType(const TypeRef &Type,
                                   const CEmitterOptions &Options) {

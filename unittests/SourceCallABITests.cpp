@@ -552,4 +552,54 @@ TEST(SourceCallABI, AcceptsOnlyTheExactPromotedEntryRegisterMarker) {
   F.Blocks[0].Ops[0].Inputs[1].SSAVer = 1;
   EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
 }
+
+TEST(SourceCallABI, RecordMemberProjectionDoesNotRequirePaddingOrDefineIt) {
+  auto H = contract({NdType::makeInt(kDarwinFloatBytes)});
+  MedFunc F;
+  MedVar Parameter = value(1);
+  Parameter.Kind = MedVar::Param;
+  Parameter.RegOff = 0;
+  Parameter.Size = kDarwinFloatBytes;
+  F.Params = {Parameter};
+  auto Input = Parameter;
+  Input.Kind = MedVar::Reg;
+  Input.Size = kDarwinRegisterBytes;
+  MedOp Copy;
+  Copy.Opcode = NdOp::COPY;
+  Copy.Output = value(2);
+  Copy.Output.Size = kDarwinRegisterBytes;
+  Copy.addInput(Input);
+  MedOp Extract;
+  Extract.Opcode = NdOp::SUBBYTES;
+  Extract.Output = value(3);
+  Extract.Output.Size = kDarwinFloatBytes;
+  Extract.addInput(Copy.Output);
+  Extract.addInput(MedVar::makeConst(0, kDarwinFloatBytes));
+  MedOp Call;
+  Call.Opcode = NdOp::CALL;
+  Call.SourceCallHint = std::make_shared<SourceCallTypeHint>(H);
+  Call.addInput(MedVar::makeConst(0x2000, kDarwinRegisterBytes));
+  Call.addInput(Extract.Output);
+  F.Blocks.emplace_back();
+  F.Blocks.front().Ops = {Copy, Extract, Call};
+  std::string Error;
+  EXPECT_TRUE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error)) << Error;
+  const auto Good = F;
+  F.Blocks.front().Ops.back().Inputs[1] = Copy.Output;
+  EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
+  F = Good;
+  F.Blocks.front().Ops[1].Inputs[1].ConstVal = kDarwinFloatBytes;
+  EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
+  F = Good;
+  F.Blocks.front().Ops.front().Inputs[0].SSAVer = 1;
+  EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
+  F = Good;
+  F.Blocks.front().Ops.front().Inputs[0].RegOff = kDarwinRegisterBytes;
+  EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
+  F = Good;
+  F.Blocks.front().Ops.front().Opcode = NdOp::INT_ADD;
+  F.Blocks.front().Ops.front().addInput(
+      MedVar::makeConst(0, kDarwinRegisterBytes));
+  EXPECT_FALSE(sourceCallArgumentsDefined(F, *H.AnalystSite, Error));
+}
 } // namespace

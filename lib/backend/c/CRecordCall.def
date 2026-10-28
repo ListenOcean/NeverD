@@ -1,0 +1,27 @@
+//===- CRecordCall.def - Logical record value spelling ---------*- C++ -*-===//
+//
+// NeverD Decompiler
+//
+//===----------------------------------------------------------------------===//
+/// \file
+/// Private value-copy spelling that excludes source padding bytes.
+//===----------------------------------------------------------------------===//
+
+#ifndef NEVERD_C_RECORD_TEXT
+#define NEVERD_C_RECORD_TEXT(Name, Text)
+#endif
+
+NEVERD_C_RECORD_TEXT(
+    kSourceRecordValue,
+    "({{ {0} __neverd_record_destination = {{0}; "
+    "{1} __neverd_record_source = ({2}); {3} __neverd_record_destination; })")
+NEVERD_C_RECORD_TEXT(
+    kSourceRecordFieldCopy,
+    "__builtin_memcpy((unsigned char *)&__neverd_record_destination + {0}, "
+    "(const unsigned char *)&__neverd_record_source + {0}, {1}); ")
+NEVERD_C_RECORD_TEXT(kUnknownNamedRecordField,
+                     "A named source record field has no complete C spelling")
+NEVERD_C_RECORD_TEXT(kInvalidSourceRecordABI,
+                     "A source call needs a complete direct value ABI")
+
+#undef NEVERD_C_RECORD_TEXT
