@@ -7938,6 +7938,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 呼び出しは現在の関数の対応付けに基づきます。動作は未検証です。</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>呼び出しコンテキスト…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主入力</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>副入力</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>主入力の関数 %1 / 副入力の関数 %2 · 共有範囲 %3
+対象命令のカバレッジ：%4% / %5%（対応付け済みの直接呼び出しを含む）。この証拠は関数の対応付けを前提とし、動作は未検証です。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>

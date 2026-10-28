@@ -7938,6 +7938,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 调用依据当前函数配对；尚未验证行为。</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>调用上下文…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主输入</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>次输入</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 个主输入函数 / %2 个次输入函数 · %3 个共享片段
+覆盖率：符合条件的指令中占 %4% / %5%，包括已配对的直接调用。此证据以函数配对为条件；尚未验证行为。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>

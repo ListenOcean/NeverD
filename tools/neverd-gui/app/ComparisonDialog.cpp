@@ -269,6 +269,8 @@ ComparisonDialog::ComparisonDialog(const QString &Worker,
               auto &View = SSA ? FlowRegionsView : RegionsView;
               if (!View) {
                 View = new ComparisonRegionsDialog(Session, this, SSA);
+                connect(View, &ComparisonRegionsDialog::inspectCallContext,
+                        this, &ComparisonDialog::showImpact);
                 connect(View, &ComparisonRegionsDialog::inspectFunction, this,
                         [this](const auto &Side, const auto &Address) {
                           selectFunction(Side, Address);

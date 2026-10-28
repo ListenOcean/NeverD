@@ -7938,6 +7938,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 호출은 현재 함수 대응을 기준으로 합니다. 동작은 검증되지 않았습니다.</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>호출 컨텍스트…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>주 입력</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>보조 입력</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>주 입력 함수 %1개 / 보조 입력 함수 %2개 · 공유 구간 %3개
+대상 명령어의 범위: %4% / %5% (대응된 직접 호출 포함). 이 증거는 함수 대응을 전제로 하며 동작은 검증되지 않았습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>

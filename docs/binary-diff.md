@@ -265,6 +265,13 @@ The **All shared spans (including unclassified)** filter and `--list region-anch
 also page anchors retained before grouping could finish. Use the saved report
 when revisiting a partial result: anchor indices belong to that exact result.
 
+Select a shared span and use **Call context… → Primary / Secondary** to trace
+its callers through the same native call-path review. This also exposes a public
+wrapper that delegates to a moved private body, even when the wrapper contains
+no directly shared instructions. Calls and tail transfers retain their original
+instruction witnesses. Reachability is conditional on observed native edges;
+it does not establish path feasibility, source ancestry or patch presence.
+
 ## Dependency evidence and slices
 
 `--dataflow` captures the existing pipeline's verified MedIR as detached SSA/CFG

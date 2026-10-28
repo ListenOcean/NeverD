@@ -8010,6 +8010,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 Вызовы используют текущие пары функций; поведение не проверено.</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>Контекст вызовов…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Основной</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Вторичный</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 основных / %2 вторичных функций · %3 общих диапазонов
+Покрытие: %4% / %5% допустимых инструкций, включая сопоставленные прямые вызовы. Эти данные зависят от пар функций; поведение не проверено.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>

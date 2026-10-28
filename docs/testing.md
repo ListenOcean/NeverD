@@ -3661,6 +3661,16 @@ fixtures exercise real x64 call bytes, shared pages, cache invalidation,
 save/reopen and settings restoration. They qualify conditional correspondence
 evidence, not callee semantics or arbitrary region transformations. The AArch64
 SDK fixture also retains the exact native BL row across save/reopen.
+Qt's `regionSelectionResolvesAfterAnUnloadedPageArrives` selects uncached
+hypothesis and raw-anchor pages in a 417-function native fixture, then checks
+the original instruction address and call-context destination after loading.
+`retainedLargeCallRegionWorkflow` accepts
+`NEVERD_DIFF_CALL_REGIONS_REPORT` and `NEVERD_DIFF_REGION_WORKFLOW` for an
+opt-in retained corpus check. It restores more than ten thousand anchors,
+selects an uncached shared body and follows its secondary call context to the
+public wrapper, comparing the original tail-transfer witness with the native
+API receipt. It exercises paging and evidence navigation; it does not turn a
+wrapper's call relationship into shared instructions or semantic equivalence.
 `BinaryDiffFlowRegions` checks split/merge/inline/outline alternatives, nested
 overlap versus actual one-to-many node mappings, origin and frequency admission,
 coverage, cooperative stops and rederived saved facts. SDK/CLI/worker/Qt region

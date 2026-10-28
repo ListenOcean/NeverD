@@ -7974,6 +7974,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 Le chiamate usano le coppie di funzioni attuali; il comportamento non è convalidato.</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>Contesto delle chiamate…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>Primario</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>Secondario</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 funzioni primarie / %2 secondarie · %3 intervalli condivisi
+Copertura: %4% / %5% delle istruzioni ammesse, incluse le chiamate dirette associate. Queste evidenze dipendono dalle coppie di funzioni; il comportamento non è convalidato.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>

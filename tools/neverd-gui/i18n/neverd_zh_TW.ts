@@ -7938,6 +7938,24 @@ Calls use current function pairs; behavior is not validated.</source>
         <translation>
 呼叫依據目前的函式配對；尚未驗證行為。</translation>
     </message>
+    <message>
+        <source>Call context…</source>
+        <translation>呼叫脈絡…</translation>
+    </message>
+    <message>
+        <source>Primary</source>
+        <translation>主要輸入</translation>
+    </message>
+    <message>
+        <source>Secondary</source>
+        <translation>次要輸入</translation>
+    </message>
+    <message>
+        <source>%1 primary / %2 secondary functions · %3 shared spans
+Coverage: %4% / %5% of eligible instructions, including paired direct calls. Function pairs condition this evidence; behavior is not validated.</source>
+        <translation>%1 個主要輸入函式 / %2 個次要輸入函式 · %3 個共用片段
+涵蓋率：符合條件的指令中占 %4% / %5%，包括已配對的直接呼叫。此證據以函式配對為條件；尚未驗證行為。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonReviewDialog</name>
