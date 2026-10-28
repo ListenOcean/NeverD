@@ -50,7 +50,7 @@ caller-context query and retains `output.callx-contexts.json` for every sample.
 It uses the same loader, execution profile, process isolation and request
 budgets. This query is not added to the default export kinds. Target evidence
 is conditional on the recorded summary/caller and recognized entry model;
-every site retains dynamic fallback. Schema 8 covers complete function CFGs,
+every site retains dynamic fallback. Schema 9 covers complete function CFGs,
 nested parameters, return values and typed scratch effects. It retains prior
 entry-prefix evidence under a separate scope and records generalized inputs,
 summary dependencies and resource/recursion barriers. It also records projected
@@ -135,6 +135,19 @@ from a complete relative cell, in either direction, through the shared
 typed-cell owner. Reports expose the bound in `frame_coordinates`; manual
 frames remain unbounded. A translated interval that can overlap still loses
 its facts, including frame-relative arithmetic reaching heap addresses.
+Summary-local frame inputs can be normalized at a known singleton entry r10,
+with literal bits and captured identities unchanged. Returned frame-valued r0
+and typed cells are rebound to the actual caller. Relative typed stores and
+copies share their range validation, including representable coordinates below
+the numeric stack region; wrapped windows and frame-based image reads remain
+unsupported. `frame_coordinates` declares the summary and instantiated-proof
+namespaces, and `canonicalized_frame_inputs` counts normalization work.
+Opaque cached recursion cuts can be reconsidered when their non-self callee is
+no longer active, with the same transfer/target retention checks and four-variant
+limit. `unblocked_recursion_retries` counts successful work selections, not
+target recoveries. Unknown members of a repeated literal-image binding cluster
+do not prevent exploring a new literal binding; they still supply no target
+or alias proof.
 Full finite target proofs from this path do not by themselves establish
 complete candidate-callee summaries or execution coverage. Expression nodes
 and proof steps consume the existing output, retained-state and work budgets.
@@ -379,3 +392,79 @@ Remaining full-scan native failures:
 All use `rustc 1.91.1 (ed61e7d7e 2025-11-07)`. Emitted sources, compiler versions and probe templates match the earlier run. No isolated retry replaces a full-scan failure.
 
 Validation: Release **411/411**, no failures, skips or disabled cases. Both C and Rust cover all **5,899,345 raw slots exactly once**, with matching partitions. Sanitizers, other host platforms and real business-handler replay were not requalified in this run. P3 and the broader semantic-recovery goal remain open.
+
+## 2026-10-28 P3 frame and recursion qualification
+
+Qualified code: `0fb3e597f288101f74d3166b4e4f5ec9627206a6`; worker SHA-256
+`010c2739bce749cf08994deb8fa948fbb00f0bab6a59ed8b1d659074e9b78dd2`.
+The baseline is the complete second #1931 round at
+`d024084e01c2d045220f38c214c1d2cd9e212e8e`; its production worker is
+byte-identical to publication commit `bb21384252cd0ffb6c2de2f16983721207796758`.
+The new report SHA-256 is
+`ce3ab40e2385c7660d7de45ab131c9629d3133e2a2ea5021b4324af58236d15d`.
+
+One independent complete run of all 72 pinned SOs passes every analysis stage
+(`load`, `runtime_image`, `decode`, `control_flow`, `verification`, `cfg_medir`,
+`highir`, `solana`), LLVM/C/Rust export, CALLX-context queries, and C/Rust native
+object compilation: **72/72 before and after**. No crashes, timeouts or native
+compile failures occurred in this round. The earlier #1931 first round's five
+Rust timeouts remain historical failures; no isolated retry substitutes for a
+full-run result, and timing stability is not established.
+
+Profiles, asset hashes, compiler versions/flags, dependency inputs and budgets
+match: 60 seconds/request, sampled process-group RSS 8 GiB, output 512 MiB,
+jobs 2; internally 8,388,608 instruction visits, 64 MiB retained-state estimate,
+524,288 output elements, four specializations per entry, and four complete
+value alternatives. Release SBF checks pass **467/467**, with no skips or
+disabled cases, including required official SBPF, Agave and protocol-scale
+gates. Four new tests cover typed atomic frame translation, equivalent frames,
+previously blocked recursive calls, and unknown variants beside new image
+bindings; their 31 synthetic raw CALLX observations are not corpus bank replay.
+
+| Conditional-analysis measure | Before | After |
+| --- | ---: | ---: |
+| Singleton target sites | 184 | 194 |
+| Complete finite target-set sites | 31 | 31 |
+| Sites with either conditional address proof | 215 | 225 |
+| Sites with no conditional address proof | 7,359 | 7,349 |
+| Instruction visits | 183,686,634 | 169,908,145 |
+| Function summaries | 141,400 | 120,986 |
+
+Singleton site/address relations gain 13 and caller-slot relations gain 17,
+with no losses. Caller-entry relations gain 28 but lose 381 singleton and four
+finite-set relations in Raydium CPMM/LaunchLab. An independent raw-ELF audit
+checks all **1,170 old positive contexts** for these 385 removed relations:
+literal vtable construction, relocated immutable function pointers, all raw
+return paths setting r0 to zero, and conservative caller CFG propagation
+exclude every old call position. Without the certified zero return, all 1,170
+call positions become reachable again. In-memory mutations to nonzero returns
+and overwritten vtables are rejected; original SO hashes remain unchanged.
+For example, CPMM's calls at 18864/18927 into wrapper 24242 dispatch to slot
+5116, whose returns are zero; the JNE branch into the panic tail at 18961 cannot
+be taken. Calls otherwise may return, clobber caller-saved registers and expose
+unknown memory; no nonreturning host-callback assumption is introduced.
+
+Serialized expression witnesses are not all preserved. After normalization by
+the owning caller's known R10, 2,656 forms become 2,279: 383 removed, six added.
+Of the removed forms, 381 correspond to the audited pruning above. The other
+two Aquifer forms, from caller entries 30832/31055 through call 31699 to CALLX
+17792, now use direct function summaries. Three old positive contexts retain
+the same normalized known caller registers and complete target set
+`{17898, 17998, 18086, 18141}`. Queries do not serialize complete input memory,
+so this comparison does not establish all-memory equivalence. Raw witness
+counts 9,002 → 2,279 also include coordinate deduplication.
+
+All 216 LLVM/C/Rust exports remain byte-identical to the baseline. C and Rust
+each represent all 5,899,345 raw slots exactly once, with matching partitions.
+Whole-program structured recovery is still **0/72**; all 7,574 raw CALLX sites
+retain dynamic fallback. There are 71 samples with remaining unproven sites;
+`meteora-dbc` and `meteora-dlmm` still reach a global analysis budget bound.
+
+Lifinity-v1 CALLX 1963 remains unproven. Its unknown summary contexts decrease
+from 24 to 16 (ten missing full-width scratch values, six unknown entry
+registers); this deduplication is not a new target proof. Error-helper tag and
+payload propagation, potentially aliasing writes, and the join at 32493 still
+prevent carrying allocation/field facts through 32926 to 1960/1963. Finite
+instrumented inputs observe slot **1971**, address `0x100003EB8`; this does not
+prove all inputs. Sanitizers, other host platforms, real bank/CPI replay and
+byte-identical source reconstruction were not requalified in this round.

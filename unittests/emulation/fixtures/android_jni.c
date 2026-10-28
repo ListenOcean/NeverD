@@ -1987,12 +1987,8 @@ int jni_event_log(unsigned form, unsigned mode) {
   CHECK(integer && wide && floating);
   if (mode == 5) {
     __asm__ volatile("msr fpcr, %0" : : "r"((U64)0x00400000));
-    if (form == 2) {
-      CHECK(event_log_call(e, type, methods[2], form, 'F', 0x3f800000) == -11);
-      return C(vm, int, 5);
-    }
-    (void)event_log_call(e, type, methods[2], form, 'F', 0x3f800000);
-    return __LINE__;
+    CHECK(event_log_call(e, type, methods[2], form, 'F', 0x3f800000) == -11);
+    return C(vm, int, 5);
   }
   if (mode == 4) {
     Ref field = C(e, Ref, 94, float_class, "value", "F");
@@ -2059,14 +2055,63 @@ int jni_event_log(unsigned form, unsigned mode) {
   return C(vm, int, 5);
 }
 
-int jni_event_log_explicit_va(const void *arguments) {
+U64 jni_event_log_explicit_va(const void *arguments, U64 control) {
   Handle e = attach();
   CHECK(e);
   Ref type = C(e, Ref, 6, "android/util/EventLog");
   Ref method = C(e, Ref, 113, type, "writeEvent", "(IF)I");
   CHECK(method);
+  __asm__ volatile("msr fpcr, %0\n msr fpsr, %1"
+                   :
+                   : "r"(control), "r"((U64)0x08000002)
+                   : "memory");
   CHECK(C(e, int, 130, type, method, arguments) == -11);
-  return C(vm, int, 5);
+  U64 status;
+  __asm__ volatile("mrs %0, fpsr" : "=r"(status));
+  CHECK(!C(vm, int, 5));
+  return status;
+}
+
+U64 jni_event_log_float_control(unsigned form, U64 bits, U64 control,
+                                U64 initial_status, unsigned boxed) {
+  Handle e = attach();
+  CHECK(e);
+  Ref type = C(e, Ref, 6, "android/util/EventLog");
+  Ref method = C(e, Ref, 113, type, "writeEvent",
+                 boxed ? "(I[Ljava/lang/Object;)I" : "(IF)I");
+  Ref float_type = C(e, Ref, 6, "java/lang/Float");
+  Ref ctor = C(e, Ref, 33, float_type, "<init>", "(F)V");
+  CHECK(type && method && float_type && ctor);
+  union {
+    U64 bits;
+    double number;
+  } input = {bits};
+  __asm__ volatile("msr fpcr, %0\n msr fpsr, %1"
+                   :
+                   : "r"(control), "r"(initial_status)
+                   : "memory");
+  if (boxed) {
+    const U64 args[] = {bits};
+    Ref number = form == 0 ? C(e, Ref, 28, float_type, ctor, input.number)
+                 : form == 1
+                     ? stat_logger_new_v(e, float_type, ctor, input.number)
+                     : C(e, Ref, 30, float_type, ctor, args);
+    CHECK(number);
+    Ref array = C(e, Ref, 172, 1, float_type, number);
+    CHECK(event_log_call(e, type, method, form, 'L', array) == -11);
+  } else if (form == 2) {
+    CHECK(event_log_call(e, type, method, form, 'F', bits) == -11);
+  } else {
+    CHECK((form ? event_log_v(e, type, method, 0x12345678, input.number)
+                : C(e, int, 129, type, method, 0x12345678, input.number)) ==
+          -11);
+  }
+  U64 status, observed_control;
+  __asm__ volatile("mrs %0, fpsr\n mrs %1, fpcr"
+                   : "=r"(status), "=r"(observed_control));
+  CHECK(observed_control == control);
+  CHECK(!C(vm, int, 5));
+  return status;
 }
 
 int jni_service_manager_logs(unsigned form) {

@@ -4777,10 +4777,13 @@ void HighCWriter::writeAll(const std::vector<HighFunc> &Funcs) {
 
 bool HighCWriter::writeFunctionsInParallel(const std::vector<HighFunc> &Funcs) {
   // A source recorder, a source map and the source names follow the text as
-  // one pass prints it; a small unit is not worth a writer per thread.
+  // one pass prints it; a small unit is not worth a writer per thread,
+  // unless it leaves out a definition that fails: a copy that threw starts
+  // afresh, where the serial loop would go on from its broken state.
+  const bool Refusing = Opts.RefusedDefinitions != nullptr;
   if (SourceRecorder || Opts.SourceMap || Opts.SourceNames ||
-      Funcs.size() < limits::kMinParallelCFunctionDefinitions ||
-      workerThreadCount() < 2)
+      (!Refusing && (Funcs.size() < limits::kMinParallelCFunctionDefinitions ||
+                     workerThreadCount() < 2)))
     return false;
   std::vector<uint64_t> Weight(Funcs.size(), 0);
   for (size_t I = 0; I < Funcs.size(); ++I)
@@ -4818,13 +4821,28 @@ bool HighCWriter::writeFunctionsInParallel(const std::vector<HighFunc> &Funcs) {
       }
     }
   });
-  // The serial loop stops at the first definition that fails.
-  for (const std::exception_ptr &Failure : Failures)
-    if (Failure)
-      std::rethrow_exception(Failure);
+  // The serial loop stops at the first definition that fails; a refusing
+  // unit leaves out each one that threw an error it can name.
+  std::vector<std::string> Refusals(Refusing ? Funcs.size() : 0);
+  for (size_t I = 0; I < Funcs.size(); ++I) {
+    if (!Failures[I])
+      continue;
+    if (!Refusing)
+      std::rethrow_exception(Failures[I]);
+    try {
+      std::rethrow_exception(Failures[I]);
+    } catch (const std::exception &Error) {
+      Refusals[I] = Error.what();
+    }
+  }
   for (size_t I = 0; I < Funcs.size(); ++I) {
     if (Funcs[I].Name.empty())
       continue;
+    if (Failures[I]) {
+      Opts.RefusedDefinitions->push_back(
+          {Funcs[I].Entry, Funcs[I].Name, std::move(Refusals[I])});
+      continue;
+    }
     OS << Texts[I];
     if (I + 1 < Funcs.size())
       OS << "\n";
@@ -4993,6 +5011,9 @@ bool HighCEmitter::emit(const std::vector<HighFunc> &Funcs,
   std::set<std::string> Asked;
   auto Render = [&](llvm::raw_ostream &OS, CSourceRecorder *Recorder,
                     std::vector<TypeRef> *Wanted = nullptr) {
+    // The definitions the unit leaves out are those of the text it keeps.
+    if (Opts.RefusedDefinitions)
+      Opts.RefusedDefinitions->clear();
     std::vector<HighFunc> Working = Funcs;
     if (Opts.StructuredExceptionSyntax) {
       attachCxxFuncletBodies(Working);

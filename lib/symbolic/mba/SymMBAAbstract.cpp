@@ -1298,7 +1298,9 @@ abstractToMBAImpl(SymContext &Ctx, SymRef Root, bool AllowProducts,
       continue;
     }
 
-    llvm::ArrayRef<SymRef> Ops = Ctx.operands(R);
+    auto SourceOperands = Ctx.operands(R);
+    llvm::SmallVector<SymRef, 8> Ops(SourceOperands.begin(),
+                                     SourceOperands.end());
     if (Ops.empty()) {
       Rewritten[Index] = R;
       continue;
@@ -1314,6 +1316,8 @@ abstractToMBAImpl(SymContext &Ctx, SymRef Root, bool AllowProducts,
         continue;
       }
 
+      // Hiding a complementary mask can create NOT and grow Ctx's operand
+      // pool. Ops owns this iteration's source references across that growth.
       NewOps.push_back(Hide(C));
     }
 

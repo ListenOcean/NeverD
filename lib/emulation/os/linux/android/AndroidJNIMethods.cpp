@@ -7,13 +7,12 @@
 /// JNI method identities and value-based Java operations. Unknown method
 /// bodies remain unsupported; resolving a name never supplies a canned result.
 //===----------------------------------------------------------------------===//
+#include "../../../arch/aarch64/AArch64FloatConversion.h"
 #include "AndroidArguments.h"
 
 #include "neverd/dalvik/Library.h"
 #include "neverd/emulation/Limits.h"
 
-#include "llvm/ADT/APFloat.h"
-#include "llvm/ADT/APInt.h"
 #include "llvm/Support/Endian.h"
 
 #include <algorithm>
@@ -213,18 +212,22 @@ BionicResult Bionic::jniMethods(unsigned Slot, const NativeCallEvent &Call) {
       auto Control = CPU.readRegister(CPURegister::AArch64FPCR);
       if (!Control)
         return Control.takeError();
-      if ((*Control)[0]) {
+      const auto Converted = narrowAArch64Double(*Argument, (*Control)[0]);
+      if (!Converted) {
         Result.Stop = ProcessStopReason::UnsupportedService;
         Result.Diagnostic =
-            "JNI promoted float conversion requires default FPCR";
+            "JNI promoted float conversion has unsupported FPCR controls";
         return std::optional<BionicValue>();
       }
-      llvm::APFloat Promoted(llvm::APFloat::IEEEdouble(),
-                             llvm::APInt(64, *Argument));
-      bool LosesInfo;
-      Promoted.convert(llvm::APFloat::IEEEsingle(),
-                       llvm::APFloat::rmNearestTiesToEven, &LosesInfo);
-      V = Promoted.bitcastToAPInt().getZExtValue();
+      if (Converted->Raised) {
+        auto Status = CPU.readRegister(CPURegister::AArch64FPSR);
+        if (!Status)
+          return Status.takeError();
+        (*Status)[0] |= Converted->Raised;
+        if (auto E = CPU.writeRegister(CPURegister::AArch64FPSR, *Status))
+          return std::move(E);
+      }
+      V = Converted->Bits;
     } else {
       auto Argument =
           Arguments.next(Types[I] == 'L' || Types[I] == 'J' ? 8 : 4);

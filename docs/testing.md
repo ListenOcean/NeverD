@@ -12442,11 +12442,23 @@ byte truncation and API 28 zero tails, scalar capacity, error precedence,
 work/heap limits and DEX/library equivalence. `AndroidJNI.EventLog*` covers
 ordinary/V/A calls at O0/O2, relocation variants and available CPU backends,
 including independent GP/FP save cursors, overflow stack slots, immutable
-va_list memory, malformed FP save areas, default-FPCR conversion and explicit
+va_list memory, malformed FP save areas, baseline-FPCR conversion and explicit
 unsupported floating field returns. Run the AndroidFormatting suite too when
 changing the shared argument reader. `ProcessPublic.AndroidEventLogOverloadsMatchSDKAndCLI`
 compares thirty complete reports, including unavailable/exhausted/mismatching
 write transcripts. These checks do not establish a live logd environment.
+
+`AArch64FloatConversion.*` in `NeverDAArch64FPTests` checks 31 independent
+result/exception vectors, rejects every control bit outside the baseline
+contract, and compares 66,032 conversions with native FCVT on an ARM64 GNU-asm
+host across all 16 rounding/FZ/DN combinations. Other hosts explicitly skip
+the native oracle. `AndroidJNI.EventLogFloat*` checks direct and boxed floats
+through ordinary/V/A calls, cumulative status/QC, unchanged FPCR, raw signaling
+NaNs in jvalue arrays, and earlier FPSR effects at a later service failure.
+`ProcessPublic.AndroidEventLogFloatControlMatchesSDKAndCLI` adds 36 complete
+report pairs across O0/O2. Run the full ARM64 FP and Dalvik suites, Android
+JNI/log/formatting/scanning/callback/thread suites, Linux report/clock checks
+and EventLog public-interface cases after changing this boundary.
 
 Build the owning executable first, then select its label. This avoids relinking
 unrelated large semantic targets.
