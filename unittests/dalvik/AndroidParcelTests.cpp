@@ -14,9 +14,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdint>
 #include <initializer_list>
+#include <map>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace neverd::mobile::dalvik {
