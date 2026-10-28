@@ -247,7 +247,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
           return Callee;
         });
   }
-  prepareRecoveredSourceStackAccesses(Img, Result);
+  prepareRecoveredSourceStackAccesses(Img, Result, Result.LowFuncs);
   // Both C projections consume these original-machine observations after
   // source ABI remodeling. They never participate in type or call recovery.
   std::map<va_t, const LowFunc *> OriginalFunctions;

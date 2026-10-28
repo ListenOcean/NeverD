@@ -18,8 +18,10 @@
 #include "neverd/ir/med/MedIR.h"
 
 #include <map>
+#include <set>
 
 namespace neverd {
+struct BinaryImage;
 
 /// Whether \p V is the value register \p RegOff holds at \p Func's entry:
 /// its version zero, or the entry seed that copies it (`COPY RSI.1 = RSI`).
@@ -36,10 +38,20 @@ bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
 /// call operands reading private frame bytes proved never written on any
 /// incoming path become explicit unavailable values in source only. General
 /// partial-byte observations are separate. The analysis is discarded before
-/// returning; operation positions stay stable.
+/// returning; operation positions stay stable. An optional current image
+/// identifies complete data-object reads disjoint from the private source
+/// frame; unknown addresses and external stores still stop the spill proof.
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format,
-                             StackEntryKind Entry = StackEntryKind::Call);
+                             StackEntryKind Entry = StackEntryKind::Call,
+                             const BinaryImage *Image = nullptr);
+
+/// Positional Win64 register inputs whose only uses are source-proved dead
+/// spills and dead identity transports. Every implicit call observation must
+/// follow a full overwrite or have a bound unread-register proof. The caller
+/// must supply a complete current body with freshly prepared source stores.
+/// This does not remove parameter slots or authorize a native ABI rewrite.
+std::set<unsigned> unobservedSourceSpillParameters(const MedFunc &Func);
 
 /// After call argument recovery, omit private stores only when a complete
 /// noncapturing use proof of the frame finds no reads of their surviving

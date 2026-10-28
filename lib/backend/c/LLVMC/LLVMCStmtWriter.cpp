@@ -7805,10 +7805,9 @@ std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
         continue;
       }
     }
-    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Op)) {
-      Op = GEP->getPointerOperand()->stripPointerCasts();
-      continue;
-    }
+    // Keep a nonzero GEP for imageDataVA below. Its offset selects the import
+    // slot; peeling it would rename every entry in one IAT object as the
+    // first import. An unresolvable offset must keep its indirect target.
     break;
   }
   const llvm::Value *Ptr = Op;

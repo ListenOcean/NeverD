@@ -93,7 +93,8 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
     throw LowToMedConversionError(
         "source frame in " + Func.Name +
         ": a CALL return-slot proof waits for callee return ranges");
-  markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind);
+  markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(), Func.EntryKind,
+                          &Image);
 }
 
 MedCallReturnRanges sourceCallReturnRanges(const BinaryImage &Image,
@@ -119,10 +120,11 @@ MedCallReturnRanges sourceCallReturnRanges(const BinaryImage &Image,
 }
 
 void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
-                                         PipelineResult &Result) {
+                                         PipelineResult &Result,
+                                         llvm::ArrayRef<LowFunc> Originals) {
   std::map<va_t, const MedFunc *> Callees;
   std::set<va_t> Complete;
-  for (const LowFunc &Func : Result.LowFuncs)
+  for (const LowFunc &Func : Originals)
     if (Func.hasCompleteLiftCoverage() &&
         Func.UnsafeIndirectBranchAddresses.empty())
       Complete.insert(Func.Entry);
@@ -136,6 +138,71 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
     if (Complete.count(Func.Entry))
       markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
                                         Callees);
+  if (Image.Arch != Arch::X64 || Image.abiFormat() != BinaryFormat::COFF)
+    return;
+  std::set<va_t> Referenced;
+  for (const auto &Func : Result.MedFuncs)
+    for (const auto &Call : Func.CallInfos)
+      if (!Call.IsIndirect && !Call.SourceCallHint &&
+          !Call.ArgumentsInCalleeRegisterOrder &&
+          !Result.CallPrototypeArguments.count(Call.TargetAddr))
+        Referenced.insert(Call.TargetAddr);
+  std::vector<const MedFunc *> Sources;
+  std::vector<uint64_t> Weights;
+  const auto Arguments =
+      getTargetRegInfo(Image.Arch).integerArgumentLayout(Image.abiFormat());
+  for (const auto &[Entry, Func] : Callees) {
+    if (!Referenced.count(Entry))
+      continue;
+    bool HasSpill = false;
+    uint64_t Weight = 1;
+    for (const auto &Block : Func->Blocks) {
+      Weight += Block.Ops.size();
+      for (const auto &Op : Block.Ops)
+        HasSpill |= Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+                    Op.Inputs[1].Kind == MedVar::Reg &&
+                    Op.Inputs[1].SSAVer == 0 &&
+                    Arguments.registerIndex(Op.Inputs[1].RegOff) >= 0;
+    }
+    if (HasSpill) {
+      Sources.push_back(Func);
+      Weights.push_back(Weight);
+    }
+  }
+  // Cached signature bodies stay immutable. Prepare a local copy only for
+  // an actually referenced omitted body with a possible incoming spill.
+  std::vector<std::set<unsigned>> Unobserved(Sources.size());
+  parallelForEachWeighted(Weights, [&](auto Claim, size_t N) {
+    for (size_t I; (I = Claim()) < N;) {
+      const auto &Func = *Sources[I];
+      if (Complete.count(Func.Entry)) {
+        Unobserved[I] = unobservedSourceSpillParameters(Func);
+      } else {
+        MedFunc Prepared = Func;
+        markSourceStackAccesses(Prepared, Image.Arch, Image.abiFormat(),
+                                Prepared.EntryKind, &Image);
+        Unobserved[I] = unobservedSourceSpillParameters(Prepared);
+      }
+    }
+  });
+  std::map<va_t, const std::set<unsigned> *> ByEntry;
+  for (size_t I = 0; I < Sources.size(); ++I)
+    if (!Unobserved[I].empty())
+      ByEntry.emplace(Sources[I]->Entry, &Unobserved[I]);
+  for (auto &Func : Result.MedFuncs)
+    for (auto &Call : Func.CallInfos) {
+      if (Call.IsIndirect || Call.SourceCallHint ||
+          Call.ArgumentsInCalleeRegisterOrder ||
+          Result.CallPrototypeArguments.count(Call.TargetAddr))
+        continue;
+      const auto Found = ByEntry.find(Call.TargetAddr);
+      if (Found == ByEntry.end())
+        continue;
+      for (unsigned P : *Found->second)
+        if (P < Call.Args.size())
+          Call.Args[P] = MedVar::makeConst(0, Call.Args[P].Size,
+                                           ConstantAddressProvenance::Scalar);
+    }
 }
 
 void omitRefusedFunctions(PipelineResult &Result,

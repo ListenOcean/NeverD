@@ -15,6 +15,7 @@
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
+#include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -820,7 +821,8 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
                                BinaryFormat Format,
                                llvm::ArrayRef<FrameAccess> Loads,
                                llvm::ArrayRef<FrameAccess> Stores,
-                               const ValueReads &Reads) {
+                               const ValueReads &Reads,
+                               const BinaryImage *Image) {
   if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame)
     return;
   const auto &TRI = getTargetRegInfo(Architecture);
@@ -833,8 +835,20 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
     Accesses.emplace(Access.Op, &Access);
   for (const FrameAccess &Access : Stores)
     Accesses.emplace(Access.Op, &Access);
+  // Folding an address calculation may leave one named COPY after the
+  // earlier substitution phase. Preserve its exact width and provenance;
+  // numeric equality or a truncated address is not an image-object proof.
+  std::map<ValueKey, const MedVar *> ConstantAddresses;
+  if (Image)
+    for (const auto &Block : Func.Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+            Op.Output.Size == TRI.PointerSize && Op.Inputs[0].isConst() &&
+            Op.Inputs[0].Size == TRI.PointerSize)
+          ConstantAddresses.emplace(keyOf(Op.Output), &Op.Inputs[0]);
   std::map<int, size_t> Blocks;
   std::set<va_t> BlockEntries;
+  std::set<const MedOp *> ImageReads;
   std::map<const MedOp *, std::pair<size_t, size_t>> Positions;
   for (size_t B = 0; B < Func.Blocks.size(); ++B) {
     Blocks.emplace(Func.Blocks[B].Id, B);
@@ -842,6 +856,31 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
     for (size_t I = 0; I < Func.Blocks[B].Ops.size(); ++I) {
       const MedOp &Op = Func.Blocks[B].Ops[I];
       Positions.emplace(&Op, std::pair{B, I});
+      if (!Image || Op.Opcode != NdOp::LOAD || !Op.NumInputs ||
+          !Op.Output.Size || Op.Inputs[0].Size != TRI.PointerSize)
+        continue;
+      const MedVar *Pointer = &Op.Inputs[0];
+      if (!Pointer->isConst()) {
+        const auto Found = ConstantAddresses.find(keyOf(*Pointer));
+        if (Found == ConstantAddresses.end())
+          continue;
+        Pointer = Found->second;
+      }
+      if (!isExactAddressProvenance(Pointer->Provenance) ||
+          isCodeAddressProvenance(Pointer->Provenance))
+        continue;
+      const va_t Address = Pointer->ConstVal;
+      const va_t Owner = Pointer->AddressOwnerVA == InvalidVA
+                             ? Image->layoutAddressOwner(Address)
+                             : Pointer->AddressOwnerVA;
+      const auto End = Image->mappedObjectOwnerEnd(Address);
+      if (End && Address < *End && Op.Output.Size <= *End - Address &&
+          Owner != InvalidVA && Image->layoutAddressOwner(Address) == Owner &&
+          Image->layoutAddressOwner(Address + Op.Output.Size - 1) == Owner &&
+          Image->hasObjectDataProvenance(Address) &&
+          Image->hasObjectDataProvenance(Address + Op.Output.Size - 1) &&
+          Image->readVA(Address, Op.Output.Size))
+        ImageReads.insert(&Op);
     }
   }
   size_t Budget = limits::ir::kSourceEntrySpillWork;
@@ -975,6 +1014,12 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
           break;
         }
         if (Op.Opcode == NdOp::STORE || Op.Opcode == NdOp::LOAD) {
+          // This exact image object is separate from the invocation's source
+          // frame. Its read stays observable, including its loaded value;
+          // neither an arbitrary numeric pointer nor an external store gets
+          // this permission to cross the private-byte overwrite proof.
+          if (ImageReads.count(&Op))
+            continue;
           const auto At = Accesses.find(&Op);
           if (At == Accesses.end() ||
               !Private(At->second->Offset, At->second->Size)) {
@@ -1211,7 +1256,8 @@ void markReturnAddressReads(MedFunc &Func, Arch Architecture,
 }
 
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
-                             BinaryFormat Format, StackEntryKind Entry) {
+                             BinaryFormat Format, StackEntryKind Entry,
+                             const BinaryImage *Image) {
   // These source-only annotations are derived from the current body. An
   // edited store or load must not retain a proof from an earlier preparation.
   for (MedBlock &Block : Func.Blocks)
@@ -1228,8 +1274,196 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
   if (hasStackReturnAddress(Architecture, Entry))
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
                            Stores);
-  markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores, Reads);
+  markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores, Reads,
+                            Image);
   replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);
+}
+
+std::set<unsigned> unobservedSourceSpillParameters(const MedFunc &Func) {
+  std::set<unsigned> Result;
+  if (Func.CC != CallingConv::Win64 || Func.SourceTypeHint ||
+      Func.SourceParametersBound || Func.IsVariadic || Func.SkippedSSA ||
+      Func.AnalystStackFrame || Func.Blocks.empty() ||
+      !Func.Blocks.front().Preds.empty() ||
+      Func.EntryKind != StackEntryKind::Call ||
+      !Func.IntegerArgumentRegisters.empty() ||
+      (Func.ExceptionMetadata &&
+       (Func.ExceptionMetadata->Personality != ExceptionPersonality::None ||
+        Func.ExceptionMetadata->ParseStatus !=
+            ExceptionParseStatus::Complete)) ||
+      llvm::any_of(Func.ModuleAnalysisRoots,
+                   [&](va_t Root) { return Root != Func.Entry; }))
+    return Result;
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  const auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
+  std::map<int, const MedBlock *> Blocks;
+  std::set<va_t> Entries;
+  std::map<ValueKey, const MedVar *> Values;
+  for (const auto &Block : Func.Blocks) {
+    if (!Block.ExceptionalSuccs.empty())
+      return Result;
+    Blocks.emplace(Block.Id, &Block);
+    Entries.insert(Block.StartAddr);
+    for (const auto &Phi : Block.Phis) {
+      if (Phi.ExceptionalEntry)
+        return Result;
+      Values.emplace(keyOf(Phi.Output), &Phi.Output);
+    }
+    for (const auto &Op : Block.Ops)
+      if (!Op.Output.isConst() && Op.Output.Size)
+        Values.emplace(keyOf(Op.Output), &Op.Output);
+  }
+  const ValueReads Reads(Func);
+  size_t Budget = limits::ir::kSourceEntrySpillWork;
+  for (unsigned P = 0; P < Func.Params.size() && P < Layout.Registers.size();
+       ++P) {
+    const uint64_t Register = Layout.Registers[P];
+    if (Func.Params[P].RegOff != Register)
+      continue;
+    std::set<ValueKey> Aliases;
+    std::vector<ValueKey> Pending;
+    for (const auto &Op : Func.Blocks.front().Ops) {
+      if (Op.Opcode != NdOp::COPY)
+        break;
+      if (Op.Output.Kind == MedVar::Reg && Op.Output.RegOff == Register &&
+          Op.NumInputs == 1 && Op.Inputs[0].Kind == MedVar::Reg &&
+          Op.Inputs[0].RegOff == Register && Op.Inputs[0].SSAVer == 0) {
+        Pending.push_back(keyOf(Op.Inputs[0]));
+        Pending.push_back(keyOf(Op.Output));
+      }
+    }
+    bool Safe = !Pending.empty(), Saved = false;
+    const auto Follow = [&](ValueKey Key) {
+      const auto At = Values.find(Key);
+      if (At == Values.end())
+        return false;
+      const MedVar &Value = *At->second;
+      // Moving an incoming value to another physical register can make it an
+      // implicit argument there. Only this register and temporaries qualify.
+      if (Value.Kind != MedVar::Temp &&
+          (Value.Kind != MedVar::Reg || Value.RegOff != Register))
+        return false;
+      Pending.push_back(Key);
+      return true;
+    };
+    while (Safe && !Pending.empty()) {
+      if (!Budget)
+        return Result;
+      --Budget;
+      const ValueKey Key = Pending.back();
+      Pending.pop_back();
+      if (!Aliases.insert(Key).second)
+        continue;
+      if (Reads.ImplicitReads.count(Key)) {
+        Safe = false;
+        break;
+      }
+      if (const auto At = Reads.Ops.find(Key); At != Reads.Ops.end())
+        for (const MedOp *Use : At->second) {
+          if (!Budget)
+            return Result;
+          --Budget;
+          if (Use->Opcode == NdOp::STORE && Use->PrologueSave &&
+              Use->NumInputs == 2 && keyOf(Use->Inputs[1]) == Key &&
+              keyOf(Use->Inputs[0]) != Key) {
+            Saved = true;
+            continue;
+          }
+          if (Use->Opcode != NdOp::COPY || Use->NumInputs != 1 ||
+              Use->MemoryOrdering != NdMemoryOrdering::None ||
+              Use->MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+              Use->SourceCallHint || !Use->IntrinsicOutputs.empty() ||
+              Use->Output.Size != Use->Inputs[0].Size ||
+              !Follow(keyOf(Use->Output))) {
+            Safe = false;
+            break;
+          }
+        }
+      if (const auto At = Reads.PhiOutputs.find(Key);
+          Safe && At != Reads.PhiOutputs.end()) {
+        if (At->second.size() > Budget)
+          return Result;
+        Budget -= At->second.size();
+        for (const auto &Output : At->second)
+          if (!Follow(Output)) {
+            Safe = false;
+            break;
+          }
+      }
+    }
+    if (!Safe || !Saved)
+      continue;
+    for (const auto &Call : Func.CallInfos)
+      for (const auto &Argument : Call.Args)
+        Safe &= !Aliases.count(keyOf(Argument));
+    // Source operands do not describe an opaque call's implicit registers.
+    // Check every path until this family has been fully overwritten. A
+    // may-write call summary or a partial write is not an overwrite proof.
+    std::vector<int> Work{Func.Blocks.front().Id};
+    std::set<int> Seen;
+    while (Safe && !Work.empty()) {
+      const int Id = Work.back();
+      Work.pop_back();
+      if (!Seen.insert(Id).second)
+        continue;
+      const auto At = Blocks.find(Id);
+      if (At == Blocks.end()) {
+        Safe = false;
+        break;
+      }
+      const MedBlock &Block = *At->second;
+      bool Closed = false;
+      for (const auto &Op : Block.Ops) {
+        if (!Budget)
+          return Result;
+        --Budget;
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+          const auto Proof = Func.CallUnreadRegisters.find(Op.CallSiteId);
+          if (Proof == Func.CallUnreadRegisters.end() || !Op.CallSiteId ||
+              !Op.NumInputs || !Op.Inputs[0].isConst() || Op.SourceCallHint ||
+              Op.Addr != Proof->second.Instruction ||
+              Op.OriginSeq != Proof->second.OriginSeq ||
+              Op.Inputs[0].ConstVal != Proof->second.Target ||
+              !callPreservesRegisterBytes(Arch::X64, Proof->second.Families,
+                                          Register, TRI.PointerSize)) {
+            Safe = false;
+            break;
+          }
+        } else if (Op.Opcode == NdOp::RETURN) {
+          Closed = true;
+          break;
+        } else if (Op.Opcode == NdOp::INDIR_BR ||
+                   (Op.Opcode == NdOp::INTRINSIC &&
+                    !isExplicitFlagsTransfer(Op, Arch::X64))) {
+          Safe = false;
+          break;
+        } else if (Op.Output.Kind == MedVar::Reg &&
+                   Op.Output.RegOff == Register &&
+                   Op.Output.Size >= TRI.PointerSize &&
+                   !Aliases.count(keyOf(Op.Output))) {
+          Closed = true;
+          break;
+        } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
+          if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
+              !Entries.count(Op.Inputs[0].ConstVal)) {
+            Safe = false;
+            break;
+          }
+        }
+      }
+      if (!Closed) {
+        if (Block.Succs.empty())
+          Safe = false;
+        if (Block.Succs.size() > Budget)
+          return Result;
+        Budget -= Block.Succs.size();
+        Work.insert(Work.end(), Block.Succs.begin(), Block.Succs.end());
+      }
+    }
+    if (Safe)
+      Result.insert(P);
+  }
+  return Result;
 }
 
 void markUnobservedBorrowedFrameStores(

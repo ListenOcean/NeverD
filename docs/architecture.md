@@ -360,6 +360,18 @@ definition can also have that version. Call home areas and released frame bytes
 remain observable without explicit pointer arguments. This proof annotates only
 the source projection; it neither changes native memory effects nor supplies a
 general pointer-escape or kernel continuation contract.
+An exact, complete mapped data-object read may cross the private-byte overwrite
+walk without being removed. Scalar numeric pointers, address fragments, ordered
+or segmented accesses and external stores do not establish that separation.
+After call recovery, the same source owner identifies positional Win64 register
+inputs used only by discarded spills and identity transport. Every implicit
+call before an independent full-register overwrite needs its current bound
+unread-register proof. Exceptional observations and partial overwrites remain
+conservative. Call arguments retain their positions; only a proved unobserved
+value becomes scalar zero. Complete omitted bodies use the existing bounded
+signature reader and immutable memo. SDK LLVM queries repeat this preparation
+after their own call recovery, borrowing the original LowIR coverage evidence.
+These facts do not alter native argument summaries or physical stores.
 `MedStackAlignment` also owns signed entry-relative offset bounds for dynamic
 allocations. Machine-width scalar ranges, complete PHI components and checked
 offset arithmetic can separate their CALL return slots from fixed frame loads

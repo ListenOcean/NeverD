@@ -268,6 +268,133 @@ TEST(SourceStackSpills, OverwrittenValuesNeedNotComeFromTheEntry) {
       }
 }
 
+TEST(SourceStackSpills, OnlyCompleteImageReadsCanCrossACompleteOverwrite) {
+  for (unsigned Mode = 0; Mode < 11; ++Mode) {
+    SCOPED_TRACE(Mode);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Bitness::Bits64;
+    Segment Storage;
+    Storage.VA = 0x2000;
+    Storage.Size = Storage.FileSz = 8;
+    Storage.Data.resize(8);
+    Storage.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(std::move(Storage));
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    const auto Home = temp(10);
+    auto ImageAddress = MedVar::makeConst(
+        Mode == 1 ? 0x2001 : 0x2000, 8,
+        Mode == 2   ? ConstantAddressProvenance::Unknown
+        : Mode == 3 ? ConstantAddressProvenance::AddressFragment
+        : Mode == 4 ? ConstantAddressProvenance::CodeAddress
+                    : ConstantAddressProvenance::Address);
+    if (Mode == 5)
+      ImageAddress = rcx(0);
+    if (Mode == 10)
+      ImageAddress.AddressOwnerVA = 0x3000;
+    auto Read = op(NdOp::LOAD, temp(11), {ImageAddress});
+    if (Mode == 6)
+      Read.MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 7)
+      Read.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+    if (Mode == 8)
+      Read = op(NdOp::STORE, none(), {ImageAddress, Home});
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {
+        op(NdOp::COPY, sp(0), {sp(0)}), op(NdOp::COPY, rcx(0), {rcx(0)}),
+        op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+        op(NdOp::STORE, none(), {Home, rcx(0)}), Read,
+        op(NdOp::STORE, none(),
+           {Home, MedVar::makeConst(19, Mode == 9 ? 4 : 8)}),
+        // Once all original bytes are overwritten, a later opaque borrow
+        // may inspect them without making the discarded incoming value live.
+        op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8), Home}),
+        op(NdOp::RETURN, none(), {temp(11)})};
+    Func.Blocks.push_back(std::move(Block));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                            StackEntryKind::Call, &Image);
+    EXPECT_EQ(Func.Blocks.front().Ops[3].PrologueSave, Mode == 0);
+    EXPECT_EQ(Func.Blocks.front().Ops[4].Opcode, Read.Opcode);
+    EXPECT_EQ(Func.Blocks.front().Ops[4].MemoryOrdering, Read.MemoryOrdering);
+    EXPECT_EQ(Func.Blocks.front().Ops.size(), 8U);
+  }
+}
+
+TEST(SourceStackSpills, DiscardedSpillInputsStillNeedImplicitCallProofs) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    Func.Params = {rcx(0)};
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    const auto Home = temp(10);
+    Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+                 op(NdOp::COPY, rcx(0), {rcx(0)}),
+                 op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+                 op(NdOp::STORE, none(), {Home, rcx(0)}),
+                 op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)})};
+    if (Mode == 3)
+      Block.Ops.push_back(op(NdOp::COPY, reg(4, x86reg::RDX, 1), {rcx(0)}));
+    if (Mode == 7)
+      Block.Ops.push_back(op(NdOp::COPY, temp(11), {rcx(0)}));
+    if (Mode != 2 && Mode < 8) {
+      auto Overwrite = rcx(1);
+      Overwrite.Size = Mode == 1 ? 1 : 8;
+      Block.Ops.push_back(
+          op(NdOp::COPY, Overwrite,
+             {Mode == 7 ? temp(11) : MedVar::makeConst(42, Overwrite.Size)}));
+    }
+    auto Call = op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8)});
+    Call.Addr = 0x1010;
+    Call.OriginSeq = 7;
+    Call.CallSiteId = 1;
+    if (Mode >= 8) {
+      auto &Proof = Func.CallUnreadRegisters[1];
+      Proof.Instruction = Call.Addr;
+      Proof.OriginSeq = Call.OriginSeq;
+      Proof.Target = Mode == 9 ? 0x4000 : 0x3000;
+      Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+    }
+    if (Mode == 4) {
+      MedCallInfo Info;
+      Info.BlockId = 0;
+      Info.OpIdx = Block.Ops.size();
+      Info.TargetAddr = 0x3000;
+      Info.Args = {rcx(0)};
+      Func.CallInfos.push_back(Info);
+    }
+    if (Mode == 5)
+      Block.ExceptionalSuccs.resize(1);
+    if (Mode >= 10) {
+      Func.ExceptionMetadata.emplace();
+      Func.ExceptionMetadata->ParseStatus =
+          Mode == 12 ? ExceptionParseStatus::Partial
+                     : ExceptionParseStatus::Complete;
+      Func.ExceptionMetadata->Personality = Mode == 11
+                                                ? ExceptionPersonality::Unknown
+                                                : ExceptionPersonality::None;
+    }
+    Block.Ops.push_back(Call);
+    Block.Ops.push_back(op(NdOp::RETURN, none(),
+                           {Mode == 6 ? rcx(0) : MedVar::makeConst(0, 8)}));
+    Func.Blocks.push_back(std::move(Block));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(unobservedSourceSpillParameters(Func),
+              Mode == 0 || Mode == 8 || Mode == 10 ? std::set<unsigned>{0}
+                                                   : std::set<unsigned>{});
+  }
+}
+
 TEST(SourceStackSpills, FlagsTransfersDoNotObserveScratchButKeepTheirEffects) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 9; ++Mode) {

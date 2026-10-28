@@ -323,7 +323,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return true;
 
   if (medStackProjection(Opts) == MedStackProjection::Source) {
-    prepareRecoveredSourceStackAccesses(Img, Result);
+    prepareRecoveredSourceStackAccesses(Img, Result, Result.LowFuncs);
     // The proof can refuse a requested function, or every one.
     if (!refuseObservedCallReturnReads(Img, Result, refusalFailsRun(Opts),
                                        Dbg) ||

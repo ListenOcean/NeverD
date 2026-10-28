@@ -2069,6 +2069,148 @@ TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
   }
 }
 
+TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
+  constexpr va_t Consumer = Text + 0x80;
+  constexpr va_t Global = Iat + 0x100;
+  std::vector<uint8_t> Code(0xC0, 0xCC);
+  std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x28};
+  const auto Random = throughSlot(Text + Caller.size(), Iat);
+  Caller.insert(Caller.end(), Random.begin(), Random.end());
+  Caller.push_back(0xE8);
+  const auto Call = rel32(Text + Caller.size() + 4, Consumer);
+  Caller.insert(Caller.end(), Call.begin(), Call.end());
+  Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x28, 0xC3});
+  put(Code, Text, Caller);
+  std::vector<uint8_t> Body = {0x48, 0x89, 0x4C, 0x24, 8, // mov [rsp+8],rcx
+                               0x53,                      // push rbx
+                               0x48, 0x83, 0xEC, 0x20,    // sub rsp,20h
+                               0x48, 0x8B, 0x1D}; // mov rbx,[rip+global]
+  const auto Data = rel32(Consumer + Body.size() + 4, Global);
+  Body.insert(Body.end(), Data.begin(), Data.end());
+  Body.insert(Body.end(), {0x48, 0x83, 0x64, 0x24, 0x30, 0, // and [rsp+30h],0
+                           0x48, 0x8D, 0x4C, 0x24, 0x30});  // lea rcx,[rsp+30h]
+  const auto Read = throughSlot(Consumer + Body.size(), Iat + 8);
+  Body.insert(Body.end(), Read.begin(), Read.end());
+  Body.insert(Body.end(), {0x48, 0x01, 0xD8, // add rax,rbx
+                           0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
+  put(Code, Consumer, Body);
+  auto Image =
+      makeImage(Code, {{Text, "reset_spill"}, {Consumer, "read_reset_home"}},
+                {"rand", "strlen"});
+  Segment Storage;
+  Storage.Name = ".data";
+  Storage.VA = Global;
+  Storage.Size = Storage.FileSz = 8;
+  Storage.Data.resize(8);
+  Storage.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Image.Segments.push_back(std::move(Storage));
+  Symbol Object;
+  Object.Addr = Global;
+  Object.Name = "spill_global";
+  Object.Size = 8;
+  Image.Symbols.push_back(std::move(Object));
+  std::string NativeOracle;
+  llvm::raw_string_ostream Native(NativeOracle);
+  Native << R"(
+#if defined(__linux__) && defined(__x86_64__)
+#include <sys/mman.h>
+static uint64_t incoming_seed;
+static __attribute__((ms_abi)) int machine_rand(void) {
+  int value = rand();
+  __asm__ volatile("movq %0, %%rcx" : : "r"(incoming_seed) : "rcx");
+  return value;
+}
+static __attribute__((ms_abi)) size_t machine_strlen(const char *p) {
+  return strlen(p);
+}
+static int check_native(uint64_t value, uint64_t seed) {
+  static const uint8_t original[] = {
+)";
+  for (uint8_t Byte : Code)
+    Native << unsigned(Byte) << ',';
+  const size_t Bytes = Global - Text + sizeof(uint64_t);
+  Native << "};\n  const size_t size = " << Bytes << R"(;
+  uint8_t *mapping = mmap(0, size + 16, PROT_READ | PROT_WRITE | PROT_EXEC,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (mapping == MAP_FAILED) return 1;
+  uint8_t *code = mapping + 16;
+  memcpy(code, original, sizeof(original));
+  uintptr_t random = (uintptr_t)machine_rand;
+  uintptr_t reader = (uintptr_t)machine_strlen;
+)";
+  Native << "  memcpy(code + " << Iat - Text << ", &random, 8);\n"
+         << "  memcpy(code + " << Iat - Text + 8 << ", &reader, 8);\n"
+         << "  memcpy(code + " << Global - Text << ", &value, 8);\n"
+         << R"(
+  incoming_seed = seed;
+  calls = 0;
+  __builtin___clear_cache((char *)code, (char *)code + size);
+  uint64_t actual = ((uint64_t (__attribute__((ms_abi)) *)(void))code)();
+  int bad = actual != value || calls != 1;
+  if (munmap(mapping, size + 16)) return 1;
+  return bad;
+}
+#else
+static int check_native(uint64_t value, uint64_t seed) { return 0; }
+#endif
+)";
+  for (bool OmitCallee : {false, true})
+    for (bool LLVM : {false, true})
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(testing::Message()
+                     << OmitCallee << ':' << LLVM << ':' << NoOpt);
+        llvm::LLVMContext Context;
+        PipelineOptions Options;
+        Options.EmitDumpOutput = false;
+        Options.OnlyFunctionEntries = {Text};
+        if (!OmitCallee)
+          Options.OnlyFunctionEntries.insert(Consumer);
+        Options.LiftMode = LLVM;
+        Options.SourceProjection = true;
+        Options.NoOpt = NoOpt;
+        auto Result = Pipeline().run(Image, Context, Options);
+        ASSERT_TRUE(Result.Success) << Result.Error;
+        std::string Source;
+        llvm::raw_string_ostream Output(Source);
+        CEmitterOptions COptions;
+        COptions.TheArch = Image.Arch;
+        COptions.Format = Image.Format;
+        COptions.Image = &Image;
+        ASSERT_TRUE(
+            LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
+                                       nullptr, &Image)
+                 : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+        EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
+        if (OmitCallee || Source.find("__builtin_trap") != std::string::npos)
+          continue;
+        const std::string Providers = R"(
+#include <string.h>
+static unsigned calls;
+int rand(void) { ++calls; return 17; }
+)";
+        const std::string Oracle = R"(
+int main(void) {
+  uint64_t seed = UINT64_C(0xfedcba9876543210);
+  for (unsigned i = 0; i < 64; ++i) {
+    uint64_t value = i ? seed : 37;
+    if (check_native(value, seed)) return 1;
+    memcpy(&spill_global, &value, sizeof(value));
+    calls = 0;
+    if ((uint64_t)reset_spill() != value || calls != 1) return 2;
+    seed ^= seed << 13;
+    seed ^= seed >> 7;
+    seed ^= seed << 17;
+  }
+  return 0;
+}
+)";
+        for (llvm::StringRef Level : {"-O0", "-O2"})
+          source_call_execution_test::compileAndRun(
+              Source + Providers + NativeOracle + Oracle,
+              {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+      }
+}
+
 TEST(CallExitRegisters, EntrySpillProofKeepsObservedBytesAndEscapes) {
   for (unsigned Version : {0u, 3u})
     for (unsigned Mode = 0; Mode < 7; ++Mode) {

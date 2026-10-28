@@ -15,6 +15,8 @@
 
 #include "neverd/ir/med/MedIntegerReturnRange.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <cstddef>
 #include <map>
 #include <string>
@@ -52,9 +54,11 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
 MedCallReturnRanges sourceCallReturnRanges(const BinaryImage &Image,
                                            const PipelineResult &Result);
 
-/// Shared source-only frame observation proof after call ABI recovery.
+/// Shared source-only frame observation proof after call ABI recovery. Borrow
+/// the original LowIR coverage from the pipeline or SDK's immutable result.
 void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
-                                         PipelineResult &Result);
+                                         PipelineResult &Result,
+                                         llvm::ArrayRef<LowFunc> Originals);
 
 /// Whether a function MedIR refuses fails the run of \p Options rather than
 /// leaving it out (PipelineOptions::OmitRefusedFunctions).

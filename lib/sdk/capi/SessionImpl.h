@@ -15,6 +15,7 @@
 
 #include "../../pipeline/PipelineCallAbiDetail.h"
 #include "../../pipeline/PipelineFunctionNames.h"
+#include "../../pipeline/PipelineSourceStackAccesses.h"
 #include "../plugin/PluginManager.h"
 #include "FunctionAuditReason.h"
 #include "ImageStrings.h"
@@ -1218,6 +1219,9 @@ struct Session {
       Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
       recoverModuleCallAbi(Img, Recovery, FuncNames,
                            /*SourceDeclarations=*/true);
+      // Recovery rebuilds CallInfos. Reapply the same source observation
+      // proof as module emission before caching these single-function views.
+      prepareRecoveredSourceStackAccesses(Img, Recovery, PipeResult.LowFuncs);
       NativeMedFuncs = std::move(Recovery.MedFuncs);
       NativeCalleeDeclarations = std::move(Recovery.OmittedCalleeDeclarations);
     }

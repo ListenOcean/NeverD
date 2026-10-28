@@ -22,10 +22,12 @@
 #include "llvm/IR/Metadata.h"
 #include "llvm/IR/Verifier.h"
 
+#include <algorithm>
 #include <gtest/gtest.h>
 #include <optional>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::sdk {
 namespace {
@@ -144,6 +146,87 @@ TEST_F(SessionLLVMTest, ExactAddressZeroIgnoresHelperNamesAndDeclarations) {
 
   EXPECT_EQ(State.findNativeLlvmFunction(0), Source);
   EXPECT_TRUE(State.LastError.empty());
+}
+
+TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
+  constexpr va_t Caller = 0x1000, Consumer = 0x1040, Global = 0x2000;
+  State.Img.Format = BinaryFormat::COFF;
+  State.Img.Entry = Caller;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Caller;
+  Text.Size = Text.FileSz = 0x80;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xCC);
+  const std::vector<uint8_t> CallBytes = {0x48, 0x83, 0xEC, 0x28, 0xE8,
+                                          0x37, 0,    0,    0,    0x48,
+                                          0x83, 0xC4, 0x28, 0xC3};
+  const std::vector<uint8_t> Body = {
+      0x48, 0x89, 0x4C, 0x24, 8,            // mov [rsp+8],rcx
+      0x53, 0x48, 0x83, 0xEC, 0x20,         // push rbx; sub rsp,20h
+      0x48, 0x8B, 0x1D, 0xAF, 0x0F, 0,   0, // mov rbx,[rip+global]
+      0x48, 0x83, 0x64, 0x24, 0x30, 0,      // and qword [rsp+30h],0
+      0x48, 0x8D, 0x4C, 0x24, 0x30,         // lea rcx,[rsp+30h]
+      0xFF, 0x15, 0x9E, 0x1F, 0,    0,      // call [strlen]
+      0x48, 0x01, 0xD8,                     // add rax,rbx
+      0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};  // add rsp,20h; pop rbx; ret
+  std::copy(CallBytes.begin(), CallBytes.end(), Text.Data.begin());
+  std::copy(Body.begin(), Body.end(), Text.Data.begin() + Consumer - Caller);
+  State.Img.Segments.push_back(std::move(Text));
+  Segment Data;
+  Data.Name = ".data";
+  Data.VA = Global;
+  Data.Size = Data.FileSz = 8;
+  Data.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+  Data.Data.assign(8, 0);
+  State.Img.Segments.push_back(std::move(Data));
+  Segment Slots;
+  Slots.Name = ".idata";
+  Slots.VA = 0x3000;
+  Slots.Size = Slots.FileSz = 8;
+  Slots.Flags = SegmentFlags::Readable;
+  Slots.Data.assign(8, 0);
+  State.Img.Segments.push_back(std::move(Slots));
+  Import Reader;
+  Reader.Name = "strlen";
+  Reader.Module = "msvcrt.dll";
+  Reader.IATAddr = 0x3000;
+  State.Img.Imports.push_back(std::move(Reader));
+  for (const auto &[Entry, Name] : {std::pair{Caller, "spill_caller"},
+                                    std::pair{Consumer, "spill_consumer"}}) {
+    auto Symbol = Symbol::makeFunc(Entry);
+    Symbol.Name = Name;
+    State.Img.Symbols.push_back(std::move(Symbol));
+  }
+  Symbol Object;
+  Object.Addr = Global;
+  Object.Name = "spill_global";
+  Object.Size = 8;
+  State.Img.Symbols.push_back(std::move(Object));
+  for (bool Omitted : {false, true}) {
+    SCOPED_TRACE(Omitted);
+    State.NativeMedFuncs.reset();
+    State.FunctionLlvmModules.clear();
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Caller};
+    if (!Omitted)
+      Options.OnlyFunctionEntries.insert(Consumer);
+    State.PipeResult = Pipeline().run(State.Img, *State.LLVMCtx, Options);
+    ASSERT_TRUE(State.PipeResult.Success) << State.PipeResult.Error;
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(NoOpt);
+      const auto *Shown = State.ensureFunctionLlvmModule(Caller, NoOpt, true);
+      ASSERT_TRUE(Shown) << State.LastError;
+      ASSERT_TRUE(State.NativeMedFuncs);
+      const auto &Calls = State.NativeMedFuncs->front().CallInfos;
+      ASSERT_EQ(Calls.size(), 1U);
+      ASSERT_EQ(Calls.front().Args.size(), 1U);
+      EXPECT_TRUE(Calls.front().Args.front().isConst());
+      EXPECT_EQ(Calls.front().Args.front().ConstVal, 0U);
+      EXPECT_EQ(State.ensureFunctionLlvmModule(Caller, NoOpt, true), Shown);
+    }
+  }
 }
 
 TEST_F(SessionLLVMTest, EmissionExceptionsKeepTheSessionAndReason) {

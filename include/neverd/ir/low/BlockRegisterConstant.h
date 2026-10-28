@@ -3,6 +3,11 @@
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
+///
+/// \file
+/// Scalar register constants and bit-mask identities shared by IR consumers.
+///
+//===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_IR_LOW_BLOCKREGISTERCONSTANT_H
 #define NEVERD_IR_LOW_BLOCKREGISTERCONSTANT_H
@@ -32,6 +37,22 @@ inline bool isLowSelfXor(const LowOp &Op) {
          Op.Inputs[0] == Op.Inputs[1] && Op.Output.Size == Op.Inputs[0].Size;
 }
 
+/// A scalar bit mask that fixes the result regardless of the other operand.
+/// Callers must establish scalar provenance and matching operand widths.
+inline std::optional<uint64_t>
+absorbingBitwiseConstant(NdOp Opcode, uint16_t Bytes, uint64_t Value) {
+  if (!Bytes || Bytes > sizeof(uint64_t))
+    return std::nullopt;
+  const uint64_t Mask = Bytes == sizeof(uint64_t)
+                            ? ~uint64_t{0}
+                            : (uint64_t{1} << (8 * Bytes)) - 1;
+  if (Opcode == NdOp::INT_OR && (Value & Mask) == Mask)
+    return Mask;
+  if (Opcode == NdOp::INT_AND && (Value & Mask) == 0)
+    return 0;
+  return std::nullopt;
+}
+
 /// The constant `or r, -1` or `and r, 0` writes whatever the register held
 /// (MSVC sets a register to all ones or zero this way): such an op reads
 /// nothing of its register input.
@@ -42,18 +63,14 @@ inline std::optional<uint64_t> lowAbsorbingConstant(const LowOp &Op) {
       !(Op.Output.isReg() || Op.Output.isTemp()) || !Op.Output.Size ||
       Op.Output.Size > 8)
     return std::nullopt;
-  const uint64_t Mask = Op.Output.Size == 8
-                            ? ~uint64_t{0}
-                            : (uint64_t{1} << (8 * Op.Output.Size)) - 1;
   for (unsigned I = 0; I < 2; ++I) {
     const NdVar &C = Op.Inputs[I];
-    if (!C.isConst())
+    if (!C.isConst() || isAddressProvenance(C.Provenance) ||
+        C.Size != Op.Output.Size || Op.Inputs[1 - I].Size != Op.Output.Size)
       continue;
-    const uint64_t V = C.Offset & Mask;
-    if (Op.Opcode == NdOp::INT_OR && V == Mask)
-      return Mask;
-    if (Op.Opcode == NdOp::INT_AND && V == 0)
-      return 0;
+    if (const auto Value =
+            absorbingBitwiseConstant(Op.Opcode, Op.Output.Size, C.Offset))
+      return Value;
   }
   return std::nullopt;
 }

@@ -249,6 +249,19 @@ parameters and opaque external effects remain unsupported by this proof. The
 ntos `StDmpSinglePageAdd` gap therefore still requires broader authenticated
 pointer effects and per-slot incoming argument reads; a leaf fixture is not
 evidence that this original function is fixed.
+Complete mapped data-object reads no longer block a proved full overwrite of
+private spill bytes. The read itself remains; fragments, conflicting owners,
+ordered accesses and arbitrary external pointers retain the barrier. Scalar
+absorbing masks share their Low/Med identity and never freeze relocated address
+constants. Post-recovery source preparation can also replace an unobserved
+Win64 register argument with zero while retaining every parameter position.
+Its full-use and physical-register walks reject partial writes, exceptional
+observers, another register's implicit input and stale unread-call evidence.
+SDK single-function LLVM queries repeat the shared proof after rebuilding
+CallInfos, using borrowed LowIR coverage instead of copying the image's bodies.
+This is not a native ABI rewrite or proof that missing interior stack arguments
+are unused. LLVMC import naming also retains nonzero GEP offsets within IAT
+objects; stripping those offsets could select a different imported routine.
 HighIR now keeps the shared direct-call argument boundary: its secondary setup
 scan cannot append neighboring stack locals after a complete recovered list or
 replace an unavailable interior operand with a stale local. This removes a
