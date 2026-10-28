@@ -13671,10 +13671,11 @@ private slots:
       QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
       bench.session.setComment(Base + 0x140, QStringLiteral("shared comment"));
       QTRY_VERIFY(bench.session.dirty());
-      QVERIFY(bench.action(ActionId::FileSave)->isEnabled());
+      // Command availability is refreshed on the next event turn.
+      QTRY_VERIFY(bench.action(ActionId::FileSave)->isEnabled());
       bench.session.save();
       QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
-      QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
+      QTRY_VERIFY(!bench.action(ActionId::FileSave)->isEnabled());
       QVERIFY(readAll(path + ".neverd/annotations.json")
                   .startsWith("[\n  {\n    \"addr\": "));
       QVERIFY(bench.window->close());
