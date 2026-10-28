@@ -125,6 +125,37 @@ TEST(SourceCallABI, DarwinARM64FixedSpillsKeepNaturalSizeAndAlignment) {
   }
 }
 
+TEST(SourceCallABI, DarwinFixedAndNativeScalarContractsAgree) {
+  const unsigned Widths[] = {
+#define SOURCE_CALL_ABI_NARROW(Bytes) Bytes,
+#include "SourceCallABIFixtures.def"
+  };
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const unsigned Bytes : Widths)
+      for (const bool Signed : {false, true}) {
+        const auto Narrow = NdType::makeInt(Bytes, Signed);
+        auto Hint = contract(std::vector<TypeRef>(
+            kDarwinRegisterArguments + kDarwinExtraArguments, Narrow));
+        Hint.Signature.ReturnType = Narrow;
+        auto Native = Hint.Signature;
+        std::string Error;
+        ASSERT_TRUE(assignAnalystCallABI(Hint, Architecture,
+                                         BinaryFormat::MachO, Error))
+            << Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Native, Architecture, Error))
+            << Error;
+        // The origins differ; compare the complete assigned ABI itself.
+        Native.Origin = Hint.Signature.Origin;
+        EXPECT_TRUE(equalSourceABIs(Hint.Signature, Native));
+        for (const auto &Parameter : Hint.Signature.Parameters)
+          EXPECT_EQ(Parameter.Location.ExtendTo32Bits,
+                    Parameter.Location.Kind ==
+                        SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(Hint.Signature.ReturnLocation.ExtendTo32Bits,
+                  Architecture == Arch::AArch64);
+      }
+}
+
 TEST(SourceCallABI, WindowsARM64VariadicsUseOneIntegerBankForAllScalars) {
   const std::vector<TypeRef> Types{NdType::makeInt(4),   NdType::makeFloat(4),
                                    NdType::makeFloat(8), NdType::makeInt(8),

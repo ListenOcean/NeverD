@@ -1,5 +1,4 @@
-//===- SourceParameterPlacementAAPCS64.def - AArch64 PCS values --*- C++
-//-*-===//
+//===- SourceParameterPlacementAAPCS64.def - AArch64 PCS -------*- C++ -*-===//
 //
 // NeverD Decompiler
 //
@@ -10,6 +9,7 @@
 #endif
 
 NEVERD_AAPCS64_PLACEMENT_VALUE(uint16_t, kRegisterBytes, 8)
+NEVERD_AAPCS64_PLACEMENT_VALUE(unsigned, kIntegerPairRegisters, 2)
 NEVERD_AAPCS64_PLACEMENT_VALUE(uint16_t, kMaxRegisterRecordBytes, 16)
 NEVERD_AAPCS64_PLACEMENT_VALUE(size_t, kMaxAggregateMembers, 4)
 NEVERD_AAPCS64_PLACEMENT_VALUE(uint16_t, kMaxAggregateBytes, 64)
