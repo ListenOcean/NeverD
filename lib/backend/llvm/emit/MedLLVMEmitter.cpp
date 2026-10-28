@@ -1130,6 +1130,7 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
   ConstValueUsedAsIntegerCache.clear();
   FatalCodePointerResolution = false;
   FatalDataPointerResolution = false;
+  RefusedBodies.clear();
   ImportedSymbolPlaceholders.clear();
   StringDataAddrs.clear();
   GlobalStrCounter = 0;
@@ -1470,10 +1471,20 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
     const auto &Func = Funcs[I];
     if (Func.Name.empty())
       continue;
+    // A refusal belongs to the body that made it, so that a unit can leave
+    // that body out instead of every other one.
+    const bool CodeRefused = std::exchange(FatalCodePointerResolution, false);
+    const bool DataRefused = std::exchange(FatalDataPointerResolution, false);
+    DiagnosticCapture Diagnostics;
     ActiveCxxContinuationPlan = I;
     if (!tryEmitX86NativeMemoryFunction(Func))
       emitFunc(Func);
     ActiveCxxContinuationPlan.reset();
+    if (FatalCodePointerResolution || FatalDataPointerResolution)
+      RefusedBodies.push_back(
+          {I, llvm::StringRef(Diagnostics.text()).trim().str()});
+    FatalCodePointerResolution |= CodeRefused;
+    FatalDataPointerResolution |= DataRefused;
   }
   ActiveCxxContinuationPlan.reset();
   finalizeCxxContinuationPlans();

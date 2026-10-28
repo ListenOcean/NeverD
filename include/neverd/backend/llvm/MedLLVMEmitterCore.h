@@ -65,6 +65,7 @@
 #include <memory>
 #include <optional>
 #include <set>
+#include <string>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
@@ -160,6 +161,18 @@ public:
 
   uint64_t unhandledValueIntrinsicCount() const {
     return UnhandledValueIntrinsicCount;
+  }
+
+  /// A function whose body refused a stale code or data address, by its
+  /// index in the last emit()'s functions, with the error it wrote: that
+  /// emit() returned no module.  The same functions emitted with these
+  /// bodies masked off leave them declared only.
+  struct RefusedBody {
+    size_t Index = 0;
+    std::string Reason;
+  };
+  const std::vector<RefusedBody> &refusedBodies() const {
+    return RefusedBodies;
   }
 
 private:
@@ -2404,6 +2417,7 @@ private:
   /// including declarations, empty bodies, and BodyMask-omitted members.
   std::set<va_t> CxxContinuationFunctionEntries;
   std::optional<size_t> ActiveCxxContinuationPlan;
+  std::vector<RefusedBody> RefusedBodies;
   // Sticky hard failure: a relocation-proven executable pointer must never
   // degrade to an embedded original VA.  emit() discards the module when set.
   bool FatalCodePointerResolution = false;

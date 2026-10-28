@@ -1531,6 +1531,22 @@ void recoverCallAbi(
           Op.NumInputs >= 1u + Op.CalleeRegisterArgs;
       if (SummarizedIntegerOperands)
         CalleeRegArgs = Op.CalleeRegisterArgs;
+      // A summary that also lists floating arguments, each in the next
+      // vector register (System V), still counts the integer ones: the call
+      // sets no integer register past them, though the callee's own recovery
+      // took more as forwarded parameters (a register it passes on untouched
+      // to a variadic call).  Those take zero, before the floating arguments
+      // that follow them.
+      int ZeroedRegArgs = -1;
+      if (!SummarizedIntegerOperands && Convention &&
+          Convention->RegisterArgumentsFromCalleeSummary &&
+          Convention->VectorArgumentsFromCalleeSummary &&
+          !Convention->PositionalArgumentSlots && Op.CalleeRegisterArgs >= 0 &&
+          Op.CalleeVectorSlots == 0 && Op.CalleeVectorArgs > 0 &&
+          CalleeRegArgs > Op.CalleeRegisterArgs) {
+        ZeroedRegArgs = CalleeRegArgs;
+        CalleeRegArgs = Op.CalleeRegisterArgs;
+      }
       // Slots filled by the stack-store scan (vs the register scan).  On i386 a
       // stack-argument slot index can fall into the integer-register slot range
       // (0,1) when the callee takes no integer register argument but does take
@@ -2799,6 +2815,14 @@ void recoverCallAbi(
             KnownFPCallee = true;
           }
         }
+        // A variadic callee that saves the vector registers (System V) reads
+        // as many as the call's AL counts.  Past them a register holds what
+        // earlier code left there, which the call passes on no more than
+        // HighIR's scan takes it (an unknown count bounds nothing).
+        if (!CI.IsIndirect && Op.VariadicVectorCount >= 0 &&
+            VectorArgumentCallees &&
+            VectorArgumentCallees->count(CI.TargetAddr))
+          FPLimit = std::min<int>(FPLimit, Op.VariadicVectorCount);
         // Width and count of FP arguments a pure tail-call forwarder passes
         // straight through.  External libc callees are NOT in CalleeFPArity
         // (that map is intra-module only), so consult the libc signature
@@ -3211,6 +3235,9 @@ void recoverCallAbi(
               MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize));
         }
       }
+      while (static_cast<int>(IntPart.size()) < ZeroedRegArgs)
+        IntPart.push_back(
+            MedVar::makeConst(0, static_cast<uint16_t>(TRI.PointerSize)));
       // A variadic callee that takes its vector argument registers as
       // parameters (System V) takes every integer and vector argument
       // register, which a call passes in that order before its stack

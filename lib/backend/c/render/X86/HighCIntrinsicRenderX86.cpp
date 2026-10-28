@@ -16,6 +16,7 @@
 #include "X86FPStateHelpers.h"
 #include "X86ScalarSystem.h"
 #include "X86SystemRegister.h"
+#include "X87ControlAccess.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -245,8 +246,8 @@ void writeX87CHelpers(llvm::raw_ostream &OS, bool UsesExtended,
   if (Used.count(X87CHelper::ControlWord))
     OS << "static inline uint16_t neverd_x87_control_word(void) {\n"
           "    uint16_t word;\n"
-          "    __asm__ volatile(\"fnstcw %0\" : \"=m\"(word));\n"
-          "    return word;\n"
+       << renderX87ControlAccess(false, "&word")
+       << "    return word;\n"
           "}\n\n";
   if (!Used.count(X87CHelper::Fprem))
     return;

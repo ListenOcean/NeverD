@@ -315,6 +315,25 @@ std::string refusedFunctionNotes(const PipelineResult &Result) {
   return Notes.empty() ? Notes : Notes + "\n";
 }
 
+/// A note for each function the unit's LLVM module declares only, which
+/// follows the pipeline's: its body refused a stale address, for the reason
+/// the emitter gives.
+std::string leftOutDefinitionNotes(const PipelineResult &Result) {
+  std::vector<const PipelineFunctionAudit *> LeftOut;
+  for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
+    if (!Audit.LLVMDiagnostic.empty())
+      LeftOut.push_back(&Audit);
+  llvm::sort(LeftOut,
+             [](const auto *A, const auto *B) { return A->Entry < B->Entry; });
+  std::string Notes;
+  for (const PipelineFunctionAudit *Audit : LeftOut)
+    Notes += notDecompiledNote(
+        Audit->Name.empty() ? "sub_" + llvm::utohexstr(Audit->Entry)
+                            : Audit->Name,
+        Audit->Entry, "llvm-emission-failed; " + Audit->LLVMDiagnostic);
+  return Notes.empty() ? Notes : Notes + "\n";
+}
+
 /// A note for each definition the unit's C left out, which follows the
 /// pipeline's: its C could not be written, for the reason the writer gives.
 std::string refusedDefinitionNotes(
@@ -2162,8 +2181,11 @@ static const char *decompileAllImpl(neverd_session_t Sess,
     Opts.OnlyFunctionEntries = *Only;
     Opts.OmitRefusedFunctions = true;
   }
-  if (UseLlvmRoute)
+  if (UseLlvmRoute) {
     Opts.LiftMode = true;
+    // The unit names a body the LLVM emitter refuses and leaves it out.
+    Opts.OmitRefusedLLVMBodies = true;
+  }
   Opts.SourceProjection = true;
   // Symbolic source simplification is the caller's explicit choice for the
   // whole program, never a default.
@@ -2331,7 +2353,8 @@ static const char *decompileAllImpl(neverd_session_t Sess,
         S->setError(emissionFailure(Error));
       return nullptr;
     }
-    OS << refusedDefinitionNotes(RefusedDefinitions) << Unit;
+    OS << leftOutDefinitionNotes(R.Result)
+       << refusedDefinitionNotes(RefusedDefinitions) << Unit;
   } else {
     CEmitterOptions COpts;
     COpts.TheArch = R.Img.Arch;

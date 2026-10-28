@@ -7274,6 +7274,27 @@ passes its own argument on that way, as
 `long g(long a, long b) { return logv("x", b); }` does, passes zero where the
 program passes `b`, and its C takes no such parameter.
 
+System V's vector registers do not share it. A call that loads AL with a
+constant, in its own block (`lowByteConstantAtCall`, which gives
+`MedOp::VariadicVectorCount`), passes a routine that saves the vector
+registers for va_arg (its prologue tests AL and branches around their spills,
+`LocalRegisterEffect::SavesVectorArguments`) the low double of each of that
+many vector argument registers, and no other. The entry-read summary counts
+them as the call's reads (`RegisterStep::VectorCount`), so a register the
+caller passes on untouched is one it reads at its entry:
+`long gd(double x) { return logv("y", x); }`, which is
+`lea rdi; mov al, 1; jmp logv`, reads XMM0. Its callers pass that double as
+they pass any register a summary lists, and it takes it as a parameter, though
+no entry copy names the register (`detectSummaryVectorParams`). HighIR's scan
+of a call to the routine enters that parameter where the register reaches the
+call untouched, and call recovery for LLVM takes no vector register past the
+count, which holds only what earlier code left there. Where a callee's summary
+lists floating arguments, that recovery passes no integer register past those
+the summary counts, though the callee's own recovery took more as forwarded
+parameters: those positions pass zero, before the floating arguments. A call
+whose block loads AL with no constant gives no count, and nothing changes for
+it.
+
 The search for the value an argument register holds at a call (MedABI's
 `findReachingArgReg`, HighIR's `reachingRegisterAtCall`) ends a path back from
 the call at a call that may change the register (`callClobbersRegister`, the
@@ -7485,8 +7506,17 @@ throws the same way (`c-emission-failed; unsupported LLVM C cmpxchg shape` for
 an AArch64 CASP pair). So is one whose source requirements, checked before
 any rendering, fail (`c-emission-failed; immediate original memory requires a
 runtime GPR value or a complete occurrence-bound image span`): no rendering
-reads it, and its callers call it as a function outside the unit. Asked for
-alone, such a function still fails with that reason, and so does a unit
+reads it, and its callers call it as a function outside the unit. Before any
+C, a body the LLVM emitter refuses for a stale code or data address no longer
+discards its whole shard: the emitter names the body that wrote the refusal
+(`MedLLVMEmitter::refusedBodies`), the shard, or the serial module, is
+emitted again with that body masked off, and the LLVM C unit notes it first
+(`llvm-emission-failed; med_llvm_emitter: ambiguous pointer-table address
+... refusing stale-address fallback`). A lift, whose IR names nothing it
+leaves out, and a patch, which rewrites every function it lifts, still fail
+at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Asked for alone,
+such a function still
+fails with that reason, and so does a unit
 rendered with a source map, recorded positions or source names, or one whose
 requirements fail under structured exception syntax, which writes funclets
 inside their parents, or in a function whose body fills another's `__finally`.
