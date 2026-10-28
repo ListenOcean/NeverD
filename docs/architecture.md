@@ -7368,9 +7368,14 @@ at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
 unstructured SEH region without its native handler body, is left out of the
 unit the same way and noted after those (`c-emission-failed; unstructured SEH
 view requires the original native handler body`); the other definitions are
-written as they would be. Asked for alone, such a function still fails with
-that reason, and so does a unit rendered with a source map, recorded
-positions or source names.
+written as they would be. So is one whose source requirements, checked before
+any rendering, fail (`c-emission-failed; immediate original memory requires a
+runtime GPR value or a complete occurrence-bound image span`): no rendering
+reads it, and its callers call it as a function outside the unit. Asked for
+alone, such a function still fails with that reason, and so does a unit
+rendered with a source map, recorded positions or source names, or one whose
+requirements fail under structured exception syntax, which writes funclets
+inside their parents, or in a function whose body fills another's `__finally`.
 
 HighC writes a unit's headers, helpers, declarations and image objects on the
 calling thread, then its function definitions on worker threads, each with a
