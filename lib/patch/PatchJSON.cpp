@@ -21,6 +21,7 @@
 #endif
 
 #include <charconv>
+#include <limits>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -159,6 +160,17 @@ llvm::Expected<PatchRow> readRow(const RowFields &Fields, uint64_t &Total) {
                               uint64_t &Out) {
     if (!Text || !Text->consume_front("0x") || Text->empty())
       return false;
+    // Preserve leading zeroes without converting excess significant digits.
+    constexpr size_t MaxDigits = std::numeric_limits<uint64_t>::digits / 4;
+    if (Text->size() > MaxDigits) {
+      *Text = Text->ltrim('0');
+      if (Text->empty()) {
+        Out = 0;
+        return true;
+      }
+      if (Text->size() > MaxDigits)
+        return false;
+    }
     const auto Parsed = std::from_chars(Text->begin(), Text->end(), Out, 16);
     return Parsed.ec == std::errc{} && Parsed.ptr == Text->end();
   };

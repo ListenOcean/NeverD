@@ -112,6 +112,7 @@ TEST(PatchJSON, AddressFieldsKeepUnsignedHexValuesAndLeadingZeroes) {
   Check("0x0", 0);
   Check("0x000000000000000000000000000002", 2);
   Check("0xABCDEF", 0xabcdef);
+  Check("0x" + std::string(8192, '0'), 0);
   Check("0xfFfFfFfFfFfFfFfF", UINT64_MAX);
   Check("0x" + std::string(4096, '0') + "ffffffffffffffff", UINT64_MAX);
 
@@ -143,7 +144,10 @@ TEST(PatchJSON, AddressFieldsRejectPartialSignedAndOverflowingHex) {
                                          "0x2\xc3\xa9",
                                          "0x10000000000000000",
                                          "0x00010000000000000000",
-                                         "0xFFFFFFFFFFFFFFFFF"};
+                                         "0xFFFFFFFFFFFFFFFFF",
+                                         "0x" + std::string(8192, 'f'),
+                                         "0x" + std::string(8192, '0') +
+                                             std::string(17, 'f')};
   for (const auto &Spelling : Invalid) {
     SCOPED_TRACE(Spelling);
     const auto Quoted = llvm::formatv("{0}", llvm::json::Value(Spelling)).str();
