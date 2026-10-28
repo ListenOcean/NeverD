@@ -7237,7 +7237,10 @@ callee-count and operation bounds; support bodies are not emitted. Conflicting
 shapes and explicit source or user declarations do not gain inferred fields.
 Integer fields occupy complete ABI words even when a caller reads a narrow view.
 Reading only X1 can nominate an X0/X1 pair, including across a split call block;
-it still needs the same callee proof. Return-field checks follow every ordinary
+it still needs the same callee proof. Such a caller observed no argument passing
+through the call, so a register the callee leaves untouched supplies no field
+then: the callee must write each one. A tail forwarder or an import, which has
+no body to prove, gains no shape from such a read. Return-field checks follow every ordinary
 predecessor through shared epilogues and loops. A single indexed SSA dependency
 closure rejects values derived from unspecified inputs, missing definitions or
 unbound call clobbers, rather than accepting an arithmetic copy of unknown bits.

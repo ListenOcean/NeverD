@@ -442,6 +442,10 @@ struct MedCallReturnRead {
 struct MedStructReturnCandidate {
   uint32_t CallSiteId = 0;
   std::vector<MedVar> Fields;
+  /// The caller read only the second integer word; the first is proposed.
+  /// A second word the callee leaves untouched is then the caller's own
+  /// residue, not a returned argument: the callee must write each field.
+  bool SecondWordOnly = false;
 };
 
 struct MedTypedLocal {
