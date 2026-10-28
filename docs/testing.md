@@ -577,12 +577,16 @@ Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
 composition; a legitimate intermediate `ptrauth.resign` is checked rather
 than mistaken for an arbitrary IA/0 call. Both sources also compile through
 the configured LLVM backend to ELF for the original integer groups.
-`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks fixed f32/f64,
-exhausted FP registers, mixed integer/FP arguments, floating result bits and
-Darwin variadic tails across both keys, zero/dynamic discriminators and raw
-controls. All 30 typed groups emit actual Mach-O objects on five routes. Set
-`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer groups and
-30 typed groups with all five object routes.
+`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks signed/unsigned
+8/16/32-bit integers, 64-bit integers and pointers, fixed f32/f64, exhausted
+GP/FP registers, mixed operands, exact result bits and Darwin variadic tails
+across both keys, zero/dynamic discriminators and raw controls. All 75 typed
+groups emit actual Mach-O objects on five routes. Narrow register arguments
+and results require the correct LLVM extension attribute; stack arguments
+retain their source width. The outer fixture explicitly writes the complete
+X0 return carrier, and a constant result cannot stand in for the callback's
+value. Set `NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer
+groups and 75 typed groups with all five object routes.
 `NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
 C prototypes and refuses unsupported authenticated language bindings. Its five
 HighC variants must compile at O0/O2 with the original target and authentication.

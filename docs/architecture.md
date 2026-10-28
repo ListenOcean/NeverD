@@ -613,9 +613,21 @@ authenticated storage, relocation and signed-unwind ABI contract.
 The shared AAPCS64 parameter placement owner describes Darwin fixed scalar
 spills with their natural size and alignment after either register bank is
 exhausted. ELF and Windows ARM64 retain eight-byte stack slots. Darwin variadic
-tails keep their separate eight-byte placement rule. Apple aggregate spills
-still need their own complete layout contract. The limits for this placement
-owner live in `SourceParameterPlacementAAPCS64.def`.
+tails keep their separate eight-byte placement rule. Darwin integer pairs may
+start at odd-numbered registers; an entire 128-bit scalar moves to a 16-byte
+aligned stack slot when the remaining registers cannot hold it. ELF and COFF
+retain even-register alignment. Apple aggregate spills still need their own
+complete layout contract. The limits for this placement owner live in
+`SourceParameterPlacementAAPCS64.def`.
+
+Fixed analyst call prototypes reuse `assignDarwinScalarSourceABI`, as Darwin
+variadic prefixes and recovered declarations already do. Narrow integer
+register parameters and AArch64 narrow results retain the ABI's 32-bit
+sign/zero-extension guarantee separately from their source width. LLVM source
+call emission consumes those validated guarantees as `signext`/`zeroext`
+attributes; signed source spelling alone does not grant them. Narrow stack
+arguments keep their original storage width. This scalar call contract does
+not admit 128-bit or aggregate analyst call prototypes.
 
 The DWARF reader keeps an image-derived arm64e return ABI flag separate from
 the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when
