@@ -7,15 +7,64 @@
 /// \file
 /// Checks exact full-word mask relations without assuming partial complements.
 
+#include "../../lib/symbolic/mba/SymMBADetail.h"
 #include "gtest/gtest.h"
 
 #include "neverd/solver/SymSynthVerifier.h"
 #include "neverd/symbolic/SymMBA.h"
 
+#include <cstdint>
 #include <random>
+#include <utility>
+#include <vector>
 
 using namespace neverd;
 using namespace neverd::symbolic;
+
+TEST(SymMBAMaskRelation, MaskAbstractionOwnsOperandsAcrossArenaGrowth) {
+  SymContext Probe;
+  auto ProbeX = Probe.mkVar("padding", 32);
+  auto Marker = Probe.mkAdd(ProbeX, Probe.mkOne(32));
+  auto Pool = reinterpret_cast<uintptr_t>(Probe.operands(Marker).data());
+  unsigned Boundary = 0;
+  for (unsigned I = 2; I < (1u << 20); ++I) {
+    (void)Probe.mkAdd(ProbeX, Probe.mkConst(32, I));
+    auto Current = reinterpret_cast<uintptr_t>(Probe.operands(Marker).data());
+    if (Current != Pool && I > (1u << 16)) {
+      Boundary = I;
+      break;
+    }
+    Pool = Current;
+  }
+  ASSERT_GT(Boundary, 16u);
+  unsigned Growth = 0;
+  for (unsigned Parity : {0u, 1u})
+    for (unsigned Padding = Boundary - 16; Padding < Boundary + 16; ++Padding) {
+      SCOPED_TRACE(Padding);
+      SymContext C;
+      auto X = C.mkVar("lifetime_x", 32);
+      auto Y = C.mkVar("lifetime_y", 32);
+      for (unsigned I = 0; I < Padding; ++I)
+        (void)C.mkAdd(X, C.mkConst(32, I + 1));
+      if (Parity)
+        (void)C.mkNot(Y);
+      auto Mask = C.mkConst(32, 0x4c6fa0b1);
+      auto Root = C.mkXor(C.mkAnd(X, Mask), C.mkOr(Y, C.mkNot(Mask)));
+      auto Before = reinterpret_cast<uintptr_t>(C.operands(Root).data());
+      auto Abstraction = detail::abstractToMBA(C, Root, false);
+      ASSERT_TRUE(Abstraction);
+      Growth += Before != reinterpret_cast<uintptr_t>(C.operands(Root).data());
+      auto Restored = C.substitute(Abstraction->Body, Abstraction->Hidden);
+      for (const auto &[A, B] :
+           {std::pair{0u, 0u}, {UINT32_MAX, 1u}, {0xdeadbeefu, 0x11223344u}}) {
+        std::vector<llvm::APInt> Inputs(C.numVars(), llvm::APInt(32, 0));
+        Inputs[C.varId(X)] = llvm::APInt(32, A);
+        Inputs[C.varId(Y)] = llvm::APInt(32, B);
+        EXPECT_EQ(C.eval(Restored, Inputs), C.eval(Root, Inputs));
+      }
+    }
+  EXPECT_GT(Growth, 0u);
+}
 
 TEST(SymMBAMaskRelation, ComplementedOffsetAddress) {
   for (unsigned Width : {8u, 32u, 64u, 65u, 128u, 257u}) {
