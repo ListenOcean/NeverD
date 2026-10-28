@@ -16,7 +16,9 @@ equivalence remain unknown.
 Portable FNOP/EMMS/FEMMS admission was added after those baseline records.
 The earlier X0–X4 results do not certify these additions on native ARM64 or
 establish physical FEMMS execution. Their generated-state and native x64
-reference checks remain separate from the historical cross-host qualification.
+reference checks are recorded in the [reset qualification
+ledger](evidence/x86-x87-resets-2026-10-28.json), separately from the historical
+cross-host qualification.
 
 ## Profiles and limits
 

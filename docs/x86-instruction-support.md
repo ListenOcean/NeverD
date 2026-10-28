@@ -2712,3 +2712,46 @@ the exported i386 C's operand values and storage. i386 native objects and C ABI
 checks use LLVM and ordinary Clang. The independent controlled completion
 oracle does not establish descriptor faults, physical atomicity, coherence or
 WB memory behavior.
+
+## Portable owned FNOP and MMX resets
+
+The explicit owned x64 portable profile now admits FNOP, EMMS and FEMMS across
+the concrete interpreter, generated LLVM/HighC/LLVM-C interface and portable
+translation selector gate. Pending waiting exceptions, invalid control words
+and unknown incoming control/status refuse before mutation. FNOP updates guest
+FIP while retaining the profile's undefined condition-code bits. EMMS and FEMMS
+clear TOP and empty the tags; FEMMS also invalidates every physical payload's
+provenance. General MMX data operations and typed/unowned or i386 state are
+still outside this profile.
+
+Original EMMS execution exposed an incorrect TOP-preservation assumption in
+both the ordinary owned interpreter and the portable path. A shared private
+state helper now resets TOP while rotating FXSAVE logical slots to preserve
+physical register identities. Physical tags and known-payload masks do not
+rotate. Unicorn's Haswell model reproduces the old incorrect TOP behavior, so
+EMMS uses the original native instruction as its reference instead.
+
+LLVM commit `ce2ee24b501f0aad3a8291a378e016848b0727b2` adds the void,
+zero-argument `llvm.x86.fnop()` intrinsic with waiting, status and scheduling
+effects. NeverC commit `29ed2c9372030696d16ec54c313b542aa67a11c1` adds
+`__builtin_ia32_fnop()` and synchronized frontend/backend tables. LLVM IR,
+NeverC and its LLVM bridge execute six O0/O2 profiles on the recorded Intel
+x64 host, covering 288 state observations and 12 pending-#MF deliveries at
+the actual FNOP instruction. This does not add a Clang frontend builtin.
+
+The [qualification ledger](evidence/x86-x87-resets-2026-10-28.json) binds all
+results to their tested commits and artifacts. Each SDK passes 36 generated
+reset artifacts with 2,700 state observations and 576 original-instruction
+comparisons; the prior arithmetic fixture separately passes 36 artifacts with
+6,096 observations and 5,760 original comparisons. Native SDK integration
+passes 1,147 tests, with 49 native-AArch64-only tests explicitly skipped.
+The pinned suite's sole aggregate 3DNow timeout is repaired by giving each
+instruction/form its own ordinary CTest deadline: all 103 cases pass and keep
+all 960 objects. The existing QEMU guest consumes those exports and passes
+368,640 state and 4,080 fault comparisons, while its 1,440 pending-#MF and
+240 stack-#SS differentials remain unqualified.
+
+These additions do not inherit the historical ARM64 qualification. Physical
+FEMMS, privileged #NM behavior and complete architectural equivalence remain
+unqualified. LLVM release, production SDK pinning and the LLVM gitlink remain
+unchanged while the global instruction gaps are open.

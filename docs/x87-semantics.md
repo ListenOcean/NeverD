@@ -314,6 +314,8 @@ Unicorn's Haswell model incorrectly retains TOP for EMMS, so that reference
 is excluded from the portable context comparison. The generated-code reset
 suite uses original FNOP/EMMS instructions on native x64 instead; FEMMS payload
 invalidation remains a software provenance contract without a hardware claim.
+The [reset evidence](evidence/x86-x87-resets-2026-10-28.json) records the original
+EMMS counterexample, both SDK profiles and the native compiler FNOP checks.
 
 The existing FXSAVE64 context remains authoritative. TOP changes rotate logical
 slots while preserving physical payloads, physical tags and the physical
