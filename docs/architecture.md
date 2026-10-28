@@ -1424,9 +1424,13 @@ storage and do not retain another session cache.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
 external input retains its existing validation. One row-emission loop serves
-compact SDK inventories and the nested or indented stream used by persistence.
-Compact output writes the fixed schema names directly; patch-kind strings
-retain the general JSON encoder. Compact range JSON uses the same sink and
+compact SDK inventories, canonical two-space sidecars and general nested or
+indented streams. Compact and sidecar output write the fixed schema names
+directly; patch-kind strings retain the general JSON encoder. The patch save
+adapter supplies the complete root value to the shared sidecar owner, which
+still adds the final newline, handles write errors and commits atomically;
+write locking and digest conflict checks remain in the adapter. Compact range
+JSON uses the same sink and
 hexadecimal scratch formatter, with its address/size schema in the patch
 owner. Neither SDK getter duplicates serialization or changes result ownership.
 

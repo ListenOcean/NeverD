@@ -54,8 +54,9 @@ neverd::patch::parseHex(llvm::StringRef Text, uint64_t Limit) {
 
 namespace {
 // This root-array writer accepts only the fixed patch inventory schema keys.
-// General string values still use LLVM's JSON escaping.
-class CompactPatchOutput {
+// Pretty selects the canonical two-space sidecar format. General string
+// values still use LLVM's JSON escaping.
+template <bool Pretty> class PatchOutput {
   llvm::raw_ostream &Stream;
   bool FirstObject = true;
   bool FirstAttribute = true;
@@ -64,25 +65,34 @@ class CompactPatchOutput {
     if (!FirstAttribute)
       Stream << ',';
     FirstAttribute = false;
-    Stream << '"' << Key << "\":";
+    if constexpr (Pretty)
+      Stream << "\n    ";
+    Stream << '"' << Key << (Pretty ? "\": " : "\":");
   }
 
 public:
-  explicit CompactPatchOutput(llvm::raw_ostream &Stream) : Stream(Stream) {}
+  explicit PatchOutput(llvm::raw_ostream &Stream) : Stream(Stream) {}
 
   template <typename Callback> void array(Callback Emit) {
     Stream << '[';
     Emit();
+    if constexpr (Pretty)
+      if (!FirstObject)
+        Stream << '\n';
     Stream << ']';
   }
 
   template <typename Callback> void object(Callback Emit) {
     if (!FirstObject)
       Stream << ',';
+    if constexpr (Pretty)
+      Stream << "\n  ";
     FirstObject = false;
     FirstAttribute = true;
     Stream << '{';
     Emit();
+    if constexpr (Pretty)
+      Stream << "\n  ";
     Stream << '}';
   }
 
@@ -124,7 +134,8 @@ static void writeHexAttribute(llvm::json::OStream &Output, llvm::StringRef Key,
   Output.attributeEnd();
 }
 
-void writeHexAttribute(CompactPatchOutput &Output, llvm::StringLiteral Key,
+template <bool Pretty>
+void writeHexAttribute(PatchOutput<Pretty> &Output, llvm::StringLiteral Key,
                        llvm::StringRef Text) {
   Output.hexAttribute(Key, Text);
 }
@@ -159,13 +170,19 @@ void neverd::patch::writePatchRows(llvm::json::OStream &Output,
 
 void neverd::patch::writePatchRows(llvm::raw_ostream &Stream,
                                    const PatchOverlay &Overlay) {
-  CompactPatchOutput Output(Stream);
+  PatchOutput<false> Output(Stream);
+  writeRows(Output, Overlay);
+}
+
+void neverd::patch::writePatchSidecarRows(llvm::raw_ostream &Stream,
+                                          const PatchOverlay &Overlay) {
+  PatchOutput<true> Output(Stream);
   writeRows(Output, Overlay);
 }
 
 void neverd::patch::writePatchRanges(llvm::raw_ostream &Stream,
                                      const PatchOverlay &Overlay) {
-  CompactPatchOutput Output(Stream);
+  PatchOutput<false> Output(Stream);
   HexValue Hex;
   Output.array([&] {
     for (const auto &[Offset, Row] : Overlay.rows())

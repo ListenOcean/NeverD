@@ -25,8 +25,12 @@ llvm::Expected<std::vector<uint8_t>> parseHex(llvm::StringRef Text,
 /// neither needs an intermediate JSON object tree.
 void writePatchRows(llvm::json::OStream &Output, const PatchOverlay &Overlay);
 /// Emit the same canonical rows directly as compact JSON. Use the OStream
-/// overload when nesting or indentation is required.
+/// overload when nesting or custom indentation is required.
 void writePatchRows(llvm::raw_ostream &Stream, const PatchOverlay &Overlay);
+/// Emit canonical rows as a root array with two-space sidecar indentation.
+/// The sidecar owner supplies the final newline and commits the output.
+void writePatchSidecarRows(llvm::raw_ostream &Stream,
+                           const PatchOverlay &Overlay);
 /// Emit address/size ranges as compact JSON in canonical file-offset order.
 void writePatchRanges(llvm::raw_ostream &Stream, const PatchOverlay &Overlay);
 llvm::Expected<std::vector<PatchRow>> parsePatchRows(llvm::StringRef Text);
