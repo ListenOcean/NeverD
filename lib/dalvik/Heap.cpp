@@ -64,6 +64,16 @@ bool Heap::replaceBytes(Object &object, std::vector<uint8_t> bytes) {
   object.Length = object.Bytes.size() / 2;
   return true;
 }
+bool Heap::resizeBytes(Object &object, uint64_t size) {
+  const uint64_t growth =
+      size > object.Bytes.size() ? size - object.Bytes.size() : 0;
+  if (growth > limit - used)
+    return false;
+  used += growth; // Same conservative retained-capacity policy as replacement.
+  object.Bytes.resize(size);
+  object.Length = size / 2;
+  return true;
+}
 bool Heap::replaceMapEntries(Object &object,
                              std::vector<Object::MapEntry> entries) {
   const size_t previous = object.MapEntries ? object.MapEntries->size() : 0;

@@ -800,9 +800,7 @@ QString ListingView::copyText() const {
     return selectedText();
   // A prefix word copies once a click selects it; the body's highlight
   // marks the word.
-  if (const QString word = currentToken(); !word.isEmpty())
-    return word;
-  return currentLineText();
+  return currentToken();
 }
 
 void ListingView::moveCursor(int line, int column, bool extend) {
@@ -1224,7 +1222,9 @@ void ListingView::keyPressEvent(QKeyEvent *event) {
     break;
   }
   if (event->matches(QKeySequence::Copy)) {
-    QApplication::clipboard()->setText(copyText());
+    // Blank space leaves the clipboard as it was, as in IDA.
+    if (const QString text = copyText(); !text.isEmpty())
+      QApplication::clipboard()->setText(text);
     return;
   }
   QAbstractScrollArea::keyPressEvent(event);

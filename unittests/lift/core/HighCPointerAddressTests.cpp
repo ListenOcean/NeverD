@@ -32829,6 +32829,75 @@ TEST(HighCPointerAddresses, RepeatedOuterTestKeepsCallBeforeLaterEffect) {
   }
 }
 
+TEST(HighCPointerAddresses, NestedIfMergeKeepsPrefixCallsWhereTheyRan) {
+  // Each prefix call runs whenever the outer test holds, before the inner
+  // test. Merging the two tests must not make it wait on the inner one:
+  //   0: `t = other(b); if (c) work(a);`
+  //   1: `t = fcall(b); u = hcall(); if (a && t) work(a);`
+  //   2: `t = fcall(b); if (a && c && t) work(a);`
+  for (int Shape = 0; Shape < 3; ++Shape)
+    for (int Sited = 0; Sited < 2; ++Sited) {
+      SCOPED_TRACE(testing::Message()
+                   << "Shape " << Shape << " Sited " << Sited);
+      HighFunc Func;
+      Func.Name = "prefix_calls";
+      Func.Entry = 0x140001000;
+      Func.ReturnType = NdType::makeVoid();
+      auto NonZero = [](ExprPtr E, unsigned Size) {
+        return HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(E),
+                                   HighExpr::makeConst(0, Size));
+      };
+      const MedVar T = temporary(40, 0, 4), U = temporary(41, 0, 4);
+      const char *Name = Shape == 0 ? "other" : "fcall";
+      ExprPtr First = HighExpr::makeCall(Name, 0x140002300, {parameter(1)});
+      if (Sited)
+        First->CallSiteAddr = 0x140001010;
+      HighStmt Inner;
+      Inner.Kind = StmtKind::If;
+      if (Shape == 0)
+        Inner.Cond = NonZero(parameter(2), 8);
+      else if (Shape == 1)
+        Inner.Cond =
+            HighExpr::makeBinop(NdOp::BOOL_AND, NonZero(parameter(0), 8),
+                                NonZero(HighExpr::makeVar(T), 4));
+      else
+        Inner.Cond = HighExpr::makeBinop(
+            NdOp::BOOL_AND,
+            HighExpr::makeBinop(NdOp::BOOL_AND, NonZero(parameter(0), 8),
+                                NonZero(parameter(2), 8)),
+            NonZero(HighExpr::makeVar(T), 4));
+      Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+      HighStmt Outer;
+      Outer.Kind = StmtKind::If;
+      Outer.Cond = NonZero(parameter(0), 8);
+      Outer.Body = {assignTo(T, std::move(First))};
+      if (Shape == 1)
+        Outer.Body.push_back(
+            assignTo(U, HighExpr::makeCall("hcall", 0x140002400, {})));
+      Outer.Body.push_back(Inner);
+      Func.Body = {Outer};
+      structureIfElse(Func, 8);
+      const std::string Source = emitFunctions({Func});
+      const auto BodyAt = Source.find("void prefix_calls");
+      ASSERT_NE(BodyAt, std::string::npos) << Source;
+      const auto OuterTest = Source.find("if (", BodyAt);
+      const auto InnerTest = Source.find("if (", OuterTest + 1);
+      ASSERT_NE(InnerTest, std::string::npos) << Source;
+      for (const char *Call : {Shape == 0 ? "other(" : "fcall(",
+                               Shape == 1 ? "hcall(" : nullptr}) {
+        if (!Call)
+          continue;
+        const auto At = Source.find(Call, BodyAt);
+        EXPECT_GT(At, OuterTest) << Source;
+        EXPECT_LT(At, InnerTest) << Source;
+        EXPECT_EQ(Source.find(Call, At + 1), std::string::npos) << Source;
+      }
+      if (Shape == 1)
+        EXPECT_LT(Source.find("fcall(", BodyAt), Source.find("hcall(", BodyAt))
+            << Source;
+    }
+}
+
 TEST(HighCPointerAddresses, TrailingLoadReadAsLaterCallArgumentStays) {
   // `t27` feeds only the third argument of a call before the inner test.
   HighFunc Func;
@@ -36126,7 +36195,7 @@ TEST(HighCPointerAddresses, GsHandlerDataBit2AlignBranchIsPrinted) {
   EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
+TEST(HighCPointerAddresses, CallResultUsedByTestEaxReachesReturn) {
   // `call helper / test eax, eax / je` must keep the call result. Dropping
   // the dest turns the compare into an uninitialized temp (cxx_eh_probe
   // 0x140001570).
@@ -36185,9 +36254,18 @@ TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_NE(Source.find("= ret_one("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("\n    ret_one();"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  // Both exits return RAX, so folding the branch to a direct returned call is
+  // valid. Check the machine result and diagnose an uninitialized temporary
+  // rather than requiring a particular assignment or conditional spelling.
+  const std::string Program = Source + R"c(
+int64_t ret_one(void) { return 1; }
+int main(void) {
+  return uses_call_result() == 1 ? 0 : 1;
+}
+)c";
+  for (const char *Optimization : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Program, {Optimization, "-Werror=uninitialized"});
 }
 
 TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {

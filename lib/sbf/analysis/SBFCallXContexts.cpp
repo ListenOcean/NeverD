@@ -150,6 +150,8 @@ llvm::StringRef barrierName(CallXSummaryBarrier Barrier) {
     return "unknown_call_target_effects";
   case CallXSummaryBarrier::UnsupportedRawEntry:
     return "raw_target_without_decoded_block_entry";
+  case CallXSummaryBarrier::NonReturningCall:
+    return "proven_nonreturning_call";
   case CallXSummaryBarrier::SummaryBudget:
     return "summary_unavailable_after_specialization_budget";
   }
@@ -459,6 +461,8 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
     Row["applied_parameterized_memory_effects"] = Edge.AppliedMemoryEffects;
     Row["applied_stored_values"] =
         static_cast<int64_t>(Edge.AppliedStoredValues);
+    Row["instantiated_return_input_expression"] =
+        Edge.InstantiatedReturnInputExpression;
     Row["generalized_unknown_inputs"] = Edge.GeneralizedInputs;
     Row["input_generalization"] = generalizationName(Edge.InputGeneralization);
     if (Edge.InstantiatedCopySlot) {
@@ -503,7 +507,7 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   const auto Translation =
       frameTranslationLimit(Program.Low.TheVersion, Program.Config);
   return llvm::json::Object{
-      {"schema", 9},
+      {"schema", 11},
       {"captured_addresses", std::move(Captures)},
       {"distinct_captures_prove_no_alias", false},
       {"frame_coordinates",
@@ -568,6 +572,10 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.CanonicalizedFrameInputs)},
       {"unblocked_recursion_retries",
        static_cast<int64_t>(Report.UnblockedRecursionRetries)},
+      {"return_reachability_instruction_visits",
+       static_cast<int64_t>(Report.ReturnReachabilityVisits)},
+      {"instantiated_return_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedReturnInputExpressions)},
       {"instantiated_stored_value_input_expressions",
        static_cast<int64_t>(Report.InstantiatedStoredValueInputExpressions)},
       {"instantiated_target_input_expressions",

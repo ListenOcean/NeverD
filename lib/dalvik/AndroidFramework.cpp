@@ -425,7 +425,8 @@ void Program::addAndroidFramework() {
         {"dalvik/system/PathClassLoader", "dalvik/system/BaseDexClassLoader"},
         {"android/content/pm/PackageManager", "java/lang/Object"},
         {"android/app/ApplicationPackageManager",
-         "android/content/pm/PackageManager"}}) {
+         "android/content/pm/PackageManager"},
+        {"android/os/Parcel", "java/lang/Object"}}) {
     Class type;
     type.name = "L" + std::string(name) + ";";
     type.superclass = "L" + std::string(base) + ";";
@@ -441,6 +442,7 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/app/ClientTransactionHandler")
       type.access.insert("abstract");
     if (std::string_view(name) == "android/app/ActivityThread" ||
+        std::string_view(name) == "android/os/Parcel" ||
         std::string_view(name) == "android/util/EventLog" ||
         std::string_view(name) == "java/lang/Integer" ||
         std::string_view(name) == "java/lang/Long" ||
@@ -1513,6 +1515,8 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           uint64_t receiver,
                                           std::span<const uint64_t> arguments,
                                           const AdmitInstruction &admit) {
+  if (method.Op == ParcelData)
+    return parcel(heap, method, receiver, arguments, admit);
   if (method.Op == EventLogWrite)
     return eventLog(heap, program, method, arguments, admit);
   if (method.Op == ServiceGet || method.Op == ServiceCheck ||

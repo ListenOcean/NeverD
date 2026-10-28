@@ -4584,13 +4584,18 @@ They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
 `WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
 a listing row's address and segment name and copies exactly that word. Clicks
-on the arrow gutter, the colon and the gap before the body leave the current
-line as the copy, and a drag inside the address keeps the characters it
-covers. `WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing,
-graph and pseudocode views. Without a selection, Ctrl+C and Edit Copy take the
-clicked word. They take the word an arrow key reaches, a right-clicked word,
-and the line on blank space, and a selection still wins. Keys move the
-listing's highlight with the copied word. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+on the colon and the gap before the body leave the clipboard as it was, and a
+drag inside the address keeps the characters it covers.
+`WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing, graph and
+pseudocode views. Without a selection, Ctrl+C and Edit Copy take the clicked
+word, the word an arrow key reaches and a right-clicked word. Blank space
+leaves the clipboard as it was, and a selection still wins. Keys move the
+listing's highlight with the copied word.
+`WorkbenchTests::pseudocodeSplitsMemberAccesses` copies each word of
+`Device->Links.Flink` in C pseudocode and of `main.main` in Go pseudocode, and
+`WorkbenchUnitTests::pseudocodeWordsSplitMemberAccessesAtTheirDot` checks the
+word bounds and whole-word highlights behind it, dotted names kept whole
+outside pseudocode. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
@@ -12449,6 +12454,19 @@ patch-full binaries; use `check-neverd` for the complete aggregate.
 
 ## Incremental CTest workflow
 
+`AndroidParcelTest.*` covers owned-pool order and limits, raw/recycled objects,
+independent integer/UTF-16 wire bytes, unaligned overwrites, null/empty Strings,
+padding, short and malformed reads, copied byte arrays, native cursor/range
+boundaries, work/heap stops and DEX/library identity sharing. The API 28 source
+contract includes consumed string lengths and unchecked terminators; a symmetric
+round trip alone is insufficient. `AndroidJNI.Parcel*` runs ordinary/V/A calls
+at O0/O2 across relocation variants and available CPU backends.
+`ProcessPublic.AndroidParcelDataAndBoundariesMatchSDKAndCLI` compares 42 complete
+report pairs, including the next explicit interface-token/StrictMode boundary.
+Run full Dalvik, Android JNI and native/Linux Binder suites, plus the focused
+public test after changing this owner. These are original synthetic tests;
+they establish no live Binder service or whole-MVM restoration.
+
 `AndroidServiceManagerTest.*` covers slow/statistics record bytes, strict versus
 inclusive timing, signed wrapping/division, ART strings/nulls, ignored negative
 log results, and partial field updates at resource stops. `AndroidLog.Event*`
@@ -15643,6 +15661,37 @@ continuation materialization remains a separate source-ABI requirement.
 `SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
 a unit of selected functions names the one this proof refuses and defines the
 other, while that function alone still fails with the diagnostic.
+
+`MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
+x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
+unknown and address-valued results, incomplete coverage, independent roots,
+calls, malformed edges, return occurrence binding and admission budgets.
+`CallResultBoundsSurviveTruncationAndSignExtension` checks bounded allocation
+arithmetic and negative/wrapping counterexamples at x86, x64, ARM and ARM64
+pointer widths. `CallBoundsDoNotHideNativeWidthOffsetWrap` rejects a nonnegative
+callee result whose complete stack offset crosses the signed native boundary,
+even when its upper endpoint alone fits.
+`SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
+keeps the physical CALL-slot rejection when a result can raise SP or has no
+summary.
+`SourceCallReturnReads.NativeWidthExtentsDoNotHidePhysicalCallSlots` checks
+x86/x64 CALL pushes and loads that cross the native offset boundary even when
+their starting SP or address fits. An independent byte-wise modular oracle
+checks the aliases, and the adjacent representable intervals remain accepted
+when the required callee bound is available.
+`PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
+checks serial/parallel batches, reversed function order and replacement of a
+bounded callee by an unknown one without retaining stale facts.
+`PipelineSourceStackAccesses.BoundedCalleeKeepsDynamicFrameRestores` runs actual
+x64 call/allocation/restore bytes through source LLVM emission in COFF, ELF and
+Mach-O at one and four threads. A loaded 16-bit result supplies a bounded
+allocation; a 32-bit result whose sign extension can raise SP remains refused.
+The successful modules pass LLVM verification.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` retains
+the larger PE whole-module compilation fixture. Its runtime relocator uses the
+same 16-bit section-count proof. This does not establish bounds for the other
+dynamic allocations in its printf helpers: an omitted stack probe supplies no
+scalar range fact. Native Windows execution is separate from cross-compilation.
 
 `MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
 direct and indirect CALLs whose only SP use precedes an explicit restore at an

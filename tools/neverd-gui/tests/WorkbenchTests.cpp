@@ -483,6 +483,12 @@ void clearClipboard() {
   if (QGuiApplication::platformName() == QLatin1String("windows"))
     QTest::qWait(20);
 }
+
+void setClipboard(const QString &text) {
+  QApplication::clipboard()->setText(text);
+  if (QGuiApplication::platformName() == QLatin1String("windows"))
+    QTest::qWait(20);
+}
 } // namespace
 
 class WorkbenchTests : public QObject {
@@ -4506,11 +4512,13 @@ private slots:
     const auto click = [viewport](Qt::MouseButton button, QPoint at) {
       QTest::mouseClick(viewport, button, Qt::NoModifier, at);
     };
+    // What Copy leaves on the clipboard, which holds `kept` before.
+    const QString kept = QStringLiteral("clipboard before Copy");
     const auto copied = [&] {
-      clearClipboard();
+      setClipboard(kept);
       QTest::keyClick(listing, Qt::Key_C, Qt::ControlModifier);
       const QString keyed = clipboardText();
-      clearClipboard();
+      setClipboard(kept);
       bench.action(ActionId::EditCopy)->trigger();
       const QString command = clipboardText();
       return keyed == command ? keyed : keyed + QStringLiteral(" | ") + command;
@@ -4538,14 +4546,14 @@ private slots:
     QCOMPARE(listing->selectedText(), region);
     QCOMPARE(copied(), region);
     // Beside the words, the colon and the gap before the body select
-    // nothing, and Copy takes the line.
+    // nothing, and Copy leaves the clipboard as it was.
     click(Qt::LeftButton, on(prefix, colon, y));
     QCOMPARE(listing->selectedText(), listing->currentLineText());
-    QCOMPARE(copied(), listing->currentLineText());
+    QCOMPARE(copied(), kept);
     click(Qt::LeftButton,
           on(prefix + QLatin1Char(' '), int(prefix.size()), y));
     QCOMPARE(listing->selectedText(), listing->currentLineText());
-    QCOMPARE(copied(), listing->currentLineText());
+    QCOMPARE(copied(), kept);
 
     // A right click selects the address for the context menu's Copy.
     const int next = y + height;
@@ -4572,7 +4580,7 @@ private slots:
   void copyTakesTheHighlightedWord() {
     // As in IDA, Copy without a selection takes the word under the cursor,
     // which the highlight marks as the cursor moves by mouse or keys; on
-    // blank space it takes the line.
+    // blank space it leaves the clipboard as it was.
     QFETCH(QString, view);
     QTemporaryDir directory;
     Workbench bench;
@@ -4587,7 +4595,7 @@ private slots:
     bench.window->activateWindow();
     QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
     QWidget *text = nullptr, *surface = nullptr;
-    std::function<QString()> row, line, selected;
+    std::function<QString()> row, selected;
     std::function<QRect()> caret;
     std::function<void()> home;
     ListingView *listing = nullptr;
@@ -4597,7 +4605,6 @@ private slots:
       text = listing;
       surface = listing->viewport();
       row = [listing] { return listing->cursorLine()->styled.text; };
-      line = [listing] { return listing->currentLineText(); };
       selected = [listing] { return listing->selectedText(); };
       caret = [listing] { return listing->cursorViewportRect(); };
       home = [listing] { QTest::keyClick(listing, Qt::Key_Home); };
@@ -4607,7 +4614,6 @@ private slots:
       QTRY_VERIFY(assembly->graphMode() && graph->loaded());
       text = surface = graph;
       row = [graph] { return graph->currentRowText(); };
-      line = row;
       caret = [graph] { return graph->cursorViewportRect(); };
       // A graph row has no Home of its own; Left stops at its start.
       home = [graph] {
@@ -4621,7 +4627,6 @@ private slots:
       text = code;
       surface = code->viewport();
       row = [code] { return code->selectedText(); };
-      line = row;
       selected = [code] { return code->selectedText(); };
       caret = [code] { return code->cursorViewportRect(); };
       home = [code] { QTest::keyClick(code, Qt::Key_Home); };
@@ -4630,11 +4635,13 @@ private slots:
     QTRY_VERIFY(text->hasFocus());
     if (view == QLatin1String("graph"))
       QTest::keyClick(text, Qt::Key_1);
+    // What Copy leaves on the clipboard, which holds `kept` before.
+    const QString kept = QStringLiteral("clipboard before Copy");
     const auto copied = [&] {
-      clearClipboard();
+      setClipboard(kept);
       QTest::keyClick(text, Qt::Key_C, Qt::ControlModifier);
       const QString keyed = clipboardText();
-      clearClipboard();
+      setClipboard(kept);
       bench.action(ActionId::EditCopy)->trigger();
       const QString command = clipboardText();
       return keyed == command ? keyed : keyed + QStringLiteral(" | ") + command;
@@ -4699,13 +4706,13 @@ private slots:
     QCOMPARE(copied(), second);
     if (listing)
       QCOMPARE(ListingViewTestAccess::highlight(*listing), second);
-    // Blank space, reached by keys or by a click, copies the line.
+    // Blank space, reached by keys or by a click, copies nothing.
     place(blank);
-    QCOMPARE(copied(), line());
+    QCOMPARE(copied(), kept);
     if (listing)
       QVERIFY(ListingViewTestAccess::highlight(*listing).isEmpty());
     click(Qt::LeftButton, onBlank);
-    QCOMPARE(copied(), line());
+    QCOMPARE(copied(), kept);
     // A right click marks the word for the context menu's Copy.
     click(Qt::RightButton, onSecond);
     QCOMPARE(copied(), second);
@@ -4717,6 +4724,66 @@ private slots:
       QVERIFY(selection.size() > first.size());
       QCOMPARE(copied(), selection);
     }
+  }
+
+  void pseudocodeSplitsMemberAccesses_data() {
+    QTest::addColumn<QString>("fixture");
+    QTest::addColumn<QString>("access");
+    QTest::newRow("c") << QStringLiteral("local-types.bin")
+                       << QStringLiteral("Links.Flink");
+    QTest::newRow("go") << QStringLiteral("pseudocode-go.bin")
+                        << QStringLiteral("main.main");
+  }
+
+  void pseudocodeSplitsMemberAccesses() {
+    // Each word of a member access or qualified name copies alone, whatever
+    // language the pseudocode reads in.
+    QFETCH(QString, fixture);
+    QFETCH(QString, access);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, fixture));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    // function_7 reads its parameter's members once it is a _DEVICE *.
+    const bool device = fixture == QLatin1String("local-types.bin");
+    const Address entry = Base + (device ? 0x70 : 0x140);
+    if (device)
+      bench.session.editFunction(
+          entry,
+          {{"type", "int64_t function_7(_DEVICE *Device, int64_t arg1)"}});
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(entry);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(entry));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(code->complete() && code->allText().contains(access),
+                             OpenTimeoutMs);
+    // Ctrl+C with the cursor in the row holding the access, at a column of
+    // \p needle.
+    const auto copyAt = [&](const QString &needle, int offset) {
+      code->setFocus();
+      for (int line = 0; line < code->lineCount(); ++line) {
+        code->setCursorLine(line);
+        if (code->selectedText().contains(access))
+          break;
+      }
+      const int column = int(code->selectedText().indexOf(needle)) + offset;
+      QTest::keyClick(code, Qt::Key_Home);
+      for (int i = 0; i < column; ++i)
+        QTest::keyClick(code, Qt::Key_Right);
+      clearClipboard();
+      QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+      return clipboardText();
+    };
+    const int dot = int(access.indexOf(QLatin1Char('.')));
+    QCOMPARE(copyAt(access, 1), access.left(dot));
+    QCOMPARE(copyAt(access, dot + 2), access.mid(dot + 1));
+    if (device)
+      QCOMPARE(copyAt(QStringLiteral("Device->"), 1), QStringLiteral("Device"));
   }
 
   void tabFromCodeUsesSelectedInstruction_data() {

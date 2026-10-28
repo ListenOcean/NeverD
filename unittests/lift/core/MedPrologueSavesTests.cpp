@@ -18,6 +18,7 @@
 #include "llvm/ADT/StringExtras.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <initializer_list>
 #include <limits>
 #include <map>
@@ -880,6 +881,124 @@ TEST(SourceCallReturnReads, BoundedAllocationsSeparateTheFixedFrame) {
     }
 }
 
+TEST(SourceCallReturnReads, BoundedCallResultsKeepPhysicalSlotChecks) {
+  auto Image = callSlotImage();
+  Image.Segments.front().Data[16] = 0xe8;
+  for (bool HasRange : {false, true})
+    for (bool Negative : {false, true}) {
+      auto Func = observedCallSlot();
+      auto &Ops = Func.Blocks.front().Ops;
+      // The saved word is above both call slots when the allocation only
+      // lowers SP. A signed negative count can instead raise it into that word.
+      Ops[2].Opcode = NdOp::INT_ADD;
+      auto Result = temp(40);
+      Result.Kind = MedVar::Reg;
+      Result.RegOff = getTargetRegInfo(Image.Arch).IntReturnReg;
+      auto Query = op(NdOp::CALL, Result, {MedVar::makeConst(0x2000, 8)});
+      Query.Addr = 0x1008;
+      auto Narrow = temp(41);
+      Narrow.Size = 4;
+      Ops[4].Addr = 0x1010;
+      Ops[4].Inputs[0] = MedVar::makeConst(0x3000, 8);
+      Ops[5].Addr = 0x1015;
+      Ops.insert(Ops.begin() + 4,
+                 {Query,
+                  op(NdOp::SUBBYTES, Narrow, {Result, MedVar::makeConst(0, 4)}),
+                  op(NdOp::INT_SEXT, temp(42), {Narrow}),
+                  op(NdOp::INT_SUB, sp(2), {sp(1), temp(42)})});
+      MedCallReturnRanges Ranges;
+      if (HasRange)
+        Ranges.try_emplace(
+            0x2000, MedIntegerReturnRange{Image.Arch, 8, 0,
+                                          Negative ? UINT32_MAX : UINT16_MAX});
+      std::string Error;
+      EXPECT_EQ(validateSourceCallReturnReads(
+                    Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+                    nullptr, &Ranges),
+                HasRange && !Negative)
+          << Error;
+      if (!HasRange || Negative)
+        EXPECT_NE(Error.find("physical CALL return slot"), std::string::npos);
+    }
+}
+
+TEST(SourceCallReturnReads, NativeWidthExtentsDoNotHidePhysicalCallSlots) {
+  for (Arch Architecture : {Arch::X86, Arch::X64}) {
+    const auto Width = getTargetRegInfo(Architecture).PointerSize;
+    const uint64_t Maximum = (uint64_t{1} << (Width * 8 - 1)) - 1;
+    const uint64_t Mask = (Maximum << 1) | 1;
+    for (bool WrapSlot : {false, true})
+      for (bool WrapLoad : {false, true})
+        for (bool HasRange : {false, true}) {
+          SCOPED_TRACE(::testing::Message()
+                       << int(Architecture) << ':' << WrapSlot << ':'
+                       << WrapLoad << ':' << HasRange);
+          const uint64_t MaxCount = Maximum - 64 - (WrapSlot ? 0 : Width - 1);
+          const uint64_t Address =
+              WrapLoad ? Maximum - Width / 2 + 1 : Maximum - Width + 2;
+          const unsigned ReadWidth = WrapLoad ? Width : 1;
+          // Independently enumerate the bytes in native modular arithmetic.
+          // SP itself fits in both cases; its push or the load can cross the
+          // signed coordinate boundary and alias the other interval.
+          const uint64_t CallEnd = (uint64_t{0} - 64 - MaxCount) & Mask;
+          bool Overlaps = false;
+          for (unsigned I = 0; I < Width; ++I)
+            for (unsigned J = 0; J < ReadWidth; ++J)
+              Overlaps |=
+                  ((CallEnd - Width + I) & Mask) == ((Address + J) & Mask);
+          ASSERT_EQ(Overlaps, WrapSlot || WrapLoad);
+
+          auto Image = callSlotImage();
+          Image.Arch = Architecture;
+          Image.Segments.front().Data[16] = 0xe8;
+          auto Func = observedCallSlot();
+          Func.FrameSize = 64;
+          auto Result = temp(40);
+          Result.Kind = MedVar::Reg;
+          Result.RegOff = getTargetRegInfo(Architecture).IntReturnReg;
+          auto &Ops = Func.Blocks.front().Ops;
+          Ops = {
+              op(NdOp::COPY, sp(0), {sp(0)}),
+              op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(64, Width)}),
+              op(NdOp::CALL, Result, {MedVar::makeConst(0x2000, Width)}),
+              op(NdOp::INT_SUB, sp(2), {sp(1), Result}),
+              op(NdOp::INT_ADD, temp(41),
+                 {sp(0), MedVar::makeConst(Address, Width)}),
+              op(NdOp::STORE, none(), {temp(41), MedVar::makeConst(19, Width)}),
+              op(NdOp::CALL, none(), {MedVar::makeConst(0x3000, Width)}),
+              op(NdOp::LOAD, temp(42), {temp(41)}),
+              op(NdOp::RETURN, none(), {temp(42)})};
+          for (auto &Op : Ops) {
+            Op.Output.TheArch = Architecture;
+            Op.Output.Size = Width;
+            for (unsigned I = 0; I < Op.NumInputs; ++I) {
+              Op.Inputs[I].TheArch = Architecture;
+              Op.Inputs[I].Size = Width;
+            }
+          }
+          Ops[2].Addr = 0x1008;
+          Ops[6].Addr = 0x1010;
+          Ops[7].Addr = 0x1015;
+          Ops[5].Inputs[1].Size = ReadWidth;
+          Ops[7].Output.Size = ReadWidth;
+          Ops[8].Inputs[0].Size = ReadWidth;
+          MedCallReturnRanges Ranges;
+          Ranges.try_emplace(
+              0x2000, MedIntegerReturnRange{Architecture, Width, 0, MaxCount});
+          std::string Error;
+          const bool Safe = validateSourceCallReturnReads(
+              Func, Image, Error, limits::ir::kSourceCallReturnReadWork,
+              nullptr, HasRange ? &Ranges : nullptr);
+          EXPECT_EQ(Safe, HasRange && !WrapSlot && !WrapLoad) << Error;
+          if (!Safe)
+            EXPECT_NE(Error.find(WrapLoad ? "native stack-offset"
+                                          : "physical CALL return slot"),
+                      std::string::npos)
+                << Error;
+        }
+  }
+}
+
 TEST(SourceCallReturnReads, SparseStackWritesNeedOnlyOneOperationScan) {
   auto Func = observedCallSlot();
   auto &Ops = Func.Blocks.front().Ops;
@@ -1577,7 +1696,7 @@ TEST(SourceCallReturnReads, DeferredLoadsWaitForTheSettledObservation) {
   std::string Error;
   EXPECT_TRUE(validateSourceCallReturnReads(
       Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
-      nullptr, &Deferred))
+      nullptr, nullptr, &Deferred))
       << Error;
   ASSERT_EQ(Deferred.size(), 1u);
   EXPECT_EQ(Deferred[0].Load, 0x100du);
@@ -1586,7 +1705,7 @@ TEST(SourceCallReturnReads, DeferredLoadsWaitForTheSettledObservation) {
             std::string::npos);
   // Other refusals do not wait.
   EXPECT_FALSE(validateSourceCallReturnReads(Func, callSlotImage(), Error, 0,
-                                             nullptr, &Deferred));
+                                             nullptr, nullptr, &Deferred));
   EXPECT_NE(Error.find("work budget"), std::string::npos);
   // The function returns the loaded value, so it is still refused, and the
   // diagnostic names what observes it.
@@ -1631,7 +1750,7 @@ TEST(SourceCallReturnReads, EachDeferredLoadLeavesTheProofOnce) {
   std::vector<MedCallReturnRead> Deferred;
   EXPECT_TRUE(validateSourceCallReturnReads(
       Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
-      nullptr, &Deferred))
+      nullptr, nullptr, &Deferred))
       << Error;
   std::vector<va_t> Loads;
   for (const MedCallReturnRead &Read : Deferred)
@@ -1644,7 +1763,7 @@ TEST(SourceCallReturnReads, EachDeferredLoadLeavesTheProofOnce) {
   Deferred.clear();
   EXPECT_TRUE(validateSourceCallReturnReads(
       Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
-      nullptr, &Deferred))
+      nullptr, nullptr, &Deferred))
       << Error;
   EXPECT_EQ(Deferred.size(), 3u);
 }
@@ -1706,7 +1825,7 @@ TEST(SourceCallReturnReads, ACleanupPopObservedByNothingIsNotRefused) {
   std::string Error;
   EXPECT_TRUE(validateSourceCallReturnReads(
       Func, callSlotImage(), Error, limits::ir::kSourceCallReturnReadWork,
-      nullptr, &Func.CallReturnReads))
+      nullptr, nullptr, &Func.CallReturnReads))
       << Error;
   ASSERT_EQ(Func.CallReturnReads.size(), 1u);
   EXPECT_TRUE(validateObservedCallReturnReads(Func, callSlotImage(), Error))

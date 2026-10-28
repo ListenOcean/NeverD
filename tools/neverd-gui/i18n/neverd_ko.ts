@@ -120,8 +120,8 @@
         <translation>복사(&amp;C)</translation>
     </message>
     <message>
-        <source>Copy the selection, the highlighted word or the current line</source>
-        <translation>선택 영역, 강조 표시된 단어 또는 현재 줄을 복사합니다</translation>
+        <source>Copy the selection or the highlighted word</source>
+        <translation>선택 영역 또는 강조 표시된 단어를 복사합니다</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>

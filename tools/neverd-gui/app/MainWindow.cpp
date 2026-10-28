@@ -4185,7 +4185,9 @@ void MainWindow::copySelection() {
       return;
     }
     if (auto *code = qobject_cast<CodeText *>(widget)) {
-      QApplication::clipboard()->setText(code->copyText());
+      // Blank space leaves the clipboard as it was, as in IDA.
+      if (const QString text = code->copyText(); !text.isEmpty())
+        QApplication::clipboard()->setText(text);
       return;
     }
     if (auto *chooser = qobject_cast<ChooserView *>(widget)) {
@@ -4197,7 +4199,8 @@ void MainWindow::copySelection() {
       return;
     }
   }
-  QApplication::clipboard()->setText(disassembly_->copyText());
+  if (const QString text = disassembly_->copyText(); !text.isEmpty())
+    QApplication::clipboard()->setText(text);
 }
 
 void MainWindow::chooseLocation(ChooserKind kind, ActionId command) {

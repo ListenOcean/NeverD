@@ -2,6 +2,7 @@ include(${CMAKE_SOURCE_DIR}/cmake/NeverDZlib.cmake)
 add_neverd_component_library(NeverDDalvik
   AndroidFramework.cpp
   AndroidEventLog.cpp
+  AndroidParcel.cpp
   AndroidServiceManager.cpp
   AndroidStatLogger.cpp
   AndroidProperties.cpp
