@@ -168,10 +168,13 @@ int shifts(int a) {
 
 // At -O0 a local label table is copied from its read-only initializer, an
 // object no symbol names: the copy reads the object the output declares,
-// not the address the image gives it.
+// not the address the image gives it. Without PIC the initializer lies in
+// .rodata; a PIC object's .data.rel.ro is writable, and its name alone
+// proves no immutability.
 TEST_F(X86_64_ImageTable, AnUnnamedInitializerIsDeclared) {
   KernelOptimization = "-O0";
-  expectRunsLikeSource(R"C(
+  expectHighCRunsLikeSource({"-target", "x86_64-linux-gnu", "-fno-pic"},
+                            R"C(
 int loc8(int a) {
   const void *tab[8] = {&&L0, &&L1, &&L2, &&L3, &&L4, &&L5, &&L6, &&L7};
   unsigned acc = (unsigned)a;
@@ -214,7 +217,7 @@ int loc8(int a) {
   return (int)acc;
 }
 )C",
-                       "loc8", {"loc8"});
+                            "loc8", {"loc8"}, {-3, 0, 1, 77});
 }
 
 // `SA[i - 1]` takes one from a sum of SA's address and an index: SA is the
