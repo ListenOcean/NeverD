@@ -408,6 +408,14 @@ emission and all 64 combinations of architecture, serial/sharded emission,
 optimization and source projection. Neither a module nor source observations
 may escape a failed pipeline run. Reusing an emitter after refusal must still
 produce verified LLVM for a valid function and reset the diagnostic count.
+`PipelineOutcome.RealShardedEmissionLeavesOutOnlyTheRefusedBody` and
+`LLVMDataPointerInvariantBoundary.NamesTheRefusedBodySoTheOthersEmitWithoutIt`
+(`NeverDLiftTests`) check that a body refusing a stale address is named with
+the error it wrote and declared only, while the shard's other functions keep
+their definitions; without `OmitRefusedLLVMBodies`, as in a lift, the run
+still fails, which the `JTE_*FailsClosed*` lift tests also hold. Decompile a
+whole x86-64 libsqlite3 or Rust binary through `--llvm` after changing that
+retry: one such body used to fail the unit.
 
 `NeverDAArch64ReturnProtectionTests` exercises decoded leaf and saved-LR
 recipes for ELF, Mach-O and COFF, including key/leaf attributes, preserved
