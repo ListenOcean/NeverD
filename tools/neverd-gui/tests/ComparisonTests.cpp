@@ -2446,6 +2446,8 @@ private slots:
     QVERIFY(Regions);
     auto *Kind = Regions->findChild<QComboBox *>("regionKind");
     Kind->setCurrentIndex(Kind->findData("raw_anchors"));
+    QVERIFY(Kind->isVisible());
+    QVERIFY(!Regions->findChild<QTableView *>("regionHypotheses")->isVisible());
     auto *Table = Regions->findChild<QTableView *>("regionAnchors");
     auto *Anchors = qobject_cast<ComparisonModel *>(Table->model());
     auto *Instructions = Regions->findChild<QTableView *>("regionInstructions");
@@ -2555,8 +2557,13 @@ private slots:
                                                     : "/light-regions.png")));
       }
     auto *Kind = Dialog->findChild<QComboBox *>("regionKind");
+    Kind->setCurrentIndex(Kind->findData("raw_anchors"));
+    QTRY_COMPARE_WITH_TIMEOUT(Spans->model()->rowCount(), 1, Timeout);
+    QVERIFY(Kind->isVisible());
+    QVERIFY(!Functions->isVisible());
     Kind->setCurrentIndex(
         1); // This one-to-one fixture has no split hypothesis.
+    QVERIFY(Functions->isVisible());
     QTRY_COMPARE_WITH_TIMEOUT(Functions->model()->rowCount(), 0, Timeout);
     QCOMPARE(Spans->model()->rowCount(), 0);
     QCOMPARE(Instructions->model()->rowCount(), 0);
@@ -2575,6 +2582,7 @@ private slots:
     QTRY_COMPARE_WITH_TIMEOUT(Spans->model()->rowCount(), 1, Timeout);
     QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 5, Timeout);
     QVERIFY(!Functions->isEnabled());
+    QVERIFY(!Functions->isVisible());
     Session.start(Input("0x1000"), Input("0x8000"), {{"regions", false}});
     QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
     QTRY_COMPARE_WITH_TIMEOUT(Spans->model()->rowCount(), 0, Timeout);

@@ -100,7 +100,7 @@ ComparisonRegionsDialog::ComparisonRegionsDialog(ComparisonSession &S,
   auto *Left = new QWidget(Split);
   auto *LeftLayout = new QVBoxLayout(Left);
   LeftLayout->setContentsMargins(0, 0, 0, 0);
-  Kind = new QComboBox(Left);
+  Kind = new QComboBox(this);
   Kind->setObjectName("regionKind");
   Kind->setAccessibleName(tr("Possible transformation"));
   for (const auto &[Name, Key] : {std::pair{tr("All hypotheses"), "all"},
@@ -115,7 +115,7 @@ ComparisonRegionsDialog::ComparisonRegionsDialog(ComparisonSession &S,
                                   {tr("Shared region"), "shared_region"}})
     Kind->addItem(Name, Key);
   Kind->addItem(tr("All shared spans (including unclassified)"), "raw_anchors");
-  LeftLayout->addWidget(Kind);
+  Layout->insertWidget(Layout->indexOf(Split), Kind);
   Hypotheses = new ComparisonModel(Session,
                                    Flow ? ComparisonModel::Kind::FlowRegions
                                         : ComparisonModel::Kind::Regions,
@@ -385,6 +385,7 @@ void ComparisonRegionsDialog::filter() {
   RegionId.clear();
   InstructionQuery = {};
   HypothesisTable->setEnabled(!Session.busy() && !Raw);
+  HypothesisTable->parentWidget()->setVisible(!Raw);
   if (Raw) {
     Hypotheses->clear();
     Anchors->setQuery({{"all_anchors", true}});
