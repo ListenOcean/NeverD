@@ -139,6 +139,16 @@ and encoding index instead of process-specific diagnostic object bytes.
 `NeverDMachOPointerRelocationBoundaryTests` includes escaped-fragment refusals
 with original-image source mode both enabled and disabled.
 
+`COFFExceptionIR.HighCSEHScopesSharingARangeNestInTableOrder` checks both
+orders of a finally and an except scope over one range: nested single-clause
+tries, the outermost arm holding its handler, and an inner handler left after
+both tries.
+
+`COFFExceptionIR.HighCCatchFuncletIsOutsideItsOwnTry` checks that a catch
+funclet whose tail maps back to its own try gets no region of it, nor of a
+parent try its states never reach, while another handler's try still protects
+it.
+
 `NeverDCOFFExceptionIRTests` executes split protected-range loops with every
 test exception mask at O0/O2, checks unprotected operations remain outside the
 range, and rejects conflicting or nested scope states. The portable harness
@@ -178,7 +188,10 @@ return-slot writes are disjoint from observed bytes. Overlapping reads, missing
 fresh LowIR and explicit handler SP reads retain refusal; native reconstruction
 remains unavailable. The same fixture checks that copy propagation and DCE
 retain the ordinary entry register marker needed to omit an unobserved RBP
-save from both source projections. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
+save from both source projections.
+`MedSEHEstablisherFrame.EpilogueAfterTheGuardedRangeIsUnchecked` checks a
+clang-cl range that ends one byte past a call's return address, with a range
+covering the epilogue as its negative control. `MedStackAlignment.ExceptionalStackRangesAreQueryLocalAndKeepAllEntries`
 checks that a range seed cannot become an exact executable value or survive
 query removal, detached definitions or conflicting bounds.
 `MedStackAlignment.AGuardedCounterBoundsRepeatedStackAllocations` checks x86,
@@ -3952,6 +3965,9 @@ metadata, stack/nonvolatile writes, conditional control flow, no-return calls,
 missing home space, local/interior/continuation targets, non-executable ranges,
 truncation, relocatable input and targets with no callable exit. These run in
 `NeverDImageAnalysisBoundaryTests` and the aggregate lift suite.
+`FunctionDiscoveryAlignment.RexBytesBeginFunctionsOnlyIn64BitCode` checks that
+the padding scan starts an x64 function at a REX byte after an int3, but no
+IA-32 function at the same INC/DEC byte.
 
 `FunctionDiscoveryAlignment.LongCalleesNeedReachableCallableExits` checks the
 64/65-instruction linear-prefix and 256/257-instruction reachable-probe boundaries
@@ -4412,6 +4428,11 @@ and actions with the fixture worker. `databaseRecoverySurvivesConsumedJournalAnd
 checks working-copy preservation and explicit discard when the packed state
 changes. Run these with the native Windows Qt platform when checking Windows
 file dialogs and view shortcuts.
+`searchBeforeTheListingHasACursorKeepsItsResults` starts a text search while
+the listing has no cursor and places one before the search answers. The search
+keeps its results: a search begun before the first rows arrived used to drop
+them, taking the cursor those rows bring for a move away, so searching right
+after opening a file showed nothing on a slow machine.
 
 The GUI unit cases `deepLinksTakeIdasFormAndRefuseWhatTheyCannotName` and
 `aLinkGoesToTheWorkbenchThatHasItsProgram` check link syntax, hash prefixes and
@@ -4633,7 +4654,22 @@ listing's highlight with the copied word.
 `Device->Links.Flink` in C pseudocode and of `main.main` in Go pseudocode, and
 `WorkbenchUnitTests::pseudocodeWordsSplitMemberAccessesAtTheirDot` checks the
 word bounds and whole-word highlights behind it, dotted names kept whole
-outside pseudocode. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+outside pseudocode.
+`WorkbenchTests::lockedHighlightsStayAcrossMovesAndViews` locks `rbx` in the
+listing with Ctrl+Alt+1, checks the color stays painted after the cursor leaves
+it, frees and relocks it with Ctrl+Alt+1 and Ctrl+Alt+0, locks a pseudocode
+word, lists the Lock highlight menu with its swatches and frees every color on
+close. `WorkbenchUnitTests::highlightLocksToggleAsIdaDoes`,
+`registerFamiliesShareTheirParts` and `highlightsCoverRegistersSharingTheWord`
+check the toggles, register families and register-span ranges behind it.
+`WorkbenchTests::jumpDialogPreviewsWhereEnterGoes` types an address and a name
+into Jump anywhere and checks that the preview beside the matches lands on the
+typed address and on the chosen match, stays out of the keyboard focus, and
+empties for text that names nothing.
+`WorkbenchTests::graphEdgesSelectAndShowTheirOtherEnd` clicks an edge of
+function_6's graph and checks that it is selected, that a hover beside its
+arrow names the branching block and one near its start names the block it
+goes to, and that a click on a block lets the edge go. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
 clicks Hex View row addresses with each button and copies the address as
 drawn. A click on the byte the address went to, or an arrow key, makes Copy
 take bytes again, and a Shift click on an address changes nothing.
@@ -5852,6 +5888,9 @@ screen sends a callee to the proof only when each of its returns follows such
 a call, so one that calls the function on an error path costs no proof. A
 tail jump into a function that is stated, named or proved never to return
 ends its path, and a statement that the target returns decides over both.
+`InternalNoReturn.UniversalCRTTerminateNeverReturns` checks that `terminate`
+imported from the Universal CRT ends its caller's block, and that the same name
+imported from another module does not.
 
 The concurrent graph tests hold a builder at a real prover callback and observe
 registered waiters before releasing it. They check one construction for matching
@@ -6231,6 +6270,9 @@ Generated sources are cross-compiled at O0/O2 in both ARM and Thumb mode and
 their object bytes checked, including the 255/256 transition requiring `.w`.
 ARMv8 HLT also participates in source, object-byte and boundary checks,
 including repeated interior halts and a halt immediately before another entry.
+`ARM32ThumbControl.LoadingPCOffTheStackReturns` checks that Thumb-2
+`ldr pc, [sp], #N` returns for N of 4, 0xC and 0x14. Offset, pre-indexed,
+negative and non-SP loads of PC stay indirect branches.
 This is a compilation and encoding check, not native ARM execution.
 Live and indexed symbol queries distinguish padding guesses from confirmed
 names, independent aliases, code ranges and discovered call targets. Full and
@@ -15845,6 +15887,14 @@ Its serializer checks exact compact/indented bytes, every byte value, and
 hexadecimal address boundaries against an independent stream formatter. The
 address cases alternate short file offsets with high virtual addresses, cross
 every hexadecimal digit width, and round-trip complete rows at each indentation.
+
+The reader tests preserve leading zeroes, mixed-case digits, full unsigned
+64-bit values and numerically equal keys with different spellings. They reject
+signs, partial values, embedded NULs, non-hexadecimal text and overflow in each
+address field, retaining the field-versus-key diagnostic distinction. Long
+all-zero and overflowing bodies retain the same contract. Empty
+inputs with either null or non-null storage retain the legacy syntax diagnostic
+without passing a null buffer to the accelerated parser.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
