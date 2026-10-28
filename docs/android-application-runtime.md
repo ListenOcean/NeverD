@@ -670,8 +670,13 @@ Replies do not populate the cache, simulate latency or execute native
 Parcel/Binder transport. `getService` also updates StatLogger duration arrays
 and accumulated counters using shared boot/monotonic clocks, Linux process UID
 and API 28 core/app thresholds. `checkService` omits those statistics updates.
-Local Binder objects, native object translation, remote exceptions and EventLog
-output remain outside this subset. With `observe_java_state`, the optional
+Slow/statistics EventLog branches require the separate, ordered
+[`android.event_log_writes` contract](android-log-reader.md#event-write-contract).
+Its bytes, truncation rules and signed results are shared with the five
+`EventLog.writeEvent` overloads and native `__android_log_bwrite`;
+missing writes remain unsupported. Local Binder objects, native object
+translation and remote exceptions remain outside this subset. With
+`observe_java_state`, the optional
 `java_state.framework.service_manager` report retains cache completeness,
 entry identities, manager/logger identities and proxy warning state. Report
 heap identities use hexadecimal strings; input proxy keys remain numeric keys.

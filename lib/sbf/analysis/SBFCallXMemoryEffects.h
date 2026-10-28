@@ -22,7 +22,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <tuple>
+#include <variant>
 #include <vector>
 
 namespace neverd::sbf::callx_detail {
@@ -35,6 +37,11 @@ ProvenValueSet
 substituteOrigins(const ProvenValueSet &Origins,
                   const std::array<ProvenValueSet, kRegisterCount> &Entry,
                   const SBFProgram &Program);
+
+/// Store actual typed values after entry-input substitution. This is shared by
+/// affine and loaded-field postconditions; private origins never reach it.
+size_t applyStoredWord(ScratchState &Scratch, const RegisterValue &Address,
+                       const ProvenValueSet &Values, const SBFProgram &Program);
 
 struct MemoryWrite {
   RegisterValue Address;
@@ -82,6 +89,14 @@ public:
   void store(const RegisterValue &Address, uint64_t Size,
              const ProvenValueSet &Value);
   ProvenValueSet read(const RegisterValue &Address) const;
+  void storeExpression(const RegisterValue &Address, size_t Expression);
+  std::optional<size_t> readExpression(const RegisterValue &Address) const;
+  void discardExpressions();
+  size_t expressionCount() const;
+  void visitValues(
+      llvm::function_ref<void(const RegisterValue &, const ProvenValueSet &,
+                              std::optional<size_t>)>
+          Visit) const;
   void copyFrom(const RegisterValue &Source, const RegisterValue &Destination,
                 uint64_t Size, const SBFProgram &Program);
   void recordInputCopy(const RegisterValue &Source,
@@ -114,7 +129,10 @@ private:
   };
   llvm::SmallVector<InputCopy, 0> Copies;
   void invalidate(const RegisterValue &Address, uint64_t Size);
-  std::map<std::tuple<RegisterValue::Kind, uint64_t, int64_t>, ProvenValueSet>
+  // Expression IDs describe captured entry-input values, never VM bits. They
+  // share address invalidation with affine origins and meet only identical IDs.
+  using StoredValue = std::variant<ProvenValueSet, size_t>;
+  std::map<std::tuple<RegisterValue::Kind, uint64_t, int64_t>, StoredValue>
       Values;
 };
 

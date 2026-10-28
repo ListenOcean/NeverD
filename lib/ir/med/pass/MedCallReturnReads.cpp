@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedCallReturnReads.h"
 
 #include "../../../safety/StackSlotFlow.h"
+#include "../X86/RegistrationCallStacks.h"
 #include "../X86/SEHCallStackRanges.h"
 #include "../abi/MedABIPassDetail.h"
 
@@ -78,9 +79,41 @@ struct RegistrationCalls {
   std::set<const MedOp *> PrivateCallbacks;
 };
 
+/// Without the complete state proof, the EH3/EH4 frame protocol still places
+/// the stacks a handler restores and those a runtime callback runs on.
+RegistrationCalls protocolCalls(
+    const MedFunc &Func, const LowFunc &Source, const BinaryImage &Image,
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
+  RegistrationCalls Result;
+  const auto Seeds = x86_registration::savedStackReloads(Func, Source, Image,
+                                                         Accesses, Remaining);
+  if (!Seeds.empty()) {
+    std::vector<MedVar> Values;
+    for (const auto &[Call, Stack] : Stacks)
+      Values.push_back(Stack);
+    if (!charge(Remaining, Values.size()))
+      return {};
+    const auto Restored = entryStackOffsetsFromProvenDefinitions(
+        Func, Values, Seeds, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    size_t I = 0;
+    for (const auto &[Call, Stack] : Stacks)
+      if (const auto Offset = Restored[I++])
+        Result.Offsets.emplace(Call, *Offset);
+  }
+  std::map<const MedOp *, MedVar> Unplaced;
+  for (const auto &[Call, Stack] : Stacks)
+    if (!Result.Offsets.count(Call))
+      Unplaced.emplace(Call, Stack);
+  Result.PrivateCallbacks =
+      x86_registration::privateCallbackCalls(Func, Image, Unplaced, Remaining);
+  return Result;
+}
+
 RegistrationCalls registrationCalls(
     const MedFunc &Func, const LowFunc *Source, const BinaryImage &Image,
-    const std::map<const MedOp *, MedVar> &Stacks, size_t &Remaining) {
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
   if (!Source || Image.Arch != Arch::X86 ||
       Image.abiFormat() != BinaryFormat::COFF || Func.AnalystStackFrame ||
       Func.SkippedSSA || Source->Entry != Func.Entry ||
@@ -88,13 +121,14 @@ RegistrationCalls registrationCalls(
     return {};
   const auto &States = *Source->RegistrationStates;
   const auto &EH = *Source->ExceptionMetadata;
-  if (!States.Complete || !States.CallbackStatesComplete ||
-      !States.RegistrationLifetimeComplete ||
-      EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
+  if (EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
       EH.Registration->RealignedFrame || Func.Entry != EH.CodeRange.Begin ||
       (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4))
     return {};
+  if (!States.Complete || !States.CallbackStatesComplete ||
+      !States.RegistrationLifetimeComplete)
+    return protocolCalls(Func, *Source, Image, Stacks, Accesses, Remaining);
   using Identity = std::pair<va_t, int>;
   using Value = std::tuple<MedVar::VarKind, int, int>;
   const auto Key = [](const MedVar &V) {
@@ -842,8 +876,20 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     if (Observe(CallEnds, {}, Allowance, nullptr))
       return true;
     Diagnostic.clear();
-    const auto Registration =
-        registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
+    // Only a PE32 registration frame reads the exact accesses by operation.
+    const bool ByOperation = Image.Arch == Arch::X86 && FreshSource &&
+                             FreshSource->RegistrationStates;
+    std::map<const MedOp *, int64_t> Accesses;
+    if (ByOperation)
+      for (const Access &Load : Loads)
+        Accesses.emplace(Load.Op, Load.Begin);
+    for (size_t I = 0; ByOperation && I < Memory.size(); ++I)
+      if (Memory[I]->Opcode == NdOp::STORE && Offsets[I] &&
+          *Offsets[I] <=
+              std::numeric_limits<int64_t>::max() - Memory[I]->Inputs[1].Size)
+        Accesses.emplace(Memory[I], *Offsets[I]);
+    const auto Registration = registrationCalls(
+        Func, FreshSource, Image, StackPointers, Accesses, Remaining);
     if (!Remaining)
       return Exhausted();
     for (auto &[Call, End] : CallEnds)

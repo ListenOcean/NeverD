@@ -17,6 +17,8 @@
 #include <cstdint>
 
 namespace neverd::limits::dalvik {
+// API 28 LOGGER_ENTRY_MAX_PAYLOAD, including the binary event's int32 tag.
+inline constexpr unsigned kAndroidEventLogPayloadBytes = 4068;
 
 // include/neverd/dalvik/Heap.h
 inline constexpr uint64_t kHeapByteLimit = 8 * 1024 * 1024;

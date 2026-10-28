@@ -60,6 +60,10 @@ struct RuntimeServices {
   std::function<ExecutionResult(std::string_view, int32_t)> property_integer;
   // Process.myUid Java int bits from the shared OS identity owner.
   std::function<ExecutionResult()> process_uid;
+  // Exact LOG_ID_EVENTS bytes, including the little-endian int32 tag.
+  // Returned values are liblog's Java int bits; negative values are not
+  // exceptions. Missing transport state must return an explicit stop.
+  std::function<ExecutionResult(std::span<const uint8_t>)> event_log_write;
 };
 class Program {
 public:

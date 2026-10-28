@@ -66,6 +66,7 @@ enum class CallXInputGeneralization : uint8_t {
   ResourceBudget,
   EquivalentGenericInputs,
   EquivalentSpecializedInputs,
+  ReplacedRecursiveContext,
 };
 
 enum class CallXInputExpressionKind : uint8_t {
@@ -201,6 +202,7 @@ struct CallXFunctionSummary {
   size_t InputScratchWords = 0;
   size_t OutputScratchWords = 0;
   size_t OutputParameterizedWords = 0;
+  size_t OutputFieldValueExpressions = 0;
   size_t OutputMemoryCopies = 0;
 };
 
@@ -220,14 +222,17 @@ struct CallXContextReport {
   size_t InputDependencyVisits = 0;
   size_t SummaryCacheEvictions = 0;
   size_t GeneralizedPublishedSummaries = 0;
+  size_t UnblockedRecursionRetries = 0;
   size_t EquivalentGenericReuses = 0;
   size_t EquivalentSpecializedReuses = 0;
   size_t SkippedNonCallXRootSpecializations = 0;
   size_t SkippedConstantBranchSuccessors = 0;
+  size_t CanonicalizedFrameInputs = 0;
   std::vector<UnsignedValueRange> CapturedAddresses;
   std::vector<CallXInputExpression> InputExpressions;
   std::vector<CallXInputMemoryGuard> InputMemoryGuards;
   size_t InstantiatedTargetInputExpressions = 0;
+  size_t InstantiatedStoredValueInputExpressions = 0;
 };
 
 /// Analyze complete recognized function CFGs with context-keyed summaries.

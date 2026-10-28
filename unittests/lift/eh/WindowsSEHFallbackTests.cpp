@@ -150,6 +150,49 @@ TEST(WindowsSEHFallback, DoesNotSilentlyDiscardAnUnboundHandlerBody) {
   EXPECT_THROW(emitFallback(Function, Arch::X86), std::invalid_argument);
 }
 
+// A unit that lists the definitions it leaves out names that one, with what
+// it threw, and writes the others: few enough for one writer, or as many as
+// worker threads write.
+TEST(WindowsSEHFallback, AUnitLeavesOutOnlyTheDefinitionItCannotWrite) {
+  for (size_t Count : {size_t(3), size_t(40)}) {
+    SCOPED_TRACE(Count);
+    std::vector<HighFunc> Functions;
+    for (size_t I = 0; I < Count; ++I) {
+      Functions.push_back(fallbackFunction());
+      Functions.back().Name = "native_seh_" + std::to_string(I);
+      Functions.back().Entry = 0x1000 + 0x1000 * I;
+    }
+    HighFunc &Broken = Functions[Count / 2];
+    Broken.Body.front().EHClauseBodies.front() = Broken.Body.front().Body;
+    CEmitterOptions Options;
+    Options.EmitIncludes = false;
+    Options.TheArch = Arch::X86;
+    Options.Format = BinaryFormat::COFF;
+    std::vector<CEmitterOptions::RefusedDefinition> Refused;
+    Options.RefusedDefinitions = &Refused;
+    std::string Source;
+    llvm::raw_string_ostream OS(Source);
+    ASSERT_TRUE(HighCEmitter().emit(Functions, OS, Options));
+    ASSERT_EQ(Refused.size(), 1u) << Source;
+    EXPECT_EQ(Refused.front().Entry, Broken.Entry);
+    EXPECT_EQ(Refused.front().Name, Broken.Name);
+    EXPECT_EQ(Refused.front().Reason,
+              "unstructured SEH view requires the original native handler "
+              "body");
+    for (const HighFunc &Function : Functions)
+      EXPECT_EQ(Source.find(Function.Name + "(void) {") != std::string::npos,
+                &Function != &Broken)
+          << Function.Name << "\n"
+          << Source;
+    // Without the list, the first definition that fails fails the unit.
+    Options.RefusedDefinitions = nullptr;
+    std::string Unit;
+    llvm::raw_string_ostream UnitOS(Unit);
+    EXPECT_THROW(HighCEmitter().emit(Functions, UnitOS, Options),
+                 std::invalid_argument);
+  }
+}
+
 TEST(WindowsSEHFallback, NativeContinuationKeepsItsBodyAfterReturn) {
   for (StmtKind Kind : {StmtKind::SEHTry, StmtKind::CxxTry}) {
     SCOPED_TRACE(unsigned(Kind));

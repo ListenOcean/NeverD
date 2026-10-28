@@ -70,6 +70,9 @@ public:
   QString currentToken() const;
   QString currentLineText() const;
   QString selectedText() const;
+  /// What Copy takes: the selection; else, as in IDA, the word under the
+  /// cursor, which the highlight marks; nothing on blank space.
+  QString copyText() const;
   /// Inclusive byte bounds of selected items, or the current item. Only
   /// worker-supplied extents from the current listing may define this range.
   std::optional<std::pair<Address, Address>> byteSelection() const;
@@ -150,6 +153,13 @@ private:
   int visibleLines() const;
   int lineAt(int y) const;
   int columnAt(const Line &line, int x) const;
+  /// Columns [first, second) of the address-prefix word whose glyphs \p x
+  /// falls on: the region name or the address.
+  std::optional<std::pair<int, int>> prefixWordAt(const Line &line,
+                                                  int x) const;
+  /// Select the prefix word under \p x on the cursor line, as IDA highlights
+  /// a clicked address for Ctrl+C. False off a word.
+  bool selectPrefixWord(int x);
   int firstColumn(const Line &line) const;
   qreal columnX(const Line &line, int column) const;
   int textLeft() const;

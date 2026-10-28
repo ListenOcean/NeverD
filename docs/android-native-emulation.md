@@ -1282,8 +1282,11 @@ results reuse the same Binder identities and apply `Binder.allowBlocking`.
 retained StatLogger arrays. It obtains UID through the shared Linux identity
 owner, applies API 28 core/app thresholds and Java integer wrapping, and reads
 uptime from the independent monotonic clock. `checkService` does not perform
-these statistics updates. Paths requiring EventLog output or RemoteException
-handling remain unsupported rather than fabricating logging or transport effects.
+these statistics updates. Slow/statistics EventLog records and all five
+`EventLog.writeEvent` overloads use the explicit ordered
+[event-write transcript](android-log-reader.md#event-write-contract), shared
+with native `__android_log_bwrite`. Encoding, byte truncation and signed results
+are modeled; missing writes and RemoteException handling remain unsupported.
 
 [StatLogger](https://android.googlesource.com/platform/frameworks/base/+/android-9.0.0_r1/core/java/com/android/internal/util/StatLogger.java)
 `logDurationStat(int,long)` updates counts, total/max duration, and per-second

@@ -159,7 +159,8 @@ inline bool isTextSectionName(llvm::StringRef Name) {
 /// `.data.rel.ro.*` variants).  Writable in section flags but read-only after
 /// relocation; never plain mutable scalar/array data.
 inline bool isDataRelRoSectionName(llvm::StringRef Name) {
-  return Name.starts_with(elf::DataRelRo);
+  return Name.consume_front(elf::DataRelRo) &&
+         (Name.empty() || Name.starts_with("."));
 }
 
 /// True if \p Name identifies a section/segment whose loader-visible flags may

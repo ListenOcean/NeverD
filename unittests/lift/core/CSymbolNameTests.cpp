@@ -569,16 +569,22 @@ TEST(CSymbolNames, StartupPassesMainThroughItsPrototype) {
                 {callStatement("__libc_start_main", 0x2000, Args)})},
       Img);
   // The routine no header declares has its C library prototype, and the
-  // address of main reads as main, converted to the parameter's type.
+  // address of main reads as main's linker symbol, converted to the
+  // parameter's type: the address alone gives main no C signature.
   EXPECT_NE(Source.find("extern int32_t __libc_start_main(int32_t (*)(int32_t, "
                         "char **, char **), int32_t, char **, void (*)(void), "
                         "void "
                         "(*)(void), void (*)(void), void *)"),
             NotFound)
       << Source;
-  EXPECT_NE(Source.find("extern int main();"), NotFound) << Source;
+  EXPECT_NE(
+      Source.find("extern unsigned char neverd_code_main[] __asm__(\"main\");"),
+      NotFound)
+      << Source;
+  EXPECT_EQ(Source.find("extern int main"), NotFound) << Source;
   EXPECT_NE(Source.find("__libc_start_main((int32_t (*)(int32_t, char **, "
-                        "char **))main, 1, (char **)0x7000, 0, 0, 0, 0);"),
+                        "char **))neverd_code_main, 1, (char **)0x7000, 0, 0, "
+                        "0, 0);"),
             NotFound)
       << Source;
   EXPECT_EQ(Source.find("0x1150"), NotFound) << Source;
@@ -589,8 +595,9 @@ TEST(CSymbolNames, StartupPassesMainThroughItsPrototype) {
 
 TEST(CSymbolNames, FunctionAddressesReadAsTheirFunctions) {
   const BinaryImage Img = startupImage();
-  // An unprototyped callee takes the function's pointer as it is; a number
-  // equal to its address stays a number.
+  // An unprototyped callee takes the function's address as its linker
+  // symbol, which the address alone gives no C signature; a number equal to
+  // its address stays a number.
   std::vector<HighFunc> Funcs{function(
       "install", 0x1000,
       {callStatement("register_hook", 0x2000, {address(0x1180)}),
@@ -598,8 +605,13 @@ TEST(CSymbolNames, FunctionAddressesReadAsTheirFunctions) {
                      {HighExpr::makeConst(
                          0x1180, 8, ConstantAddressProvenance::Scalar)})})};
   const std::string Source = emitWithImage(Funcs, Img);
-  EXPECT_NE(Source.find("extern int on_exit_hook();"), NotFound) << Source;
-  EXPECT_NE(Source.find("register_hook(on_exit_hook);"), NotFound) << Source;
+  EXPECT_NE(Source.find("extern unsigned char neverd_code_on_exit_hook[] "
+                        "__asm__(\"on_exit_hook\");"),
+            NotFound)
+      << Source;
+  EXPECT_EQ(Source.find("extern int on_exit_hook"), NotFound) << Source;
+  EXPECT_NE(Source.find("register_hook(neverd_code_on_exit_hook);"), NotFound)
+      << Source;
   EXPECT_NE(Source.find("register_hook(0x1180);"), NotFound) << Source;
 }
 
@@ -671,7 +683,8 @@ std::string emitFor(const std::vector<HighFunc> &Funcs, BinaryFormat Format,
 TEST(CSymbolNames, CxxRuntimeRoutinesTakeTheirPrototypes) {
   const BinaryImage Img = startupImage();
   // A static object's destructor registers through __cxa_atexit, which no
-  // header declares: the destructor passes as the function it is.
+  // header declares: the destructor's address passes as its linker symbol,
+  // converted to the parameter's type.
   const std::string Source = emitWithImage(
       {function("install", 0x1000,
                 {callStatement("__cxa_atexit", 0x2000,
@@ -685,7 +698,8 @@ TEST(CSymbolNames, CxxRuntimeRoutinesTakeTheirPrototypes) {
       << Source;
   EXPECT_NE(Source.find("extern void __cxa_end_catch(void);"), NotFound)
       << Source;
-  EXPECT_NE(Source.find("__cxa_atexit((void (*)(void *))on_exit_hook, 0, 0);"),
+  EXPECT_NE(Source.find("__cxa_atexit((void (*)(void *))neverd_code_on_exit_"
+                        "hook, 0, 0);"),
             NotFound)
       << Source;
   source_call_execution_test::compileAndRun(

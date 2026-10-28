@@ -483,6 +483,12 @@ void clearClipboard() {
   if (QGuiApplication::platformName() == QLatin1String("windows"))
     QTest::qWait(20);
 }
+
+void setClipboard(const QString &text) {
+  QApplication::clipboard()->setText(text);
+  if (QGuiApplication::platformName() == QLatin1String("windows"))
+    QTest::qWait(20);
+}
 } // namespace
 
 class WorkbenchTests : public QObject {
@@ -4470,6 +4476,300 @@ private slots:
       QTest::keyClick(text, Qt::Key_C, Qt::ControlModifier);
       QCOMPARE(clipboardText(), row.mid(2) + QLatin1Char('\n') + next.left(2));
     }
+  }
+
+  void clickingAnAddressPrefixSelectsItsWord() {
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "fixture.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    auto *listing = bench.window->disassembly()->listing();
+    QTRY_VERIFY(listing->cursorLine());
+    listing->horizontalScrollBar()->setValue(0);
+    auto *viewport = listing->viewport();
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const qreal width = metrics.horizontalAdvance(QLatin1Char('M'));
+    const int gutter = int(std::ceil(width * 7));
+    const qreal left =
+        gutter + ::neverd::limits::gui_config::kListingViewTextMargin;
+    // The boundary before character \p at of \p text drawn from the prefix's
+    // left, and the middle of that character.
+    const auto before = [&](const QString &text, int at, int y) {
+      return QPoint(qRound(left + metrics.horizontalAdvance(text.left(at))), y);
+    };
+    const auto on = [&](const QString &text, int at, int y) {
+      return QPoint(qRound(left + (metrics.horizontalAdvance(text.left(at)) +
+                                   metrics.horizontalAdvance(text.left(at + 1))) /
+                                      2),
+                    y);
+    };
+    const auto click = [viewport](Qt::MouseButton button, QPoint at) {
+      QTest::mouseClick(viewport, button, Qt::NoModifier, at);
+    };
+    // What Copy leaves on the clipboard, which holds `kept` before.
+    const QString kept = QStringLiteral("clipboard before Copy");
+    const auto copied = [&] {
+      setClipboard(kept);
+      QTest::keyClick(listing, Qt::Key_C, Qt::ControlModifier);
+      const QString keyed = clipboardText();
+      setClipboard(kept);
+      bench.action(ActionId::EditCopy)->trigger();
+      const QString command = clipboardText();
+      return keyed == command ? keyed : keyed + QStringLiteral(" | ") + command;
+    };
+    const auto rowAt = [&](int y) {
+      click(Qt::LeftButton, QPoint(gutter / 2, y));
+      return listing->cursorLine() ? listing->cursorLine()->prefix : QString();
+    };
+    const int y = height / 2 + height;
+    const QString prefix = rowAt(y);
+    const int colon = int(prefix.lastIndexOf(QLatin1Char(':')));
+    QVERIFY2(colon > 0, qPrintable(prefix));
+    const QString region = prefix.left(colon);
+    const QString address = prefix.mid(colon + 1);
+    QVERIFY2(address.contains(QRegularExpression("^[0-9A-F]{16}$")),
+             qPrintable(prefix));
+    QVERIFY(std::all_of(region.begin(), region.end(), isTokenCharacter));
+    // The gutter click that picked the row selects nothing.
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+
+    click(Qt::LeftButton, on(prefix, colon + 1 + int(address.size()) / 2, y));
+    QCOMPARE(listing->selectedText(), address);
+    QCOMPARE(copied(), address);
+    click(Qt::LeftButton, on(prefix, colon / 2, y));
+    QCOMPARE(listing->selectedText(), region);
+    QCOMPARE(copied(), region);
+    // Beside the words, the colon and the gap before the body select
+    // nothing, and Copy leaves the clipboard as it was.
+    click(Qt::LeftButton, on(prefix, colon, y));
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+    QCOMPARE(copied(), kept);
+    click(Qt::LeftButton,
+          on(prefix + QLatin1Char(' '), int(prefix.size()), y));
+    QCOMPARE(listing->selectedText(), listing->currentLineText());
+    QCOMPARE(copied(), kept);
+
+    // A right click selects the address for the context menu's Copy.
+    const int next = y + height;
+    const QString nextPrefix = rowAt(next);
+    QCOMPARE(nextPrefix.lastIndexOf(QLatin1Char(':')), colon);
+    click(Qt::RightButton, on(nextPrefix, int(nextPrefix.size()) - 1, next));
+    QCOMPARE(listing->selectedText(), nextPrefix.mid(colon + 1));
+    QCOMPARE(copied(), nextPrefix.mid(colon + 1));
+    // A drag inside the address keeps just the characters it covers.
+    dragText(viewport, before(nextPrefix, colon + 2, next),
+             before(nextPrefix, colon + 5, next));
+    QCOMPARE(listing->selectedText(), nextPrefix.mid(colon + 2, 3));
+    QCOMPARE(copied(), nextPrefix.mid(colon + 2, 3));
+  }
+
+  void copyTakesTheHighlightedWord_data() {
+    QTest::addColumn<QString>("view");
+    for (const QString view :
+         {QStringLiteral("listing"), QStringLiteral("graph"),
+          QStringLiteral("pseudocode")})
+      QTest::newRow(qPrintable(view)) << view;
+  }
+
+  void copyTakesTheHighlightedWord() {
+    // As in IDA, Copy without a selection takes the word under the cursor,
+    // which the highlight marks as the cursor moves by mouse or keys; on
+    // blank space it leaves the clipboard as it was.
+    QFETCH(QString, view);
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "fixture.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *assembly = bench.window->disassembly();
+    // function_5's blocks hold instructions with operands (`push rbx`).
+    const Address function =
+        Base + (view == QLatin1String("graph") ? 0x50 : 0x140);
+    assembly->navigate(function);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(function));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    QWidget *text = nullptr, *surface = nullptr;
+    std::function<QString()> row, selected;
+    std::function<QRect()> caret;
+    std::function<void()> home;
+    ListingView *listing = nullptr;
+    if (view == QLatin1String("listing")) {
+      listing = assembly->listing();
+      QTRY_VERIFY(listing->cursorLine());
+      text = listing;
+      surface = listing->viewport();
+      row = [listing] { return listing->cursorLine()->styled.text; };
+      selected = [listing] { return listing->selectedText(); };
+      caret = [listing] { return listing->cursorViewportRect(); };
+      home = [listing] { QTest::keyClick(listing, Qt::Key_Home); };
+    } else if (view == QLatin1String("graph")) {
+      assembly->setGraphMode(true);
+      auto *graph = assembly->graph();
+      QTRY_VERIFY(assembly->graphMode() && graph->loaded());
+      text = surface = graph;
+      row = [graph] { return graph->currentRowText(); };
+      caret = [graph] { return graph->cursorViewportRect(); };
+      // A graph row has no Home of its own; Left stops at its start.
+      home = [graph] {
+        for (int i = 0; i < 200; ++i)
+          QTest::keyClick(graph, Qt::Key_Left);
+      };
+    } else {
+      bench.action(ActionId::ViewPseudocode)->trigger();
+      auto *code = bench.codeView("source")->text();
+      QTRY_VERIFY_WITH_TIMEOUT(code->complete(), OpenTimeoutMs);
+      text = code;
+      surface = code->viewport();
+      row = [code] { return code->selectedText(); };
+      selected = [code] { return code->selectedText(); };
+      caret = [code] { return code->cursorViewportRect(); };
+      home = [code] { QTest::keyClick(code, Qt::Key_Home); };
+    }
+    text->setFocus();
+    QTRY_VERIFY(text->hasFocus());
+    if (view == QLatin1String("graph"))
+      QTest::keyClick(text, Qt::Key_1);
+    // What Copy leaves on the clipboard, which holds `kept` before.
+    const QString kept = QStringLiteral("clipboard before Copy");
+    const auto copied = [&] {
+      setClipboard(kept);
+      QTest::keyClick(text, Qt::Key_C, Qt::ControlModifier);
+      const QString keyed = clipboardText();
+      setClipboard(kept);
+      bench.action(ActionId::EditCopy)->trigger();
+      const QString command = clipboardText();
+      return keyed == command ? keyed : keyed + QStringLiteral(" | ") + command;
+    };
+    // Words are runs of token characters; a blank column has none beside it.
+    const auto words = [](const QString &shown) {
+      QList<std::pair<int, int>> found;
+      for (int at = 0; at < shown.size();) {
+        int end = at;
+        while (end < shown.size() && isTokenCharacter(shown.at(end)))
+          ++end;
+        if (end - at >= 2)
+          found.append({at, end});
+        at = std::max(end, at + 1);
+      }
+      return found;
+    };
+    const auto blankColumn = [](const QString &shown) {
+      for (int at = 1; at < shown.size(); ++at)
+        if (!isTokenCharacter(shown.at(at - 1)) &&
+            !isTokenCharacter(shown.at(at)))
+          return at;
+      return -1;
+    };
+    QString current;
+    for (int i = 0; i < 40; ++i) {
+      current = row();
+      if (words(current).size() >= 2 && blankColumn(current) > 0)
+        break;
+      QTest::keyClick(text, Qt::Key_Down);
+    }
+    const auto found = words(current);
+    const int blank = blankColumn(current);
+    QVERIFY2(found.size() >= 2 && blank > 0, qPrintable(current));
+    const QString first = current.mid(found[0].first,
+                                      found[0].second - found[0].first);
+    const QString second = current.mid(found[1].first,
+                                       found[1].second - found[1].first);
+    // The caret's place at a column of the row, reached by keys.
+    const auto place = [&](int column) {
+      home();
+      for (int i = 0; i < column; ++i)
+        QTest::keyClick(text, Qt::Key_Right);
+      return caret();
+    };
+    const auto click = [&](Qt::MouseButton button, const QRect &at) {
+      home();
+      QTest::mouseClick(surface, button, Qt::NoModifier,
+                        QPoint(at.x() + 1, at.center().y()));
+    };
+    const QRect onFirst = place(found[0].first + 1);
+    const QRect onSecond = place(found[1].first + 1);
+    const QRect onBlank = place(blank);
+
+    click(Qt::LeftButton, onFirst);
+    QCOMPARE(copied(), first);
+    if (listing)
+      QCOMPARE(ListingViewTestAccess::highlight(*listing), first);
+    // Keys carry the highlight, and Copy, to the word they reach.
+    for (int i = found[0].first; i < found[1].first; ++i)
+      QTest::keyClick(text, Qt::Key_Right);
+    QCOMPARE(copied(), second);
+    if (listing)
+      QCOMPARE(ListingViewTestAccess::highlight(*listing), second);
+    // Blank space, reached by keys or by a click, copies nothing.
+    place(blank);
+    QCOMPARE(copied(), kept);
+    if (listing)
+      QVERIFY(ListingViewTestAccess::highlight(*listing).isEmpty());
+    click(Qt::LeftButton, onBlank);
+    QCOMPARE(copied(), kept);
+    // A right click marks the word for the context menu's Copy.
+    click(Qt::RightButton, onSecond);
+    QCOMPARE(copied(), second);
+    // A selection wins over the word.
+    if (selected) {
+      click(Qt::LeftButton, onFirst);
+      QTest::keyClick(text, Qt::Key_End, Qt::ShiftModifier);
+      const QString selection = selected();
+      QVERIFY(selection.size() > first.size());
+      QCOMPARE(copied(), selection);
+    }
+  }
+
+  void cPseudocodeSplitsMemberAccesses() {
+    // A word of a C member access copies alone.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(writeFixture(directory, "local-types.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    const Address entry = Base + 0x70;
+    bench.session.editFunction(
+        entry,
+        {{"type", "int64_t function_7(_DEVICE *Device, int64_t arg1)"}});
+    auto *assembly = bench.window->disassembly();
+    assembly->navigate(entry);
+    QTRY_COMPARE(assembly->currentFunction(), std::optional<Address>(entry));
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    auto *code = view->text();
+    const QString access = QStringLiteral("Links.Flink");
+    QTRY_VERIFY_WITH_TIMEOUT(
+        code->complete() &&
+            code->allText().contains(QStringLiteral("Device->") + access),
+        OpenTimeoutMs);
+    // Ctrl+C with the cursor in the row holding the access, at a column of
+    // \p needle.
+    const auto copyAt = [&](const QString &needle, int offset) {
+      code->setFocus();
+      for (int line = 0; line < code->lineCount(); ++line) {
+        code->setCursorLine(line);
+        if (code->selectedText().contains(access))
+          break;
+      }
+      const int column = int(code->selectedText().indexOf(needle)) + offset;
+      QTest::keyClick(code, Qt::Key_Home);
+      for (int i = 0; i < column; ++i)
+        QTest::keyClick(code, Qt::Key_Right);
+      clearClipboard();
+      QTest::keyClick(code, Qt::Key_C, Qt::ControlModifier);
+      return clipboardText();
+    };
+    QCOMPARE(copyAt(access, 1), QStringLiteral("Links"));
+    QCOMPARE(copyAt(access, 7), QStringLiteral("Flink"));
+    QCOMPARE(copyAt(QStringLiteral("Device->"), 1), QStringLiteral("Device"));
   }
 
   void tabFromCodeUsesSelectedInstruction_data() {
@@ -12399,6 +12699,84 @@ private slots:
     QVERIFY(!hex->selection());
   }
 
+  void clickingAHexRowAddressSelectsIt() {
+    QTemporaryDir directory;
+    const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
+    QVERIFY(!path.isEmpty());
+    Workbench bench;
+    bench.window->openFile(path);
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    for (auto *dock :
+         bench.window->findChildren<KDDockWidgets::QtWidgets::DockWidget *>())
+      if (dock->uniqueName() == QLatin1String("hex-1"))
+        dock->raise();
+    auto *hex = bench.window->findChild<HexView *>();
+    QVERIFY(hex);
+    QTRY_VERIFY(hex->isVisible());
+    hex->setCurrent(Base);
+    QTRY_VERIFY_WITH_TIMEOUT(hex->byteAt(Base + 0x21).has_value(),
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    hex->horizontalScrollBar()->setValue(0);
+    hex->verticalScrollBar()->setValue(0);
+    auto *viewport = hex->viewport();
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const qreal character = metrics.horizontalAdvance(QLatin1Char('0'));
+    const int height = int(std::ceil(metrics.lineSpacing()));
+    const qreal margin = ::neverd::limits::gui_config::kHexViewMargin;
+    // The middle of a row's address, and of its first byte after two spaces.
+    const auto address = [&](int row) {
+      return QPoint(qRound(margin + 8 * character), row * height + height / 2);
+    };
+    const auto firstByte = [&](int row) {
+      return QPoint(qRound(margin + (16 + 2 + 1) * character),
+                    row * height + height / 2);
+    };
+    const auto byteText = [hex](Address at) {
+      return QStringLiteral("%1")
+          .arg(*hex->byteAt(at), 2, 16, QLatin1Char('0'))
+          .toUpper();
+    };
+    const auto click = [viewport](Qt::MouseButton button, QPoint at,
+                                  Qt::KeyboardModifiers modifiers = {}) {
+      QTest::mouseClick(viewport, button, modifiers, at);
+    };
+    click(Qt::LeftButton, firstByte(0));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base));
+
+    // The click goes to the row and copies its address as drawn.
+    click(Qt::LeftButton, address(1));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    QVERIFY(!hex->selection());
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+    clearClipboard();
+    bench.action(ActionId::EditCopy)->trigger();
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+    // A click on the byte the address went to copies the byte again.
+    click(Qt::LeftButton, firstByte(1));
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), byteText(Base + 0x10));
+    // So does a key that moves on from the address.
+    click(Qt::LeftButton, address(2));
+    QTest::keyClick(hex, Qt::Key_Right);
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x21));
+    clearClipboard();
+    QTest::keyClick(hex, Qt::Key_C, Qt::ControlModifier);
+    QTRY_COMPARE(clipboardText(), byteText(Base + 0x21));
+    // A right click selects the address as well; Shift extends nothing.
+    click(Qt::RightButton, address(1));
+    click(Qt::LeftButton, address(2), Qt::ShiftModifier);
+    QCOMPARE(hex->currentAddress(), std::optional<Address>(Base + 0x10));
+    clearClipboard();
+    bench.action(ActionId::EditCopy)->trigger();
+    QTRY_COMPARE(clipboardText(), displayAddress(Base + 0x10, 16));
+  }
+
   void stringReferencesAndHexTextEncodings() {
     QTemporaryDir directory;
     const auto path = writeFixture(directory, QStringLiteral("fixture.bin"));
@@ -13502,10 +13880,11 @@ private slots:
       QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
       bench.session.setComment(Base + 0x140, QStringLiteral("shared comment"));
       QTRY_VERIFY(bench.session.dirty());
-      QVERIFY(bench.action(ActionId::FileSave)->isEnabled());
+      // Command availability is refreshed on the next event turn.
+      QTRY_VERIFY(bench.action(ActionId::FileSave)->isEnabled());
       bench.session.save();
       QTRY_VERIFY_WITH_TIMEOUT(!bench.session.dirty(), OpenTimeoutMs);
-      QVERIFY(!bench.action(ActionId::FileSave)->isEnabled());
+      QTRY_VERIFY(!bench.action(ActionId::FileSave)->isEnabled());
       QVERIFY(readAll(path + ".neverd/annotations.json")
                   .startsWith("[\n  {\n    \"addr\": "));
       QVERIFY(bench.window->close());

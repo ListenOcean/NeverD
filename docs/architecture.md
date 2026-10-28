@@ -367,6 +367,22 @@ the loads stay separated even then, it skips the costlier slot bounds
 (registration replay, offset ranges, SEH handler bounds and upper bounds),
 which can only narrow those writes. That attempt has its own allowance, so a
 refusal or exhaustion there leaves the bounded proof its whole budget.
+Where the PE32 registration-state proof stays incomplete, for example after a
+filter, handler or finally writes through a pointer parameter, the reader
+still places EH3/EH4 CALL stacks by the frame protocol
+(`X86/RegistrationCallStacks`). The prologue pushes the record (seeded level,
+scope table, handler) and saves ESP in the SavedESP word below the node FS:[0]
+links. When every exact store to that word saves one entry stack offset, each
+exact pointer-wide reload is seeded with it, which places the CALLs after a
+handler restores ESP; only a write outside every source object, corrupting the
+runtime's record, could change the word otherwise. A CALL whose stack derives
+from one runtime callback's stack root alone, at or below that root, runs on
+the dispatcher's stack below the parent frame and writes no parent byte.
+Pruning unreached arms still needs the complete proof. Low-to-Med also applies
+each direct callee's proven return cleanup
+(`RegistrationStateAnalysis::CalleeStacks`), which does not depend on the
+reaching state, so a single-function view pops a `ret imm` callee's arguments
+as a whole-image run does.
 `integerReturnRange` uses the same scalar range evaluator to summarize the
 complete primary integer return register of bounded ordinary x86/x64 leaves.
 It checks original LowIR coverage and return occurrences, then unions every
@@ -618,7 +634,13 @@ the call's `ptrauth` operand bundle, preserving the signed input even when LR
 supplied an original operand. Both C projections use auth-and-resign to the
 compiler's default function-pointer schema. A resolved display name cannot
 replace that authenticated target, and exact LLVM call prototypes remain
-exact. Ordinary raw indirect calls use a feature-gated signing bridge so an
+exact. Explicit source call-site prototypes and recovered native C prototypes
+reuse that same target rendering, including floating arguments/results and a
+variadic fixed prefix where declared. They cannot authenticate to a raw pointer
+and then acquire a second implicit C check, or replace a captured target with
+its display name. Authenticated special-language bindings without a complete
+call ABI reject explicitly.
+Ordinary raw indirect calls use a feature-gated signing bridge so an
 arm64e C compiler does not impose its default authentication on a raw BLR.
 Clang O0 can retain an intermediate resign and produce a different invalid-PAC
 diagnostic from the original branch; this is not exact exception-syndrome
@@ -626,6 +648,25 @@ equivalence. Model rejection evidence compares exception classes; complete ESR
 and exact fault-PC equality remain unqualified. Whole-image arm64e rebuilding
 still requires the separate
 authenticated storage, relocation and signed-unwind ABI contract.
+
+The shared AAPCS64 parameter placement owner describes Darwin fixed scalar
+spills with their natural size and alignment after either register bank is
+exhausted. ELF and Windows ARM64 retain eight-byte stack slots. Darwin variadic
+tails keep their separate eight-byte placement rule. Darwin integer pairs may
+start at odd-numbered registers; an entire 128-bit scalar moves to a 16-byte
+aligned stack slot when the remaining registers cannot hold it. ELF and COFF
+retain even-register alignment. Apple aggregate spills still need their own
+complete layout contract. The limits for this placement owner live in
+`SourceParameterPlacementAAPCS64.def`.
+
+Fixed analyst call prototypes reuse `assignDarwinScalarSourceABI`, as Darwin
+variadic prefixes and recovered declarations already do. Narrow integer
+register parameters and AArch64 narrow results retain the ABI's 32-bit
+sign/zero-extension guarantee separately from their source width. LLVM source
+call emission consumes those validated guarantees as `signext`/`zeroext`
+attributes; signed source spelling alone does not grant them. Narrow stack
+arguments keep their original storage width. This scalar call contract does
+not admit 128-bit or aggregate analyst call prototypes.
 
 The DWARF reader keeps an image-derived arm64e return ABI flag separate from
 the encoded CIE augmentation. Classic arm64e and arm64e.x1 select IB even when
@@ -7258,7 +7299,23 @@ the pipeline refused (`RejectedLowIR`, `RejectedIncomplete`,
 `RejectedUnwindlessNonLeaf`, `MedIRFailed`), where it would otherwise be
 missing with no word. The reason is the audit's disposition and its evidence,
 as `--func` reports it for that function (`rejected-incomplete; decode failure
-at 0xC`).
+at 0xC`). A function the pipeline kept whose C the writer cannot form, as an
+unstructured SEH region without its native handler body, is left out of the
+unit the same way and noted after those (`c-emission-failed; unstructured SEH
+view requires the original native handler body`); the other definitions are
+written as they would be. Asked for alone, such a function still fails with
+that reason, and so does a unit rendered with a source map, recorded
+positions or source names.
+
+HighC writes a unit's headers, helpers, declarations and image objects on the
+calling thread, then its function definitions on worker threads, each with a
+copy of the writer those declarations prepared, and joins the definitions in
+order. A definition reads only what the declarations prepared and resets its
+own state, so its text does not depend on the thread or on the definitions
+written before it; the first definition that fails, in order, fails the unit
+as in one pass. A unit of fewer than `kMinParallelCFunctionDefinitions`
+definitions, or one rendered with a source map, recorded positions or source
+names, which follow the text as one pass prints it, is written on one thread.
 
 An x86 function whose whole body is one direct unconditional jump, after an
 optional `endbr` marker, passes its caller's return address, stack and
@@ -12146,7 +12203,7 @@ HighIR tail copying consults `SourceCallTypeHint::requiresUniqueSourceOccurrence
 
 The shared `SourceABI` owner distinguishes a logical by-value record from its physical address carrier. Darwin ARM64 C declarations for six or sixteen doubles keep the complete record type and use an eight-byte integer-register or naturally aligned stack carrier, independently of floating argument registers and the x8 result pointer. ABI equality and projection batching retain this distinction, calling convention and parameter roles. Partial, overlapping, incompatible or stale carriers are rejected. This declaration alone does not bind LowIR calls, project entries, emit HighC calls or authorize frame borrows: those require a separate copy-storage proof. Compiler and native ABI tests cover register exhaustion, stack packing, arbitrary floating bits, copy mutation isolation and independent indirect results; they are not a complete `setTransform:` recovery test.
 
-Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. A DWARF pointer is as wide as its unit's addresses, four bytes on i386 and 32-bit ARM, so the parameter after it is the next slot's. An i386 function whose DWARF says its parameters enter it in registers is placed where it says (`FunctionSym::ParamEntryLocations`, `placeEnteredParameters`): GCC passes a local function's first three in EAX, EDX and ECX (regparm), clang its first two in ECX and EDX (fastcc), and the rest follow in stack slots while every parameter before has a known place. No call to such a function takes argument types by position. Unoptimized code locates parameters only in their spill slots, so it binds by cdecl's. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or Apple arm64 stack packing. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
+Debug signatures name recovered parameters by where they arrive, never by position. `SourceParameterPlacement` places each source parameter under the ordinary convention of its target: System V x86-64, Microsoft x64, AAPCS64 and i386 cdecl/stdcall, each in its own file. It returns the registers and stack slots that hold each parameter's pieces, and the hidden result pointer. HighC binds a recovered parameter to the piece at its register or entry stack offset; an i386 stack parameter's offset counts from the lowest stack parameter number, since MedABIPass numbers the stack parameters before it promotes a register parameter a call passes on. LLVM-C binds its arguments the same way, through the binding the two writers share (`bindDebugParams`, `lib/backend/c/DebugParamBinding`): the LLVM emitter records where each argument arrives in the `neverd.parameter-sites` function metadata, its register or the MedIR parameter index that numbers its stack slot. An argument of no recorded place binds by position only while every parameter before it fills one integer slot, as in every convention, and an MSVC indirect result keeps its arguments' positions in both writers. A later piece is named after its parameter and byte offset (`p_8`), and the declared type applies only where the location holds the whole value as its bytes. A DWARF pointer is as wide as its unit's addresses, four bytes on i386 and 32-bit ARM, so the parameter after it is the next slot's. An i386 function whose DWARF says its parameters enter it in registers is placed where it says (`FunctionSym::ParamEntryLocations`, `placeEnteredParameters`): GCC passes a local function's first three in EAX, EDX and ECX (regparm), clang its first two in ECX and EDX (fastcc), and the rest follow in stack slots while every parameter before has a known place. No call to such a function takes argument types by position. Unoptimized code locates parameters only in their spill slots, so it binds by cdecl's. Placement stops at the first parameter whose place the rules cannot be sure of: a record whose passing the source does not state, a scalar wider than a register, a memory record of unknown alignment, or an Apple arm64 aggregate spill without a described layout. Later parameters keep their machine names, and functions of languages with their own conventions, such as Go, bind nothing. The DWARF loader gives parameter and result types alone a passing mode and scalar layout: C records pass by value, C++ classes as `DW_AT_calling_convention` states, and `_Complex` values as complex numbers. Rust records stay unknown, because Rust's own ABI and `extern "C"` pass some records differently. PDB records follow the Microsoft C++ ABI: i386 passes them as their bytes, while x64 passes them as their bytes or as an address in the same position. Call prototypes and argument casts still come only from signatures that map by position, whose parameters are all integers or all floating values.
 
 The shared `SourceFrameAnalysis` can check initialized private by-value copies at an original call when independent effect certificates describe the consumer and any complete indirect-result producer. It checks all reaching paths and loop backedges, exact active ranges, other argument aliases and later uses. Consuming a copy invalidates its initialization and saved-byte identities; a later read requires a new definite write. Initialization facts also expire on possible writes and frame release, while retained Swift scratch obligations remain intact. The query returns parameter extents only after complete frame restoration; it grants no machine identity, SDK effect, call binding or source-publication permission. Tests include branches, loops, partial writes, aliases and retained scratch; native ARM64 fixtures with real ObjC/CALayer reject reads of consumed copies and accept independently initialized disposable copies.
 
@@ -12275,6 +12332,11 @@ atomically within the cooperative scheduler, while errno stays in caller TLS.
 admission validates both JSON and C++ input; each read emits the same v4 packet
 from explicit visible records. Opaque guest tokens share the Linux memory owner.
 No logd transport or permission state is inferred. See [Android log readers](android-log-reader.md).
+
+The same owner admits a separate finite `event_log_writes` transcript. Native
+`__android_log_bwrite`, EventLog overloads and ServiceManager logging compare
+exact binary event bytes and share one consumption cursor. Write results never
+create visible reader records; omission, exhaustion and mismatch stay explicit.
 
 `AndroidProperties` builds one immutable guest property table from explicit
 inputs. Name lookup, stable `prop_info` identities, serials, legacy reads and
@@ -13377,12 +13439,28 @@ name; successful semantic replies retain Binder identity without populating the
 cache. Missing replies remain unsupported, and an explicit null reply alone
 establishes service absence. `getService` updates StatLogger duration arrays,
 selects core/app thresholds through the shared Linux UID service, accumulates
-Java int counters and reads the independent monotonic uptime clock.
+Java int counters and reads the independent monotonic uptime clock. Slow and
+statistics logging encodes the two API 28 records through the shared ART String
+owner. `RuntimeServices::event_log_write` routes their bytes to the same ordered
+`AndroidLog` transcript as native `__android_log_bwrite`. A matched negative
+liblog result still commits subsequent Java assignments; a missing/mismatching
+write or resource stop preserves earlier assignments and stops explicitly.
 `checkService` omits these statistics updates. JNI remains a handle/ABI adapter.
 Linux Binder continues to own native device/transaction state; this Java
 projection cannot translate its keys into those handles. Local/custom Binder
 behavior, native object translation, Parcel RPC, RemoteException handling,
-EventLog output and add/list service calls remain unsupported. The volatile
+and add/list service calls remain unsupported.
+`AndroidEventLog` owns all five writeEvent payload encodings and the API 28
+list/string truncation rules, including singleton zero tails and sticky encoding
+errors. ServiceManager reuses this owner. `AndroidArguments` independently
+tracks AAPCS64 GP/FP cursors and their shared overflow stack; JNI converts
+promoted floats through `AArch64FloatConversion`, which owns baseline FPCR
+rounding/FZ/DN and raised FPSR bits. JNI accumulates these flags into existing
+guest status even if a later service stops; A-form float bits need no conversion.
+The architecture helper uses APFloat for numeric rounding and owns ARM64
+tininess-before-rounding, flushing, NaN and directed-overflow effects. Boxed value
+constructors use shared final fields; the projected Float field admits a bit
+carrier without enabling general floating DEX execution. The volatile
 warning field is admitted by shared framework
 field identity; supplied DEX volatile fields retain their existing guard.
 Observed Java state reports cache identity/completeness, retained entries,

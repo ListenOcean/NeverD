@@ -2640,13 +2640,24 @@ static bool isPredicateOrLoadAssign(const std::vector<HighStmt> &Body, size_t K,
 /// earlier one, so drops are withdrawn until nothing kept reads a dropped
 /// value. With \p RefuseReadCalls, a call folded into \p Pred that still has
 /// a reader returns nothing: keeping its assignment would run the call twice.
+/// \p Substituted marks the prefixes whose values composition placed in the
+/// predicate. Their calls are folded whether or not they name a call site.
 static std::optional<std::vector<bool>>
 composedPrefixDrops(const std::vector<HighStmt> &Body, size_t End,
-                    const ExprPtr &Pred, bool RefuseReadCalls) {
+                    const ExprPtr &Pred, bool RefuseReadCalls,
+                    const std::vector<bool> &Substituted) {
   std::vector<bool> Drop(Body.size(), false);
   std::set<const HighStmt *> Dropped;
+  auto SubstitutedCall = [&](size_t K) {
+    MedVar Dest;
+    ExprPtr Val;
+    return K < Substituted.size() && Substituted[K] &&
+           isValueAssign(Body[K], Dest, Val) && Val &&
+           Val->Kind == ExprKind::Call;
+  };
   for (size_t K = 0; K < End && K < Body.size(); ++K)
-    if (prefixOkForChain(Body[K]) && isPredicateOrLoadAssign(Body, K, Pred)) {
+    if (prefixOkForChain(Body[K]) &&
+        (SubstitutedCall(K) || isPredicateOrLoadAssign(Body, K, Pred))) {
       Drop[K] = true;
       Dropped.insert(&Body[K]);
     }
@@ -2825,14 +2836,19 @@ peelInnerAgainstOuter(const HighStmt &Stmt, size_t OuterI,
                        SameTempId);
 }
 
+/// \p Substituted, when given, marks each Body[I] whose value now stands in
+/// the returned condition.
 static std::optional<ExprPtr>
 composePrefixesIntoCond(const std::vector<HighStmt> &Body, size_t Begin,
-                        size_t End, ExprPtr Cond) {
+                        size_t End, ExprPtr Cond,
+                        std::vector<bool> *Substituted = nullptr) {
   if (!Cond || Begin > End)
     return std::nullopt;
   for (size_t I = Begin; I < End; ++I)
     if (!prefixOkForChain(Body[I]))
       return std::nullopt;
+  if (Substituted)
+    Substituted->assign(Body.size(), false);
   for (size_t N = End; N > Begin; --N) {
     const size_t I = N - 1;
     MedVar Dest;
@@ -2840,6 +2856,8 @@ composePrefixesIntoCond(const std::vector<HighStmt> &Body, size_t Begin,
     if (!isValueAssign(Body[I], Dest, Val) || !exprUsesVar(Cond.get(), Dest))
       continue;
     Cond = replaceVarInExpr(Cond, Dest, Val);
+    if (Substituted)
+      (*Substituted)[I] = true;
   }
   for (size_t I = Begin; I < End; ++I) {
     MedVar Dest;
@@ -5289,6 +5307,7 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
           const ExprPtr OriginalInnerCond = Inner.Cond;
           bool FoldPrefix = InnerI > 0;
           bool DidCompose = false;
+          std::vector<bool> Substituted;
           bool SideEffectPrefix = false;
           for (size_t K = 0; K < InnerI; ++K)
             if (Stmt.Body[K].Kind == StmtKind::Call ||
@@ -5304,8 +5323,8 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
                 UsedLater = true;
             }
             ExprPtr Before = Inner.Cond;
-            auto Folded =
-                composePrefixesIntoCond(Stmt.Body, 0, InnerI, Inner.Cond);
+            auto Folded = composePrefixesIntoCond(Stmt.Body, 0, InnerI,
+                                                  Inner.Cond, &Substituted);
             if (!Folded || UsedLater)
               FoldPrefix = false;
             else {
@@ -5323,11 +5342,25 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
             if (!DidCompose)
               return std::optional<std::vector<bool>>(
                   std::vector<bool>(Stmt.Body.size(), false));
-            return composedPrefixDrops(Stmt.Body, InnerI, Pred,
-                                       RefuseReadCalls);
+            return composedPrefixDrops(Stmt.Body, InnerI, Pred, RefuseReadCalls,
+                                       Substituted);
           };
           std::optional<std::vector<bool>> DropsB;
-          if (auto Rest = dropAndPrefix(OuterForPeel, Inner.Cond, SameTempId)) {
+          auto Rest = dropAndPrefix(OuterForPeel, Inner.Cond, SameTempId);
+          // A remainder the uncomposed test already leaves keeps reading the
+          // prefix, so every prefix call still runs where it did. Otherwise
+          // the dropped test held the outer test's own call: its prefix copy
+          // goes, and a value with another reader keeps the test uncomposed.
+          std::optional<std::vector<bool>> DropsR;
+          if (Rest && !isConstTrue(*Rest) && DidCompose) {
+            auto Plain =
+                dropAndPrefix(OuterForPeel, OriginalInnerCond, SameTempId);
+            if (Plain && !isConstTrue(*Plain))
+              Rest = std::move(Plain);
+            else if (!(DropsR = PrefixDrops(*Rest, true)))
+              Rest.reset();
+          }
+          if (Rest) {
             if (isConstTrue(*Rest)) {
               const std::vector<bool> DropsA = *PrefixDrops(PredForDce, false);
               std::vector<HighStmt> Prefix;
@@ -5344,9 +5377,22 @@ static bool structureIfElseList(std::vector<HighStmt> &Body, int MaxPasses,
               Stmt.Body = std::move(Prefix);
             } else {
               Inner.Cond = std::move(*Rest);
-              Stmt.Body[InnerI] = std::move(Inner);
-              NestedChanged |=
-                  dropUnusedTrailingAssigns(Stmt.Body, InnerI, PredForDce, Med);
+              std::vector<HighStmt> Kept;
+              Kept.reserve(Stmt.Body.size());
+              size_t KeptInnerI = 0;
+              for (size_t K = 0; K < Stmt.Body.size(); ++K) {
+                if (K == InnerI) {
+                  KeptInnerI = Kept.size();
+                  Kept.push_back(std::move(Inner));
+                  continue;
+                }
+                if (DropsR && K < InnerI && (*DropsR)[K])
+                  continue;
+                Kept.push_back(std::move(Stmt.Body[K]));
+              }
+              Stmt.Body = std::move(Kept);
+              NestedChanged |= dropUnusedTrailingAssigns(Stmt.Body, KeptInnerI,
+                                                         PredForDce, Med);
             }
             Changed = true;
           } else if (!SideEffectPrefix && (InnerI == 0 || FoldPrefix) &&

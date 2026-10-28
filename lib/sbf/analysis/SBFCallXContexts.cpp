@@ -172,6 +172,8 @@ llvm::StringRef generalizationName(CallXInputGeneralization Kind) {
     return "reused_equivalent_generic_leaf_inputs";
   case CallXInputGeneralization::EquivalentSpecializedInputs:
     return "reused_proven_equivalent_specialized_inputs";
+  case CallXInputGeneralization::ReplacedRecursiveContext:
+    return "opaque_recursive_specialization_replaced";
   }
   llvm_unreachable("unknown input generalization");
 }
@@ -438,7 +440,9 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
         {"output_memory_copies",
          static_cast<int64_t>(Summary.OutputMemoryCopies)},
         {"output_parameterized_words",
-         static_cast<int64_t>(Summary.OutputParameterizedWords)}};
+         static_cast<int64_t>(Summary.OutputParameterizedWords)},
+        {"output_field_value_expressions",
+         static_cast<int64_t>(Summary.OutputFieldValueExpressions)}};
     if (Summary.ReturnValueExpression)
       Row["return_value_expression"] =
           static_cast<int64_t>(*Summary.ReturnValueExpression);
@@ -499,11 +503,14 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
   const auto Translation =
       frameTranslationLimit(Program.Low.TheVersion, Program.Config);
   return llvm::json::Object{
-      {"schema", 7},
+      {"schema", 9},
       {"captured_addresses", std::move(Captures)},
       {"distinct_captures_prove_no_alias", false},
       {"frame_coordinates",
        llvm::json::Object{
+           {"namespace", "owning_function_summary"},
+           {"input_normalization", "known_singleton_r10"},
+           {"instantiated_proof_namespace", "caller_summary_after_frame_push"},
            {"stack_frame_bytes",
             static_cast<int64_t>(Program.Config.StackFrameSize)},
            {"max_call_depth",
@@ -557,6 +564,12 @@ llvm::json::Object callXContextReportJSON(const SBFProgram &Program,
        static_cast<int64_t>(Report.SkippedNonCallXRootSpecializations)},
       {"constant_branch_successors_skipped",
        static_cast<int64_t>(Report.SkippedConstantBranchSuccessors)},
+      {"canonicalized_frame_inputs",
+       static_cast<int64_t>(Report.CanonicalizedFrameInputs)},
+      {"unblocked_recursion_retries",
+       static_cast<int64_t>(Report.UnblockedRecursionRetries)},
+      {"instantiated_stored_value_input_expressions",
+       static_cast<int64_t>(Report.InstantiatedStoredValueInputExpressions)},
       {"instantiated_target_input_expressions",
        static_cast<int64_t>(Report.InstantiatedTargetInputExpressions)},
       {"target_input_expressions", std::move(Expressions)},

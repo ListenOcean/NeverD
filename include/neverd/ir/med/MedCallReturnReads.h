@@ -35,6 +35,8 @@ struct MedFunc;
 /// effects. FreshSource, when supplied, must be the exact LowIR input of this
 /// fresh conversion, before source cleanup. Its checked registration-state
 /// flow can locate restored x86 SEH stacks; this is not a reusable MedIR fact.
+/// Where that proof is incomplete, the EH3/EH4 frame protocol still places
+/// reloads of the saved stack pointer and runtime callback stacks.
 ///
 /// With \p Deferred, each such load is recorded there instead of refusing the
 /// function: whether its value is observed is known only once call arguments

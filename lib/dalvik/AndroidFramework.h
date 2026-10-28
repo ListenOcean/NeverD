@@ -45,6 +45,10 @@ public:
   definingLoader(std::string_view type, const Program &program) const;
 
 private:
+  ExecutionResult eventLog(Heap &heap, const Program &program,
+                           const LibraryMethod &method,
+                           std::span<const uint64_t> arguments,
+                           const AdmitInstruction &admit);
   ExecutionResult serviceManager(Heap &heap, const Program &program,
                                  const LibraryMethod &method, uint64_t receiver,
                                  std::span<const uint64_t> arguments,

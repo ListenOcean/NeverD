@@ -120,8 +120,8 @@
         <translation>&amp;Copier</translation>
     </message>
     <message>
-        <source>Copy the selection or current line</source>
-        <translation>Copier la sélection ou la ligne actuelle</translation>
+        <source>Copy the selection or the highlighted word</source>
+        <translation>Copier la sélection ou le mot surligné</translation>
     </message>
     <message>
         <source>Copy &amp;address</source>
