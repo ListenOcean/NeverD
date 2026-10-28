@@ -161,6 +161,23 @@ TEST(SymParse, LiteralsAcceptEveryRadixAndWrapToTheParseWidth) {
             Ctx.mkConst(llvm::APInt(256, 1).shl(64)));
 }
 
+TEST(SymParse, LiteralWordBoundariesPreserveTruncationAndZeroExtension) {
+  for (uint32_t Width : {1u, 8u, 63u, 64u, 65u, 128u, 257u}) {
+    SCOPED_TRACE(Width);
+    SymContext Ctx;
+    for (const char *Text : {"18446744073709551615", "0xffffffffffffffff",
+                             "0b11111111111111111111111111111111"
+                             "11111111111111111111111111111111"})
+      EXPECT_EQ(Ctx.constValue(parse(Ctx, Text, Width)),
+                llvm::APInt::getAllOnes(64).zextOrTrunc(Width));
+    for (const char *Text : {"18446744073709551616", "0x10000000000000000"})
+      EXPECT_EQ(Ctx.constValue(parse(Ctx, Text, Width)),
+                llvm::APInt::getOneBitSet(65, 64).zextOrTrunc(Width));
+    EXPECT_EQ(Ctx.constValue(parse(Ctx, "000000000000000000000000003", Width)),
+              llvm::APInt(64, 3).zextOrTrunc(Width));
+  }
+}
+
 TEST(SymParse, AWidthSuffixOverridesTheParseWidth) {
   SymContext Ctx;
   EXPECT_EQ(Ctx.width(parse(Ctx, "255#8")), 8u);

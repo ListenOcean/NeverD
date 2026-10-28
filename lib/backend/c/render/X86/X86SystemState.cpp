@@ -31,6 +31,16 @@ bool hasTransactionEffects(const llvm::CallBase &Call) {
          !Call.hasFnAttr(llvm::Attribute::Speculatable);
 }
 
+bool hasSecureLaunchEffects(const llvm::CallBase &Call) {
+  return hasTransactionEffects(Call) && Call.doesNotReturn() &&
+         Call.hasFnAttr(llvm::Attribute::Convergent) &&
+         Call.hasFnAttr(llvm::Attribute::NoDuplicate) &&
+         !Call.hasFnAttr(llvm::Attribute::WillReturn) &&
+         !Call.hasFnAttr(llvm::Attribute::NoSync) &&
+         !Call.hasFnAttr(llvm::Attribute::NoFree) &&
+         !Call.hasFnAttr(llvm::Attribute::NoCallback);
+}
+
 std::string unsignedType(uint16_t Bytes) {
   return Bytes == 16 ? "__uint128_t"
                      : "uint" + std::to_string(8 * Bytes) + "_t";
@@ -118,7 +128,10 @@ std::string renderAsm(const X86SystemStateAsm &P,
   Text += " : ";
   if (P.ChangesFlags)
     Text += "\"cc\", ";
-  return Text + "\"memory\");";
+  Text += "\"memory\");";
+  if (x86SystemStateContract(P.Id).Kind == X86SystemStateKind::SecureLaunch)
+    Text += " __builtin_unreachable();";
+  return Text;
 }
 
 std::string nativeBody(const X86SystemStateNative &Plan,
@@ -296,7 +309,9 @@ renderX86SystemStateExpression(Arch TargetArch, const HighExpr &Expression,
   Shape.ValidId = Expression.Kind == ExprKind::Call &&
                   Expression.IntrinsicOutputs.empty() &&
                   !Expression.IsIndirectCall && !Expression.IndirectTarget &&
-                  !Expression.SourceCallHint && !Expression.DoesNotReturn &&
+                  !Expression.SourceCallHint &&
+                  (!Expression.DoesNotReturn ||
+                   C.Kind == X86SystemStateKind::SecureLaunch) &&
                   Expression.Operands.size() == Arguments.size();
   Shape.WritableOutput = true;
   Shape.OutputSize = Expression.Type ? Expression.Type->Size : 0;
@@ -426,7 +441,10 @@ renderX86SystemStateCall(Arch TargetArch, const llvm::CallInst &Call,
             !Asm->hasSideEffects() || Asm->isAlignStack() || Asm->canThrow() ||
             Asm->getDialect() != llvm::InlineAsm::AD_ATT ||
             Call.getNumOperandBundles() || Call.onlyReadsMemory() ||
-            Call.onlyWritesMemory() || Call.doesNotReturn() ||
+            Call.onlyWritesMemory() ||
+            (C.Kind == X86SystemStateKind::SecureLaunch
+                 ? !hasSecureLaunchEffects(Call)
+                 : Call.doesNotReturn()) ||
             Call.getFunctionType()->isVarArg() ||
             Call.arg_size() != P->InputBytes.size() ||
             Arguments.size() != Call.arg_size() || !matchesReturn(Call, *P))
@@ -523,9 +541,11 @@ renderX86SystemStateNativeCall(Arch TargetArch, const llvm::CallBase &Call,
       const auto Count = P->InputBytes.size();
       if (!Callee->isIntrinsic() || Call.getNumOperandBundles() ||
           Call.onlyReadsMemory() || Call.onlyWritesMemory() ||
-          Call.doesNotReturn() || Call.getFunctionType()->isVarArg() ||
-          Call.arg_size() != Count || Arguments.size() != Count ||
-          !matchesReturn(Call, Assembly))
+          (x86SystemStateContract(Id).Kind == X86SystemStateKind::SecureLaunch
+               ? !hasSecureLaunchEffects(Call)
+               : Call.doesNotReturn()) ||
+          Call.getFunctionType()->isVarArg() || Call.arg_size() != Count ||
+          Arguments.size() != Count || !matchesReturn(Call, Assembly))
         continue;
       bool Valid = true;
       for (size_t I = 0; I < Count; ++I) {

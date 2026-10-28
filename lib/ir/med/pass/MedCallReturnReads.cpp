@@ -12,6 +12,7 @@
 #include "neverd/ir/med/MedCallReturnReads.h"
 
 #include "../../../safety/StackSlotFlow.h"
+#include "../X86/RegistrationCallStacks.h"
 #include "../X86/SEHCallStackRanges.h"
 #include "../abi/MedABIPassDetail.h"
 
@@ -34,6 +35,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/MathExtras.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -77,9 +79,41 @@ struct RegistrationCalls {
   std::set<const MedOp *> PrivateCallbacks;
 };
 
+/// Without the complete state proof, the EH3/EH4 frame protocol still places
+/// the stacks a handler restores and those a runtime callback runs on.
+RegistrationCalls protocolCalls(
+    const MedFunc &Func, const LowFunc &Source, const BinaryImage &Image,
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
+  RegistrationCalls Result;
+  const auto Seeds = x86_registration::savedStackReloads(Func, Source, Image,
+                                                         Accesses, Remaining);
+  if (!Seeds.empty()) {
+    std::vector<MedVar> Values;
+    for (const auto &[Call, Stack] : Stacks)
+      Values.push_back(Stack);
+    if (!charge(Remaining, Values.size()))
+      return {};
+    const auto Restored = entryStackOffsetsFromProvenDefinitions(
+        Func, Values, Seeds, Image.Arch, Image.abiFormat(), Func.EntryKind);
+    size_t I = 0;
+    for (const auto &[Call, Stack] : Stacks)
+      if (const auto Offset = Restored[I++])
+        Result.Offsets.emplace(Call, *Offset);
+  }
+  std::map<const MedOp *, MedVar> Unplaced;
+  for (const auto &[Call, Stack] : Stacks)
+    if (!Result.Offsets.count(Call))
+      Unplaced.emplace(Call, Stack);
+  Result.PrivateCallbacks =
+      x86_registration::privateCallbackCalls(Func, Image, Unplaced, Remaining);
+  return Result;
+}
+
 RegistrationCalls registrationCalls(
     const MedFunc &Func, const LowFunc *Source, const BinaryImage &Image,
-    const std::map<const MedOp *, MedVar> &Stacks, size_t &Remaining) {
+    const std::map<const MedOp *, MedVar> &Stacks,
+    const std::map<const MedOp *, int64_t> &Accesses, size_t &Remaining) {
   if (!Source || Image.Arch != Arch::X86 ||
       Image.abiFormat() != BinaryFormat::COFF || Func.AnalystStackFrame ||
       Func.SkippedSSA || Source->Entry != Func.Entry ||
@@ -87,13 +121,14 @@ RegistrationCalls registrationCalls(
     return {};
   const auto &States = *Source->RegistrationStates;
   const auto &EH = *Source->ExceptionMetadata;
-  if (!States.Complete || !States.CallbackStatesComplete ||
-      !States.RegistrationLifetimeComplete ||
-      EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
+  if (EH.ParseStatus != ExceptionParseStatus::Complete || !EH.Registration ||
       EH.Registration->RealignedFrame || Func.Entry != EH.CodeRange.Begin ||
       (EH.Encoding != ExceptionEncoding::X86ScopeTableEH3 &&
        EH.Encoding != ExceptionEncoding::X86ScopeTableEH4))
     return {};
+  if (!States.Complete || !States.CallbackStatesComplete ||
+      !States.RegistrationLifetimeComplete)
+    return protocolCalls(Func, *Source, Image, Stacks, Accesses, Remaining);
   using Identity = std::pair<va_t, int>;
   using Value = std::tuple<MedVar::VarKind, int, int>;
   const auto Key = [](const MedVar &V) {
@@ -276,8 +311,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                                    const BinaryImage &Image,
                                    std::string &Diagnostic, size_t WorkLimit,
                                    const LowFunc *FreshSource,
-                                   std::vector<MedCallReturnRead> *Deferred) {
+                                   const MedCallReturnRanges *CallReturns,
+                                   std::vector<MedCallReturnRead> *Deferred,
+                                   bool *NeedsCalleeFacts) {
   Diagnostic.clear();
+  if (NeedsCalleeFacts)
+    *NeedsCalleeFacts = false;
   // Link-register targets have no implicit stack write. The current source
   // call encoding authority authenticates x86 near CALL/JMP occurrences.
   if (!getTargetRegInfo(Image.Arch).CallPushesReturnAddress ||
@@ -331,6 +370,8 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
   if (!Remaining)
     return Exhausted();
   const auto Width = getTargetRegInfo(Image.Arch).PointerSize;
+  const int64_t MinimumOffset = llvm::minIntN(Width * 8);
+  const int64_t MaximumOffset = llvm::maxIntN(Width * 8);
   std::vector<MedVar> Values;
   for (const auto *Op : Memory)
     Values.push_back(Op->Inputs[0]);
@@ -348,9 +389,18 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     const auto *Op = Memory[I];
     const auto Size =
         Op->Opcode == NdOp::LOAD ? Op->Output.Size : Op->Inputs[1].Size;
-    if (!Offsets[I] || !Size ||
-        *Offsets[I] > std::numeric_limits<int64_t>::max() - Size)
+    if (!Offsets[I] || !Size)
       continue;
+    // The beginning fits the native coordinate by entryStackOffsets. Keep
+    // the whole access in that coordinate too: skipping a wrapping load
+    // would remove an observer, while a wrapping store proves no overwrite.
+    if (*Offsets[I] > MaximumOffset - Size) {
+      if (Op->Opcode == NdOp::LOAD)
+        return Refuse("load at 0x" + llvm::utohexstr(Op->Addr) +
+                      " exceeds the native stack-offset interval; refusing "
+                      "an unproved frame projection");
+      continue;
+    }
     const auto [Block, Position] = Positions.at(Op);
     Access A{Op, Block, Position, *Offsets[I], *Offsets[I] + Size};
     if (Op->Opcode == NdOp::LOAD)
@@ -365,6 +415,15 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       CallEnds.emplace(Calls[I], EntryStackOffsetRange{*Offset, *Offset});
     else
       CallEnds.emplace(Calls[I], std::nullopt);
+  const auto CallSlotBegin =
+      [&](const EntryStackOffsetRange &End) -> std::optional<int64_t> {
+    // SP can fit while the implicit push crosses the native coordinate.
+    // Such a write has no representable interval in this proof.
+    if (End.Min < MinimumOffset + Width || End.Max > MaximumOffset ||
+        End.Min > End.Max)
+      return std::nullopt;
+    return End.Min - Width;
+  };
   // Whether every load's history reaches no CALL write in Ends, which are
   // bounded from above by Bounds where they have no range. With Defer, a load
   // such a write reaches is recorded there and leaves the proof instead.
@@ -383,11 +442,12 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                               Below->second);
           continue;
         }
-      if (!End || End->Min < std::numeric_limits<int64_t>::min() + Width) {
+      const auto Begin = End ? CallSlotBegin(*End) : std::nullopt;
+      if (!Begin) {
         UnknownLocation = true;
         continue;
       }
-      Ranges.emplace_back(End->Min - Width, End->Max);
+      Ranges.emplace_back(*Begin, End->Max);
     }
     llvm::sort(Ranges);
     std::vector<std::pair<int64_t, int64_t>> Merged;
@@ -494,10 +554,11 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
       Cut(Store.End);
     }
     for (const auto &[Op, End] : Ends) {
-      if (End && End->Min >= std::numeric_limits<int64_t>::min() + Width) {
-        Cut(End->Min - Width);
-        Cut(End->Max);
-      }
+      if (End)
+        if (const auto Begin = CallSlotBegin(*End)) {
+          Cut(*Begin);
+          Cut(End->Max);
+        }
       if (const auto Below = Bounds.find(Op); Below != Bounds.end())
         Cut(Below->second);
     }
@@ -553,11 +614,10 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
                              ? Everything
                              : Covered(std::numeric_limits<int64_t>::min(),
                                        Below->second);
-          else if (Call->second->Min <
-                   std::numeric_limits<int64_t>::min() + Width)
-            Item.Range = Everything;
+          else if (const auto Begin = CallSlotBegin(*Call->second))
+            Item.Range = Covered(*Begin, Call->second->Max);
           else
-            Item.Range = Covered(Call->second->Min - Width, Call->second->Max);
+            Item.Range = Everything;
         }
         Row.push_back(Item);
       }
@@ -816,8 +876,20 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     if (Observe(CallEnds, {}, Allowance, nullptr))
       return true;
     Diagnostic.clear();
-    const auto Registration =
-        registrationCalls(Func, FreshSource, Image, StackPointers, Remaining);
+    // Only a PE32 registration frame reads the exact accesses by operation.
+    const bool ByOperation = Image.Arch == Arch::X86 && FreshSource &&
+                             FreshSource->RegistrationStates;
+    std::map<const MedOp *, int64_t> Accesses;
+    if (ByOperation)
+      for (const Access &Load : Loads)
+        Accesses.emplace(Load.Op, Load.Begin);
+    for (size_t I = 0; ByOperation && I < Memory.size(); ++I)
+      if (Memory[I]->Opcode == NdOp::STORE && Offsets[I] &&
+          *Offsets[I] <=
+              std::numeric_limits<int64_t>::max() - Memory[I]->Inputs[1].Size)
+        Accesses.emplace(Memory[I], *Offsets[I]);
+    const auto Registration = registrationCalls(
+        Func, FreshSource, Image, StackPointers, Accesses, Remaining);
     if (!Remaining)
       return Exhausted();
     for (auto &[Call, End] : CallEnds)
@@ -840,10 +912,14 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
         UnboundedStacks.push_back(Found->second);
       }
   if (!UnboundedCalls.empty()) {
-    const auto Bounds = entryStackOffsetRanges(
-        Func, UnboundedStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
-    for (size_t I = 0; I < Bounds.size(); ++I)
+    const auto Bounds =
+        entryStackOffsetRanges(Func, UnboundedStacks, Image.Arch,
+                               Image.abiFormat(), Func.EntryKind, CallReturns);
+    for (size_t I = 0; I < Bounds.size(); ++I) {
       CallEnds.at(UnboundedCalls[I]) = Bounds[I];
+      if (!Bounds[I] && !CallReturns && NeedsCalleeFacts)
+        *NeedsCalleeFacts = true;
+    }
   }
   if (FreshSource &&
       llvm::any_of(CallEnds, [](const auto &Entry) { return !Entry.second; })) {
@@ -874,6 +950,9 @@ bool validateSourceCallReturnReads(const MedFunc &Func,
     if (!Pending.empty()) {
       if (!charge(Remaining, Pending.size()))
         return Exhausted();
+      // Callee facts already served the complete range query above. The
+      // remaining values need a local one-sided proof; retrying the same
+      // failed range with callee facts cannot establish native-width bounds.
       const auto Bounds = entryStackOffsetUpperBounds(
           Func, PendingStacks, Image.Arch, Image.abiFormat(), Func.EntryKind);
       for (size_t I = 0; I < Pending.size(); ++I)

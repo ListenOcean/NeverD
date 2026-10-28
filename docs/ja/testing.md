@@ -2038,6 +2038,8 @@ Linux ネイティブ検証では `HighSwiftEmitter` 全体も実行し、レジ
 
 `SymAtomicCmpxchg.*` と `InterpreterSpecialization.AtomicCmpxchg*` は、全バイトの効果、両エンディアン、旧値の由来、入出力エイリアス、ネイティブ戻りセル、合流をまたぐアフィンスピルの無効化、有序操作の発生保持、厳密な受け入れ、十分な予算と不足予算を対象とします。独立したバイト参照器が扱うのは逐次的な値の意味論だけです。ソースラップの対照には初期化済みで構造が正しいグラフを使い、有序メモリの境界での拒否を要求します。独立 LowIR の対照には完全な sidecar も結び付け、証明書がないことを要求します。ネイティブバイナリの証明は、LOCK CMPXCHG のアーキテクチャ未定義出力監査が不完全なため、より早く拒否される場合があります。raw レシートの検査は順序、アドレス空間、更新オペランドを結び付けます。対応を主張する前に所有テスト群を実行してください。テスト定義だけでは実行の証拠になりません。
 
+`InterpreterSpecialization.AtomicUpdates*` は ADD/XCHG の全スカラー幅と両バイト順、旧値出力の重複、ネイティブ戻り領域、値不変操作の保持、ノード間の新旧メモリ由来、明示的実行域の拒否、フレーム保持の十分な予算と不足予算を検査します。全インタープリター特化、条件付きストア、原子シンボリックテストと共に実行します。バイト参照器は逐次値だけをモデル化します。
+
 `InterpreterSpecialization.WideIntegerConcat*` は両バイト順、上下位ワード、定数入力、重複出力、上位ワードによる分岐、不正形状、正確／不足予算、未知メモリ由来の保持を検査します。厳密に復号した `PSHUFD` は全256選択値と同一／別宛先を独立したダブルワード索引で照合します。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` はネイティブ証明と両ソース配置の拒否を維持します。
 
 `InterpreterSpecialization.Timestamp*` は独立した値・状態オラクルで全ビット、上位半分のクリア、独立／反復読み取り、レジスタ・フラグ・メモリ・セグメント基底の保持、正確／不足予算、不正な操作列、未知アドレス由来を検査します。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` は raw 完了とネイティブ証明／ソース配置の拒否を確認します。既存の `X86_64_Intrinsics` 時計ケースはソース出力と 1 回の読み取りによる全ビット結果を検査し、`DriverTimestamp` は Unicorn/KVM/WHP 共通の時計方針、状態保持、予算、オーバーフローを別途検査します。プラットフォームによるスキップはバックエンド実行の証拠ではありません。
@@ -2223,3 +2225,7 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 メモリ事後条件の変更時には、保持値、条件付き結果、新しい未知状態、呼び出し前のターゲット、不正入力の拒否を確認する `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests`、`NeverDSymMemoryKnowledgeTests` を実行してください。
 
 `NeverDSymbolicCallEffectTests` は両分岐、先行する呼び出し効果、繰り返し呼び出し、経路合流後の完全な条件を提供者が受け取ることも検査します。矛盾した効果は後続の操作と提供者呼び出しを停止します。これはソルバーを使わない探索回帰であり、外部 API 契約の検証ではありません。
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` と交換の対照テストは O0/O2 と UBSan で両 C 経路を実行し、x64 の全4幅、非整列アドレス、旧値、隣接バイトを確認します。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` は元の LLVM IR も実行し、未使用結果の書き込みを保持し、変更されたアセンブリ契約を拒否します。FS/GS はコンパイルのみでホスト TLS に触れません。実行には x64 ホストが必要で、競合やハードウェア障害の認証ではありません。
+
+`X86LegacyAtomic.LockedArithmetic*` は x86/x64 の幅、独立した算術フラグ、入力レジスタとキャリーの保持、符号付き即値、非整列の隣接バイト、読み取り専用・部分マッピング、FS/GS、ロックなしの対照を検証します。未対応のロック付き演算を通常のストアに変換しません。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` は四種類の命令の特化と、順序付きメモリの証明拒否を確認します。

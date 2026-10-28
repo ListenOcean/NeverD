@@ -933,11 +933,21 @@ void MedLLVMEmitter::emitCallOp(const MedOp &Op, llvm::IRBuilder<> &Builder,
     if (Hint.Signature.ReturnType->Kind == NdTypeKind::Int &&
         Hint.Signature.ReturnType->IsSigned)
       Call->addFnAttr(llvm::Attribute::get(*Ctx, LLVMSourceSignedResult));
-    for (unsigned I = 0; I < Hint.Signature.Parameters.size(); ++I)
-      if (const auto &Type = Hint.Signature.Parameters[I].Type;
-          Type->Kind == NdTypeKind::Int && Type->IsSigned)
+    if (Hint.Signature.ReturnLocation.ExtendTo32Bits)
+      Call->addRetAttr(Hint.Signature.ReturnType->IsSigned
+                           ? llvm::Attribute::SExt
+                           : llvm::Attribute::ZExt);
+    for (unsigned I = 0; I < Hint.Signature.Parameters.size(); ++I) {
+      const auto &Parameter = Hint.Signature.Parameters[I];
+      if (Parameter.Type->Kind == NdTypeKind::Int && Parameter.Type->IsSigned)
         Call->addParamAttr(
             I, llvm::Attribute::get(*Ctx, LLVMSourceSignedParameter));
+      // The checked ABI establishes these bits in the physical register;
+      // source signedness alone would not authorize an extension attribute.
+      if (Parameter.Location.ExtendTo32Bits)
+        Call->addParamAttr(I, Parameter.Type->IsSigned ? llvm::Attribute::SExt
+                                                       : llvm::Attribute::ZExt);
+    }
     Call->setMetadata(
         "neverd.source.analyst-call",
         llvm::MDNode::get(*Ctx,

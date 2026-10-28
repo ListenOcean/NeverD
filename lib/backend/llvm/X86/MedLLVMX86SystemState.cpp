@@ -95,7 +95,8 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
                                  sizeToType(AccessBytes), Builder, Space);
       if (Space == NdMemoryAddressSpace::Default)
         T = V->getType();
-    } else if (C.Kind == X86SystemStateKind::SegmentedBlock)
+    } else if (C.Kind == X86SystemStateKind::SegmentedBlock ||
+               isX86SystemStatePhysicalAddressArgument(Id, I))
       // A segment offset may equal an image VA without naming its replacement.
       // Reuse the FS/GS offset materializer, including non-constant SSA copies.
       V = getRawSegmentOffset(Op.Inputs[I + FirstInput], Builder);
@@ -110,7 +111,10 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
   const auto Native = x86SystemStateNative(
       Id, TargetArch, x86SystemStateWidth(Id, Shape), Op.MemoryAddressSpace);
   llvm::CallInst *Call;
-  if (Native && (Id == Intrinsic::Xabort ||
+  if (Native &&
+      (Id == Intrinsic::X86Skinit
+           ? llvm::Intrinsic::lookupIntrinsicID(Native->LLVMName)
+           : Id == Intrinsic::Xabort ||
                  llvm::Intrinsic::lookupIntrinsicID(
                      Native->AddressBits ? "llvm.x86.lar.mem16.address"
                                          : "llvm.x86.invlpgb.addr32"))) {
@@ -144,6 +148,12 @@ llvm::Value *MedLLVMEmitter::emitX86SystemState(const MedOp &Op, Intrinsic Id,
     auto *Signature = llvm::FunctionType::get(Return, Types, false);
     auto *Asm = llvm::InlineAsm::get(Signature, P->Text, P->Constraints, true);
     Call = Builder.CreateCall(Asm, Arguments);
+  }
+  if (C.Kind == X86SystemStateKind::SecureLaunch) {
+    Call->setDoesNotReturn();
+    Call->addFnAttr(llvm::Attribute::Convergent);
+    Call->addFnAttr(llvm::Attribute::NoDuplicate);
+    Builder.CreateUnreachable();
   }
   if (P->OutputBytes.empty())
     return nullptr;

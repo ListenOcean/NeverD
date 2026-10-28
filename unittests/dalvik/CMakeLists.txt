@@ -4,6 +4,7 @@ add_neverd_unittest(NeverDDalvikTests RuntimeTests.cpp AndroidVersionTests.cpp
   AndroidCollectionsTests.cpp
   AndroidStatLoggerTests.cpp
   AndroidServiceManagerTests.cpp
+  AndroidEventLogTests.cpp
   AndroidMessageQueueTests.cpp
   RuntimeSnapshotTests.cpp
   LINK_COMPONENTS Dalvik)

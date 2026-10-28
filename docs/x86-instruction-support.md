@@ -123,6 +123,52 @@ while an unused vvvv field must still be all ones. Arithmetic, COMI, mask
 comparison, scalar/packed conversion, approximation and ROUND retain their
 family-specific rules. REX2 cannot encode ROUND's map 3.
 
+## Native secure-loader launch
+
+SKINIT now has an explicit terminating contract on x86 and x64. It consumes
+the original low 32 bits of EAX as a physical Secure Loader Block address and
+has no ordinary continuation in the calling machine context. The processor
+owns privilege/feature checks, address rounding, reset, SLB accesses,
+attestation and entry transfer. No eager compiler read, pre-alignment or
+synthetic success replaces those effects. This follows [AMD APM Volume 3,
+revision 3.38, pages 472–473](https://docs.amd.com/v/u/en-US/24594_3.38_APM_Vol3_PUB).
+
+One appended intrinsic identity and the shared system-state inventory own the
+operand shape. The common architectural termination helper ends LowIR and
+MedIR flow; HighIR retains termination with a dynamic physical input. Native
+emission uses `llvm.x86.skinit(i32)` when the SDK provides it, and the owned
+real-instruction assembly contract otherwise. NeverC exposes
+`__builtin_ia32_skinit(unsigned)` and the Microsoft `__svm_skinit(int)` spelling
+as native nonreturning builtins. The LLVM declaration is convergent and
+noduplicate, retains unknown memory effects, and makes no willreturn, nosync,
+nofree or nocallback promise. Both C routes reject malformed native or owned
+assembly signatures and incomplete effect/termination contracts.
+
+Physical inputs remain integer bits even beside ordinary process-memory uses.
+The MedIR value-dependency owner follows register slices, scalar operations and
+PHIs back to entry parameters; MedIR and both HighIR inference stages consume
+that fact. Process-address printing also retains the original zero/sign
+extension and truncation before pointer conversion. Thus an EDI input with bit
+31 set cannot become a full-width pointer or a sign-extended DS address.
+The concrete emulator refuses the operation before reading an SLB or changing
+registers: no CPU reset or TPM environment is invented.
+
+The retained qualification and exact source snapshots are recorded in
+[evidence/x86-skinit-2026-10-27.json](evidence/x86-skinit-2026-10-27.json).
+Instruction checks cover 240 decode/lift/termination combinations and 112
+contradictory-metadata refusals. Each SDK covers 36 pipeline profiles and 180
+objects across x86/x64 ELF, COFF and Mach-O, plus eight sanitized caller-input
+observations and eight UBSan source executions with a high-bit address. The
+privileged operation is removed before those source executions. NeverC also
+compiles both actual C routes into 72 native x64 objects and passes sixteen
+unsanitized input-recorder executions per SDK; its emitted IR uses the native
+intrinsic instead of selecting the assembly fallback. Independent
+binary-boundary checks cover 1,080 raw-EAX observations in twelve LLVM objects
+and another 1,080 in six NeverC objects. They stop before the independently
+verified `0f 01 de` instruction; they do not execute SKINIT or qualify reset,
+attestation, successful launch or architectural faults. Global completion and
+the later LLVM release/SDK/gitlink update remain separate work.
+
 ## Known remaining gaps
 
 | Instructions or family | Missing contract |
@@ -131,7 +177,6 @@ family-specific rules. REX2 cannot encode ROUND's map 3.
 | Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 paths now retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. The explicit portable x87 profile does not admit MMX resets. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
-| SKINIT | Machine reinitialization and nonlocal control transfer. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
@@ -168,7 +213,8 @@ retain WC protocol, concurrent write completion and device transactions, but
 these tests do not independently measure those properties. The concrete
 emulator models only the single-threaded ordinary-memory projection.
 
-VMRUN and SKINIT still fail strict lifting explicitly. ENCLU and GETSEC decode
+VMRUN still fails strict lifting explicitly. SKINIT uses the native
+nonreturning launch contract above. ENCLU and GETSEC decode
 to pending state, which cannot enter MedIR or either emitter until the CFG
 proves a supported leaf. Dynamic, transferring and unknown leaves remain
 explicitly unsupported. Legacy
@@ -478,7 +524,7 @@ incomplete intermediate batch.
    integration below is implemented; selectors with unknown natural-register
    high bits and transferring leaves still require additional contracts.
 3. Introduce a versioned complete-machine-state boundary and explicit
-   continuations for VMRUN, SKINIT and the transferring GETSEC/ENCLU leaves.
+   continuations for VMRUN and the transferring GETSEC/ENCLU leaves.
    It must carry the affected integer, flag, segment, x87/SIMD and control
    state, distinguish native return, VM exit and nonlocal transfer, and reject
    states the selected runtime cannot transport. A compiler calling convention

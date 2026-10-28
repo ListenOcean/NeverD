@@ -1366,7 +1366,8 @@ TEST(HighCPointerAddresses, PointerOffsetAddressOmitsArithmeticWrap) {
   EXPECT_EQ(Source.find("(uint64_t)(8)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("(uintptr_t)"), std::string::npos) << Source;
   EXPECT_NE(Source.find("+ 8"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("__atomic_fetch_add"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__asm__ __volatile__(\"lock xaddl"), std::string::npos)
+      << Source;
   expectPortableStore(Source, "int32_t", "(uintptr_t)p + 8", "1");
 }
 
@@ -1406,11 +1407,36 @@ TEST(HighCPointerAddresses, AtomicFetchAddComposesIntoCompare) {
   Guard.Body = {Release};
   Func.Body = {Fetch, Guard};
   const std::string Source = emitFunctions({Func});
-  EXPECT_NE(Source.find("if (__atomic_fetch_add("), std::string::npos)
+  EXPECT_NE(Source.find("if (({ uint32_t neverd_atomic_value"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("t94_7"), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("(uintptr_t)((uintptr_t)"), std::string::npos)
-      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)p + 8"), std::string::npos) << Source;
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
+      llvm::Triple::x86_64)
+    GTEST_SKIP() << "Native x64 memory operations require an x64 host";
+  compileAndRunCallOrdering("#include <stdint.h>\n"
+                            "typedef struct CAuxData { uint64_t pad; uint32_t "
+                            "refs, guard; } CAuxData;\n" +
+                                Source + R"(
+static unsigned calls;
+static uintptr_t last;
+int dtor(uintptr_t p) { ++calls; last=p; return 0; }
+int main(void) {
+  const uint32_t values[] = {0, 1, 2, UINT32_MAX};
+  for (unsigned i=0; i<4; ++i) {
+    CAuxData value = {UINT64_C(0x8877665544332211), values[i], 0xa5a5a5a5};
+    calls=0; last=0;
+    last_ref(&value);
+    if (value.refs != values[i]-1 || calls != (values[i]==1)) return 1;
+    if (calls && last != (uintptr_t)&value) return 2;
+    if (value.pad != UINT64_C(0x8877665544332211) || value.guard != 0xa5a5a5a5)
+      return 3;
+  }
+  return 0;
+}
+)",
+                            true);
 }
 
 TEST(HighCPointerAddresses, SameAddressSignedIncrementKeepsModularExpression) {
@@ -6485,9 +6511,11 @@ TEST(HighCPointerAddresses, UnionOverlayPicksUniqueAccessWidth) {
   Func.Body = {Load, Store, Fetch};
   const std::string Source = emitFunctions({Func});
   EXPECT_NE(Source.find("p->_m_nRef"), std::string::npos) << Source;
-  EXPECT_NE(
-      Source.find("__atomic_fetch_add((uint32_t *)(&p->_m_nRef), 0xFFFFFFFF,"),
-      std::string::npos)
+  EXPECT_NE(Source.find("__asm__ __volatile__(\"lock xaddl"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)(&p->_m_nRef)"), std::string::npos)
+      << Source;
+  EXPECT_NE(Source.find("(uintptr_t)(0xFFFFFFFF)"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("(uint32_t)(-1)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("___u1"), std::string::npos) << Source;
@@ -32455,7 +32483,9 @@ TEST(HighCPointerAddresses, NestedIfKeepsPredicateCallsFromEmptyThenElse) {
   EXPECT_NE(Source.find("arg2 == 1"), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
+TEST(HighCPointerAddresses, NestedIfKeepsOtherKindCallsBeforeFieldGuard) {
+  // The body's IsKind calls read other arguments than the guard's call, so
+  // they are other executions and stay.
   HighFunc Func;
   Func.Name = "leftover_kind";
   Func.Entry = 0x140001000;
@@ -32541,7 +32571,7 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignsBeforeFieldGuard) {
   for (size_t Pos = BodyAt;
        (Pos = Source.find("IsKind(", Pos)) != std::string::npos; Pos += 7)
     ++KindCount;
-  EXPECT_EQ(KindCount, 1u) << Source;
+  EXPECT_EQ(KindCount, 3u) << Source;
 }
 
 TEST(HighCPointerAddresses, NestedIfKeepsSideEffectCallBeforeFieldGuard) {
@@ -32605,10 +32635,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
     V.TheArch = Arch::X64;
     return V;
   };
+  // The body's IsKind assignment copies the guard's call instruction.
   HighStmt Kind;
   Kind.Kind = StmtKind::Assign;
   Kind.Dst = HighExpr::makeVar(Temp(71));
   Kind.Val = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  Kind.Val->CallSiteAddr = 0x140001010;
   HighStmt Field;
   Field.Kind = StmtKind::Assign;
   Field.Dst = HighExpr::makeVar(Temp(76, 35));
@@ -32641,12 +32673,12 @@ TEST(HighCPointerAddresses, NestedIfDropsLeftoverKindAssignReusedAsClobber) {
   Empty.Val = HighExpr::makeCall(
       "IsEmpty", 0x140002200,
       {parameter(1), HighExpr::makeVar(Temp(71)), HighExpr::makeVar(Temp(73))});
+  ExprPtr GuardKind = HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)});
+  GuardKind->CallSiteAddr = Kind.Val->CallSiteAddr;
   HighStmt Guard;
   Guard.Kind = StmtKind::If;
-  Guard.Cond = HighExpr::makeBinop(
-      NdOp::INT_NOTEQUAL,
-      HighExpr::makeCall("IsKind", 0x140002300, {parameter(0)}),
-      HighExpr::makeConst(0, 4));
+  Guard.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, std::move(GuardKind),
+                                   HighExpr::makeConst(0, 4));
   Guard.Body = {Kind, Field, Inner, Undef, Empty};
   Func.Body = {Guard};
   structureIfElse(Func, 8);
@@ -32704,6 +32736,97 @@ bool everyReadTempIsAssigned(const HighFunc &Func) {
   });
   return std::includes(Assigned.begin(), Assigned.end(), Read.begin(),
                        Read.end());
+}
+
+TEST(HighCPointerAddresses, RepeatedOuterTestRunsComposedCallOnce) {
+  // `if (a) { t = probe(b); if (a && t) work(a); }`: the inner test repeats
+  // the outer one, and what remains of it takes the composed probe call.
+  // The prefix call is that execution, with or without a call site, so it
+  // runs once. A later reader of t keeps the inner test uncomposed.
+  for (int Variant = 0; Variant < 3; ++Variant) {
+    HighFunc Func;
+    Func.Name = "repeated_outer_test";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    const MedVar Probed = temporary(40, 0, 4);
+    ExprPtr Probe = HighExpr::makeCall("probe", 0x140002300, {parameter(1)});
+    if (Variant == 1)
+      Probe->CallSiteAddr = 0x140001010;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Cond = HighExpr::makeBinop(
+        NdOp::BOOL_AND,
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                            HighExpr::makeConst(0, 8)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Probed),
+                            HighExpr::makeConst(0, 4)));
+    Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                     HighExpr::makeConst(0, 8));
+    Outer.Body = {assignTo(Probed, std::move(Probe)), Inner};
+    Func.Body = {Outer};
+    if (Variant == 2)
+      Func.Body.push_back(
+          callStmt("use", 0x140002400, {HighExpr::makeVar(Probed)}));
+    structureIfElse(Func, 8);
+    EXPECT_TRUE(everyReadTempIsAssigned(Func)) << Variant;
+    const std::string Source = emitFunctions({Func});
+    const auto BodyAt = Source.find("void repeated_outer_test");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t ProbeCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("probe(", Pos)) != std::string::npos; Pos += 6)
+      ++ProbeCount;
+    EXPECT_EQ(ProbeCount, 1u) << Variant << "\n" << Source;
+    EXPECT_NE(Source.find("work(", BodyAt), std::string::npos) << Source;
+  }
+}
+
+TEST(HighCPointerAddresses, RepeatedOuterTestKeepsCallBeforeLaterEffect) {
+  // `if (a) { t = probe(b); note(); if (a && t) work(a); }`: dropping the
+  // repeated outer test must not move probe past note, with or without a
+  // call site.
+  for (int Sited = 0; Sited < 2; ++Sited) {
+    HighFunc Func;
+    Func.Name = "repeated_test_effect";
+    Func.Entry = 0x140001000;
+    Func.ReturnType = NdType::makeVoid();
+    const MedVar Probed = temporary(40, 0, 4);
+    ExprPtr Probe = HighExpr::makeCall("probe", 0x140002300, {parameter(1)});
+    if (Sited)
+      Probe->CallSiteAddr = 0x140001010;
+    HighStmt Inner;
+    Inner.Kind = StmtKind::If;
+    Inner.Cond = HighExpr::makeBinop(
+        NdOp::BOOL_AND,
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                            HighExpr::makeConst(0, 8)),
+        HighExpr::makeBinop(NdOp::INT_NOTEQUAL, HighExpr::makeVar(Probed),
+                            HighExpr::makeConst(0, 4)));
+    Inner.Body = {callStmt("work", 0x140002000, {parameter(0)})};
+    HighStmt Outer;
+    Outer.Kind = StmtKind::If;
+    Outer.Cond = HighExpr::makeBinop(NdOp::INT_NOTEQUAL, parameter(0),
+                                     HighExpr::makeConst(0, 8));
+    Outer.Body = {assignTo(Probed, std::move(Probe)),
+                  callStmt("note", 0x140002400, {}), Inner};
+    Func.Body = {Outer};
+    structureIfElse(Func, 8);
+    const std::string Source = emitFunctions({Func});
+    const auto BodyAt = Source.find("void repeated_test_effect");
+    ASSERT_NE(BodyAt, std::string::npos) << Source;
+    size_t ProbeCount = 0;
+    for (size_t Pos = BodyAt;
+         (Pos = Source.find("probe(", Pos)) != std::string::npos; Pos += 6)
+      ++ProbeCount;
+    EXPECT_EQ(ProbeCount, 1u) << Sited << "\n" << Source;
+    EXPECT_LT(Source.find("probe(", BodyAt), Source.find("note(", BodyAt))
+        << Sited << "\n"
+        << Source;
+    EXPECT_NE(Source.find("work(", BodyAt), std::string::npos) << Source;
+  }
 }
 
 TEST(HighCPointerAddresses, TrailingLoadReadAsLaterCallArgumentStays) {
@@ -36003,7 +36126,7 @@ TEST(HighCPointerAddresses, GsHandlerDataBit2AlignBranchIsPrinted) {
   EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
 }
 
-TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
+TEST(HighCPointerAddresses, CallResultUsedByTestEaxReachesReturn) {
   // `call helper / test eax, eax / je` must keep the call result. Dropping
   // the dest turns the compare into an uninitialized temp (cxx_eh_probe
   // 0x140001570).
@@ -36062,9 +36185,18 @@ TEST(HighCPointerAddresses, CallResultUsedByTestEaxIsAssigned) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(HighCEmitter().emit(Result.HighFuncs, OS));
   OS.flush();
-  EXPECT_NE(Source.find("= ret_one("), std::string::npos) << Source;
-  EXPECT_EQ(Source.find("\n    ret_one();"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("if ("), std::string::npos) << Source;
+  // Both exits return RAX, so folding the branch to a direct returned call is
+  // valid. Check the machine result and diagnose an uninitialized temporary
+  // rather than requiring a particular assignment or conditional spelling.
+  const std::string Program = Source + R"c(
+int64_t ret_one(void) { return 1; }
+int main(void) {
+  return uses_call_result() == 1 ? 0 : 1;
+}
+)c";
+  for (const char *Optimization : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Program, {Optimization, "-Werror=uninitialized"});
 }
 
 TEST(HighCPointerAddresses, ReturningCallFollowedByInt3PreservesDebugBreak) {
@@ -43921,23 +44053,29 @@ int main(void) {
                             true);
 }
 
-TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+static void checkMemoryRmwThroughBothRoutes(NdOp Opcode) {
+  const bool Add = Opcode == NdOp::ATOMIC_ADD;
   if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() !=
       llvm::Triple::x86_64)
-    GTEST_SKIP() << "Native x64 exchanges require an x64 host";
+    GTEST_SKIP() << "Native x64 memory operations require an x64 host";
   constexpr va_t Entry = 0x140001000;
   for (unsigned Bytes : {1U, 2U, 4U, 8U})
     for (bool Locked : {false, true}) {
+      if (Add && !Locked)
+        continue;
       std::vector<uint8_t> Code;
       if (Locked)
         Code.push_back(0xf0);
-      // xchg [rcx], dl/dx/edx/rdx; zero-extend the old value into the return
-      // register. No alignment promise can be inferred from the address.
+      // xchg/lock xadd [rcx], dl/dx/edx/rdx; extend the old value into the
+      // return register. No alignment promise can be inferred from the address.
       if (Bytes == 2)
         Code.push_back(0x66);
       if (Bytes == 8)
         Code.push_back(0x48);
-      Code.insert(Code.end(), {uint8_t(Bytes == 1 ? 0x86 : 0x87), 0x11});
+      if (Add)
+        Code.push_back(0x0f);
+      const uint8_t Base = Add ? 0xc0 : 0x86;
+      Code.insert(Code.end(), {uint8_t(Base + (Bytes != 1)), 0x11});
       if (Bytes <= 2)
         Code.insert(Code.end(),
                     {0x0f, uint8_t(Bytes == 1 ? 0xb6 : 0xb7), 0xc2});
@@ -43953,14 +44091,19 @@ TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
         const auto Image = makeCodeFixture(Entry, Code);
         const auto Source = LLVMRoute ? llvmcOnlyFunction(Image, Entry)
                                       : highcOnlyFunction(Image, Entry);
-        ASSERT_NE(Source.find("__asm__ __volatile__(\"xchg"), std::string::npos)
+        ASSERT_NE(Source.find(Add ? "__asm__ __volatile__(\"lock xadd"
+                                  : "__asm__ __volatile__(\"xchg"),
+                  std::string::npos)
+            << Source;
+        EXPECT_EQ(Source.find("__atomic_fetch_add"), std::string::npos)
             << Source;
         EXPECT_EQ(Source.find("__atomic_exchange_n"), std::string::npos)
             << Source;
         compileAndRunCallOrdering(
             "#include <stdint.h>\n#include <stdbool.h>\n#include <string.h>\n" +
-                Source + "\ntypedef uint" + std::to_string(Bytes * 8) +
-                "_t word;\n" + R"(
+                Source + "\n#define ADDITION " + (Add ? "1" : "0") +
+                "\ntypedef uint" + std::to_string(Bytes * 8) + "_t word;\n" +
+                R"(
 int main(void) {
   _Alignas(64) unsigned char storage[64];
   const word values[] = {0, (word)-1, (word)UINT64_C(0x8877665544332211),
@@ -43973,7 +44116,8 @@ int main(void) {
         word old = sub_140001000((void *)(storage + offset), values[j]);
         word current;
         memcpy(&current, storage + offset, sizeof(word));
-        if (old != values[i] || current != values[j]) return 1;
+        word expected = ADDITION ? (word)(values[i] + values[j]) : values[j];
+        if (old != values[i] || current != expected) return 1;
         for (unsigned k = 0; k < sizeof(storage); ++k)
           if ((k < offset || k >= offset + sizeof(word)) && storage[k] != 0x5a)
             return 2;
@@ -43984,6 +44128,14 @@ int main(void) {
             true);
       }
     }
+}
+
+TEST(HighCPointerAddresses, MemoryExchangeReturnsItsSnapshotThroughBothRoutes) {
+  checkMemoryRmwThroughBothRoutes(NdOp::ATOMIC_XCHG);
+}
+
+TEST(HighCPointerAddresses, MemoryAdditionReturnsItsSnapshotThroughBothRoutes) {
+  checkMemoryRmwThroughBothRoutes(NdOp::ATOMIC_ADD);
 }
 
 TEST(HighCPointerAddresses,

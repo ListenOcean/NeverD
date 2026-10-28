@@ -275,6 +275,20 @@ std::string missingHighFunctionReason(const PipelineResult &Result,
 /// A note for each function the pipeline refused, with why, which a whole
 /// unit begins with: a refused function is otherwise missing from it with
 /// no word, where asking for it alone names the reason.
+std::string notDecompiledNote(llvm::StringRef Name, va_t Entry,
+                              llvm::StringRef Reason) {
+  // Neither a name nor a reason, which may quote one, can end the comment
+  // it stands in.
+  auto Commented = [](std::string Text) {
+    for (size_t At = Text.find("*/"); At != std::string::npos;
+         At = Text.find("*/", At))
+      Text.replace(At, 2, "* /");
+    return Text;
+  };
+  return "/* neverd.not-decompiled: " + Commented(Name.str()) + " at 0x" +
+         llvm::utohexstr(Entry) + ": " + Commented(Reason.str()) + " */\n";
+}
+
 std::string refusedFunctionNotes(const PipelineResult &Result) {
   std::vector<const PipelineFunctionAudit *> Refused;
   for (const PipelineFunctionAudit &Audit : Result.FunctionAudits)
@@ -295,18 +309,21 @@ std::string refusedFunctionNotes(const PipelineResult &Result) {
     std::string Name = Audit->Name.empty()
                            ? "sub_" + llvm::utohexstr(Audit->Entry)
                            : Audit->Name;
-    // Neither a name nor a reason, which may quote one, can end the comment
-    // it stands in.
-    auto Commented = [](std::string Text) {
-      for (size_t At = Text.find("*/"); At != std::string::npos;
-           At = Text.find("*/", At))
-        Text.replace(At, 2, "* /");
-      return Text;
-    };
-    Notes += "/* neverd.not-decompiled: " + Commented(Name) + " at 0x" +
-             llvm::utohexstr(Audit->Entry) + ": " +
-             Commented(functionAuditReason(*Audit)) + " */\n";
+    Notes += notDecompiledNote(Name, Audit->Entry, functionAuditReason(*Audit));
   }
+  return Notes.empty() ? Notes : Notes + "\n";
+}
+
+/// A note for each definition the unit's C left out, which follows the
+/// pipeline's: its C could not be written, for the reason the writer gives.
+std::string refusedDefinitionNotes(
+    const std::vector<CEmitterOptions::RefusedDefinition> &Refused) {
+  std::string Notes;
+  for (const auto &Definition : Refused)
+    Notes += notDecompiledNote(
+        Definition.Name.empty() ? "sub_" + llvm::utohexstr(Definition.Entry)
+                                : Definition.Name,
+        Definition.Entry, "c-emission-failed; " + Definition.Reason);
   return Notes.empty() ? Notes : Notes + "\n";
 }
 } // namespace
@@ -2297,14 +2314,21 @@ static const char *decompileAllImpl(neverd_session_t Sess,
       COpts.SourceNames = &Names;
     recordDefinitions(COpts);
     COpts.WholeProgram = true;
+    // A definition whose C cannot be written is left out and named, as a
+    // function the pipeline refused is.
+    std::vector<CEmitterOptions::RefusedDefinition> RefusedDefinitions;
+    COpts.RefusedDefinitions = &RefusedDefinitions;
+    std::string Unit;
     try {
+      llvm::raw_string_ostream UnitOS(Unit);
       HighCEmitter Emitter;
-      Emitter.emit(R.Result.HighFuncs, OS, COpts, Debug);
+      Emitter.emit(R.Result.HighFuncs, UnitOS, COpts, Debug);
     } catch (const std::exception &Error) {
       if (S)
         S->setError(emissionFailure(Error));
       return nullptr;
     }
+    OS << refusedDefinitionNotes(RefusedDefinitions) << Unit;
     if (Dialect) {
       SourceDialectOptions Options;
       Options.Dialect = *Dialect;

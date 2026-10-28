@@ -18,6 +18,9 @@
 #include <vector>
 using namespace neverd;
 namespace {
+#define SOURCE_CALL_ABI_VALUE(Type, Name, Value) constexpr Type Name = Value;
+#include "SourceCallABIFixtures.def"
+
 SourceCallTypeHint contract(std::vector<TypeRef> Types, int Fixed = -1) {
   SourceCallTypeHint H;
   H.CallKind = SourceCallTypeHint::Kind::Analyst;
@@ -84,6 +87,75 @@ TEST(SourceCallABI, WindowsARM64FixedScalarsKeepSeparateBanksAndStackSlots) {
   EXPECT_EQ(Hint.Signature.ReturnLocation.RegisterOffset, TRI.FPReturnReg);
   EXPECT_EQ(Hint.Signature.ReturnLocation.ValueBytes, 8);
 }
+TEST(SourceCallABI, DarwinARM64FixedSpillsKeepNaturalSizeAndAlignment) {
+  struct Spill {
+    bool Floating;
+    unsigned Bytes;
+    int64_t Offset;
+  };
+  const Spill Spills[] = {
+#define SOURCE_CALL_ABI_SPILL(Floating, Bytes, Offset)                         \
+  {Floating, Bytes, Offset},
+#include "SourceCallABIFixtures.def"
+  };
+  std::vector<TypeRef> Types;
+  for (unsigned I = 0; I < kDarwinRegisterArguments; ++I) {
+    Types.push_back(NdType::makeInt(kDarwinRegisterBytes));
+    Types.push_back(NdType::makeFloat(kDarwinRegisterBytes));
+  }
+  const unsigned RegisterCount = Types.size();
+  for (const auto &Spill : Spills)
+    Types.push_back(Spill.Floating ? NdType::makeFloat(Spill.Bytes)
+                                   : NdType::makeInt(Spill.Bytes));
+  for (const auto Format :
+       {BinaryFormat::MachO, BinaryFormat::ELF, BinaryFormat::COFF}) {
+    auto Hint = contract(Types);
+    std::string Diagnostic;
+    ASSERT_TRUE(assignAnalystCallABI(Hint, Arch::AArch64, Format, Diagnostic))
+        << Diagnostic;
+    for (unsigned I = 0; I < std::size(Spills); ++I) {
+      const auto &Location =
+          Hint.Signature.Parameters[RegisterCount + I].Location;
+      EXPECT_EQ(Location.Kind, SourceABICarrierKind::Stack);
+      EXPECT_EQ(Location.EntryStackOffset, Format == BinaryFormat::MachO
+                                               ? Spills[I].Offset
+                                               : I * kDarwinRegisterBytes);
+      EXPECT_EQ(Location.ValueBytes, Spills[I].Bytes);
+    }
+  }
+}
+
+TEST(SourceCallABI, DarwinFixedAndNativeScalarContractsAgree) {
+  const unsigned Widths[] = {
+#define SOURCE_CALL_ABI_NARROW(Bytes) Bytes,
+#include "SourceCallABIFixtures.def"
+  };
+  for (const auto Architecture : {Arch::AArch64, Arch::X64})
+    for (const unsigned Bytes : Widths)
+      for (const bool Signed : {false, true}) {
+        const auto Narrow = NdType::makeInt(Bytes, Signed);
+        auto Hint = contract(std::vector<TypeRef>(
+            kDarwinRegisterArguments + kDarwinExtraArguments, Narrow));
+        Hint.Signature.ReturnType = Narrow;
+        auto Native = Hint.Signature;
+        std::string Error;
+        ASSERT_TRUE(assignAnalystCallABI(Hint, Architecture,
+                                         BinaryFormat::MachO, Error))
+            << Error;
+        ASSERT_TRUE(assignDarwinScalarSourceABI(Native, Architecture, Error))
+            << Error;
+        // The origins differ; compare the complete assigned ABI itself.
+        Native.Origin = Hint.Signature.Origin;
+        EXPECT_TRUE(equalSourceABIs(Hint.Signature, Native));
+        for (const auto &Parameter : Hint.Signature.Parameters)
+          EXPECT_EQ(Parameter.Location.ExtendTo32Bits,
+                    Parameter.Location.Kind ==
+                        SourceABICarrierKind::IntegerRegister);
+        EXPECT_EQ(Hint.Signature.ReturnLocation.ExtendTo32Bits,
+                  Architecture == Arch::AArch64);
+      }
+}
+
 TEST(SourceCallABI, WindowsARM64VariadicsUseOneIntegerBankForAllScalars) {
   const std::vector<TypeRef> Types{NdType::makeInt(4),   NdType::makeFloat(4),
                                    NdType::makeFloat(8), NdType::makeInt(8),

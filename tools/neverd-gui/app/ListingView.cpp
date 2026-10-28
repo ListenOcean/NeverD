@@ -549,6 +549,32 @@ int ListingView::columnAt(const Line &line, int x) const {
   return layout.lineAt(0).xToCursor(x - textLeft());
 }
 
+std::optional<std::pair<int, int>>
+ListingView::prefixWordAt(const Line &line, int x) const {
+  const int column = columnAt(line, x);
+  if (column >= 0 || x < arrowsWidth_)
+    return std::nullopt;
+  const int base = firstColumn(line);
+  const auto [begin, end] = tokenRange(line.prefix, column - base);
+  // The arrow gutter, the colon and the gap before the body hold no word.
+  if (begin == end || x < columnX(line, base + begin) ||
+      x >= columnX(line, base + end))
+    return std::nullopt;
+  return std::pair{base + begin, base + end};
+}
+
+bool ListingView::selectPrefixWord(int x) {
+  if (cursorLine_ < 0 || cursorLine_ >= int(lines_.size()))
+    return false;
+  const auto word = prefixWordAt(lines_[cursorLine_], x);
+  if (!word)
+    return false;
+  anchor_ = std::pair{cursorLine_, word->first};
+  cursorColumn_ = word->second;
+  viewport()->update();
+  return true;
+}
+
 int ListingView::firstColumn(const Line &line) const {
   return showPrefixes_ ? -int(line.prefix.size()) - 1 : 0;
 }
@@ -767,6 +793,14 @@ QString ListingView::selectedText() const {
     text.append(row.mid(begin, end - begin));
   }
   return text.join(QLatin1Char('\n'));
+}
+
+QString ListingView::copyText() const {
+  if (anchor_ && *anchor_ != std::pair{cursorLine_, cursorColumn_})
+    return selectedText();
+  // A prefix word copies once a click selects it; the body's highlight
+  // marks the word.
+  return currentToken();
 }
 
 void ListingView::moveCursor(int line, int column, bool extend) {
@@ -1144,45 +1178,53 @@ void ListingView::paintArrows(QPainter &painter, int first, int last) {
 void ListingView::keyPressEvent(QKeyEvent *event) {
   const bool shift = event->modifiers() & Qt::ShiftModifier;
   const bool control = event->modifiers() & Qt::ControlModifier;
+  // The highlight follows the cursor, as IDA's does, so Copy takes the word
+  // it marks.
+  const auto move = [&](int line, int column) {
+    moveCursor(line, column, shift);
+    highlight_ = currentToken();
+  };
   switch (event->key()) {
   case Qt::Key_Up:
-    moveCursor(cursorLine_ - 1, cursorColumn_, shift);
+    move(cursorLine_ - 1, cursorColumn_);
     return;
   case Qt::Key_Down:
-    moveCursor(cursorLine_ + 1, cursorColumn_, shift);
+    move(cursorLine_ + 1, cursorColumn_);
     return;
   case Qt::Key_PageUp:
     top_ = std::max(0, top_ - visibleLines() + 1);
-    moveCursor(cursorLine_ - visibleLines() + 1, cursorColumn_, shift);
+    move(cursorLine_ - visibleLines() + 1, cursorColumn_);
     return;
   case Qt::Key_PageDown:
     top_ = std::min(std::max(0, int(lines_.size()) - visibleLines()),
                     top_ + visibleLines() - 1);
-    moveCursor(cursorLine_ + visibleLines() - 1, cursorColumn_, shift);
+    move(cursorLine_ + visibleLines() - 1, cursorColumn_);
     return;
   case Qt::Key_Left:
-    moveCursor(cursorLine_, cursorColumn_ - 1, shift);
+    move(cursorLine_, cursorColumn_ - 1);
     return;
   case Qt::Key_Right:
-    moveCursor(cursorLine_, cursorColumn_ + 1, shift);
+    move(cursorLine_, cursorColumn_ + 1);
     return;
   case Qt::Key_Home:
     if (control)
       jumpTo(space_.first());
     else
-      moveCursor(cursorLine_, 0, shift);
+      move(cursorLine_, 0);
     return;
   case Qt::Key_End:
     if (control)
       jumpTo(space_.last());
     else if (const auto *line = cursorLine())
-      moveCursor(cursorLine_, int(line->styled.text.size()), shift);
+      move(cursorLine_, int(line->styled.text.size()));
     return;
   default:
     break;
   }
   if (event->matches(QKeySequence::Copy)) {
-    QApplication::clipboard()->setText(selectedText());
+    // Blank space leaves the clipboard as it was, as in IDA.
+    if (const QString text = copyText(); !text.isEmpty())
+      QApplication::clipboard()->setText(text);
     return;
   }
   QAbstractScrollArea::keyPressEvent(event);
@@ -1203,6 +1245,10 @@ void ListingView::mousePressEvent(QMouseEvent *event) {
     highlight_ = lines_[index].styled.tokenAt(column);
   } else if (index != cursorLine_ || !anchor_) {
     moveCursor(index, column);
+    highlight_ = lines_[index].styled.tokenAt(column);
+    // The context menu's Copy then takes the word the click is on.
+    if (selectPrefixWord(int(event->position().x())))
+      emitLocation();
   }
   viewport()->update();
 }
@@ -1235,9 +1281,15 @@ void ListingView::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void ListingView::mouseReleaseEvent(QMouseEvent *event) {
+  const bool pressed = selecting_;
   selecting_ = false;
   if (anchor_ && *anchor_ == std::pair{cursorLine_, cursorColumn_})
     anchor_.reset();
+  // A plain click on the address prefix selects the word under it, so Ctrl+C
+  // copies the address. Selecting on release leaves a drag its own range.
+  if (pressed && !anchor_ && event->button() == Qt::LeftButton &&
+      !(event->modifiers() & (Qt::ShiftModifier | Qt::ControlModifier)))
+    selectPrefixWord(int(event->position().x()));
   if ((event->modifiers() & Qt::ControlModifier) &&
       event->button() == Qt::LeftButton)
     if (const auto target = operandTarget())

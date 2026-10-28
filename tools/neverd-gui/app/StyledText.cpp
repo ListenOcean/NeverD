@@ -27,6 +27,17 @@ bool isTokenCharacter(QChar c) {
          c == QLatin1Char('?') || c == QLatin1Char('.');
 }
 
+namespace {
+/// Whether the character at \p at continues a word of \p text.
+bool continuesToken(const QString &text, qsizetype at, TokenDots dots) {
+  const QChar c = text.at(at);
+  if (c != QLatin1Char('.') || dots == TokenDots::Join)
+    return isTokenCharacter(c);
+  return at > 0 && at + 1 < text.size() && text.at(at - 1).isDigit() &&
+         text.at(at + 1).isDigit();
+}
+} // namespace
+
 void StyledLine::setFromWorker(const QString &line,
                                const QJsonArray &workerSpans) {
   text = line;
@@ -82,14 +93,10 @@ const StyledSpan *StyledLine::spanAt(int position) const {
   return nullptr;
 }
 
-QString StyledLine::tokenAt(int position) const {
+QString StyledLine::tokenAt(int position, TokenDots dots) const {
   if (position < 0 || position > text.size())
     return {};
-  int begin = position, end = position;
-  while (begin > 0 && isTokenCharacter(text.at(begin - 1)))
-    --begin;
-  while (end < text.size() && isTokenCharacter(text.at(end)))
-    ++end;
+  const auto [begin, end] = tokenRange(text, position, dots);
   return text.mid(begin, end - begin);
 }
 
@@ -170,16 +177,29 @@ QTextLayout &StyledLine::layout(const QFont &font, quint64 stamp,
   return *layout_;
 }
 
-QVector<int> tokenOccurrences(const QString &text, const QString &token) {
+std::pair<int, int> tokenRange(const QString &text, int position,
+                               TokenDots dots) {
+  if (position < 0 || position > text.size())
+    return {0, 0};
+  int begin = position, end = position;
+  while (begin > 0 && continuesToken(text, begin - 1, dots))
+    --begin;
+  while (end < text.size() && continuesToken(text, end, dots))
+    ++end;
+  return {begin, end};
+}
+
+QVector<int> tokenOccurrences(const QString &text, const QString &token,
+                              TokenDots dots) {
   QVector<int> result;
   if (token.isEmpty())
     return result;
   for (qsizetype at = text.indexOf(token); at >= 0;
        at = text.indexOf(token, at + 1)) {
-    const bool startOk = at == 0 || !isTokenCharacter(text.at(at - 1));
+    const bool startOk = at == 0 || !continuesToken(text, at - 1, dots);
     const qsizetype after = at + token.size();
     const bool endOk =
-        after >= text.size() || !isTokenCharacter(text.at(after));
+        after >= text.size() || !continuesToken(text, after, dots);
     if (startOk && endOk)
       result.append(int(at));
   }

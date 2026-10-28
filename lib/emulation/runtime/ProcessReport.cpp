@@ -203,6 +203,9 @@ llvm::Expected<ProcessOptions> processOptionsFromJSON(llvm::StringRef Text) {
   if (Options.Android)
     for (const auto &Image : Options.Android->DexImages)
       EncodedPayloadBytes += Image.size() * 2;
+  if (Options.Android && Options.Android->EventLogWrites)
+    for (const auto &Write : *Options.Android->EventLogWrites)
+      EncodedPayloadBytes += Write.Payload.size() * 2;
   if (Options.LinuxFiles)
     for (const auto &[Path, Bytes] : Options.LinuxFiles->Files)
       EncodedPayloadBytes += Bytes.size() * 2;

@@ -387,6 +387,11 @@ void Program::addAndroidFramework() {
         {"android/os/ServiceManagerProxy", "java/lang/Object"},
         {"android/os/SystemClock", "java/lang/Object"},
         {"android/os/SystemProperties", "java/lang/Object"},
+        {"android/util/EventLog", "java/lang/Object"},
+        {"java/lang/Number", "java/lang/Object"},
+        {"java/lang/Integer", "java/lang/Number"},
+        {"java/lang/Long", "java/lang/Number"},
+        {"java/lang/Float", "java/lang/Number"},
         {"com/android/internal/util/StatLogger", "java/lang/Object"},
         {"android/os/Handler", "java/lang/Object"},
         {"android/os/Looper", "java/lang/Object"},
@@ -425,7 +430,8 @@ void Program::addAndroidFramework() {
     type.name = "L" + std::string(name) + ";";
     type.superclass = "L" + std::string(base) + ";";
     type.access = {"public"};
-    if (std::string_view(name) == "java/util/AbstractMap" ||
+    if (std::string_view(name) == "java/lang/Number" ||
+        std::string_view(name) == "java/util/AbstractMap" ||
         std::string_view(name) == "java/net/URLConnection" ||
         std::string_view(name) == "android/content/Context" ||
         std::string_view(name) == "android/content/ContentResolver" ||
@@ -435,6 +441,10 @@ void Program::addAndroidFramework() {
         std::string_view(name) == "android/app/ClientTransactionHandler")
       type.access.insert("abstract");
     if (std::string_view(name) == "android/app/ActivityThread" ||
+        std::string_view(name) == "android/util/EventLog" ||
+        std::string_view(name) == "java/lang/Integer" ||
+        std::string_view(name) == "java/lang/Long" ||
+        std::string_view(name) == "java/lang/Float" ||
         std::string_view(name) == "android/provider/Settings$Secure" ||
         std::string_view(name) == "java/lang/StringBuilder" ||
         std::string_view(name) == "java/util/Locale" ||
@@ -497,6 +507,20 @@ void Program::addAndroidFramework() {
     if (std::string_view(name) == "android/provider/Settings$NameValueTable")
       type.interfaces = {"Landroid/provider/BaseColumns;"};
     type.source_id = "android-api28-framework";
+    if (std::string_view(name) == "java/lang/Number")
+      type.interfaces = {"Ljava/io/Serializable;"};
+    if (std::string_view(name) == "java/lang/Integer" ||
+        std::string_view(name) == "java/lang/Long" ||
+        std::string_view(name) == "java/lang/Float") {
+      type.interfaces = {"Ljava/lang/Comparable;"};
+      Field field;
+      field.reference = {type.name, "value",
+                         std::string_view(name) == "java/lang/Integer" ? "I"
+                         : std::string_view(name) == "java/lang/Long"  ? "J"
+                                                                       : "F"};
+      field.access = {"private", "final"};
+      type.fields.push_back(std::move(field));
+    }
     if (std::string_view(name) == "android/os/Binder" ||
         std::string_view(name) == "android/os/BinderProxy")
       type.interfaces = {"Landroid/os/IBinder;"};
@@ -679,6 +703,7 @@ void Program::addAndroidFramework() {
       android_framework_initializers.insert(&entry->second);
     if (inserted &&
         (std::string_view(name) == "android/os/ServiceManager" ||
+         std::string_view(name) == "java/lang/Float" ||
          std::string_view(name) == "android/os/BinderProxy" ||
          std::string_view(name) == "android/app/ActivityThread" ||
          std::string_view(name) == "android/content/pm/PackageItemInfo" ||
@@ -1031,6 +1056,17 @@ ExecutionResult AndroidFramework::field(Heap &heap, const Field &field,
                                         std::optional<uint64_t> write,
                                         const AdmitInstruction &admit) {
   const auto &ref = field.reference;
+  if (ref.owner == "Ljava/lang/Float;") {
+    // The projected immutable value is an IEEE-754 bit carrier. This does not
+    // admit floating-point DEX arithmetic or writes to final fields.
+    const auto object = heap.get(receiver);
+    if (!object->Fields.contains(&field))
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Java Float value field is not supplied"};
+    return {ExecutionStop::Returned, object->Fields.at(&field)};
+  }
   if (ref.owner == "Landroid/os/ServiceManager;") {
     auto &value = service_fields.at(&field);
     if (write)
@@ -1477,6 +1513,8 @@ ExecutionResult AndroidFramework::execute(Heap &heap, const Program &program,
                                           uint64_t receiver,
                                           std::span<const uint64_t> arguments,
                                           const AdmitInstruction &admit) {
+  if (method.Op == EventLogWrite)
+    return eventLog(heap, program, method, arguments, admit);
   if (method.Op == ServiceGet || method.Op == ServiceCheck ||
       method.Op == ServiceInitCache || method.Op == BinderAllowBlocking ||
       method.Op == BinderQueryLocalInterface || method.Op == ServiceAsBinder)

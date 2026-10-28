@@ -576,18 +576,65 @@ observable/memory/dead-call counterexamples and malformed LLVM bundles.
 Recompiled HighC/LLVMC at O0/O2 must preserve the complete key/discriminator
 composition; a legitimate intermediate `ptrauth.resign` is checked rather
 than mistaken for an arbitrary IA/0 call. Both sources also compile through
-the configured LLVM backend to ELF. Set
-`NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine sample groups and all
-five object routes. Compiler IR identifiers are normalized for reproducible
-exports. The compiler checks do not prove that the host enables instruction
+the configured LLVM backend to ELF for the original integer groups.
+`ExplicitTypesKeepAuthenticationOnTheCall` additionally checks signed/unsigned
+8/16/32-bit integers, 64-bit integers and pointers, fixed f32/f64, exhausted
+GP/FP registers, mixed operands, exact result bits and Darwin variadic tails
+across both keys, zero/dynamic discriminators and raw controls. All 75 typed
+groups emit actual Mach-O objects on five routes. Narrow register arguments
+and results require the correct LLVM extension attribute; stack arguments
+retain their source width. The outer fixture explicitly writes the complete
+X0 return carrier, and a constant result cannot stand in for the callback's
+value. Set `NEVERD_ARM64E_CALL_ABI_ARTIFACT_DIR` to retain the nine integer
+groups and 75 typed groups with all five object routes.
+`NativeTypesKeepTheOriginalIndirectTarget` separately retains recovered native
+C prototypes and refuses unsupported authenticated language bindings. Its five
+HighC variants must compile at O0/O2 with the original target and authentication.
+Compiler IR identifiers are normalized for reproducible exports.
+The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
-neither establishes the complete Apple image, FP/aggregate/variadic call or
-native signed-unwind ABI.
+neither establishes the complete Apple image, aggregate-call or native
+signed-unwind ABI.
 The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
-binds the actual model inputs and all 116 current export hashes to their source
+binds the actual model inputs and 116 export hashes recorded at those source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
 control, original timeout failures and unchanged-limit serial repeats.
+The [typed-call receipt](evidence/arm64e-typed-call-abi-2026-10-28.json)
+adds 30 Darwin typed-call model guests and repeats the original 30 integer
+guests. Actual Mach-O text is copied unchanged into the controlled guest;
+compiler IR is not retargeted to ELF for the typed calls. Supplied prototypes
+cover `float`, `double` and `uint64_t` arguments with floating results, including
+fixed stack spills and Darwin variadic tails. Every argument bit and position,
+SP alignment, return bits and callback-before-fault condition is checked.
+Five recovered-native HighC variants have identical IR and objects to their
+corresponding explicit-prototype model inputs. This does not qualify automatic
+prototype recovery, narrow integer/pointer parameters, HFA/aggregate calls,
+authenticated special-language ABI, whole images or native signed unwinding.
+
+The larger Release run recorded in that receipt contains 10,838 test instances,
+including tests shared by separate executables. It records 10,568 accepted instances, 145 skips and
+125 failures reproduced with every changed runtime implementation restored to
+the tested dev base. The entire selection is not green. Six concurrent
+timeouts passed serially with the unchanged 120-second limit. Explicit x86_64
+compiler controls and a Clang 22 floating-builtin control retain their original
+failures and separate passing reports. The former Darwin overflow refusal
+assertion is replaced by exact byte/halfword/pointer stack offsets 0/2/8.
+
+The [Darwin scalar-carrier receipt](evidence/arm64e-darwin-scalar-carriers-2026-10-28.json)
+extends the typed profile to 75 groups, adding signed/unsigned byte, halfword
+and word values, pointers, packed fixed spills and a variadic tail after a
+packed fixed prefix. All 567 selected C++ tests and 39 environment admission
+tests pass. Thirty controlled model guests check 9,000 valid original/projected
+pairs and 21,600 invalid-signature pairs. The 5,760 C O0 exception-class
+differences remain separately counted; no wrong-signature callback executes.
+Integration with dev passes 52 targeted tests and preserves all 1,041 export
+hashes, including the 501 previous files. Independent placement tests also
+check Darwin odd-register 128-bit pairs and complete aligned integer spills;
+these do not admit 128-bit analyst call prototypes or aggregate spills.
+Automatic complete prototype recovery, aggregate/HFA transport, authenticated
+special-language and whole-image ABI, native signed unwinding, native Apple
+CPA2 execution and exact fault ESR/PC remain outside this qualification.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
@@ -937,11 +984,14 @@ assertions vacuous. PHI copies retain the explicit unknown marker.
 `X86ImplicitAtomic.*` in `NeverDX86APXAtomicSemanticTests` checks memory XCHG
 widths, explicit/implicit locking, segments, register aliases, flags and
 commit-after-write behavior. The pointer projection suite's
-`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` runs both C routes at
+`MemoryExchangeReturnsItsSnapshotThroughBothRoutes` and
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` run both C routes at
 O0/O2 with UBSan, checking old values and every neighboring byte at aligned
 and unaligned offsets for all four x64 widths. `LLVMCIntrinsicSemantics.NativeExchange*`
-also compiles FS/GS forms, executes live/dead results and rejects changed
-owned assembly/type/effect contracts before normalization. These checks
+and `NativeAddition*` also compile FS/GS forms, execute live/dead results
+through original LLVM IR and emitted C, and reject changed owned
+assembly/type/effect contracts before normalization. The host must be x64;
+segment-relative forms are compiled without accessing host TLS. These checks
 exercise completion and source projection, not contention or hardware faults.
 `AtomicUpdatesKeepProgramOrderAcrossObservers` covers all ten emitted integer
 LLVM RMW operations with dead, single-use and repeated results, checking the
@@ -1281,6 +1331,20 @@ The fixture supplies standard memory prototypes when target CRT headers are
 unavailable, retaining the compiler's actual intrinsic headers and emitted bodies.
 The existing concrete enqueue tests independently cover retry, unchanged memory,
 source/header/portal fault order and missing CPL/PASID state.
+
+`NeverDX86SkinitTests` checks strict SKINIT decode/operand admission, native
+nonreturning output and both C routes on x86/x64 ELF, COFF and Mach-O. It also
+checks the complete unknown-memory/termination contract and refusal to invent
+CPU reset state. Linux x64 source probes replace launch with a nonreturning
+recorder before execution: eight ASan/UBSan caller-input observations retain
+an image-valued physical integer, and eight UBSan runs use a high-bit address
+to check ordinary DS loading and physical input together. Preprocessed source
+and caller bodies are checked to contain no launch before host execution.
+Run the shared integer-width and pointer-address suites after changing this
+address/parameter boundary. The retained source snapshots, report hashes and
+independent LLVM/NeverC instruction-boundary checks are in the
+[SKINIT evidence](evidence/x86-skinit-2026-10-27.json). They do not qualify
+successful secure launch, attestation, processor reset or physical faults.
 
 `X86SegmentedBlock.*` and `X86SegmentedBlockSource.*` additionally cover i386
 MOVDIR64B/ENQCMD/ENQCMDS with explicit source segments and implicit ES. The
@@ -2217,13 +2281,20 @@ and modular shifts. Check it with
 work allowance, exhaustive low-six-bit carry inputs, wide words through 257
 bits, nearby parity changes and budget refusal. Degree-48/65/96 near misses
 require recovery when a concrete nonzero product includes even factors.
+`CompletedPrefixesRetainBudgetForLargeNonzeroProducts` adds 56 degree-256
+variants across 8–257-bit words, both complement forms, reversed construction
+and one-factor parity changes. Native complete blocks must finish below the
+same 65,536-work limit with a compact output. Independent full-width products
+check boundary and seeded assignments with the sampling guard disabled.
 Concrete nonzero witnesses
 only stop futile zero searches; they never authorize a rewrite. Use
 `--family complemented-carry-product --count 108` for 432 degree-48–256 cases
 with complemented inputs, reversed factors and parity near misses. Keep all
 earlier corpora as performance and output-cost controls. The CLI and GUI worker
 source tests execute both degree-96 witness fixtures through all six source
-routes at O0/O2.
+routes at O0/O2. They also execute the degree-256 witness and degree-23 narrow
+nonlinear partial block through the CLI and GUI worker routes, checking compact
+source shapes against independent complete-width multiplication at O0/O2.
 
 `SymMBAResiduePowers.*` checks modular power periods, even inputs, small
 exponents, independent multiplier parity and exact/short resource accounts.
@@ -2284,6 +2355,25 @@ constant-only plans and unchanged step counts at every width from 1 through
 previously spent request budgets, local caps under unlimited requests, zero and
 short storage, exact completion boundaries and saturated unlimited accounting.
 Outputs, work, remaining storage and completed-reading memo admission agree.
+The narrow nonlinear signature tests cover 72 degree-23/30 variants through
+257 bits, complemented inputs and neighboring parity changes. Native complete
+partial blocks must reduce their cost by at least half below 32,768 work units.
+An independent multiplication oracle exhausts all 262,144 relevant low-word
+assignments for one complemented product. Keep the existing 9,500-work complete
+block regression alongside these tests to protect its structural path.
+`DenseFrequenciesFinishWidePartialProducts` checks degree-62 partial products
+at 8/64/65/128 bits against independent complete-word multiplication. The
+non-native cases must finish below 60,000 work units with output cost at most
+286, protecting dense reconstruction headroom without increasing its budget.
+`PreparedParityPrefixesKeepTheirProductAndContext` checks that a completed
+prefix reduces the next reader's work at 8/64/257 bits, without changing its
+values. A different product, the same handle in another context, zero scratch
+storage and an exhausted request must retain their own semantics.
+The `narrow-product-cross-terms` benchmark family (`--count 36`) adds
+degree-23–126 partial blocks with 6–8 observed bits and deeper masked products.
+Every complement/order variant has a neighboring input with one factor's
+parity changed; the oracle must distinguish each pair. The generator also
+supports 65/128/257-bit words for SDK and CLI diagnostic runs.
 `Z3Solver.RepeatedProductsKeepAllFactorsAndCompleteInputModels` checks long
 factor runs around power-of-two boundaries at 1–257 bits, both full and scaled
 products. Independent complete-word multiplication and high-bit near misses
@@ -4482,6 +4572,23 @@ Character-selection cases drag address prefixes, assembly text, C and Go
 pseudocode, and ordinary source rows beside a folded prelude in both directions.
 They check Ctrl+C and Edit Copy, selection retention on mouse release and right
 click, Shift-arrow selection and partial first/last rows across a newline.
+`WorkbenchTests::clickingAnAddressPrefixSelectsItsWord` left- and right-clicks
+a listing row's address and segment name and copies exactly that word. Clicks
+on the colon and the gap before the body leave the clipboard as it was, and a
+drag inside the address keeps the characters it covers.
+`WorkbenchTests::copyTakesTheHighlightedWord` runs in the listing, graph and
+pseudocode views. Without a selection, Ctrl+C and Edit Copy take the clicked
+word, the word an arrow key reaches and a right-clicked word. Blank space
+leaves the clipboard as it was, and a selection still wins. Keys move the
+listing's highlight with the copied word.
+`WorkbenchTests::cPseudocodeSplitsMemberAccesses` copies each word of
+`Device->Links.Flink` in C pseudocode, and
+`WorkbenchUnitTests::cWordsSplitMemberAccessesAtTheirDot` checks the word
+bounds and whole-word highlights behind it, dotted names kept whole outside
+C. `WorkbenchTests::clickingAHexRowAddressSelectsIt`
+clicks Hex View row addresses with each button and copies the address as
+drawn. A click on the byte the address went to, or an arrow key, makes Copy
+take bytes again, and a Shift click on an address changes nothing.
 
 The controller also starts a controlled 30-second decompile, proves uncached
 function and listing reads complete while it is running, then switches
@@ -7626,6 +7733,22 @@ Common-addend checks compare degree-256 products and differing coefficients
 against complete AP evaluation. Inputs used only by canceled terms must still
 consume their original random words, including 65–257-bit inputs and sparse
 variable IDs; surviving plans retain their internal wide arithmetic.
+Common-product checks retain modular zero divisors, repeated factors and
+compensating additive tails. They compare factored checks against complete AP
+evaluation through 257 bits, including unused wide inputs and narrow outputs
+with wide division intermediates. `WideConstantSlotsSurviveInterruptedInputLookup`
+reuses one plan after its first input callback throws, then checks zero,
+all-ones and high-bit assignments against independent arithmetic.
+`EvaluationPlansKeepInterleavedConstantSlots` alternates native and wide
+evaluation over interleaved literal and input slots, checks missing inputs,
+and retains the original DAG node count used by budget consumers.
+`BalancedCarryColumnsFinishRotatedProducts` checks degree-64 products whose
+rotated construction order previously exhausted the shared work budget.
+`InterruptedCarryColumnsRetainCompleteValues` checks six short allowances
+against independent full-width arithmetic, including refusal during reduction.
+`LiteralWordBoundariesPreserveTruncationAndZeroExtension` checks decimal,
+hexadecimal and binary spellings around the native-word boundary across
+1–257-bit target widths, including leading zeros and wide-value fallback.
 Candidate quality
 comparisons across scoring revisions must recount both outputs with the same
 metric; the SDK's version-specific size counters are diagnostic only.
@@ -12321,6 +12444,46 @@ patch-full binaries; use `check-neverd` for the complete aggregate.
 
 ## Incremental CTest workflow
 
+`AndroidServiceManagerTest.*` covers slow/statistics record bytes, strict versus
+inclusive timing, signed wrapping/division, ART strings/nulls, ignored negative
+log results, and partial field updates at resource stops. `AndroidLog.Event*`
+and `AndroidLogOptions.Event*` cover exact write transcript admission, consumption,
+errno, dynamic providers, memory faults, empty/max payloads and clipped-prefix
+access without reading an oversized tail. `AndroidJNI.ServiceManagerLogsAndNativeWritesShareOneExactTranscript`
+executes all three JNI forms followed by a native write against one cursor.
+`ProcessPublic.AndroidEventLogWritesMatchSDKAndCLI` compares sixteen complete
+reports at O0/O2, including missing, exhausted and mismatching transcripts.
+Run full Dalvik, JNI and log suites, the process-report parser suite and this
+public-interface test after changing the shared logging boundary. Available
+CPU backends execute; unavailable backends are explicit skips.
+`ProcessPublic.AndroidEventLogPayloadBudgetMatchesSDKAndCLI` adds two complete
+reports using 257 maximum-sized entries, proving that validated payload bytes
+use the shared wire budget while metadata remains bounded separately.
+
+`AndroidEventLogTest.*` adds all five overloads, exact IEEE-754 carriers,
+boxed final values, UTF-16/ART encoding, the 255-item limit, single-item collapse,
+byte truncation and API 28 zero tails, scalar capacity, error precedence,
+work/heap limits and DEX/library equivalence. `AndroidJNI.EventLog*` covers
+ordinary/V/A calls at O0/O2, relocation variants and available CPU backends,
+including independent GP/FP save cursors, overflow stack slots, immutable
+va_list memory, malformed FP save areas, baseline-FPCR conversion and explicit
+unsupported floating field returns. Run the AndroidFormatting suite too when
+changing the shared argument reader. `ProcessPublic.AndroidEventLogOverloadsMatchSDKAndCLI`
+compares thirty complete reports, including unavailable/exhausted/mismatching
+write transcripts. These checks do not establish a live logd environment.
+
+`AArch64FloatConversion.*` in `NeverDAArch64FPTests` checks 31 independent
+result/exception vectors, rejects every control bit outside the baseline
+contract, and compares 66,032 conversions with native FCVT on an ARM64 GNU-asm
+host across all 16 rounding/FZ/DN combinations. Other hosts explicitly skip
+the native oracle. `AndroidJNI.EventLogFloat*` checks direct and boxed floats
+through ordinary/V/A calls, cumulative status/QC, unchanged FPCR, raw signaling
+NaNs in jvalue arrays, and earlier FPSR effects at a later service failure.
+`ProcessPublic.AndroidEventLogFloatControlMatchesSDKAndCLI` adds 36 complete
+report pairs across O0/O2. Run the full ARM64 FP and Dalvik suites, Android
+JNI/log/formatting/scanning/callback/thread suites, Linux report/clock checks
+and EventLog public-interface cases after changing this boundary.
+
 Build the owning executable first, then select its label. This avoids relinking
 unrelated large semantic targets.
 
@@ -14736,6 +14899,8 @@ The native Linux qualification also runs the complete `HighSwiftEmitter` owner, 
 
 `SymAtomicCmpxchg.*` and `InterpreterSpecialization.AtomicCmpxchg*` cover complete byte effects, both byte orders, old-value provenance, input/output aliases, native return cells, affine-spill invalidation across joins, retained ordered occurrences, strict admission and exact/short budgets. The independent byte oracle models sequential values only. Source-wrapping controls require ordered-memory refusal for initialized, structurally valid graphs. Independent LowIR controls also bind complete sidecars and require no certificate. Native binary proofs may refuse earlier because LOCK CMPXCHG lacks a complete architecture-undefined-output audit. Raw-receipt checks bind ordering, address space and desired operands. Run the owning suites before claiming support; test definitions alone are not execution evidence.
 
+`InterpreterSpecialization.AtomicUpdates*` covers ADD/XCHG byte effects at every scalar width and both byte orders, overlapping old-value outputs, native return footprints, retained no-change operations, old/new memory provenance across nodes, explicit-domain refusal and exact/short frame-preservation budgets. Run with all interpreter-specialization, conditional-store and atomic symbolic tests; the byte oracle supplies sequential values only.
+
 `KernelObjectTests.cpp` checks known-ID lookup, type/access/mode failures, optional handle information, failed outputs without leaked references, unload, and retained identities across stack reuse. `DriverObjectTests.cpp` executes original `driver_objects.c` on available Unicorn/KVM/WHP/HVF backends, Legacy/CheckedX64, preferred/rebased images and cooperative/17-instruction scheduling. KVM/WHP outcomes are mandatory in `NativeDriverTests.def`; missing or skipped execution is a gap. These fixtures do not certify ACLs, general process exit or unimplemented object classes.
 
 `KernelDataExportTests.cpp` checks object identity, availability, thunk capacity, read-only/NX permissions, undeclared debugger bytes and recovery dependencies. `DriverDataExportTests.cpp` runs original `driver_data.c` with real DATA imports across available backends, both contracts and image bases, including unload and rejected writes/execution. Scenario, C ABI, CLI and Python tests cover strict debugger booleans and report transport. Native outcomes are required by `NativeDriverTests.def`; unavailable backends remain coverage gaps.
@@ -15455,7 +15620,16 @@ byte views, other versions and other variables of the register, call records,
 published summary operands, unsettled calls, a bounded callee's arguments and
 the positions past them, preserved registers, register-pair results, joins,
 removed loads, exceptional edges, complete and partial overwrites, and the
-proof's budget. `SourceStackSpills`
+proof's budget. Under an incomplete EH3/EH4 registration proof, a reload of
+the pushed record's SavedESP word places the CALL after it, while a second
+saved value, a narrow or atomic write of the word, a mismatched handler or
+seeded level, a saved non-stack value or a missing source refuses; a runtime
+filter's CALL at or below its stack root is separated from the parent frame,
+unlike one above the root or one without a checked root.
+`RegistrationCallStackPop.ProvenCalleeCleanupOutlivesAnIncompleteProof` in
+`NeverDWindowsRegistrationRealignedTests` checks that a direct callee's proven
+cleanup adjusts only the block's own calls, not caller-cleanup, unknown or
+import-slot calls. `SourceStackSpills`
 variants 4 and 7 in `NeverDWin64CallContractTests` require the same explicit
 return-slot diagnostic in HighC and LLVMC across COFF/ELF/Mach-O with source
 optimization on and off. Variant 8 supplies a complete later store and executes
@@ -15464,6 +15638,37 @@ continuation materialization remains a separate source-ABI requirement.
 `SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
 a unit of selected functions names the one this proof refuses and defines the
 other, while that function alone still fails with the diagnostic.
+
+`MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
+x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
+unknown and address-valued results, incomplete coverage, independent roots,
+calls, malformed edges, return occurrence binding and admission budgets.
+`CallResultBoundsSurviveTruncationAndSignExtension` checks bounded allocation
+arithmetic and negative/wrapping counterexamples at x86, x64, ARM and ARM64
+pointer widths. `CallBoundsDoNotHideNativeWidthOffsetWrap` rejects a nonnegative
+callee result whose complete stack offset crosses the signed native boundary,
+even when its upper endpoint alone fits.
+`SourceCallReturnReads.BoundedCallResultsKeepPhysicalSlotChecks`
+keeps the physical CALL-slot rejection when a result can raise SP or has no
+summary.
+`SourceCallReturnReads.NativeWidthExtentsDoNotHidePhysicalCallSlots` checks
+x86/x64 CALL pushes and loads that cross the native offset boundary even when
+their starting SP or address fits. An independent byte-wise modular oracle
+checks the aliases, and the adjacent representable intervals remain accepted
+when the required callee bound is available.
+`PipelineSourceStackAccesses.ReturnRangesDoNotDependOnFunctionScheduling`
+checks serial/parallel batches, reversed function order and replacement of a
+bounded callee by an unknown one without retaining stale facts.
+`PipelineSourceStackAccesses.BoundedCalleeKeepsDynamicFrameRestores` runs actual
+x64 call/allocation/restore bytes through source LLVM emission in COFF, ELF and
+Mach-O at one and four threads. A loaded 16-bit result supplies a bounded
+allocation; a 32-bit result whose sign extension can raise SP remains refused.
+The successful modules pass LLVM verification.
+`NativePointerRelocationBoundary.MinGWProgramWholeModuleLLVMCCompiles` retains
+the larger PE whole-module compilation fixture. Its runtime relocator uses the
+same 16-bit section-count proof. This does not establish bounds for the other
+dynamic allocations in its printf helpers: an omitted stack probe supplies no
+scalar range fact. Native Windows execution is separate from cross-compilation.
 
 `MedSEHEstablisherFrame.CallBeforeStackRestoreKeepsHandlerFrameLive` checks
 direct and indirect CALLs whose only SP use precedes an explicit restore at an
@@ -15559,6 +15764,16 @@ services and ART loading are not covered.
 `NeverDBytePatchTests`: overlay, relocation refusal, PC-relative assembly, PE signature/checksum. The same suite checks patch JSON ownership, decoded duplicate keys, legacy number spellings, malformed fields, and row/byte/input limits. With SIMD JSON enabled, `NeverDPatchJSONFallbackTests` compiles the same reader without acceleration and runs those reader contracts too. `NeverDWorkerPatch`: preview, stale input, undo/redo, batch revert, read-only replica, reopen, exclusive export.
 
 `NeverDBytePatchTests` also compares fragmented and shuffled replay against independent byte/kind oracles, retains adjacent-segment boundaries, rejects a bad late row without changing existing image copies, and verifies immutable input-view bounds and snapshot lifetime. Reverse virtual-address mappings, including high unsigned addresses, cover both replay indexes, partial reverts and exact exported bytes.
+
+Duplicate file offsets are rejected in ordered, reversed and rotated replay
+inputs, with the same diagnostic and every live overlay, image copy and original
+snapshot unchanged. Strictly increasing offsets may skip sorting; equal offsets
+retain the original sorting and validation order.
+
+Its serializer checks exact compact/indented bytes, every byte value, and
+hexadecimal address boundaries against an independent stream formatter. The
+address cases alternate short file offsets with high virtual addresses, cross
+every hexadecimal digit width, and round-trip complete rows at each indentation.
 
 `NeverDWorkerNativePatch` repeats this against the real SDK. `NeverDWorkerSourceBytePatch` verifies source proof, isolated preview, frame symbols and native C replacement on Linux.
 
@@ -16136,3 +16351,25 @@ simplifies its obfuscated retained words, and stays exact under partial budgets.
 Run `NeverDSymMBAMaskRelationTests` and the broader `NeverDSymbolicTests`.
 
 The focused NeverDCOFFExceptionModelTests target runs exception model and decoder regressions, including unsorted duplicate directory starts, long/cyclic chains, terminal frame mismatches and addresses near the VA limit. Build it with scripts/build.py and pair its CTest label with NeverDCOFFExceptionV2Tests when changing x64 unwind directory processing.
+
+`X86LegacyAtomic.LockedArithmetic*` checks x86/x64 scalar widths, independent arithmetic flags, preserved source registers and carry, signed immediates, unaligned neighboring bytes, read-only and truncated mappings, FS/GS addresses and unlocked controls. Unsupported locked core operations cannot publish plain stores. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` also checks all four locked arithmetic forms through raw specialization and retains ordered-memory proof refusal.
+
+### Predicate cleanup and independent call effects
+
+`HighSourceExpressions.PredicateCleanupKeepsDistinctIndirectCallEffects`
+executes generated C at O0/O2 after HighIR conditional cleanup. A surrounding
+predicate call and an unused-result call before a nested conditional must
+retain their separate effects. Variants cover a shared display name, matching
+callee identities at different sites, missing sites, and changed targets or
+arguments at one site. Independent providers check call counts, arguments and
+both nested paths; a shared provider also verifies repeated actual invocations
+of one callee. `ComposedPredicateCallRunsOnce` covers the opposite case: a
+prefix call whose operands the composed predicate spells through earlier prefix
+values is the same execution and must run once. A prefix call that a nested-if
+merge composes into its condition runs only there, whether or not the call
+names a site; `HighCPointerAddresses.ThenPredChainUndefSkipArmFoldsElse`,
+`NestedIfAndKeepsPredicateCallsAfterIndependentWork` and
+`ConsecutiveSkipGotosKeepsReloadedCallPredicate` count the calls that remain.
+Run `NeverDHighControlFlowTests`, `NeverDHighCStoreForwardingTests`,
+`NeverDWindowsEHSourceTests` and `NeverDCPointerProjectionTests`. This is a
+HighIR structuring contract; it requires no external source interface.

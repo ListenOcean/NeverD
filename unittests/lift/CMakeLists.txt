@@ -707,6 +707,13 @@ add_neverd_unittest(NeverDX86TransactionBeginTests
 target_include_directories(NeverDX86TransactionBeginTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
+add_neverd_unittest(NeverDX86SkinitTests
+  x86/X86SkinitTests.cpp
+  x86/X86SkinitCallTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86SkinitTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
 add_neverd_unittest(NeverDX86TBMTests
   x86/X86TBMTests.cpp
   LINK_COMPONENTS Decode Lift Loader)

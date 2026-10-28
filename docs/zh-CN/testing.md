@@ -1999,6 +1999,8 @@ Linux 原生验收还执行完整的 `HighSwiftEmitter` 测试集，覆盖寄存
 
 `SymAtomicCmpxchg.*` 与 `InterpreterSpecialization.AtomicCmpxchg*` 覆盖完整字节效果、两种字节序、旧值来源、输入输出别名、原生返回单元、跨汇合点的仿射溢出存储失效、有序操作发生次数的保留、严格准入及精确／不足预算。独立字节校验器仅模拟顺序值语义。源码包装对照采用初始化完整、结构有效的图，要求在有序内存边界拒绝。独立 LowIR 对照还绑定完整 sidecar，并要求不产生证书。原生二进制证明可能更早拒绝，因为 LOCK CMPXCHG 尚缺完整的架构未定义输出审计。原始收据检查绑定内存序、地址空间和目标操作数。声明支持前应运行所属测试集；测试定义本身不是执行证据。
 
+`InterpreterSpecialization.AtomicUpdates*` 覆盖 ADD/XCHG 的所有标量宽度和两种字节序、旧值输出重叠、原生返回范围、不改变值的操作保留、跨节点的新旧内存来源、显式域拒绝及帧保留的精确／不足预算。应与全部解释器特化、条件存储和原子符号测试一起运行；字节校验器只提供顺序值语义。
+
 `InterpreterSpecialization.WideIntegerConcat*` 覆盖两种字节序、高低字、常量输入、重叠输出、高字控制、非法形状、精确／不足预算及未知内存来源保留。严格解码的 `PSHUFD` 以独立双字索引验证全部 256 种选择值及相同／不同目标寄存器。`BinaryLowIRRefinement.WideIntegerConcatCompletesOnlyRawRecovery` 保留原生证明和两种源码布局的拒绝。
 
 `InterpreterSpecialization.Timestamp*` 用独立值和状态参考实现检查完整读数、寄存器高半部清零、独立及重复读取、寄存器／标志／内存／段基址保持、精确和不足预算、非法序列与未知地址来源。`BinaryLowIRRefinement.TimestampCompletesOnlyRawRecovery` 检查原始恢复完成，同时保留原生证明和源码布局拒绝。现有 `X86_64_Intrinsics` 时间戳用例检查源码生成和一次读取的完整位结果；`DriverTimestamp` 单独检查 Unicorn/KVM/WHP 共享时钟策略、状态保持、预算及溢出。平台跳过不代表该后端已执行。
@@ -2188,3 +2190,7 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 调用后内存测试覆盖保留值、条件结果、未知状态更新、调用前目标与无效输入拒绝。修改此边界时，一并运行 `NeverDSymbolicCallEffectTests`、`NeverDSymbolicIntegerIntrinsicTests` 和 `NeverDSymMemoryKnowledgeTests`。
 
 `NeverDSymbolicCallEffectTests` 还检查提供者能获取两条分支、先前调用效果、重复调用以及合流后的完整路径条件；矛盾效果会阻止后续操作和提供者调用。这些是不依赖求解器的探索回归，不是外部 API 契约验证。
+
+`MemoryAdditionReturnsItsSnapshotThroughBothRoutes` 与交换对照在 O0/O2 和 UBSan 下执行两条 C 输出路线，覆盖四种 x64 宽度、未对齐地址、旧值和所有邻接字节。`LLVMCIntrinsicSemantics.NativeAddition*` / `NativeExchange*` 还执行原始 LLVM IR、保留未使用结果的写入，并拒绝改变的汇编契约。FS/GS 形式只编译，不访问宿主 TLS；执行需要 x64 宿主。这些检查不认证并发争用或硬件故障。
+
+`X86LegacyAtomic.LockedArithmetic*` 检查 x86/x64 标量宽度、独立算术标志、源寄存器和进位保留、有符号立即数、未对齐邻接字节、只读及截断映射、FS/GS 地址和无锁对照。不支持的带锁核心运算不能发布普通存储。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` 还检查四种带锁算术的原始特化，并保留有序内存证明拒绝。

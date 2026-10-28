@@ -26,8 +26,11 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstdlib>
+#include <cstring>
 #include <exception>
 #include <memory>
+#include <string>
 #include <vector>
 
 using namespace neverd;
@@ -35,6 +38,16 @@ using namespace neverd::sdk;
 namespace patchLimits = neverd::limits::patch;
 
 namespace {
+// JSON serialization escapes NULs, so its known length also describes the
+// complete C string. Keep the caller's independent malloc-owned result without
+// scanning a large inventory again to recover that length.
+char *copyJSONResult(const std::string &Text) {
+  auto *Result = static_cast<char *>(std::malloc(Text.size() + 1));
+  if (Result)
+    std::memcpy(Result, Text.c_str(), Text.size() + 1);
+  return Result;
+}
+
 struct BytePatchSnapshot : neverd_byte_patch_snapshot_v1 {
   std::vector<neverd_byte_patch_row_v1> Rows;
   std::unique_ptr<uint8_t[]> Bytes;
@@ -256,7 +269,7 @@ const char *neverd_byte_patches_json(neverd_session_t Sess) {
   llvm::json::OStream Output(Stream);
   patch::writePatchRows(Output, S->BytePatches);
   Stream.flush();
-  return dupStr(Text);
+  return copyJSONResult(Text);
 }
 const neverd_byte_patch_snapshot_v1 *
 neverd_byte_patches_snapshot_v1(neverd_session_t Sess) {
@@ -318,7 +331,7 @@ const char *neverd_byte_patch_ranges_json(neverd_session_t Sess) {
       });
   });
   Stream.flush();
-  return dupStr(Text);
+  return copyJSONResult(Text);
 }
 const char *neverd_byte_patch_context_json(neverd_session_t Sess,
                                            neverd_va_t Address) {

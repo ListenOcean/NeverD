@@ -1232,7 +1232,10 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
     return Index;
   };
   std::set<size_t> PtrParameters;
-  std::set<size_t> SegmentOffsetParameters;
+  std::set<size_t> RawAddressParameters;
+  for (const auto &Value : x86PhysicalAddressInputValues(Func))
+    if (auto Index = parameterIndex(Value))
+      RawAddressParameters.insert(*Index);
   auto recordAddressLiveIns = [&](const MedVar &AddrVar,
                                   std::set<size_t> &Roles) {
     if (auto Index = parameterIndex(AddrVar))
@@ -1265,11 +1268,11 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
           Op.NumInputs >= 1)
         MemoryAddress = &Op.Inputs[0];
       else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs >= 2 &&
-               Op.Inputs[0].isConst() &&
-               intrinsicSupportsMemoryAddressSpace(
-                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
-               !isX86StringIntrinsic(
-                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+                 Op.Inputs[0].isConst() &&
+                 intrinsicSupportsMemoryAddressSpace(
+                     static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+                 !isX86StringIntrinsic(
+                     static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress) {
         recordAddressLiveIns(*MemoryAddress,
@@ -1277,7 +1280,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
                                          NdMemoryAddressSpace::Default &&
                                      !x86NativeMemoryHasSegmentOffset(Op)
                                  ? PtrParameters
-                                 : SegmentOffsetParameters);
+                                 : RawAddressParameters);
       }
     }
   }
@@ -1290,7 +1293,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
     const auto Scalar = MP.RegOff == kNoParamReg
                             ? Func.FPParamScalarBytes.end()
                             : Func.FPParamScalarBytes.find(MP.RegOff);
-    if (PtrParameters.count(PI) && !SegmentOffsetParameters.count(PI) &&
+    if (PtrParameters.count(PI) && !RawAddressParameters.count(PI) &&
         !TRI.isFrameOrLinkReg(MP.RegOff))
       TP.Type = NdType::makePtr();
     else if (Scalar != Func.FPParamScalarBytes.end())

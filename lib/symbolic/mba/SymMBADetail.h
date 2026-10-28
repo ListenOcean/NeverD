@@ -36,6 +36,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/SmallVector.h"
 
+#include <algorithm>
 #include <array>
 #include <cassert>
 #include <cstddef>
@@ -470,15 +471,17 @@ void forEachMonomial(
   if (Selected.empty())
     return;
   llvm::SmallVector<size_t, 4> Pick(Selected.size(), 0);
+  // The visitor borrows the sorted key only for this combination. Reuse its
+  // storage across the Cartesian product, including degrees beyond inline
+  // capacity, and keep comparison of scalar indices inside the sort.
+  Monomial Key(Selected.size(), 0);
   for (;;) {
     if (!Budget.consume())
       return;
 
-    Monomial Key;
-    Key.reserve(Selected.size());
     for (size_t J = 0; J < Selected.size(); ++J)
-      Key.push_back(Selected[J][Pick[J]]);
-    llvm::sort(Key);
+      Key[J] = Selected[J][Pick[J]];
+    std::sort(Key.begin(), Key.end());
     if (!Visit(Key))
       return;
 

@@ -352,6 +352,16 @@ static const LibraryMethod Methods[] = {
      ServiceAsBinder},
     {"android/os/IServiceManager", "asBinder", "()Landroid/os/IBinder;",
      ServiceAsBinder},
+    {"android/util/EventLog", "writeEvent", "(II)I", EventLogWrite, true},
+    {"android/util/EventLog", "writeEvent", "(IJ)I", EventLogWrite, true},
+    {"android/util/EventLog", "writeEvent", "(IF)I", EventLogWrite, true},
+    {"android/util/EventLog", "writeEvent", "(ILjava/lang/String;)I",
+     EventLogWrite, true},
+    {"android/util/EventLog", "writeEvent", "(I[Ljava/lang/Object;)I",
+     EventLogWrite, true},
+    {"java/lang/Integer", "<init>", "(I)V", Construct},
+    {"java/lang/Long", "<init>", "(J)V", Construct},
+    {"java/lang/Float", "<init>", "(F)V", Construct},
 };
 
 struct LibraryStop {
@@ -477,7 +487,7 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
         M.Op == StatLoggerRecord || M.Op == ServiceGet ||
         M.Op == ServiceCheck || M.Op == ServiceInitCache ||
         M.Op == BinderAllowBlocking || M.Op == BinderQueryLocalInterface ||
-        M.Op == ServiceAsBinder ||
+        M.Op == ServiceAsBinder || M.Op == EventLogWrite ||
         (M.Op == Construct &&
          (std::string_view(M.Class) == "android/os/Handler" ||
           std::string_view(M.Class) ==
@@ -508,6 +518,49 @@ ExecutionResult executeLibrary(Heap &heap, const LibraryMethod &M,
       work(bytes.size());
       return Ref(heap.stringConstant(key, {bytes.begin(), bytes.end()}));
     };
+    if (M.Op == Construct &&
+        (std::string_view(M.Class) == "java/lang/Integer" ||
+         std::string_view(M.Class) == "java/lang/Long" ||
+         std::string_view(M.Class) == "java/lang/Float")) {
+      if (!program)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java boxed value declaration is not supplied"};
+      const auto *field = program->findField(
+          {"L" + std::string(M.Class) + ";", "value", Types[0]}, false);
+      if (!field)
+        return {ExecutionStop::Unsupported,
+                0,
+                {},
+                "Java boxed value field is not supplied"};
+      if (ObjectValue &&
+          (ObjectValue->Type != Object::Instance ||
+           ObjectValue->ClassName != M.Class || ObjectValue->Initialized ||
+           !ObjectValue->Fields.contains(field)))
+        return failure("Java boxed value constructor receiver mismatch");
+      tick();
+      auto result =
+          ObjectValue
+              ? ObjectValue
+              : heap.allocate(
+                    Object::Instance, M.Class, 0,
+                    ::neverd::limits::dalvik::kInstanceFieldStorageBytes);
+      if (!result)
+        return Ref(result);
+      result->Fields[field] = Types[0] == "J" ? Values[0] : uint32_t(Values[0]);
+      return Ref(result);
+    }
+    if (ObjectValue &&
+        (ObjectValue->ClassName == "java/lang/Integer" ||
+         ObjectValue->ClassName == "java/lang/Long" ||
+         ObjectValue->ClassName == "java/lang/Float") &&
+        !Nonvirtual &&
+        (M.Op == IdentityEquals || M.Op == Hash || M.Op == ToString))
+      return {ExecutionStop::Unsupported,
+              0,
+              {},
+              "Java boxed value comparison and formatting are not modeled"};
     if (std::string_view(M.Class) == "java/net/URL") {
       if (ObjectValue && (ObjectValue->Type != Object::Instance ||
                           ObjectValue->ClassName != M.Class))

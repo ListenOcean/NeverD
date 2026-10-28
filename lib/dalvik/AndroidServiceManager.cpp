@@ -7,12 +7,14 @@
 /// \file
 /// API 28 initialization, cached Binder identities and explicit lookup replies.
 //===----------------------------------------------------------------------===//
+#include "AndroidEventLog.h"
 #include "AndroidFramework.h"
 
 #include "neverd/dalvik/Limits.h"
 
 #include <algorithm>
 #include <bit>
+#include <initializer_list>
 #include <optional>
 #include <set>
 #include <string>
@@ -439,15 +441,36 @@ AndroidFramework::serviceManager(Heap &heap, const Program &program,
           uint32_t(*field(core ? "GET_SERVICE_LOG_EVERY_CALLS_CORE"
                                : "GET_SERVICE_LOG_EVERY_CALLS_NON_CORE",
                           "I")));
-      if ((time >= threshold &&
-           (signedLong(now) >
-                signedLong(*field("sLastSlowLogUptime", "J") + 5000) ||
-            signedLong(*field("sLastSlowLogActualTime", "J")) < time)) ||
-          (std::bit_cast<int32_t>(uint32_t(count)) >= interval &&
-           signedLong(now) >=
-               signedLong(*field("sLastStatsLogUptime", "J") + 5000)))
-        return unsupported(
-            "Android ServiceManager event logging is not modeled");
+      auto writeLog = [&](uint32_t tag, std::initializer_list<int32_t> values,
+                          std::optional<uint64_t> name = {}) {
+        AndroidEventLog log(tag);
+        for (int32_t value : values) {
+          tick(admit);
+          log.scalar(0, uint32_t(value));
+        }
+        if (name)
+          take(log.string(heap.get(*name).get(), admit));
+        take(log.write(services, admit));
+      };
+      if (time >= threshold &&
+          (signedLong(now) >
+               signedLong(*field("sLastSlowLogUptime", "J") + 5000) ||
+           signedLong(*field("sLastSlowLogActualTime", "J")) < time)) {
+        writeLog(230001, {int32_t(time / 1000)}, arguments[0]);
+        *field("sLastSlowLogUptime", "J") = now;
+        *field("sLastSlowLogActualTime", "J") = uint64_t(time);
+      }
+      if (std::bit_cast<int32_t>(uint32_t(count)) >= interval &&
+          signedLong(now) >=
+              signedLong(*field("sLastStatsLogUptime", "J") + 5000)) {
+        writeLog(230000, {std::bit_cast<int32_t>(uint32_t(count)),
+                          std::bit_cast<int32_t>(uint32_t(total)) / 1000,
+                          std::bit_cast<int32_t>(uint32_t(
+                              now - *field("sLastStatsLogUptime", "J")))});
+        count = 0;
+        total = 0;
+        *field("sLastStatsLogUptime", "J") = now;
+      }
     }
     const uint64_t args[] = {binder};
     return executeLibrary(heap,

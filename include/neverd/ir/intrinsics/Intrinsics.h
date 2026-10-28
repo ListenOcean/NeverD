@@ -486,6 +486,9 @@ enum class Intrinsic : uint16_t {
 #define NEVERD_A64_WRITEBACK_OPERATION(Id, ...) Id,
 #include "neverd/ir/intrinsics/AArch64/AArch64WritebackMemory.def"
 
+  // Append-only: secure-loader launch abandons the calling machine context.
+  X86Skinit,
+
   _Count = 16000
 };
 
@@ -523,7 +526,8 @@ enum class X86SystemStateKind : uint8_t {
   InvalidateBroadcast,
   SegmentedBlock,
   CacheZero,
-  TransactionAbort
+  TransactionAbort,
+  SecureLaunch
 };
 
 struct X86SystemStateContract {
@@ -561,6 +565,13 @@ constexpr bool isX86SystemStateAddressArgument(Intrinsic Id, unsigned Index) {
            C.Kind == X86SystemStateKind::DirectStore64B ||
            C.Kind == X86SystemStateKind::MsrList) &&
           Index == 1);
+}
+
+/// A launch address names physical memory, never a relocated image object.
+constexpr bool isX86SystemStatePhysicalAddressArgument(Intrinsic Id,
+                                                       unsigned Index) {
+  return x86SystemStateContract(Id).Kind == X86SystemStateKind::SecureLaunch &&
+         Index == 0;
 }
 
 enum class X86VirtualizationResult : uint8_t { None, Flags, Read };

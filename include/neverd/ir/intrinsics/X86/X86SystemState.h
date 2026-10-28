@@ -97,6 +97,10 @@ x86SystemStateLayout(Intrinsic Id, Arch TargetArch, uint16_t Width,
   case K::HistoryReset:
     // Intel specifies that imm8 is ignored. Only EAX controls the reset.
     return X86SystemStateLayout{0, 1, {4}};
+  case K::SecureLaunch:
+    // EAX is a physical SLB address in every code mode. Native admission
+    // precedes the processor's alignment and reset; preserve all 32 bits.
+    return X86SystemStateLayout{0, 1, {4}};
   case K::InvalidateBroadcast:
     if ((Width != 4 && Width != 8) || (TargetArch == Arch::X86 && Width != 4))
       return std::nullopt;
