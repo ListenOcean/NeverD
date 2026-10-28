@@ -1221,12 +1221,12 @@ qualified by the compiler fork's CPL0 QEMU fixtures, not physical hardware.
 Build these targets in a configured test build (see [testing.md](testing.md)):
 
 ```sh
-cmake --build build-x86 --target \
+python3 scripts/build.py build-x86 --target \
   NeverDX86InstructionCoverageTests NeverDX86SystemStateTests \
   NeverDX86SHA512Tests NeverDX86VectorEncodingModeTests NeverDX86FPEncodingTests \
   NeverDX86VirtualizationTests NeverDX86VirtualizationSourceTests \
   NeverDX86SystemSideeffectTests NeverDX86F16CStateTests \
-  NeverDX86EncodingAccuracyTests NeverDLLVMCVectorTests
+  NeverDX86EncodingAccuracyTests NeverDLLVMCVectorTests --parallel 4
 ctest --test-dir build-x86 --output-on-failure \
   -L '^(NeverDX86(InstructionCoverage|SystemState|SHA512|VectorEncodingMode|FPEncoding|Virtualization|VirtualizationSource|SystemSideeffect|F16CState|EncodingAccuracy)Tests|NeverDLLVMCVectorTests)$'
 ```
@@ -2851,6 +2851,25 @@ been replaced by this shared contract and its broader negative tests.
 An owned context still executes its restore/operation/save/host-restore as one
 assembly unit. Typed `X87ReadStatus` still consumes the status sampled by its
 own operation; replacing it with ambient FNSTSW would read the wrong state.
+
+The [qualification ledger](evidence/x86-x87-status-2026-10-28.json) binds LLVM
+`5740ed1d13baa01ca5f82d82ebc927e656620b39` and NeverC
+`a26c5ba817626a13f58ec0a19d6e238999f8af0d` to forty LLVM code-generation tests,
+113 NeverC x86 frontend tests, six backend tests and 53 generator unit tests.
+Six direct LLVM, NeverC and text-IR bridge O0/O2 profiles pass 34,560 state
+observations, sixty expected faults, twelve page-boundary accesses and 1,536
+live-value cases on the recorded Intel Linux x64 host. All profile outputs
+agree. The shared qualification driver also repeats the existing control-word
+matrix, with unchanged generated sources and all six profiles passing.
+
+At `6f7912079bda8880c2b32597c17ad050875a27a9`, both NeverD SDK profiles run
+502 tests: r6 passes 487 and skips fifteen; the native fork passes 490 and
+skips twelve. Both execute the Clang and NeverC C projections. Eleven skips
+require native AArch64 and one requires Windows single stepping; r6 additionally
+lacks three native virtualization/descriptor interfaces. The later dev
+integration at `0329646f8c3b9d90cd323a4a625d73c7a9aacf91` repeats 42 affected
+x87 interface, source-stack and machine-state tests on each SDK, all passing.
+
 These native interfaces do not close the complete-machine-state, continuation
 or physical qualification gaps listed above. LLVM release, the production SDK
 pin and the LLVM gitlink remain unchanged until those global gaps close.
