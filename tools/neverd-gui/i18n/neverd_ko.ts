@@ -6771,6 +6771,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 참조 식별 정보: 미확인. 일부 호출 또는 데이터 대상을 비교할 수 없습니다. 이 사실만으로 변경이 발생했다고 판단할 수는 없습니다.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>대응된 호출 포함</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>호출 대상이 대응된 직접 호출을 넘어 공유 영역을 확장합니다. 결과는 현재 함수 대응에 따라 달라지며 대응이 변경되면 다시 계산됩니다. 호출 동작을 검증하지는 않습니다.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7923,6 +7931,12 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 SSA 분석 방식: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+호출은 현재 함수 대응을 기준으로 합니다. 동작은 검증되지 않았습니다.</translation>
     </message>
 </context>
 <context>

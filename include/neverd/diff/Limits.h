@@ -106,6 +106,12 @@ inline constexpr size_t kAlignmentPollCells = 1024;
 inline constexpr unsigned kRegionSeedInstructions = 3;
 inline constexpr unsigned kDefaultRegionMinInstructions = 4;
 inline constexpr unsigned kDefaultRegionMinRepeatedInstructions = 8;
+/// In the call profile, two distinct mapped targets support a short repeated
+/// run without treating one common or repeated callee as distinctive context.
+inline constexpr unsigned kRegionMinDistinctCallTargets = 2;
+/// A paired cleanup call at a shared return/direct-jump boundary can support
+/// a short terminal run; the minimum run length and seed frequency still apply.
+inline constexpr unsigned kRegionMinTerminalCallTargets = 1;
 /// Short repeated runs still qualify when they cover this share of either
 /// participating function's decoded non-transfer instructions.
 inline constexpr double kRegionMinShortRunFunctionCoverage = 0.5;

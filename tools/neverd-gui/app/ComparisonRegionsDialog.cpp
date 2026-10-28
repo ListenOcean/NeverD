@@ -324,6 +324,10 @@ void ComparisonRegionsDialog::refresh() {
                 .arg(R["state"].toString().replace('_', ' '))
           : tr("Enable region analysis in comparison Settings, then compare "
                "again."));
+  if (!Flow && R["call_evidence"] == "current_function_correspondence")
+    Summary->setText(
+        Summary->text() +
+        tr("\nCalls use current function pairs; behavior is not validated."));
   if (Flow)
     Summary->setText(
         Summary->text() +

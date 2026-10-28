@@ -6807,6 +6807,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 Identità dei riferimenti: non risolte. Alcune destinazioni di chiamate o dati non possono essere confrontate. Questo da solo non dimostra una modifica.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>Includi chiamate associate</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>Estende le regioni condivise oltre le chiamate dirette con destinazioni associate. I risultati dipendono dalle coppie di funzioni attuali e vengono ricalcolati quando cambiano. Il comportamento delle chiamate non viene convalidato.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7959,6 +7967,12 @@ I produttori degli input esterni non vengono confrontati né conteggiati come co
 SSA recipe: %1</source>
         <translation>
 Metodo SSA: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+Le chiamate usano le coppie di funzioni attuali; il comportamento non è convalidato.</translation>
     </message>
 </context>
 <context>

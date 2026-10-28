@@ -6951,6 +6951,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 هويات المراجع: غير محسومة. لا يمكن مقارنة بعض أهداف الاستدعاءات أو البيانات. وهذا وحده لا يثبت حدوث تغيير.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>تضمين الاستدعاءات المتطابقة</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>توسيع المناطق المشتركة عبر الاستدعاءات المباشرة التي تمت مطابقة أهدافها. تعتمد النتائج على أزواج الدوال الحالية ويعاد حسابها عند تغير الأزواج. لا يتحقق هذا من سلوك الاستدعاءات.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -8103,6 +8111,12 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 طريقة SSA: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+تستخدم الاستدعاءات أزواج الدوال الحالية؛ لم يتم التحقق من السلوك.</translation>
     </message>
 </context>
 <context>

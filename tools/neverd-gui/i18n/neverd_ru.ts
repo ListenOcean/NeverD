@@ -6843,6 +6843,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 Идентичности ссылок: не определены. Некоторые цели вызовов или ссылки на данные нельзя сравнить. Само по себе это не доказывает наличие изменения.</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>Включить сопоставленные вызовы</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>Расширять общие области через прямые вызовы с сопоставленными целями. Результаты зависят от текущих пар функций и пересчитываются при их изменении. Поведение вызовов при этом не проверяется.</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7995,6 +8003,12 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 Метод SSA: %1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+Вызовы используют текущие пары функций; поведение не проверено.</translation>
     </message>
 </context>
 <context>

@@ -1572,6 +1572,21 @@ history branches and existing views. Edit status is separate from the retained
 snapshot's completeness. Worker capabilities resolve each additive progress
 export independently, and Qt consumes those capabilities. Copies, sorting and
 final publication remain indivisible; cancellation has no hard latency bound.
+
+`Regions` additionally owns opt-in `native-call-runs-v1`. Its per-search call
+context maps paired native targets to one canonical inventory, without rescanning
+callees per instruction or introducing another matcher. Shape-plus-target seeds
+remain bounded by the existing work, frequency and storage allowances; exact
+extension verifies every admitted call. Multiple distinct mapped targets or a
+paired terminal cleanup call can support a short repeated run, while clones
+remain ambiguous. Calls are
+conditional correspondence evidence, never behavioral proof. The interprocedural
+index stays coordinator-owned for deterministic cumulative budget/cancellation
+accounting. `Comparison` reruns this profile inside mapping-edit/undo transactions;
+`ComparisonJSON` binds it after validating the saved bijection. Default native
+runs remain independent of mapping edits and retain their original encoding.
+CLI/API/worker/Qt only select and present this owner and its recorded scope.
+
 `DataFlow` adds bounded SSA neighborhoods and forward/backward slices over an
 immutable dependency graph. `MedDataFlow` is its read-only adapter from the
 pipeline's verified MedIR; it reuses the IR owner's entry-live-in classification,

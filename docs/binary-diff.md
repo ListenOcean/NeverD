@@ -220,13 +220,41 @@ the ordinary function delta. Memory effects, register renaming, scheduling,
 source-level dataflow and cross-ISA semantics are not validated by this profile.
 An unchanged shared run does not hide a changed constant elsewhere in the body.
 
+`--region-calls` (desktop **Settings → Include matched calls**) selects the
+separate `native-call-runs-v1` profile and enables region analysis. It extends
+block-local runs across direct calls whose native targets have a current
+one-to-one function correspondence. The run retains exact normalized operands
+and register identities. Unknown, indirect, unpaired or differently paired call
+targets interrupt it; branches and returns still interrupt it. These results
+are conditioned on the heuristic or analyst-selected function pairs, **not** on
+validated call behavior or argument equivalence. The report records
+`call_evidence: current_function_correspondence`, and the review window displays
+this scope alongside the original instructions.
+
+Call-profile coverage also counts admitted direct calls. In that profile, a
+short repeated run can additionally qualify when it contains at least two
+distinct paired call targets, or a paired call in a run ending at a return or
+direct-jump boundary on both sides. The ordinary minimum length, occurrence
+bounds, exact operand checks and clone ambiguity still apply. Repeated calls to
+one target inside a block do not supply that additional support. This lets short call-heavy
+fragments survive extraction or duplication without discarding their competing
+destinations. It does not infer equivalent register values, memory effects or
+control paths. Changed calls and constants outside a shared fragment remain
+visible; matching a cleanup tail does not make its preceding call unchanged.
+
+Mapping edits and undo recompute call-profile regions within the existing
+work/storage allowance. Cancellation preserves the previous mapping and regions;
+resource exhaustion publishes only completed evidence with its stop reason.
+Saved binding validates call targets against the saved correspondence and exact
+native snapshots. The default `native-runs-v1` search and encoding are unchanged.
+
 Repeated runs shorter than the default eight instructions are omitted unless
 they cover at least half the eligible instructions of either function. This
 limits components formed from common short sequences; it is a heuristic
 abstention, not evidence that a transformation is absent. Unique seeds retain
 the ordinary minimum run length.
 
-`regions` may be an object with `enabled`, `min_instructions`,
+`regions` may be an object with `enabled`, `calls`, `min_instructions`,
 `min_repeated_instructions`, `max_occurrences`, `max_seeds`, `max_work`,
 `max_anchors` and `max_hypotheses`. Work/storage admission
 and defaults have one owner in `diff/Limits.h`. Frequent seed groups and oversized

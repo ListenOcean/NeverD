@@ -6771,6 +6771,14 @@ Reference identities: unresolved. Some call or data targets cannot be compared. 
         <translation>
 參照身分：未解析。部分呼叫或資料目標無法比較。僅憑這一點無法認定發生了變更。</translation>
     </message>
+    <message>
+        <source>Include matched calls</source>
+        <translation>包含已配對的呼叫</translation>
+    </message>
+    <message>
+        <source>Extend shared regions across direct calls whose targets are paired. Results depend on the current function pairs and are recomputed when pairs change. This does not validate call behavior.</source>
+        <translation>允許共用區域跨越目標已配對的直接呼叫。結果取決於目前的函式配對，並在配對變更時重新計算。這不驗證呼叫行為。</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::ComparisonFlowDialog</name>
@@ -7923,6 +7931,12 @@ External input producers are not compared or counted as shared code.</source>
 SSA recipe: %1</source>
         <translation>
 SSA 分析方案：%1</translation>
+    </message>
+    <message>
+        <source>
+Calls use current function pairs; behavior is not validated.</source>
+        <translation>
+呼叫依據目前的函式配對；尚未驗證行為。</translation>
     </message>
 </context>
 <context>

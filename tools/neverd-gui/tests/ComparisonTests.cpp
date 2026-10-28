@@ -2174,6 +2174,96 @@ private slots:
     delete Dialog;
   }
 
+  void callRegionSettingsAndEvidenceSurviveEditsAndReopen() {
+    const auto Path = Directory.filePath("call-regions.bin");
+    auto Code =
+        QByteArray::fromHex("89f883c00383f017e8130000006bc00783c00983f025c3");
+    Code.append(QByteArray(32 - Code.size(), char(0x90)));
+    Code.append(QByteArray::fromHex("89f883c00bc3"));
+    QVERIFY(write(Path, Code));
+    ComparisonDialog View(TEST_COMPARISON_WORKER);
+    auto &Session = View.session();
+    QSignalSpy Failures(&Session, &ComparisonSession::failed);
+    View.show();
+    QTRY_VERIFY_WITH_TIMEOUT(Session.ready(), Timeout);
+    View.findChild<QLineEdit *>("comparisonPrimary")->setText(Path);
+    View.findChild<QLineEdit *>("comparisonSecondary")->setText(Path);
+    for (const auto *Name : {"primaryLoader", "secondaryLoader"})
+      View.findChild<QComboBox *>(Name)->setCurrentIndex(1);
+    View.findChild<QLineEdit *>("primaryBase")->setText("0x1000");
+    View.findChild<QLineEdit *>("secondaryBase")->setText("0x8000");
+    auto *Calls = View.findChild<QCheckBox *>("comparisonRegionCalls");
+    auto *Regions = View.findChild<QCheckBox *>("comparisonAnalyzeRegions");
+    QVERIFY(Calls && Regions);
+    View.findChild<QToolButton *>("comparisonSettings")->setChecked(true);
+    Calls->setFocus();
+    QTest::keyClick(Calls, Qt::Key_Space);
+    QVERIFY(Regions->isChecked());
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonStart"),
+                      Qt::LeftButton);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && !Session.revision().isEmpty(),
+                             Timeout);
+    QCOMPARE(Session.summary()["regions"].toObject()["profile"].toString(),
+             QString("native-call-runs-v1"));
+    QCOMPARE(Session.summary()["regions"].toObject()["anchor_count"].toInt(),
+             1);
+    ComparisonRegionsDialog Dialog(Session, &View);
+    Dialog.show();
+    auto *Instructions = Dialog.findChild<QTableView *>("regionInstructions");
+    QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 7, Timeout);
+    QVERIFY(Dialog.findChild<QLabel *>("regionSummary")
+                ->text()
+                .contains("function pairs"));
+    const auto Captures = qEnvironmentVariable("NEVERD_DIFF_SCREENSHOTS");
+    if (!Captures.isEmpty())
+      for (const auto Mode : {Theme::Mode::Light, Theme::Mode::Dark}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(40);
+        QVERIFY(
+            Dialog.grab().save(Captures + (Mode == Theme::Mode::Dark
+                                               ? "/dark-call-regions.png"
+                                               : "/light-call-regions.png")));
+        QVERIFY(View.grab().save(Captures +
+                                 (Mode == Theme::Mode::Dark
+                                      ? "/dark-call-region-settings.png"
+                                      : "/light-call-region-settings.png")));
+      }
+    const auto Saved = Directory.filePath("call-regions.nddiff");
+    Session.command("comparison_save", {{"path", Saved}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && QFile::exists(Saved), Timeout);
+    Session.command(
+        "comparison_override",
+        {{"kind", "unmatch"}, {"primary", "0x1020"}, {"secondary", "0x8020"}});
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 0, Timeout);
+    Session.command("comparison_undo");
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy(), Timeout);
+    QTRY_COMPARE_WITH_TIMEOUT(Instructions->model()->rowCount(), 7, Timeout);
+    Dialog.hide();
+    Regions->setChecked(false);
+    QVERIFY(!Calls->isChecked());
+    bool Selected = false;
+    QTimer Select;
+    connect(&Select, &QTimer::timeout, this, [&] {
+      if (auto *File =
+              qobject_cast<QFileDialog *>(QApplication::activeModalWidget())) {
+        File->selectFile(Saved);
+        if (auto *Name = File->findChild<QLineEdit *>("fileNameEdit"))
+          Name->setText(Saved);
+        Selected = true;
+        static_cast<QDialog *>(File)->accept();
+      }
+    });
+    Select.start(10);
+    QTest::mouseClick(View.findChild<QPushButton *>("comparisonReopen"),
+                      Qt::LeftButton);
+    Select.stop();
+    QVERIFY(Selected);
+    QTRY_VERIFY_WITH_TIMEOUT(!Session.busy() && Calls->isChecked(), Timeout);
+    QVERIFY(Regions->isChecked());
+    QCOMPARE(Failures.size(), 0);
+  }
+
   void regionReviewUsesBoundedPagesAndOriginalBytes() {
     const auto Path = Directory.filePath("region.bin");
     QVERIFY(write(Path, QByteArray::fromHex("89f883c00383f0176bc00783c009c3")));

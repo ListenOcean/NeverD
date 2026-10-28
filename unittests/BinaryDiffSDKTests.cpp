@@ -3432,6 +3432,79 @@ TEST_F(BinaryDiffSDK, NativeRegionPagesPersistWithoutChangingAcceptedPairs) {
   EXPECT_EQ(neverd_comparison_regions_json(Without, "{}"), nullptr);
 }
 
+TEST_F(BinaryDiffSDK, CallRegionsRebindTargetsAcrossEditsAndRestore) {
+  // Three operations, direct call to +32, three operations, ret; callee at +32.
+  // Each non-call run is too short for the default native region profile.
+  std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 0x03, 0x83, 0xf0, 0x17,
+                            0xe8, 0x13, 0,    0,    0,    0x6b, 0xc0, 0x07,
+                            0x83, 0xc0, 0x09, 0x83, 0xf0, 0x25, 0xc3};
+  Code.resize(32, 0x90);
+  Code.insert(Code.end(), {0x89, 0xf8, 0x83, 0xc0, 11, 0xc3});
+  auto A = input(Code), B = input(Code, 0x8000);
+  auto Legacy = compare(A, B, R"({"regions":true})");
+  auto C = compare(A, B, R"({"regions":{"calls":true}})");
+  auto Old = parsed(neverd_comparison_summary_json(Legacy));
+  EXPECT_EQ(Old.getAsObject()->getObject("regions")->getInteger("anchor_count"),
+            0);
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  const auto *Regions = Summary.getAsObject()->getObject("regions");
+  EXPECT_EQ(Regions->getString("profile"), "native-call-runs-v1");
+  ASSERT_EQ(Regions->getInteger("anchor_count"), 1);
+  const auto Text = take(neverd_comparison_export_json(C));
+  auto Rows = parsed(neverd_comparison_region_page_json(C, R"({"anchor":0})"));
+  ASSERT_EQ(Rows.getAsObject()->getInteger("total"), 7);
+  const auto *Call = (*Rows.getAsObject()->getArray("rows"))[3].getAsObject();
+  EXPECT_EQ(Call->getObject("primary")->getString("address"), "0x1008");
+  EXPECT_EQ(Call->getObject("secondary")->getString("address"), "0x8008");
+  EXPECT_EQ(Call->getObject("primary")->getString("bytes"), "E813000000");
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1020","secondary":"0x8020"})"),
+      1);
+  auto Changed = parsed(neverd_comparison_summary_json(C));
+  EXPECT_EQ(
+      Changed.getAsObject()->getObject("regions")->getInteger("anchor_count"),
+      0);
+  EXPECT_EQ(neverd_comparison_region_page_json(C, R"({"anchor":0})"), nullptr);
+  const auto Edited = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(neverd_comparison_restore_json(C, Edited.c_str()), 1);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Text.c_str()), 1);
+  EXPECT_EQ(
+      render(parsed(neverd_comparison_region_page_json(C, R"({"anchor":0})"))),
+      render(Rows));
+  ASSERT_EQ(
+      neverd_comparison_override_json(
+          C, R"({"kind":"unmatch","primary":"0x1020","secondary":"0x8020"})"),
+      1);
+  ASSERT_EQ(neverd_comparison_undo(C), 1);
+  EXPECT_EQ(
+      render(parsed(neverd_comparison_region_page_json(C, R"({"anchor":0})"))),
+      render(Rows));
+  ASSERT_EQ(neverd_comparison_redo(C), 1);
+  EXPECT_EQ(neverd_comparison_region_page_json(C, R"({"anchor":0})"), nullptr);
+}
+
+TEST_F(BinaryDiffSDK, AArch64CallRegionsKeepNativeCallAndRegisterOperands) {
+  // Three scalar operations on each side of BL; the callee starts at +32.
+  const auto Code = words({0x2a0103e0, 0x11000c00, 0x4a020000, 0x94000005,
+                           0x11002400, 0x4a030000, 0x11004400, 0xd65f03c0,
+                           0x2a0103e0, 0x11002c00, 0xd65f03c0});
+  auto A = input(Code, 0x1000, "aarch64"), B = input(Code, 0x8000, "aarch64");
+  auto C = compare(A, B, R"({"regions":{"calls":true}})");
+  auto Summary = parsed(neverd_comparison_summary_json(C));
+  ASSERT_EQ(
+      Summary.getAsObject()->getObject("regions")->getInteger("anchor_count"),
+      1);
+  auto Rows = parsed(neverd_comparison_region_page_json(C, R"({"anchor":0})"));
+  ASSERT_EQ(Rows.getAsObject()->getInteger("total"), 7);
+  const auto *Call = (*Rows.getAsObject()->getArray("rows"))[3].getAsObject();
+  EXPECT_EQ(Call->getObject("primary")->getString("bytes"), "05000094");
+  EXPECT_EQ(Call->getObject("primary")->getString("address"), "0x100c");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
 TEST_F(BinaryDiffSDK, UngroupedRegionEvidenceRemainsPageableAfterBudgetStop) {
   const std::vector<uint8_t> Code{0x89, 0xf8, 0x83, 0xc0, 3,    0x83, 0xf0, 23,
                                   0x6b, 0xc0, 7,    0x83, 0xc0, 9,    0xeb, 0,
