@@ -364,8 +364,8 @@ TEST(X87ControlContract,
           Builder.CreateUnreachable();
           Builder.SetInsertPoint(Normal);
         } else if (Change == 10) {
-          auto *Mismatched = llvm::FunctionType::get(
-              Void, {Builder.getInt16Ty()}, false);
+          auto *Mismatched =
+              llvm::FunctionType::get(Void, {Builder.getInt16Ty()}, false);
           Builder.CreateCall(Mismatched, Callee, {Builder.getInt16(0)});
         } else {
           auto *Call = Builder.CreateCall(Callee, Args);

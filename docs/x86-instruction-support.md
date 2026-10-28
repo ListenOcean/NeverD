@@ -2778,3 +2778,46 @@ SDKs' generated reset/arithmetic checks pass after that repair. Physical FEMMS,
 privileged #NM behavior and complete architectural equivalence remain
 unqualified. LLVM release, production SDK pinning and the LLVM gitlink remain
 unchanged while the global instruction gaps are open.
+
+## Native x87 control-word interfaces
+
+LLVM `d6719fa9d041bb4b8f4f53ce9b8f8dfdf547923b` supplies the fixed
+`void llvm.x86.fnstcw(ptr)` and `void llvm.x86.fldcw(ptr)` interfaces. NeverC
+`2537751e7d19915010b32c2b8f71698977886b34` supplies
+`__builtin_ia32_fnstcw(unsigned short *)` and
+`__builtin_ia32_fldcw(const unsigned short *)`. Their native operations access
+exactly two bytes without assuming pointer alignment. FNSTCW is nonwaiting;
+FLDCW checks prior pending exceptions before accessing its operand. A control
+word that newly unmasks an exception leaves delivery to a subsequent waiting
+operation. The LLVM effects retain repeated calls and surrounding memory
+operations, and the machine descriptor retains FPCW/FPSW dependencies.
+
+NeverD uses these LLVM interfaces when registered. Its entry control read,
+HighC expressions and LLVM-C calls share the private X86 C rendering helper,
+which selects the NeverC builtin when available. The old r6 SDK and compilers
+without the new builtins keep the existing owned assembly path. One LLVM-call
+validator rejects malformed, retyped, aliased, defined, variadic or non-x86
+calls before function filtering. Combined constant-load assembly and the
+existing typed scalar/state contracts are unchanged; these interfaces do not
+establish full fault-PC equivalence for the lifted typed projection.
+
+The [qualification ledger](evidence/x86-x87-control-word-2026-10-28.json) records
+eight LLVM code-generation/effect tests, 111 NeverC x86 frontend tests, five
+backend tests and fifteen generator tests. LLVM checks i386/x64 ELF, COFF and
+Mach-O; NeverC checks its supported x64 targets. Six direct LLVM, NeverC and
+text-IR bridge O0/O2 profiles on the recorded Intel Linux host pass 6,912 state
+observations, 120 expected faults and 24 page-boundary accesses. Fault checks
+observe the actual opcode, saved CW/SW and completed prefix without resuming
+generated code. Independent negative controls reject missing stores, early
+operand reads, lost prefixes and widened memory accesses.
+
+At `5d9c6f1f876a0252a2da8e3e99ad05adddafdcad`, the pinned SDK passes 1,825
+tests and skips sixty; a separate successful NeverC run fills one of those
+skips, giving 1,826 passed and 59 skipped. The full SDK passes 1,827 and skips
+56. Both repeat the generated reset/arithmetic checks and capability audit.
+All 56 retained HighC/LLVM-C constant/control programs also compile through
+NeverC at O0/O2, require native control-word IR calls, and pass 86,016 exact
+binary80/control comparisons against original instructions. Physical
+qualification remains limited to the recorded x64 host; i386 runtime, #NM,
+alignment-check delivery and complete architectural equivalence are not
+claimed. The production SDK pin and LLVM gitlink remain unchanged.
