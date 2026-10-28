@@ -15968,6 +15968,14 @@ Its serializer checks exact compact/indented bytes, every byte value, and
 hexadecimal address boundaries against an independent stream formatter. The
 address cases alternate short file offsets with high virtual addresses, cross
 every hexadecimal digit width, and round-trip complete rows at each indentation.
+Compact inventory output also matches independently constructed JSON objects
+across every patch kind, all byte values, decimal size boundaries and high
+addresses. Nested output retains its surrounding fields at indentation 0, 2
+and 4; the compact and general stream entry points share the row schema.
+Compact range JSON retains file-offset ordering across nonmonotonic virtual
+addresses and split runs. Its exact bytes are checked against independent
+objects across hexadecimal address and decimal size boundaries, including an
+empty overlay.
 
 The reader tests preserve leading zeroes, mixed-case digits, full unsigned
 64-bit values and numerically equal keys with different spellings. They reject

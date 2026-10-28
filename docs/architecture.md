@@ -1423,7 +1423,12 @@ the JSON range/row fallbacks for older SDKs. These snapshots are per-request
 storage and do not retain another session cache.
 Their shared writer reuses hexadecimal scratch storage and emits only
 formatter-produced hex directly; general strings retain JSON escaping and
-external input retains its existing validation.
+external input retains its existing validation. One row-emission loop serves
+compact SDK inventories and the nested or indented stream used by persistence.
+Compact output writes the fixed schema names directly; patch-kind strings
+retain the general JSON encoder. Compact range JSON uses the same sink and
+hexadecimal scratch formatter, with its address/size schema in the patch
+owner. Neither SDK getter duplicates serialization or changes result ownership.
 
 Shared transport JSON has separate entry points for bounded external frames
 and SDK-owned documents. Backend parsing preserves native JSON number types,
