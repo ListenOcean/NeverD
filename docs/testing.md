@@ -217,6 +217,13 @@ unknown value there. `AReadBackScratchSaveKeepsItsUnknownValue` keeps it in
 both routes' C where a `push rax` is read back before any call has its slot,
 and where a routine fills the slot of a pushed R10, a nested function's
 static chain.
+`AVariadicCallPassesZeroInRegistersItLeavesUnset` runs the C of both routes for
+calls to a variadic routine whose va_start stores gp_offset 8: a caller that
+passes RSI to R9 on untouched and a second call that finds there only what
+the first left. Both C pass zero there, and the LLVM route's gives the first
+caller no parameter. `MedVariadic.X64NamedRegistersComeOnlyFromAStoredGpOffset`
+(`NeverDMedVariadicTests`) counts the named registers only from a store of
+that word, whole or in halves, into the frame.
 
 `X86_64_CallAbi.AScalarArgumentPassesOnlyItsLowLane` runs the C of both routes
 for callers that convert an int with `cvtsi2sd` or `cvtsi2ss` and scale it

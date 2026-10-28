@@ -673,6 +673,41 @@ TEST_F(X86_64_CallAbi, ALiftedVariadicCalleeTakesItsStackArguments) {
   expectLiftedRunsLikeSource(VariadicStackIntegers, "vsum_big", "sb");
 }
 
+// logv's va_start stores gp_offset 8: one integer register carries a named
+// parameter, and past it va_arg reads no more arguments than a caller
+// passes.  gdc passes RSI to R9 on untouched, and g2's second call finds in
+// them only what its first call left.  Neither sets them for logv, so each
+// C passes zero there, and the LLVM route's, like HighC, gives gdc no
+// parameter.
+TEST_F(X86_64_CallAbi, AVariadicCallPassesZeroInRegistersItLeavesUnset) {
+  expectBothRoutesRunLikeSource(R"C(
+long logv(const char *f, ...) __attribute__((noinline));
+long gdc(void) __attribute__((noinline));
+long g2(void) __attribute__((noinline));
+long gdc(void) { return logv("y") + 1; }
+long g2(void) {
+  long a = logv("y");
+  return a + logv("y") * 2;
+}
+long logv(const char *f, ...) {
+  __builtin_va_list ap;
+  __builtin_va_start(ap, f);
+  long s = f[0] == 'x' ? __builtin_va_arg(ap, long) : 3;
+  __builtin_va_end(ap);
+  return s;
+}
+int unset_e(int a) { return (int)(gdc() + g2() * 5) + a; }
+)C",
+                                "unset_e", {"unset_e", "gdc", "g2", "logv"},
+                                {0, 1, -1, 7, 1000});
+  if (HasFatalFailure() || IsSkipped())
+    return;
+  std::ifstream Input(tmpFile("decompiled.c"));
+  const std::string C((std::istreambuf_iterator<char>(Input)),
+                      std::istreambuf_iterator<char>());
+  EXPECT_TRUE(std::regex_search(C, std::regex("\\bgdc\\((void)?\\) \\{"))) << C;
+}
+
 // gdc aligns its stack for the call with `push rax`, which stores RAX's
 // incoming value where a stack argument would go, and g7 with one above the
 // two longs it pushes.  RAX holds nothing at entry, so neither slot passes

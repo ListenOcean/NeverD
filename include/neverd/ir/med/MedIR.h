@@ -649,6 +649,15 @@ struct MedFunc {
   std::optional<int64_t> VaListDisplacement;
   std::optional<int64_t> VaRegisterSaveArea;
   int VaNamedIntegerRegisters = -1;
+  /// System V x86-64: how many general-purpose registers carry named
+  /// parameters, as the gp_offset va_start stores counts them (gp_offset is
+  /// 8 x that count), where the function stores that constant into a
+  /// va_list's gp_offset field, whether or not the rest of the va_list is
+  /// proved (VaNamedIntegerRegisters); -1 otherwise.  Call recovery reads it
+  /// as AAPCS's VariadicFirstRegister (callRegisterArity): past those
+  /// registers a call passes what its caller sets, and the function still
+  /// takes every saved register as a parameter.
+  int VaStartNamedGPRs = -1;
   /// The calls that pass that va_list's address, by call site: true where
   /// they pass the va_list, false where they may pass another object in its
   /// slot, such as a buffer the compiler placed there after va_end

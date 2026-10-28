@@ -3079,9 +3079,16 @@ void recoverCallAbi(
       // A complete pre-SSA read summary already supplies the register
       // operands, including positional padding. Setup scans may find live
       // scratch registers, but cannot extend that authoritative prefix.
-      int IntCap = SummarizedIntegerOperands             ? Op.CalleeRegisterArgs
-                   : (CalleeHasFP && CalleeRegArgs >= 0) ? CalleeRegArgs
-                                                         : NumIntRegArgs;
+      // A variadic callee that takes its vector argument registers (System
+      // V) takes every integer one before them, past its named ones too.
+      const bool EveryIntegerPosition =
+          !CI.IsIndirect && VectorArgumentCallees &&
+          VectorArgumentCallees->count(CI.TargetAddr);
+      int IntCap =
+          SummarizedIntegerOperands ? Op.CalleeRegisterArgs
+          : (CalleeHasFP && CalleeRegArgs >= 0 && !EveryIntegerPosition)
+              ? CalleeRegArgs
+              : NumIntRegArgs;
 
       // Where 64-bit arguments are pair-aligned (ARM AAPCS: an even-odd
       // register pair, an 8-byte aligned stack slot), argument lanes are not

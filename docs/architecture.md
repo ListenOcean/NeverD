@@ -7280,7 +7280,15 @@ caller passes. This is a limitation, which System V x86-64 calls share: a
 register the caller passes on untouched counts as not set, so a caller that
 passes its own argument on that way, as
 `long g(long a, long b) { return logv("x", b); }` does, passes zero where the
-program passes `b`, and its C takes no such parameter.
+program passes `b`, and its C takes no such parameter. Call recovery counts
+System V's named registers by the gp_offset va_start stores into its va_list,
+eight per register (`MedFunc::VaStartNamedGPRs`), as it counts AAPCS's by the
+save area (`callRegisterArity`), so the LLVM route's C follows the rule as
+HighC does: `long gdc(void) { return logv("y") + 1; }` takes no parameter,
+and a second call to logv passes zero where the first left its registers,
+not their unknown values. Where no store of that constant into a va_list
+shows, the count stays unknown and every saved register remains one a call
+passes.
 
 System V's vector registers do not share it. A call that loads AL with a
 constant, in its own block (`lowByteConstantAtCall`, which gives

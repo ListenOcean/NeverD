@@ -138,6 +138,13 @@ private:
 /// integer and vector registers carry named parameters.
 bool hasX64VariadicPrologue(VariadicScan &S, uint64_t &VaStartWord);
 
+/// How many general-purpose registers carry named parameters, as the
+/// gp_offset in \p VaStartWord counts them (gp_offset = 8 x that count):
+/// only where the function stores the word into a va_list's gp_offset and
+/// fp_offset fields, whole or in halves, and gp_offset counts whole
+/// registers within the six.  Nothing for any other evidence.
+std::optional<int> x64VaStartNamedGPRs(VariadicScan &S, uint64_t VaStartWord);
+
 /// Where a System V x86-64 va_start puts its va_list and register save area,
 /// as displacements from the entry stack pointer.
 struct X64VaStartGeometry {
