@@ -12031,6 +12031,68 @@ private slots:
     at(reread);
   }
 
+  void backAndForwardButtonsListTheirStops() {
+    // As in IDA, the Back and Forward buttons list the stops they reach,
+    // nearest first, each as the listing names its place and what is there,
+    // and a pick goes that many steps at once, keeping the stops on both
+    // sides. The Jump menu keeps its plain commands.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loadDialogs;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("fixture.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    const auto at = [&](Address address) {
+      QTRY_VERIFY_WITH_TIMEOUT(!disassembly->listing()->jumpPending(),
+                               OpenTimeoutMs);
+      QTRY_COMPARE(disassembly->currentAddress(),
+                   std::optional<Address>(address));
+    };
+    const Address start = Base + 0x50, called = Base + 0x140,
+                  next = Base + 0x180;
+    disassembly->navigate(start);
+    at(start);
+    disassembly->navigate(called);
+    at(called);
+    disassembly->navigate(next);
+    at(next);
+    const auto list = [&](ActionId id) -> QMenu * {
+      for (auto *toolbar : bench.window->findChildren<QToolBar *>())
+        if (auto *button = qobject_cast<QToolButton *>(
+                toolbar->widgetForAction(bench.action(id))))
+          return button->popupMode() == QToolButton::MenuButtonPopup
+                     ? button->menu()
+                     : nullptr;
+      return nullptr;
+    };
+    QMenu *back = list(ActionId::JumpBack);
+    QMenu *forward = list(ActionId::JumpForward);
+    QVERIFY(back && forward);
+    QVERIFY(!bench.action(ActionId::JumpBack)->menu());
+    QVERIFY(!bench.action(ActionId::JumpForward)->menu());
+    emit back->aboutToShow();
+    const auto backStops = disassembly->stops(false);
+    QVERIFY(backStops.size() >= 2 && backStops[0] == called &&
+            backStops[1] == start);
+    QCOMPARE(back->actions().size(), qsizetype(backStops.size()));
+    // A function's stop reads `name (address)` before the instruction there.
+    const QString calledPlace =
+        QStringLiteral("(%1)\t").arg(displayAddress(called));
+    QTRY_VERIFY_WITH_TIMEOUT(
+        back->actions().first()->text().contains(calledPlace), OpenTimeoutMs);
+    const QString first = back->actions().first()->text();
+    QVERIFY2(!first.section(QLatin1Char('\t'), 1).isEmpty(), qPrintable(first));
+    back->actions()[1]->trigger();
+    at(start);
+    emit forward->aboutToShow();
+    QVERIFY(disassembly->stops(true) == (std::vector<Address>{called, next}));
+    QCOMPARE(forward->actions().size(), 2);
+    forward->actions()[1]->trigger();
+    at(next);
+    QCOMPARE(disassembly->stops(false).front(), called);
+  }
+
   void laterLinksSupersedeAQueuedGraphView() {
     QTemporaryDir directory;
     Workbench bench;

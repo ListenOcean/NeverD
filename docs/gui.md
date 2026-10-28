@@ -95,8 +95,13 @@ returns to the place the function was left; within a function the cursor goes
 to the row of the place it returns to. As in IDA, each jump adds one stop to
 the history, and the stop follows the cursor: clicks and keys after a jump, in
 the code or the disassembly, add none, so Back returns to where the jump began
-and Forward to where the user left. Imports and global objects continue to open
-at their addresses in the disassembly or hex view.
+and Forward to where the user left. The arrow beside the Back or Forward
+toolbar button lists the stops it reaches, nearest first, as IDA's does: each
+names its place, `main+1DA (2A2A)` or a segment and address outside a
+function, then the instruction or data the listing shows there. Picking one
+goes that many steps at once, and the stops on both sides stay. Imports and
+global objects continue to open at their addresses in the disassembly or hex
+view.
 Double-clicking a goto's label (`goto L_14024FAB5;`) moves the cursor to the
 label and the disassembly to the block it labels, as IDA's labels do; Back
 returns to the goto. Pseudocode and C name a label after its block's address,

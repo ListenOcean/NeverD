@@ -5050,9 +5050,12 @@ Forward returns to where the callee was left;
 of a function of the image and checks the import's type and parameters'
 places, that the image's function and a keyword hint nothing, and that a hint
 the mouse left before the worker answered stays away;
-`historyStopsFollowTheCursor`
-moves between jumps and checks that Back skips those moves and Forward returns
-to them; `bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
+`historyStopsFollowTheCursor` moves between jumps and checks that Back skips
+those moves and Forward returns to them; `backAndForwardButtonsListTheirStops`
+opens the Back and Forward buttons' lists after three jumps and checks their
+stops, nearest first, and their names, that a pick goes two steps at once and
+keeps the stops beyond it, and that the Jump menu's commands stay plain;
+`bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
 brackets nested, lines apart and around a folded block, on brackets of a
 string and a comment, and just past a bracket, and checks which pair;
 `NeverDWorkerCodeEdits` checks the literal scan

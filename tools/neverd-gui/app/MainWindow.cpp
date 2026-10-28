@@ -111,6 +111,7 @@
 #include <QTableWidget>
 #include <QTextStream>
 #include <QToolBar>
+#include <QToolButton>
 #include <QTreeView>
 #include <QTreeWidget>
 #include <QUrl>
@@ -583,6 +584,8 @@ void MainWindow::buildMenusAndToolbars() {
     fillPlaceholder(menu, name);
   });
   const auto toolbars = actions_.buildToolbars(this);
+  for (auto *toolbar : toolbars)
+    addHistoryLists(*toolbar);
   // The navigation band spans its own row under the toolbars.
   addToolBarBreak(Qt::TopToolBarArea);
   auto *bandBar = new QToolBar(tr("Navigation band"), this);
@@ -1804,7 +1807,7 @@ void MainWindow::navigateExpression(const QString &text) {
       });
 }
 
-void MainWindow::navigateHistory(bool forward) {
+void MainWindow::navigateHistory(bool forward, std::size_t steps) {
   const auto serial = ++codeNavigationSerial_;
   hexFollower_.clear();
   if (forward ? !disassembly_->canGoForward() : !disassembly_->canGoBack())
@@ -1842,9 +1845,75 @@ void MainWindow::navigateHistory(bool forward) {
   }
   QScopedValueRollback<bool> guard(codeHistoryNavigation_, true);
   if (forward)
-    disassembly_->goForward();
+    disassembly_->goForward(steps);
   else
-    disassembly_->goBack();
+    disassembly_->goBack(steps);
+}
+
+void MainWindow::addHistoryLists(QToolBar &toolbar) {
+  for (const bool forward : {false, true}) {
+    auto *button = qobject_cast<QToolButton *>(toolbar.widgetForAction(
+        actions_.action(forward ? ActionId::JumpForward : ActionId::JumpBack)));
+    if (!button)
+      continue;
+    // The button's own list: the Jump menu keeps its commands.
+    auto *menu = new QMenu(button);
+    connect(menu, &QMenu::aboutToShow, this,
+            [this, menu, forward] { showHistoryList(*menu, forward); });
+    button->setMenu(menu);
+    button->setPopupMode(QToolButton::MenuButtonPopup);
+  }
+}
+
+void MainWindow::showHistoryList(QMenu &menu, bool forward) {
+  menu.clear();
+  const auto stops = disassembly_->stops(forward);
+  const int digits = session_.bitness() == 64 ? 16 : 8;
+  for (std::size_t i = 0;
+       i < std::min(stops.size(),
+                    ::neverd::limits::gui::kMainWindowHistoryListStops);
+       ++i) {
+    const Address address = stops[i];
+    auto *action = menu.addAction(displayAddress(address, digits));
+    connect(action, &QAction::triggered, this, [this, forward, steps = i + 1] {
+      navigateHistory(forward, steps);
+    });
+    // As in IDA's list, the stop's place, then the instruction or data there.
+    session_.read(
+        QStringLiteral("listing"),
+        {{"address", hexAddress(address)},
+         {"before", 0},
+         {"after", 0},
+         {"complete_anchor_item", true}},
+        action,
+        [this, action, address, digits](const QJsonObject &payload) {
+          for (const auto &value : payload.value("lines").toArray()) {
+            const auto line = value.toObject();
+            const auto kind = line.value("kind").toString();
+            if (kind != QLatin1String("insn") && kind != QLatin1String("data"))
+              continue;
+            QString place;
+            if (const auto function =
+                    addressValue(line.value("function_address"))) {
+              place = line.value("function").toString();
+              if (address != *function)
+                place += QLatin1Char('+') + displayAddress(address - *function);
+              place += QStringLiteral(" (%1)").arg(displayAddress(address));
+            } else if (const auto *region = space_.regionOf(address)) {
+              place = region->name + QLatin1Char(':') +
+                      displayAddress(address, digits);
+            } else {
+              place = displayAddress(address, digits);
+            }
+            action->setText(
+                (place + QLatin1Char('\t') +
+                 line.value("text").toString().simplified())
+                    .replace(QLatin1Char('&'), QStringLiteral("&&")));
+            return;
+          }
+        },
+        [](const QString &, const QString &) {});
+  }
 }
 
 void MainWindow::synchronize(Address address, QObject *source) {
@@ -5695,6 +5764,7 @@ void MainWindow::toggleFocusMode() {
   showPseudocode(code->representation());
   floating->showMaximized();
   focusToolbar_ = actions_.buildFocusToolbar(floating);
+  addHistoryLists(*focusToolbar_);
   if (!addFloatingWindowToolbar(*floating, *focusToolbar_))
     delete focusToolbar_.data();
   floating->raise();

@@ -163,6 +163,8 @@ inline constexpr int kMainWindowMaxStringMinLength =
 inline constexpr int kMainWindowMaxOpcodeBytes = 12;
 // As much as one declaration of the editor takes.
 inline constexpr qint64 kMainWindowMaxHeaderBytes = 4 << 20;
+/// The stops the Back or Forward button's list shows, nearest first.
+inline constexpr std::size_t kMainWindowHistoryListStops = 30;
 
 // tools/neverd-gui/app/MicrosoftSymbols.cpp
 /// How long to wait for another modal dialog to close before asking.
