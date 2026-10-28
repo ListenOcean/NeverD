@@ -51,12 +51,12 @@ using namespace neverd;
 
 struct TypedShape {
   llvm::StringRef Name, Parameters;
-  unsigned ReturnBytes;
+  char ReturnKind;
   int Fixed;
 };
 constexpr TypedShape TypedShapes[] = {
-#define A64_CALL_TYPED_SHAPE(Name, Parameters, ReturnBytes, Fixed)             \
-  {Name, Parameters, ReturnBytes, Fixed},
+#define A64_CALL_TYPED_SHAPE(Name, Parameters, ReturnKind, Fixed)              \
+  {Name, Parameters, ReturnKind, Fixed},
 #include "AArch64AuthenticatedCallFixtures.def"
 };
 struct TypedVariant {
@@ -73,7 +73,15 @@ TypeRef typedParameter(char Kind) {
     return NdType::makeFloat(kFloatBytes);
   if (Kind == kDoubleKind)
     return NdType::makeFloat(kPointerBytes);
-  return NdType::makeInt(kPointerBytes);
+  if (Kind == kPointerKind)
+    return NdType::makePtr(NdType::makeVoid());
+  switch (Kind) {
+#define A64_CALL_INTEGER_TYPE(Kind, Bytes, Signed)                             \
+  case Kind:                                                                   \
+    return NdType::makeInt(Bytes, Signed);
+#include "AArch64AuthenticatedCallFixtures.def"
+  }
+  llvm_unreachable(kUnknownTypedKind);
 }
 
 MedFunc function(unsigned Key, bool Zero, unsigned Arguments,
@@ -381,11 +389,12 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
       Hint->CallKind = SourceCallTypeHint::Kind::Analyst;
       Call.Addr = kEntryAddress;
       Call.OriginSeq = 0;
-      Call.Output.Size = Shape.ReturnBytes;
+      const auto ReturnType = typedParameter(Shape.ReturnKind);
+      Call.Output.Size = ReturnType->Size;
       Hint->AnalystSite = SourceCallOccurrenceKey{Call.Addr, Call.OriginSeq,
                                                   NdOp::INDIR_CALL, 0};
       Hint->AnalystFixedCount = Shape.Fixed;
-      Hint->Signature.ReturnType = NdType::makeFloat(Shape.ReturnBytes);
+      Hint->Signature.ReturnType = ReturnType;
       std::vector<MedOp> Setup;
       std::vector<MedVar> Arguments;
       for (unsigned I = 0; I < Shape.Parameters.size(); ++I) {
@@ -423,6 +432,18 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
       Setup.push_back(Call);
       auto Return = Block.Ops.back();
       Return.Inputs[0] = Call.Output;
+      if (ReturnType->Size < kPromotedIntegerBytes) {
+        // The outer fixture returns source bits in a full-width integer.
+        // A byte/halfword register result alone does not define all X0 bits.
+        MedOp Widen;
+        Widen.Opcode = NdOp::INT_ZEXT;
+        Widen.Output.Kind = MedVar::Temp;
+        Widen.Output.Id = kTypedTemporaryId + Shape.Parameters.size();
+        Widen.Output.Size = kPointerBytes;
+        Widen.addInput(Call.Output);
+        Return.Inputs[0] = Widen.Output;
+        Setup.push_back(std::move(Widen));
+      }
       Setup.push_back(std::move(Return));
       Block.Ops = std::move(Setup);
       MedLLVMEmitter Emitter;
@@ -444,14 +465,31 @@ TEST(AArch64AuthenticatedCall, ExplicitTypesKeepAuthenticationOnTheCall) {
               EXPECT_EQ(Type->getNumParams(), Shape.Fixed >= 0
                                                   ? unsigned(Shape.Fixed)
                                                   : Shape.Parameters.size());
-              EXPECT_EQ(Call->getType()->getPrimitiveSizeInBits(),
-                        Shape.ReturnBytes * 8);
-              EXPECT_TRUE(Call->getType()->isFloatingPointTy());
+              const auto Width = [](const llvm::Type *Type) {
+                return Type->isPointerTy()
+                           ? kPointerBytes * kBitsPerByte
+                           : Type->getPrimitiveSizeInBits().getFixedValue();
+              };
+              EXPECT_EQ(Width(Call->getType()),
+                        ReturnType->Size * kBitsPerByte);
+              EXPECT_EQ(Call->getType()->isFloatingPointTy(),
+                        ReturnType->Kind == NdTypeKind::Float);
+              if (ReturnType->Kind == NdTypeKind::Int &&
+                  ReturnType->Size < kPromotedIntegerBytes)
+                EXPECT_TRUE(Call->hasRetAttr(ReturnType->IsSigned
+                                                 ? llvm::Attribute::SExt
+                                                 : llvm::Attribute::ZExt));
               for (unsigned I = 0; I < Shape.Parameters.size(); ++I) {
                 const auto *Argument = Call->getArgOperand(I)->getType();
                 const auto Expected = typedParameter(Shape.Parameters[I]);
-                EXPECT_EQ(Argument->getPrimitiveSizeInBits(),
-                          Expected->Size * 8);
+                EXPECT_EQ(Width(Argument), Expected->Size * kBitsPerByte);
+                if (Expected->Kind == NdTypeKind::Int &&
+                    Expected->Size < kPromotedIntegerBytes &&
+                    Hint->Signature.Parameters[I].Location.Kind ==
+                        SourceABICarrierKind::IntegerRegister)
+                  EXPECT_TRUE(Call->paramHasAttr(
+                      I, Expected->IsSigned ? llvm::Attribute::SExt
+                                            : llvm::Attribute::ZExt));
                 EXPECT_EQ(Argument->isFloatingPointTy(),
                           Expected->Kind == NdTypeKind::Float);
               }
