@@ -732,6 +732,11 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       enqueueCallees(Conversion.CalleesRead);
     else
       enqueueCallees(calleesToRead(*Conversion.Body, Img, Result));
+    // System V's model takes every register a variadic prologue saves: as an
+    // omitted callee's signature it would make its callers pass registers
+    // they never set.
+    if (Conversion.Body->takesVectorArgumentRegisters())
+      continue;
     Signatures.push_back(Conversion.Body);
   }
   return Signatures;
