@@ -113,7 +113,8 @@ inline constexpr unsigned kRegionMinDistinctCallTargets = 2;
 /// a short terminal run; the minimum run length and seed frequency still apply.
 inline constexpr unsigned kRegionMinTerminalCallTargets = 1;
 /// Short repeated runs still qualify when they cover this share of either
-/// participating function's decoded non-transfer instructions.
+/// participating function's eligible instructions (also paired direct calls
+/// when the call profile is enabled).
 inline constexpr double kRegionMinShortRunFunctionCoverage = 0.5;
 inline constexpr unsigned kMaxRegionMinInstructions = 256;
 inline constexpr unsigned kDefaultRegionMaxOccurrences = 16;
