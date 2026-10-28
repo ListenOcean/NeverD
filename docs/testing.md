@@ -594,8 +594,8 @@ Compiler IR identifiers are normalized for reproducible exports.
 The compiler checks do not prove that the host enables instruction
 authentication. The controlled model evidence distinguishes correct integer
 calling/rejection behavior from the C O0 diagnostic-syndrome differences;
-neither establishes the complete Apple image, FP/aggregate/variadic call or
-native signed-unwind ABI.
+neither establishes the complete Apple image, aggregate-call or native
+signed-unwind ABI.
 The [2026-10-28 call/return receipt](evidence/arm64e-call-and-return-abi-2026-10-28.json)
 binds the actual model inputs and all 116 current export hashes to their source
 revisions. It records the complete rebuilt test inventory, separate X64 compiler
@@ -612,7 +612,8 @@ corresponding explicit-prototype model inputs. This does not qualify automatic
 prototype recovery, narrow integer/pointer parameters, HFA/aggregate calls,
 authenticated special-language ABI, whole images or native signed unwinding.
 
-The larger Release run contains 10,838 test instances, including tests shared
+The larger Release run recorded in that receipt contains 10,838 test instances,
+including tests shared
 by separate executables. It records 10,568 accepted instances, 145 skips and
 125 failures reproduced with every changed runtime implementation restored to
 the tested dev base. The entire selection is not green. Six concurrent
@@ -620,6 +621,21 @@ timeouts passed serially with the unchanged 120-second limit. Explicit x86_64
 compiler controls and a Clang 22 floating-builtin control retain their original
 failures and separate passing reports. The former Darwin overflow refusal
 assertion is replaced by exact byte/halfword/pointer stack offsets 0/2/8.
+
+The [Darwin scalar-carrier receipt](evidence/arm64e-darwin-scalar-carriers-2026-10-28.json)
+extends the typed profile to 75 groups, adding signed/unsigned byte, halfword
+and word values, pointers, packed fixed spills and a variadic tail after a
+packed fixed prefix. All 567 selected C++ tests and 39 environment admission
+tests pass. Thirty controlled model guests check 9,000 valid original/projected
+pairs and 21,600 invalid-signature pairs. The 5,760 C O0 exception-class
+differences remain separately counted; no wrong-signature callback executes.
+Integration with dev passes 52 targeted tests and preserves all 1,041 export
+hashes, including the 501 previous files. Independent placement tests also
+check Darwin odd-register 128-bit pairs and complete aligned integer spills;
+these do not admit 128-bit analyst call prototypes or aggregate spills.
+Automatic complete prototype recovery, aggregate/HFA transport, authenticated
+special-language and whole-image ABI, native signed unwinding, native Apple
+CPA2 execution and exact fault ESR/PC remain outside this qualification.
 
 `NeverDLanguageEHTests` checks the unified signing query's image/function
 provenance, exact PCs, source scopes and bounded CIE lookup.
