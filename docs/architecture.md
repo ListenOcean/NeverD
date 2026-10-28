@@ -7434,8 +7434,17 @@ throws the same way (`c-emission-failed; unsupported LLVM C cmpxchg shape` for
 an AArch64 CASP pair). So is one whose source requirements, checked before
 any rendering, fail (`c-emission-failed; immediate original memory requires a
 runtime GPR value or a complete occurrence-bound image span`): no rendering
-reads it, and its callers call it as a function outside the unit. Asked for
-alone, such a function still fails with that reason, and so does a unit
+reads it, and its callers call it as a function outside the unit. Before any
+C, a body the LLVM emitter refuses for a stale code or data address no longer
+discards its whole shard: the emitter names the body that wrote the refusal
+(`MedLLVMEmitter::refusedBodies`), the shard, or the serial module, is
+emitted again with that body masked off, and the LLVM C unit notes it first
+(`llvm-emission-failed; med_llvm_emitter: ambiguous pointer-table address
+... refusing stale-address fallback`). A lift, whose IR names nothing it
+leaves out, and a patch, which rewrites every function it lifts, still fail
+at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Asked for alone,
+such a function still
+fails with that reason, and so does a unit
 rendered with a source map, recorded positions or source names, or one whose
 requirements fail under structured exception syntax, which writes funclets
 inside their parents, or in a function whose body fills another's `__finally`.
@@ -12755,21 +12764,66 @@ certifies from the normalized unwind codes cross-checked against the decoded
 prologue, refusing a frame register, a stack adjustment on any path into the
 guarded scope, or chained or incomplete unwind data. The bytes it returns ride
 `MedFunc::SEHTerminationFrameBytes` to HighIR, where `attachSEHFinallyBodies`
-(`lib/ir/high/structure/X86/X64SEHFinallyBodies.cpp`) projects the handler's
-body into the empty `__finally` clause: the establisher parameter is rebased
-onto the parent's entry stack pointer, each home-slot load becomes the
-parameter it holds, and the abnormal argument becomes `AbnormalTermination()`.
+(`lib/ir/high/structure/SEHFinallyBodies.cpp`, with the x64 projection in
+`X86/X64SEHFinallyBodies.cpp`) projects the handler's body into the empty
+`__finally` clause: the establisher parameter is rebased onto the parent's
+entry stack pointer, each home-slot load becomes the parameter it holds, and
+the abnormal argument becomes `AbnormalTermination()`.
 Because a C `__finally` runs on the normal exit too, the compiler's inline
 normal-path copy must not run twice: when the handler ignores the abnormal flag
 and its statements equal that copy, the copy is removed and the clause holds
 the whole body; otherwise the copy stays and the clause holds only the abnormal
 work under `if (AbnormalTermination())`. A handler whose frame is not certified,
 whose body is unavailable or has its own exception scope, or whose `__try`
-transfers control out, nests another region or calls `_local_unwind` keeps its
-address comment: the machine runs the handler on such an exit while C would
+transfers control out, nests a region with a handler or calls `_local_unwind`
+keeps its address comment (a reducible inner `__try/__finally` resumes
+nowhere and leaves by falling through, so it may nest): the machine runs the handler on such an exit while C would
 not, so the clause stays out of line until that call becomes a structured
 jump. The projection runs in the plain-C view as well as the C++ one, because
 SEH is C.
+
+An ARM or AArch64 termination handler takes only the abnormal flag. The
+unwinder restores the parent's callee-saved registers to their values where
+the exception struck before calling it, and the handler reads the parent's
+state through them (`ldr w8,[x27]`, `ldr r3,[r7,#12]`). `buildSsa`
+(`lib/ir/med/pass/MedSSA.cpp`) records, for every finally scope whose handler
+lies outside the function, the version of each full-width callee-saved or
+frame-pointer register at the entry of every block of the scope's protected
+range, as it does for an `__except` root. A register that no protected
+operation writes and whose versions agree across every range the handler ends
+is resolved through COPY and constant INT_ADD/INT_SUB definitions, never a
+PHI or an auxiliary output, to an entry-stack-pointer offset, an incoming argument register or a
+constant (keeping an address constant's provenance), and published in
+`MedFunc::SEHFuncletRegisters` by handler; anything else is left out. Version
+0 is a register's value on entry only where the entry block's self-copy
+defines it; for a register written before it is read, version 0 is its first
+definition, and a block no definition reaches records none. An AArch64
+handler also receives the establisher frame in x1, the stack pointer the
+prologue leaves for the body. The parent's stack pointer throughout the ranges
+is published under the stack pointer's offset as that frame only when it is
+the entry stack pointer less exactly the allocation the prologue's unwind
+codes record (`arm64PrologueAllocation`) and the frame pointer holds the same
+address there. clang-cl's handlers reach a parent slot at `x29 - 8` as
+`x1 - 8`, so the frame is the frame pointer by that reading and the body's
+stack pointer by another; only where the two agree is it known. These
+forms survive HighIR's renaming passes, which a raw SSA value in an exception
+clause would not. `ARM/ARMSEHFinallyBodies.cpp` replaces each entry register
+the handler reads with that value (`frame_base - k`, the parameter, or the
+constant) and an AArch64 x1 with the establisher frame, sets the flag, folds
+constant conditions so the unwind path keeps only the branches it takes
+(a `return` or jump in a dropped branch goes with it; one that survives keeps
+the comment), gives the handler's temporaries fresh numbers past the parent's
+so they print and inline as the parent's own do, and always uses the guarded
+form: the compiler's normal-path code stays where it
+is, so nothing is removed and a region nested in another `__try` is filled in
+place. A handler that reads a register without a published value, its own
+stack, another parameter or exception state, or that loops, jumps or has
+exception scopes of its own keeps its address comment. MSVC ARM leaf handlers
+have no unwind record of their own, so `FuncDetector` also takes each scope's
+out-of-line termination handler as a function entry unless it lies inside
+another record's range. Filters stay as they were: the `__except` expression
+calls one with the exception pointers, which a definition that never reads
+them would not take.
 
 Ordinary internal returns preserve both the callee PC and the parent entry PC. The same reaching-write proof checks both coordinates; writes into known allocated parent storage remain allowed.
 

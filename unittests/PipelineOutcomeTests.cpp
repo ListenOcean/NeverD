@@ -68,9 +68,11 @@ public:
   static LLVMEmissionResult emitShards(const std::vector<MedFunc> &Functions,
                                        llvm::LLVMContext &Context,
                                        const BinaryImage &Image,
-                                       unsigned Threads) {
-    return Pipeline::emitLLVMSharded(Functions, Context, Image.Arch, {}, Image,
-                                     Image.Format, true, Threads);
+                                       unsigned Threads,
+                                       bool OmitRefusedBodies = false) {
+    return Pipeline::emitLLVMSharded(
+        Functions, Context, Image.Arch, {}, Image, Image.Format, true, Threads,
+        false, {}, nullptr, {}, nullptr, false, {}, OmitRefusedBodies);
   }
 
   static void buildHighIR(const BinaryImage &Image, PipelineResult &Result) {
@@ -1859,6 +1861,78 @@ TEST(PipelineOutcome, RealShardedEmissionDefinesEverySourceFunction) {
     EXPECT_EQ(Function.getName(), Functions[Index++].Name);
   }
   EXPECT_EQ(Index, Functions.size());
+}
+
+// A body that refuses a stale address costs the unit only that definition:
+// its shard is emitted again without it, and the result names it with the
+// error the emitter wrote.
+TEST(PipelineOutcome, RealShardedEmissionLeavesOutOnlyTheRefusedBody) {
+  llvm::LLVMContext Context;
+  BinaryImage Image;
+  Image.Arch = Arch::X64;
+  Image.Bits = Bitness::Bits64;
+  Image.Format = BinaryFormat::ELF;
+  std::vector<MedFunc> Functions;
+  for (unsigned I = 0; I < 8; ++I) {
+    MedFunc Function =
+        sourceFunction(0x1000 + I * 16, "source_" + std::to_string(I));
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Function.Entry;
+    if (I == 3) {
+      // A page fragment whose low bits never arrive is stored as is.
+      MedVar Pointer;
+      Pointer.Kind = MedVar::Param;
+      Pointer.TheArch = Arch::X64;
+      Pointer.Id = 0;
+      Pointer.Size = 8;
+      Pointer.RegOff = x86reg::RDI;
+      Function.Params.push_back(Pointer);
+      MedOp Store;
+      Store.Opcode = NdOp::STORE;
+      Store.addInput(Pointer);
+      Store.addInput(MedVar::makeConst(
+          0x2000, 8, ConstantAddressProvenance::AddressFragment));
+      Block.Ops.push_back(Store);
+    }
+    MedOp Return;
+    Return.Opcode = NdOp::RETURN;
+    Block.Ops.push_back(Return);
+    Function.Blocks.push_back(std::move(Block));
+    Functions.push_back(std::move(Function));
+  }
+  // A run whose output names nothing it leaves out, as a lift's, fails.
+  testing::internal::CaptureStderr();
+  auto Failed = PipelineTestPeer::emitShards(Functions, Context, Image, 2);
+  (void)testing::internal::GetCapturedStderr();
+  EXPECT_EQ(Failed.Module, nullptr);
+  EXPECT_TRUE(Failed.LeftOut.empty());
+
+  testing::internal::CaptureStderr();
+  auto Result = PipelineTestPeer::emitShards(Functions, Context, Image, 2,
+                                             /*OmitRefusedBodies=*/true);
+  const std::string Diagnostic = testing::internal::GetCapturedStderr();
+  ASSERT_NE(Result.Module, nullptr) << Result.Error << Diagnostic;
+  EXPECT_TRUE(Result.Error.empty());
+  EXPECT_FALSE(llvm::verifyModule(*Result.Module, &llvm::errs()));
+  ASSERT_EQ(Result.LeftOut.size(), 1u) << Diagnostic;
+  EXPECT_EQ(Result.LeftOut[0].first, 3u);
+  EXPECT_NE(Result.LeftOut[0].second.find("source_3"), std::string::npos)
+      << Result.LeftOut[0].second;
+  EXPECT_NE(Result.LeftOut[0].second.find("refusing stale-address fallback"),
+            std::string::npos)
+      << Result.LeftOut[0].second;
+  for (unsigned I = 0; I < 8; ++I) {
+    const llvm::Function *Function =
+        Result.Module->getFunction(Functions[I].Name);
+    // Linking drops the left-out body's declaration where nothing calls it.
+    if (I == 3) {
+      EXPECT_TRUE(!Function || Function->isDeclaration());
+      continue;
+    }
+    ASSERT_NE(Function, nullptr) << Functions[I].Name;
+    EXPECT_FALSE(Function->isDeclaration()) << Functions[I].Name;
+  }
 }
 
 MedFunc unhandledIntrinsicFunction(Arch Architecture, uint16_t OutputSize,

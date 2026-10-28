@@ -68,6 +68,7 @@
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87ControlAccess.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -2925,8 +2926,10 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       throw std::invalid_argument(kReturnProtectionCRequiresAArch64);
     for (const auto &Block : Function)
       for (const auto &Instruction : Block) {
-        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction))
+        if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
           (void)llvmAArch64AuthenticatedCall(*Call, Opts.TheArch);
+          (void)classifyX87ControlAccess(*Call, Opts.TheArch);
+        }
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);
           (void)validateAArch64WritebackMemoryCall(Opts.TheArch, *Call);
