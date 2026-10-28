@@ -388,7 +388,10 @@ while it is held beyond an edge, extend with Shift and the arrows or a Shift
 click, or press **Ctrl+A** (also **Select all** in the context menu) for the
 whole function; **Ctrl+C** or the context menu's **Copy** copies it, and a
 right click inside the selection keeps it. Without a selection they copy the
-highlighted word under the cursor (see **Edit → Copy**).
+highlighted word under the cursor (see **Edit → Copy**). As in Hex-Rays, the
+bracket the cursor is on stands boxed with its partner, nested or lines away:
+a parenthesis, square bracket or brace of the code, not one in a string or
+comment.
 
 Global data is declared the way C source declares it, with the value the image
 holds: a string the code reaches by its address is its array

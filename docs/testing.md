@@ -5047,7 +5047,9 @@ C, moves in the callee as a click does, and checks that one Back returns the
 code to the call's line and column with the view scrolled as it was, and that
 Forward returns to where the callee was left; `historyStopsFollowTheCursor`
 moves between jumps and checks that Back skips those moves and Forward returns
-to them;
+to them; `bracketUnderTheCursorPairsWithItsPartner` puts the code cursor on
+brackets nested, lines apart and around a folded block, on brackets of a
+string and a comment, and just past a bracket, and checks which pair;
 `NeverDWorkerCodeEdits` checks the literal scan
 and type-keeping spellings of `neverd/support/IntegerLiterals.h` for C, Rust
 and Go. `tabFromAssemblyWaitsForPagesAndUnfoldsTarget` checks

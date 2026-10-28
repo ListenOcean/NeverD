@@ -2780,6 +2780,65 @@ private slots:
     QVERIFY(!bench.window->findChild<FindInViewDialog *>());
   }
 
+  void bracketUnderTheCursorPairsWithItsPartner() {
+    // As in Hex-Rays, the bracket the cursor is on pairs with its partner,
+    // nested or lines away, while one of a string or comment, or the one
+    // before the cursor, pairs with nothing.
+    QTemporaryDir directory;
+    Workbench bench;
+    LoadDialogAcceptor loads;
+    bench.window->openFile(writeFixture(directory, "code-brackets.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    bench.window->disassembly()->navigate(Base + 0x140);
+    QTRY_COMPARE(bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base + 0x140));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *code = bench.codeView("source")->text();
+    QTRY_VERIFY(code->complete());
+    const QStringList source = code->allText().split(QLatin1Char('\n'));
+    QCOMPARE(code->lineCount(), source.size());
+    // Put the cursor on the first match after a line, as Find does.
+    const auto pairOf =
+        [&](int line,
+            const QString &text) -> std::optional<std::pair<int, int>> {
+      code->setCursorLine(line);
+      if (!code->findText(text, true))
+        return std::pair{-1, -1};
+      const auto pair = code->bracketPair();
+      if (!pair)
+        return std::nullopt;
+      if (pair->line != code->cursorLine() ||
+          pair->column != code->cursorColumn())
+        return std::pair{-2, -2};
+      return std::pair{pair->partnerLine, pair->partnerColumn};
+    };
+    using Place = std::optional<std::pair<int, int>>;
+    QCOMPARE(pairOf(0, QStringLiteral("(int32_t")),
+             Place(std::pair{1, int(source[1].indexOf(QLatin1Char(')')))}));
+    QCOMPARE(pairOf(0, QStringLiteral("{")), Place(std::pair{8, 0}));
+    QCOMPARE(pairOf(7, QStringLiteral("}")),
+             Place(std::pair{1, int(source[1].size()) - 1}));
+    QCOMPARE(pairOf(2, QStringLiteral("{v0")),
+             Place(std::pair{3, int(source[3].lastIndexOf(QLatin1Char('}')))}));
+    QCOMPARE(
+        pairOf(4, QStringLiteral("[(")),
+        Place(std::pair{5, int(source[5].indexOf(QStringLiteral("1)]"))) + 2}));
+    QCOMPARE(
+        pairOf(4, QStringLiteral("(v0 &")),
+        Place(std::pair{5, int(source[5].indexOf(QStringLiteral("1)]"))) + 1}));
+    QCOMPARE(pairOf(1, QStringLiteral("(v0]")), Place());
+    QCOMPARE(pairOf(4, QStringLiteral(") */")), Place());
+    QCOMPARE(pairOf(4, QStringLiteral("v1[0]); /*")), Place());
+    QCOMPARE(pairOf(4, QStringLiteral("; /*")), Place());
+    code->viewport()->grab();
+    // A folded block keeps its braces in view, around its summary.
+    code->setCursorLine(4);
+    QVERIFY(code->setCurrentBlockFolded(true));
+    QCOMPARE(code->lineCount(), source.size() - 1);
+    QCOMPARE(pairOf(3, QStringLiteral("{")), Place(std::pair{5, 2}));
+    code->viewport()->grab();
+  }
+
   void findInViewUnfoldsHiddenMatchesAndHonorsOptions() {
     QTemporaryDir directory;
     Workbench bench;

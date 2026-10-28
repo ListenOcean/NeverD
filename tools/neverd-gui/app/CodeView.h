@@ -16,6 +16,7 @@
 #include <QVector>
 #include <QWidget>
 #include <optional>
+#include <tuple>
 
 class QComboBox;
 class QLabel;
@@ -159,6 +160,13 @@ public:
   /// The displayed line the cursor is on.
   int cursorLine() const { return cursorLine_; }
   int cursorColumn() const { return cursorColumn_; }
+  /// The bracket the cursor is on and the one it pairs with, as shown lines
+  /// and columns, which Hex-Rays marks together; none off a bracket, for one
+  /// in a string or comment, or while its partner is not in the text.
+  struct BracketPair {
+    int line = 0, column = 0, partnerLine = 0, partnerColumn = 0;
+  };
+  std::optional<BracketPair> bracketPair() const;
   int lineCount() const { return int(lines_.size()); }
   /// Recognized library operations that can fold into one-line summaries.
   int foldableCount() const { return library_.foldableCount(); }
@@ -400,6 +408,11 @@ private:
   const Declarations &declarations() const;
   mutable std::optional<Declarations> declarations_;
   int cursorLine_ = 0, cursorColumn_ = 0;
+  /// Changes whenever the shown lines do, so the bracket pair found for a
+  /// cursor place is found again.
+  quint64 linesStamp_ = 0;
+  mutable std::optional<BracketPair> brackets_;
+  mutable std::tuple<int, int, quint64> bracketsAt_{-1, -1, 0};
   std::optional<std::pair<int, int>> anchor_;
   bool selecting_ = false;
   /// Extend the selection to a point of the viewport, as dragging does; a

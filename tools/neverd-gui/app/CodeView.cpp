@@ -581,6 +581,7 @@ void CodeText::clear() {
   blocksAfterLoad_.clear();
   blockStructureAfterLoad_.clear();
   lines_.clear();
+  ++linesStamp_;
   function_.reset();
   sourceOptions_ = {};
   renderedOptions_ = {};
@@ -638,6 +639,7 @@ void CodeText::load(Address function, const QString &representation,
   if (!same) {
     renderedOptions_ = {};
     lines_.clear();
+    ++linesStamp_;
     widestLine_ = 0;
     cursorLine_ = cursorColumn_ = 0;
     anchor_.reset();
@@ -953,6 +955,7 @@ void CodeText::request(int offset, quint64 serial) {
         line.styled.text = message;
         line.styled.spans = {{0, int(message.size()), Comment, std::nullopt}};
         lines_.append(std::move(line));
+        ++linesStamp_;
         widestLine_ = message.size();
         status_ = message;
         updateRange();
@@ -1230,6 +1233,7 @@ void CodeText::rebuildLines(bool append) {
   gutterChars_ = std::max(3, int(QString::number(lastSourceLine).size()));
   cursorLine_ =
       std::clamp(previousLine, 0, std::max(0, int(lines_.size()) - 1));
+  ++linesStamp_;
   updateRange();
   updateMouseCursor(viewport()->mapFromGlobal(QCursor::pos()));
   viewport()->update();
@@ -1650,6 +1654,7 @@ void CodeText::paintEvent(QPaintEvent *) {
   const auto selectionFirst = anchor_ ? std::min(*anchor_, cursor) : cursor;
   const auto selectionLast = anchor_ ? std::max(*anchor_, cursor) : cursor;
   const TokenDots dots = tokenDots();
+  const auto brackets = bracketPair();
   for (int i = first; i <= last; ++i) {
     const int y = (i - first) * lineHeight_;
     const QRect row(0, y, area.width(), lineHeight_);
@@ -1689,6 +1694,20 @@ void CodeText::paintEvent(QPaintEvent *) {
         if (!highlight_.isEmpty())
           mark(highlight_, ColorRole::ListingHighlight);
       }
+      // The bracket under the cursor and its partner stand boxed.
+      if (brackets)
+        for (const auto &[line, column] :
+             {std::pair{brackets->line, brackets->column},
+              std::pair{brackets->partnerLine, brackets->partnerColumn}})
+          if (line == i) {
+            const QRectF box(left + textLine.cursorToX(column), y,
+                             textLine.cursorToX(column + 1) -
+                                 textLine.cursorToX(column),
+                             lineHeight_);
+            painter.fillRect(box, theme.color(ColorRole::CodeBracketMatch));
+            painter.setPen(theme.color(ColorRole::CodeBracketMatchBorder));
+            painter.drawRect(box.adjusted(0.5, 0.5, -0.5, -0.5));
+          }
     }
     QList<QTextLayout::FormatRange> selection;
     if (anchor_ && selectionFirst != selectionLast &&
@@ -2148,6 +2167,49 @@ QString CodeText::cursorWord() const {
   if (const auto name = sourceNameAt(cursorLine_, cursorColumn_))
     return name->first;
   return tokenAt(cursorLine_, cursorColumn_);
+}
+
+std::optional<CodeText::BracketPair> CodeText::bracketPair() const {
+  const std::tuple at{cursorLine_, cursorColumn_, linesStamp_};
+  if (at == bracketsAt_)
+    return brackets_;
+  bracketsAt_ = at;
+  brackets_.reset();
+  // A bracket of the code itself; one in a string, a comment or a folded
+  // summary is text.
+  const auto bracket = [this](int line, int column) {
+    const auto *span = lines_[line].styled.spanAt(column);
+    return span && span->role == Punctuation;
+  };
+  const QStringView Opening = u"([{", Closing = u")]}";
+  if (cursorLine_ < 0 || cursorLine_ >= lines_.size() ||
+      cursorColumn_ >= lines_[cursorLine_].styled.text.size())
+    return brackets_;
+  // Hex-Rays pairs the bracket the cursor is on, not the one before it.
+  const QChar on = lines_[cursorLine_].styled.text.at(cursorColumn_);
+  const auto opening = Opening.indexOf(on), closing = Closing.indexOf(on);
+  if ((opening < 0 && closing < 0) || !bracket(cursorLine_, cursorColumn_))
+    return brackets_;
+  const QChar partner =
+      opening >= 0 ? Closing.at(opening) : Opening.at(closing);
+  const int step = opening >= 0 ? 1 : -1;
+  int depth = 0;
+  for (int line = cursorLine_; line >= 0 && line < lines_.size();
+       line += step) {
+    const QString &text = lines_[line].styled.text;
+    int column = line != cursorLine_ ? (step > 0 ? 0 : int(text.size()) - 1)
+                                     : cursorColumn_;
+    for (; column >= 0 && column < text.size(); column += step) {
+      const QChar c = text.at(column);
+      if ((c != on && c != partner) || !bracket(line, column))
+        continue;
+      if ((depth += c == on ? 1 : -1) == 0) {
+        brackets_ = BracketPair{cursorLine_, cursorColumn_, line, column};
+        return brackets_;
+      }
+    }
+  }
+  return brackets_;
 }
 
 QString CodeText::copyText() const {
