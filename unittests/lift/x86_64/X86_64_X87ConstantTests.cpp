@@ -10,14 +10,12 @@
 #include "X86FPStateAccuracyFixture.h"
 
 #include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
-#include "neverd/backend/llvm/X86/LLVMX87ControlAccess.h"
 #include "neverd/ir/high/X86/X87ConstantShape.h"
 
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/Intrinsics.h"
 
 #include <cstdlib>
-#include <stdexcept>
 
 namespace {
 LowOp constantOp(unsigned Selector, uint16_t Control) {
@@ -321,75 +319,6 @@ INSTANTIATE_TEST_SUITE_P(AllSeven, X87Constants,
                                "Log10Two", "LnTwo",   "Zero"};
                            return Names[Info.param - 0xe8];
                          }));
-TEST(X87ControlContract,
-     NativeCProjectionRejectsMalformedCallsBeforeFiltering) {
-  for (const char *Name : {"llvm.x86.fnstcw", "llvm.x86.fldcw"})
-    for (unsigned Change = 0; Change < 11; ++Change)
-      for (bool HideBody : {false, true}) {
-        SCOPED_TRACE(testing::Message()
-                     << Name << ':' << Change << ':' << HideBody);
-        llvm::LLVMContext Context;
-        llvm::Module Module("invalid-control", Context);
-        auto *Void = llvm::Type::getVoidTy(Context);
-        auto *Pointer = llvm::PointerType::get(Context, Change == 5 ? 1 : 0);
-        llvm::Type *Argument = Pointer;
-        if (Change == 4)
-          Argument = llvm::Type::getInt16Ty(Context);
-        std::vector<llvm::Type *> Types(Change == 2   ? 0
-                                        : Change == 3 ? 2
-                                                      : 1,
-                                        Argument);
-        auto *Type = llvm::FunctionType::get(
-            Change == 1 ? llvm::Type::getInt16Ty(Context) : Void, Types,
-            Change == 6);
-        auto *Callee = llvm::Function::Create(
-            Type, llvm::GlobalValue::ExternalLinkage, Name, Module);
-        auto *BodyType = llvm::FunctionType::get(Void, false);
-        auto *Body = llvm::Function::Create(
-            BodyType, llvm::GlobalValue::ExternalLinkage, "probe", Module);
-        auto *Visible = llvm::Function::Create(
-            BodyType, llvm::GlobalValue::ExternalLinkage, "visible", Module);
-        llvm::IRBuilder<> Builder(
-            llvm::BasicBlock::Create(Context, "entry", Visible));
-        Builder.CreateRetVoid();
-        Builder.SetInsertPoint(
-            llvm::BasicBlock::Create(Context, "entry", Body));
-        std::vector<llvm::Value *> Args(Types.size(),
-                                        llvm::Constant::getNullValue(Argument));
-        if (Change == 9) {
-          auto *Normal = llvm::BasicBlock::Create(Context, "normal", Body);
-          auto *Unwind = llvm::BasicBlock::Create(Context, "unwind", Body);
-          Builder.CreateInvoke(Callee, Normal, Unwind, Args);
-          Builder.SetInsertPoint(Unwind);
-          Builder.CreateUnreachable();
-          Builder.SetInsertPoint(Normal);
-        } else if (Change == 10) {
-          auto *Mismatched =
-              llvm::FunctionType::get(Void, {Builder.getInt16Ty()}, false);
-          Builder.CreateCall(Mismatched, Callee, {Builder.getInt16(0)});
-        } else {
-          auto *Call = Builder.CreateCall(Callee, Args);
-          if (Change == 7) {
-            Callee->setCallingConv(llvm::CallingConv::Fast);
-            Call->setCallingConv(llvm::CallingConv::Fast);
-          }
-        }
-        Builder.CreateRetVoid();
-        if (Change == 8) {
-          Builder.SetInsertPoint(
-              llvm::BasicBlock::Create(Context, "entry", Callee));
-          Builder.CreateRetVoid();
-        }
-        CEmitterOptions Options;
-        Options.TheArch = Change == 0 ? Arch::AArch64 : Arch::X64;
-        std::string Source;
-        llvm::raw_string_ostream Stream(Source);
-        EXPECT_THROW(LLVMCEmitter().emit(Module, Stream, Options, nullptr,
-                                         nullptr, HideBody ? Visible : nullptr),
-                     std::invalid_argument);
-      }
-}
-
 class X87ControlProjectionFixture : public X86FPStateFixture {
 protected:
   void checkNativeCalls(llvm::StringRef SourceCompiler) {

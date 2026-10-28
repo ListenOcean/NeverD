@@ -2821,3 +2821,36 @@ binary80/control comparisons against original instructions. Physical
 qualification remains limited to the recorded x64 host; i386 runtime, #NM,
 alignment-check delivery and complete architectural equivalence are not
 claimed. The production SDK pin and LLVM gitlink remain unchanged.
+
+## Native x87 status, reset and wait interfaces
+
+The LLVM fork now supplies `i16 llvm.x86.fnstsw()`,
+`void llvm.x86.fnstsw.mem(ptr)`, `void llvm.x86.fnclex()`,
+`void llvm.x86.fninit()` and `void llvm.x86.fwait()`. NeverC exposes the
+corresponding header-free `__builtin_ia32_fnstsw`,
+`__builtin_ia32_fnstsw_mem`, `__builtin_ia32_fnclex`,
+`__builtin_ia32_fninit` and `__builtin_ia32_fwait` builtins. FNSTSW retains
+separate AX and two-byte DD /7 memory forms. Both have conservative IR effects
+and FPSW dependencies; unused reads still execute. FWAIT keeps its pending
+exception check. FNCLEX and FNINIT remain nonwaiting operations.
+
+FNINIT invalidates compiler-owned FP/ST/MMX values through its register
+clobbers and scheduling boundary. Live values must survive through spills and
+reloads. This describes register allocation, not physical payload erasure.
+The old SDK assembly fallback now also declares the MMX clobbers. Ordinary
+unconstrained floating-point IR retains its existing environment assumptions.
+
+NeverD's typed FNINIT/FNCLEX/FWAIT operations select registered native calls.
+One X86 state-call contract now validates all seven control/status interfaces
+before function filtering, and one private X86 helper renders their C builtin
+and assembly alternatives for HighC and LLVM-C. Malformed declarations,
+retyped calls, aliases, definitions, invokes, calling conventions, address
+spaces and non-x86 use are rejected. The former control-only validator has
+been replaced by this shared contract and its broader negative tests.
+
+An owned context still executes its restore/operation/save/host-restore as one
+assembly unit. Typed `X87ReadStatus` still consumes the status sampled by its
+own operation; replacing it with ambient FNSTSW would read the wrong state.
+These native interfaces do not close the complete-machine-state, continuation
+or physical qualification gaps listed above. LLVM release, the production SDK
+pin and the LLVM gitlink remain unchanged until those global gaps close.

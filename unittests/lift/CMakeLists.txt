@@ -4838,6 +4838,7 @@ target_include_directories(NeverDX86F16CStateTests PRIVATE
 
 add_neverd_unittest(NeverDX86X87ConstantTests
   x86_64/X86_64_X87ConstantTests.cpp
+  x86_64/X87NativeStateTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86X87ConstantTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)

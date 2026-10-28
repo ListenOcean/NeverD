@@ -25,7 +25,7 @@
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
-#include "../render/X86/X87ControlAccess.h"
+#include "../render/X86/X87NativeState.h"
 #include "LLVMCAtomicOrdering.h"
 #include "LLVMCIntegerMinMax.h"
 #include "LLVMCIntegerSaturation.h"
@@ -52,7 +52,7 @@
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX87ConstantAsm.h"
-#include "neverd/backend/llvm/X86/LLVMX87ControlAccess.h"
+#include "neverd/backend/llvm/X86/LLVMX87NativeState.h"
 #include "neverd/backend/llvm/X86/LLVMX87ValueAsm.h"
 #include "neverd/backend/llvm/X86/X86AmxNative.h"
 #include "neverd/backend/llvm/X86/X86SgxNative.h"
@@ -4051,10 +4051,12 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   const llvm::Function *Callee = Call.getCalledFunction();
   if (!Callee)
     return false;
-  if (const auto Control = classifyX87ControlAccess(Call, Opts.TheArch)) {
+  if (const auto *State = classifyX87NativeState(Call, Opts.TheArch)) {
     emitIndent(Indent);
-    OS << renderX87ControlAccess(*Control == X87ControlAccessKind::Write,
-                                 valueStr(Call.getArgOperand(0)));
+    OS << renderX87NativeState(
+        *State, State->HasPointer ? valueStr(Call.getArgOperand(0)) : "",
+        State->ReturnsStatus && valueFeedsPrintedUse(&Call) ? getName(&Call)
+                                                            : "");
     return true;
   }
   if (!Callee->isIntrinsic())
@@ -5225,6 +5227,13 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
                AsmStr == intrinsicAsmMnemonic(Intrinsic::X87Fnclex))
         Effect = X87StateEffect::Status;
       if (Effect && x87StateEffectOf(Constraints) == Effect) {
+        for (Intrinsic Id :
+             {Intrinsic::X87Fninit, Intrinsic::X87Fnclex, Intrinsic::X87Wait})
+          if (AsmStr == intrinsicAsmMnemonic(Id)) {
+            emitIndent(Indent);
+            OS << renderX87NativeState(*x87NativeStateOfIntrinsic(Id));
+            return true;
+          }
         std::string Template = AsmStr;
         if (IsFree)
           Template.insert(FreePop ? 7 : 6, "%");

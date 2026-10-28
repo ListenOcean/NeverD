@@ -16,7 +16,7 @@
 #include "X86FPStateHelpers.h"
 #include "X86ScalarSystem.h"
 #include "X86SystemRegister.h"
-#include "X87ControlAccess.h"
+#include "X87NativeState.h"
 
 #include "neverd/Limits.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
@@ -2206,6 +2206,9 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
   }
   // An x87 state instruction runs where the compiler keeps no value of its
   // own in the register stack it changes: the clobbers say which.
+  if (GnuToolchain && Ops.empty())
+    if (const auto *Spec = x87NativeStateOfIntrinsic(Id))
+      return "({ " + renderX87NativeState(*Spec) + "})";
   if (GnuToolchain && Ops.empty())
     if (const auto Effect = x87StateEffectOfIntrinsic(Id))
       return std::string("__asm__ volatile(\"") + intrinsicAsmMnemonic(Id) +

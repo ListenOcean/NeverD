@@ -18,6 +18,7 @@
 #include "neverd/backend/llvm/MedLLVMInstructionText.h"
 #include "neverd/backend/llvm/X86/LLVMX86StackEffects.h"
 #include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
+#include "neverd/backend/llvm/X86/LLVMX87NativeState.h"
 #include "neverd/backend/llvm/X86/X86DescriptorStateNative.h"
 #include "neverd/backend/llvm/X86/X86ScalarSystemNative.h"
 #include "neverd/backend/llvm/X86/X86SystemRegisterAsm.h"
@@ -889,6 +890,11 @@ bool MedLLVMEmitter::emitX86Sideeffect(const MedOp &Op, Intrinsic IC,
             "invalid x87 state intrinsic operand contract");
       Mnemonic = intrinsicAsmMnemonic(IC);
     }
+    if (const auto *Spec = x87NativeStateOfIntrinsic(IC))
+      if (const auto ID = llvm::Intrinsic::lookupIntrinsicID(Spec->LLVMName)) {
+        Builder.CreateCall(llvm::Intrinsic::getOrInsertDeclaration(Mod, ID));
+        return true;
+      }
     // Emptying a register or moving TOP invalidates every x87 value LLVM
     // might keep in the register stack; the constraints say so.
     auto *FnTy =

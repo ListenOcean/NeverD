@@ -26,7 +26,7 @@
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
-#include "../render/X86/X87ControlAccess.h"
+#include "../render/X86/X87NativeState.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
