@@ -147,6 +147,9 @@ Outcome execute(Operation Op, unsigned Escape, unsigned Index, Context &S,
     return Outcome::Completed;
   case Operation::Wait:
     return Outcome::Completed;
+  case Operation::ResetMMX:
+    S.Image[4] = 0;
+    return Outcome::Completed;
   case Operation::LoadControl: {
     const uint16_t Control = word(Memory);
     if (!x87ControlWordIsValid(Control))
@@ -319,7 +322,7 @@ preflightPortableX87Context(uint32_t Selector,
   if (Op != Operation::Initialize &&
       (!x87ControlWordIsValid(Control) || !(Control & 0x0040)))
     return Outcome::InvalidControl;
-  if (x87ContextUpdatesInstructionPointer(Selector) &&
+  if (Op != Operation::Wait && x87ContextUpdatesInstructionPointer(Selector) &&
       (Control & ExceptionFlags) != ExceptionFlags)
     return Outcome::UnmaskedControl;
   return Outcome::Completed;
@@ -348,6 +351,10 @@ executePortableX87Context(uint32_t Selector, std::array<uint8_t, 512> &State,
                                   Next, OperandView, Output);
   if (Completion != Outcome::Completed)
     return Completion;
+  // Empty tags do not establish retained payload values. FEMMS invalidates
+  // all eight physical aliases; EMMS and FNOP preserve their provenance.
+  if (Spec->InvalidatesPayloads)
+    Next.Known = 0;
   if (x87ContextUpdatesInstructionPointer(Selector)) {
     putAddress(Next.Image, 8, IP);
     if (Spec->MemoryBytes)

@@ -7612,6 +7612,14 @@ explicit masked-state slice to the existing context. It neither creates a
 parallel stack nor changes native/translation admission. Undefined CPU fields,
 unknown incoming state and unsupported effects stay explicit in that profile.
 
+The portable owner also executes FNOP, EMMS and FEMMS through the shared
+instruction table. The common preflight owns waiting exceptions and control
+validation; completion updates FNOP's guest FIP, empties EMMS/FEMMS tags and
+applies FEMMS payload invalidation. Concrete interpretation, Step V1 and the
+portable translation selector reuse this decision. These owned-state forms
+remain a separate capability class from typed state-only operations; portable
+admission must not imply a typed lift or general MMX data support.
+
 `X87GuardedValue.h` shares the typed raw-value/control-word contract for BCD
 and the native FPTAN/FSINCOS/FXTRACT result pairs. The CFG owner proves source
 payload and destination-tag preconditions; native emission enforces the

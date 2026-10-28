@@ -289,6 +289,23 @@ All data instructions in this initial slice require all six exception masks,
 including raw transport, FILD and sign changes. FLDCW admits only all-masked
 input; nonwaiting control/status operations retain their separate behavior.
 
+The explicit profile also admits FNOP, EMMS and FEMMS. All three check pending
+waiting exceptions before changing state, require no operand memory or known
+payloads, and permit valid unmasked controls when no exception is pending.
+FNOP updates the guest FIP; its undefined C0/C1/C2/C3 bits retain the incoming
+profile values. EMMS empties the tags while retaining TOP, the remaining
+environment, payload bytes and their provenance. FEMMS additionally clears all
+eight physical known-payload bits. Retained backing bytes are not known values;
+later completed writes authenticate only their own physical slots. The same
+dispatch admits these operations in the concrete interpreter, explicit generated
+Step V1 interface and portable translation selector gate. General MMX data
+operations and i386 owned state remain outside this contract.
+
+FNOP follows the [Intel instruction contract](https://cdrdv2-public.intel.com/868137/325462-089-sdm-vol-1-2abcd-3abcd-4.pdf).
+The FEMMS extension uses the [AMD architectural distinction from EMMS](https://docs.amd.com/api/khub/documents/sfvvekC9mDflu6vd3R0NXA/content).
+The existing profile and C ABI identities are unchanged; adding FEMMS to the
+software profile does not assert its availability on Intel hardware.
+
 The existing FXSAVE64 context remains authoritative. TOP changes rotate logical
 slots while preserving physical payloads, physical tags and the physical
 known-payload mask. A pop retains the empty register's bits. FNINIT resets the
@@ -405,7 +422,7 @@ execution/resumption contract, not a proof that an arbitrary loop terminates.
 queries, generated preparation and translation. Step V1 has no integer-flag
 operands: the concrete interpreter's FCOMI/FUCOMI support does not admit those
 forms at this boundary. Unsupported x87 instructions, floating source/call ABIs,
-MMX and general save/restore operations remain explicit failures. Rejecting an
+MMX data operations and general save/restore remain explicit failures. Rejecting an
 unsupported later block preserves the last completed prefix.
 
 The object, runtime registry, cache identity and checked invocation bind the

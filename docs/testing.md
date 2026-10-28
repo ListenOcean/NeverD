@@ -6360,6 +6360,19 @@ execute those exact original byte vectors and compare result bytes and defined
 state; relocated pointers and undefined C0/C2/C3 are excluded from that native
 comparison. Generated guest IP/DP are checked independently.
 
+`X87PortableGenerated.AllRoutesExecuteFnopEmmsAndFemms` separately compiles
+36 reset/state-operation artifacts through the same routes and optimization
+profiles. Each artifact checks 72 combinations of TOP, tags and known payloads,
+plus unknown-environment, pending-exception and invalid-control refusals.
+The integer result publishes only on success, no guest memory is required,
+and the complete owned state must match the instruction's contract. Native
+x64 references execute only FNOP and EMMS, comparing CW, defined SW, tags and
+every binary80 payload; all four undefined FNOP condition bits are excluded.
+FEMMS invalidation is a provenance check, not physical FEMMS qualification.
+Set `NEVERD_X87_GENERATED_ARTIFACT_DIR` to retain the separate `x87-resets`
+sources, commands, objects and observations. The arithmetic freeze script
+continues to select only its original leaf/branch/loop test.
+
 `scripts/check_x87_portable_generated.py` freezes 36 compiled artifacts and
 6,096 observations on native Linux x64/AArch64. It requires complete coverage,
 cross-route/optimization agreement, no skips, stable source/build/compiler and
@@ -6467,6 +6480,11 @@ physical provenance, FIP/FDP, write-only output and canaries. Additional cases
 check a faulting final byte after a completed load, completed executable-store
 pop, pending/unknown/invalid input state, stale memory faults, unsupported
 operations, memory-before-stack-fault precedence and success-only scalar output.
+The reset cases check pending-exception priority without guest memory and
+preserve a completed FNOP/EMMS/FEMMS prefix when the next memory operation
+fails. Direct context and decoded-emulator tests distinguish EMMS payload
+retention from FEMMS invalidation, including all eight subsequent payload
+reestablishments and refusal without partial state updates.
 Store-preflight regression checks that a successful check neither writes nor
 increments generations and cannot authorize a later overflowing generation.
 LLVM and Unicorn are independent numerical references; the native x64 test
