@@ -478,7 +478,11 @@ still fails, which the `JTE_*FailsClosed*` lift tests also hold.
 AArch64 `ldapurb w8, [sp, #0x20]` with an image, which the emitter refuses
 before any module: a lift fails once, from the shard that owns the body.
 `ShardedEmissionKeepsBothFunctionsOfOneName` checks that two functions of one
-name keep both bodies in one module and in two shards. Decompile a whole
+name keep both bodies in one module and in two shards.
+`FunctionAddressSuffixesDoNotAliasExistingNames` checks chained collisions
+with real suffixed names, each body's return value and a caller's exact
+target. It covers x86/x64/ARM32/AArch64 across COFF, ELF and Mach-O, both
+input orders, and one or two shards. Decompile a whole
 x86-64 libsqlite3 or Rust binary, and an AArch64 Rust Mach-O, through `--llvm`
 after changing that retry: one such body used to fail the unit.
 
@@ -15106,7 +15110,7 @@ NEVERD_TEST_MATRIX_NEVERC=/path/to/neverc build-source-full/bin/NeverDSourcePatc
 
 Native producer qualification pins NeverC revision `182fd2c5dc`, independent originals and the current NeverD installer. `check_source_patch_hosted_pe_runtime.py` requires 36 native Windows observations per architecture for C IR/object/hosted results and a throwing callback through two hosted C frames. `check_source_patch_elf_runtime.py` requires 120 native Linux observations per architecture for C IR/objects/hosted, hosted propagation and nine Clang C++ exception scenarios. Receipts, artifact hashes and the actual host architecture must match. These checks install real C producer outputs; they do not claim a NeverC executable ran on the CI host. The Linux inventory includes nine exception scenarios for each of Clang IR, Clang native objects and GCC native objects on x64 and ARM64. NeverC remains C-only.
 
-The earlier 204-observation translation-profile receipt is historical. Current fixtures require C-only NeverC producers; Clang C++ FH3, native-host identity and emulated CPU profiles retain separate evidence. `HighSwiftEmitter` executes register and memory scalar conversions at both optimization levels, observing result bits and MXCSR. The mobile C parser accepts only the backend's exact pragma-only rounding prefix and continues to reject conditional declarations and mutated directives.
+The earlier 204-observation translation-profile receipt is historical. Current fixtures require C-only NeverC producers; Clang C++ FH3, native-host identity and emulated CPU profiles retain separate evidence. `HighSwiftEmitter` executes register and memory scalar conversions at both optimization levels, observing result bits and MXCSR. The mobile C parser accepts the backend's exact rounding and AArch64 raw-call prefixes and continues to reject conditional declarations and mutated directives. `MobileIOSNative.SharedRawCallPreamblePreservesSourceAndFunctionCount` checks either prefix order, preserved source and independent function counts. `ChangedOrNestedRawCallPreamblesRemainUnsupported` rejects changed authentication keys, hidden functions, truncated or nested helpers and macro overrides. Run `NeverDMobileTests` and the native Objective-C calls/Blocks reconstruction check when changing this boundary; host parser tests alone do not certify Apple native execution.
 
 `InterpreterSpecialization.HighAddress*` and `BinaryLowIRRefinement.HighAddress*` cover upper-half entries and transfers, overlapping native extents, original CALL return bytes, stack restoration, data equal to label values, malformed or missing code, and exact/short budgets. The independent byte oracle and a changed-return-word negative control distinguish runtime values from CFG labels.
 

@@ -1332,10 +1332,14 @@ MedLLVMEmitter::emit(const std::vector<MedFunc> &Funcs, llvm::LLVMContext &LCtx,
                                : std::nullopt)
       EmittedName = std::move(*Shadow);
     if (!EmittedName.empty()) {
-      const auto [Owner, Named] = NameOwners.try_emplace(EmittedName, F.Entry);
-      if (!Named && Owner->second != F.Entry) {
+      for (;;) {
+        const auto [Owner, Named] =
+            NameOwners.try_emplace(EmittedName, F.Entry);
+        if (Named || Owner->second == F.Entry)
+          break;
+        // A real symbol can already use the address suffix. Reserve the
+        // final spelling before declarations or bodies can share it.
         EmittedName += "_" + llvm::utohexstr(F.Entry);
-        NameOwners.try_emplace(EmittedName, F.Entry);
       }
     }
     EmittedFuncNames[F.Entry] = EmittedName;

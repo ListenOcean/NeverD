@@ -7594,7 +7594,11 @@ still fail at such a body (`PipelineOptions::OmitRefusedLLVMBodies`). Two
 functions that carry one name, as the local symbols of one Rust generic in
 two codegen units of a Mach-O, each keep their own LLVM function: the first
 named keeps the name and a later one takes its entry address after it
-(`write_str`, `write_str_10002F90C`). One shared function had taken the
+(`write_str`, `write_str_10002F90C`). If the suffixed spelling already names
+another function, disambiguation continues until that spelling belongs to
+this entry. Declarations, bodies and calls share the reserved name, including
+when a real symbol already contains one or several such suffixes. One shared
+function had taken the
 second body and its calls in a module, and two shards that each defined the
 name failed to link. Asked for alone,
 such a function still
@@ -12881,7 +12885,7 @@ Frame-offset proof keys normalize a top-level 64-bit address sum by removing its
 
 The Objective-C source exporter clears `CEmitterOptions::EmitRecordGuards` and `CEmitterOptions::UseUnalignedPointers` for the complete native unit and individual method units. Exact-width byte copies preserve unaligned memory access while keeping generated macros outside the mobile parser; conditional and mutating directives remain rejected.
 
-The reader also recognizes the exact, complete `ContractionPolicy` block shared by the C emitters. It preserves the block for compilation and does not evaluate arbitrary conditional directives. Modified, truncated or wrapped blocks remain unsupported.
+The reader also recognizes the exact, complete `ContractionPolicy` and AArch64 raw-call pointer-authentication blocks shared by the C emitters. Either or both may precede declarations; their text remains intact for compilation and does not contribute function definitions. The reader does not evaluate arbitrary conditional directives. Modified, truncated, wrapped or nested blocks, and subsequent macro redefinitions, remain unsupported.
 
 ## Bounded bulk directory attributes
 

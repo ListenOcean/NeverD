@@ -12,6 +12,12 @@ configurations remain separate coverage.
 
 ## Open
 
+LLVM function-name disambiguation also reserves generated address suffixes.
+A real symbol using that suffix cannot absorb another function's body or
+redirect its callers. Chained collisions and reversed input order preserve
+each body's return value and call target across all four native architectures,
+all three native formats, and serial or sharded emission.
+
 Neutral immediate locked logic now keeps one ordered read-modify-write and
 its defined logical flags across both C routes. HighC retains explicit atomic
 result types when rendering signed comparisons. Public execution regressions
