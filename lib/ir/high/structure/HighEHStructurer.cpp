@@ -1661,6 +1661,70 @@ void exitArmsAsGuardClauses(std::vector<HighStmt> &Stmts,
   }
 }
 
+/// Whether control can run past the end of \p S.
+bool runsPast(const HighStmt &S) {
+  auto ListRunsPast = [](const std::vector<HighStmt> &L) {
+    return L.empty() || runsPast(L.back());
+  };
+  switch (S.Kind) {
+  case StmtKind::Goto:
+  case StmtKind::Return:
+  case StmtKind::Break:
+  case StmtKind::Continue:
+    return false;
+  case StmtKind::IfElse:
+    return ListRunsPast(S.Body) || ListRunsPast(S.ElseBody);
+  case StmtKind::Block:
+    return ListRunsPast(S.Body);
+  default:
+    return true;
+  }
+}
+
+/// Drop the return tail a local unwind jumped to when nothing enters it any
+/// more: structuring copied it into each exit that jumped there (a short
+/// return tail is printed in place of the jump), and the statement before it
+/// does not run into it.  Dead-code elimination would drop it only after the
+/// try regions are cut, which its addresses, past the protected ranges,
+/// would split.  \p Targets are the exits' targets and \p Entered every
+/// address a jump, a loop or the exception runtime enters.
+void dropUnenteredUnwindTails(std::vector<HighStmt> &Stmts,
+                              const std::set<va_t> &Targets,
+                              const std::set<va_t> &Entered) {
+  for (HighStmt &S : Stmts) {
+    dropUnenteredUnwindTails(S.Body, Targets, Entered);
+    dropUnenteredUnwindTails(S.ElseBody, Targets, Entered);
+    for (SwitchCase &Case : S.Cases)
+      dropUnenteredUnwindTails(Case.Body, Targets, Entered);
+    dropUnenteredUnwindTails(S.DefaultBody, Targets, Entered);
+    for (std::vector<HighStmt> &Clause : S.EHClauseBodies)
+      dropUnenteredUnwindTails(Clause, Targets, Entered);
+  }
+  for (size_t K = 1; K < Stmts.size(); ++K) {
+    if (!Targets.count(Stmts[K].Addr) || Entered.count(Stmts[K].Addr) ||
+        runsPast(Stmts[K - 1]))
+      continue;
+    size_t Return = K;
+    while (Return < Stmts.size() && Stmts[Return].Kind != StmtKind::Return)
+      ++Return;
+    if (Return == Stmts.size())
+      continue;
+    // Straight-line code that nothing enters, through the return.
+    bool Plain = true;
+    for (size_t J = K; J <= Return && Plain; ++J) {
+      const HighStmt &T = Stmts[J];
+      Plain = T.Body.empty() && T.ElseBody.empty() && T.Cases.empty() &&
+              T.DefaultBody.empty() && T.EHClauseBodies.empty() &&
+              (J == K || !Entered.count(T.Addr));
+    }
+    if (!Plain)
+      continue;
+    Stmts.erase(Stmts.begin() + static_cast<ptrdiff_t>(K),
+                Stmts.begin() + static_cast<ptrdiff_t>(Return) + 1);
+    --K;
+  }
+}
+
 } // anonymous namespace
 
 void reportUnprotectedGuardedCode(const HighFunc &Func, const char *Stage) {
@@ -1705,6 +1769,21 @@ void MedToHighConverter::structureExceptionRegions(HighFunc &Func,
     std::set<va_t> Addresses;
     walkStmts(Func.Body, [&](const HighStmt &S) { Addresses.insert(S.Addr); });
     exitArmsAsGuardClauses(Func.Body, Exits, Addresses);
+    std::set<va_t> Targets;
+    for (const MedSEHLocalUnwindExit &Exit : Func.SEHLocalUnwindExits)
+      Targets.insert(Exit.Target);
+    std::set<va_t> Entered = gotoTargets(Func.Body);
+    walkStmts(Func.Body, [&](const HighStmt &S) {
+      if (S.LoopHeaderAddr)
+        Entered.insert(S.LoopHeaderAddr);
+    });
+    if (EH.SEH)
+      for (const SEHScopeRecord &Scope : EH.SEH->Scopes) {
+        Entered.insert(Scope.HandlerVA);
+        Entered.insert(Scope.ContinuationVA);
+        Entered.insert(Scope.FilterOrFinallyVA);
+      }
+    dropUnenteredUnwindTails(Func.Body, Targets, Entered);
   }
   size_t SplitCopyBudget = limits::kMaxRegistrationEHStateWork;
   const auto FilterValues =

@@ -760,4 +760,40 @@ TEST(WindowsEHModesCorpus, LocalUnwindExitAgreesAloneAndInTheWholeUnit) {
   EXPECT_EQ(definitionOf(*AloneOrErr, "0x1400011E0"), Whole);
 }
 
+// xcpt4's O2 loop exits: `return` out of two nested `__try/__finally` and
+// `continue` out of the inner one, both local unwinds. The inner and outer
+// finally scopes each have two ranges, and the outer one's first range holds
+// the loop head. With every exit a jump, the copied `return 1` tail the
+// first exit jumped to runs no more; left in place until dead-code
+// elimination, its addresses past both ranges split the outer region.
+TEST(WindowsEHModesCorpus, LocalUnwindExitsKeepTheirLoopRegionsStructured) {
+  auto ExpectationsOrErr = loadExpectations();
+  ASSERT_TRUE(static_cast<bool>(ExpectationsOrErr))
+      << toString(ExpectationsOrErr.takeError());
+  auto ExpectationOrErr = selectUnique(
+      *ExpectationsOrErr, {"xcpt4", "msvc", "x86_64", "fh4", true, "o2"});
+  ASSERT_TRUE(static_cast<bool>(ExpectationOrErr))
+      << toString(ExpectationOrErr.takeError());
+  auto OutputOrErr =
+      decompileToSource(std::filesystem::path(NEVERD_BINARY_CORPUS_ROOT) /
+                        (*ExpectationOrErr)->Path);
+  ASSERT_TRUE(static_cast<bool>(OutputOrErr))
+      << toString(OutputOrErr.takeError());
+  for (const auto &[Entry, Regions] :
+       {std::pair<StringRef, StringRef>{"0x1400037D0",
+                                        "=4, fallback_regions=0"},
+        {"0x140003870", "=6, fallback_regions=0"}}) {
+    const size_t Start =
+        OutputOrErr->find(("/* neverd.entry: " + Entry + " */").str());
+    ASSERT_NE(Start, std::string::npos) << Entry.str();
+    const StringRef Function =
+        StringRef(*OutputOrErr)
+            .slice(Start, OutputOrErr->find("/* neverd.entry: ", Start + 1));
+    EXPECT_TRUE(
+        Function.contains(("highir.structured_regions" + Regions).str()))
+        << Function.str();
+    EXPECT_FALSE(Function.contains("_local_unwind")) << Function.str();
+  }
+}
+
 } // namespace

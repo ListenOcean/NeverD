@@ -12986,7 +12986,11 @@ does a call whose target the runtime itself enters.
 `MedFunc::SEHLocalUnwindExits` records each exit and the handlers it runs,
 and HighIR keeps it. Where structuring puts the
 rest of a protected body in the other arm of an `if` whose arm takes the exit,
-HighIR makes that arm a guard clause first, so the body stays in one slice. A
+HighIR makes that arm a guard clause first, so the body stays in one slice.
+A short return tail that structuring copied into every exit jumping there is
+dropped before the try regions are cut, once nothing enters it and the
+statement before it never runs into it: its addresses, past the protected
+ranges, would otherwise split a region around a loop the exits leave. A
 handler that fills its clause runs there for the jump, as C's `goto` and
 `return` run a `__finally`: the explicit call goes, and the jump, marked
 `HighStmt::AbnormalExit`, prints neither as `__leave` nor as the try's

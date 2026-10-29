@@ -14611,6 +14611,9 @@ the `__except` arm, one in the filled clause and one in the normal-path copy,
 with no `_local_unwind`, target address or handler call left, and
 `LocalUnwindExitAgreesAloneAndInTheWholeUnit` prints the same function from a
 `--func` view as from the whole unit.
+`LocalUnwindExitsKeepTheirLoopRegionsStructured` decompiles the O2 FH4 /GS
+build, whose loop exits leave split finally scopes and jump to a copied
+return tail, and requires every region of both functions structured.
 Run the Windows SEH corpus and the xcpt4 Wine check after a change here; the
 latter runs the original xcpt4 under Wine and checks the source projection
 of its `main`, so it does not run the filled `__finally` bodies.
