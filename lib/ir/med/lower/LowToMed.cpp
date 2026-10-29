@@ -1594,6 +1594,9 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   }
 
   try {
+    modelSEHLocalUnwindExits(Func, Low);
+    debugVerifyMedFunc(Func, "modelSEHLocalUnwindExits");
+
     x86_registration::RegistrationRoots(Low, TheArch, Fmt)
         .disconnectNoReturnFallthroughs(Func);
     bindSourceCalls(Func, Low, Fmt);

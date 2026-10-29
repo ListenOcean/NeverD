@@ -493,6 +493,29 @@ struct MedCallInfo {
   uint16_t StackArgumentSlotBytes = 0;
 };
 
+/// A same-frame Windows local unwind (`_local_unwind(EstablisherFrame, T)`)
+/// that LowToMed replaced by its effect: a call of each termination handler
+/// the unwind runs, with the abnormal-termination flag set and this frame's
+/// EstablisherFrame, innermost first, then a jump to T.  The calls keep the
+/// runtime call's instruction address, so HighIR can find them and run a
+/// handler through its filled `__finally` clause instead (SEHFinallyBodies.h).
+struct MedSEHLocalUnwindExit {
+  struct Handler {
+    /// The termination handler's entry.
+    va_t Entry = InvalidVA;
+    /// The scope it terminates, as an index of the SEH scope table.
+    uint32_t ScopeIndex = 0;
+    bool operator==(const Handler &) const = default;
+  };
+  /// The address of the runtime call this exit replaces.
+  va_t CallAddr = InvalidVA;
+  /// Where the unwind resumes, in this function.
+  va_t Target = InvalidVA;
+  /// The handlers the unwind calls, innermost first.
+  std::vector<Handler> Handlers;
+  bool operator==(const MedSEHLocalUnwindExit &) const = default;
+};
+
 /// A parent's value of one callee-saved register throughout the protected
 /// ranges a termination handler ends, in a form no later pass renames or
 /// removes: a fixed offset from the entry stack pointer, the register an
@@ -740,6 +763,9 @@ struct MedFunc {
   /// (buildSsa). A register absent here has no such value.
   std::map<va_t, std::map<uint64_t, SEHFuncletRegisterValue>>
       SEHFuncletRegisters;
+  /// The certified same-frame local unwinds this function makes, each
+  /// already replaced by its handler calls and jump, by call address.
+  std::vector<MedSEHLocalUnwindExit> SEHLocalUnwindExits;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
   /// Independent replay of expanded shared helpers. The source states above
   /// retain their original call occurrences and prologue receipt.

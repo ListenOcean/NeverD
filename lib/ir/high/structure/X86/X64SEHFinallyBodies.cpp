@@ -306,12 +306,13 @@ void attachX64(std::vector<HighFunc> &Funcs, std::set<va_t> *Merged) {
     std::optional<std::set<va_t>> Targets;
     FuncletNames Names;
     MedVar EntrySP;
+    UnwindExits Exits(Parent);
 
     // Top-level only: a termination region the structurer kept is a direct
     // statement of the body, and the inline normal-path copy follows it there.
     for (size_t I = 0; I < Parent.Body.size(); ++I) {
       HighStmt &Stmt = Parent.Body[I];
-      if (!isEmptyFinallyRegion(Stmt) || !protectedBodyQualifies(Stmt))
+      if (!isEmptyFinallyRegion(Stmt))
         continue;
       const va_t FuncletVA = Stmt.EHClauses.front().FilterOrActionVA;
       auto Frame = Parent.SEHTerminationFrameBytes.find(FuncletVA);
@@ -323,6 +324,17 @@ void attachX64(std::vector<HighFunc> &Funcs, std::set<va_t> *Merged) {
       const std::optional<FuncletShape> Shape =
           funcletShape(*Funclet->second, TargetArch);
       if (!Shape)
+        continue;
+      // The protected body's normal exits fall through to what follows it,
+      // the inline normal-path copy; only a local unwind leaves it as a jump,
+      // which now runs the handler as the clause.
+      const std::set<va_t> Continuation = fallthroughAddresses(Parent.Body, I);
+      dropFallthroughExits(Stmt, Continuation, gotoTargets(Parent.Body), Exits);
+      restoreFallingUnwindJumps(Stmt, Continuation, Exits);
+      Exits.rebuild();
+      Targets.reset();
+      if (!protectedBodyQualifies(Stmt, Exits) ||
+          !Exits.canRunInClause(Stmt, FuncletVA))
         continue;
       if (!Homed) {
         Homed = homedParameters(Parent, TargetArch);
@@ -353,6 +365,7 @@ void attachX64(std::vector<HighFunc> &Funcs, std::set<va_t> *Merged) {
 
       // A later attach takes fresh names past the ones this one takes.
       if (CopyLength) {
+        Exits.runInClause(Stmt, FuncletVA);
         Stmt.EHClauseBodies.front() = std::move(*Normal);
         Parent.Body.erase(Parent.Body.begin() + I + 1,
                           Parent.Body.begin() + I + 1 + *CopyLength);
@@ -365,10 +378,12 @@ void attachX64(std::vector<HighFunc> &Funcs, std::set<va_t> *Merged) {
             *Homed, EntrySP, AbnormalNames);
         if (!Abnormal)
           continue;
+        Exits.runInClause(Stmt, FuncletVA);
         Stmt.EHClauseBodies.front().push_back(
             guardAbnormalWork(std::move(*Abnormal)));
         Names = AbnormalNames;
       }
+      Exits.rebuild();
       if (Merged)
         Merged->insert(FuncletVA);
     }

@@ -1652,6 +1652,7 @@ HighFunc MedToHighConverter::convertOnce(const MedFunc &Med, Arch TheArch) {
   Func.HasUnresolvedSEHFrame = Med.HasUnresolvedSEHFrame;
   Func.SEHTerminationFrameBytes = Med.SEHTerminationFrameBytes;
   Func.SEHFuncletRegisters = Med.SEHFuncletRegisters;
+  Func.SEHLocalUnwindExits = Med.SEHLocalUnwindExits;
   for (const auto &Entry : Med.CxxContinuationEntries)
     Func.CxxContinuationTargets.insert(Entry.Target);
   // Catch returns enter the parent through edges absent from its ordinary

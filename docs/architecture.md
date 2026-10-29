@@ -378,7 +378,11 @@ scope table, handler) and saves ESP in the SavedESP word below the node FS:[0]
 links. When every exact store to that word saves one entry stack offset, each
 exact pointer-wide reload is seeded with it, which places the CALLs after a
 handler restores ESP; only a write outside every source object, corrupting the
-runtime's record, could change the word otherwise. A CALL whose stack derives
+runtime's record, could change the word otherwise. The saved-frame slot of a
+Windows local unwind is read the same way (`certifyLowSEHLocalUnwinds`, with
+the `__finally` exits below): the compiler's slot is written only by its own
+prologue protocol, and only in-bounds frame accesses are modeled.
+A CALL whose stack derives
 from one runtime callback's stack root alone, at or below that root, runs on
 the dispatcher's stack below the parent frame and writes no parent byte.
 Pruning unreached arms still needs the complete proof. Low-to-Med also applies
@@ -12958,12 +12962,58 @@ and its statements equal that copy, the copy is removed and the clause holds
 the whole body; otherwise the copy stays and the clause holds only the abnormal
 work under `if (AbnormalTermination())`. A handler whose frame is not certified,
 whose body is unavailable or has its own exception scope, or whose `__try`
-transfers control out, nests a region with a handler or calls `_local_unwind`
-keeps its address comment (a reducible inner `__try/__finally` resumes
-nowhere and leaves by falling through, so it may nest): the machine runs the handler on such an exit while C would
-not, so the clause stays out of line until that call becomes a structured
-jump. The projection runs in the plain-C view as well as the C++ one, because
-SEH is C.
+transfers control out other than by a local-unwind exit (below), nests a
+region with a handler or still calls `_local_unwind` keeps its address comment
+(a reducible inner `__try/__finally` resumes nowhere and leaves by falling
+through, so it may nest): the machine runs the handler on such an exit while
+C would not, so the clause stays out of line. The projection runs in the
+plain-C view as well as the C++ one, because SEH is C.
+
+A `return` or `goto` out of a `__try` compiles to a call of the runtime's
+`_local_unwind(TargetFrame, TargetIp)`. It runs the termination handler of
+each scope the jump leaves, innermost first, with the abnormal flag set and
+the EstablisherFrame, and resumes at TargetIp in the same frame; the call
+never returns. Low-to-Med (`lib/ir/med/lower/LowToMedSEHLocalUnwind.cpp`)
+replaces each call the saved-frame protocol certifies (below), before SSA, by
+what it does: a call of each handler `__C_specific_handler` would run, with
+the flag 1 and the EstablisherFrame as the LLVM route's cleanup passes them,
+the value the routine resumes with in RAX (`RtlUnwind`'s `ReturnValue`,
+zero), and a jump to TargetIp. The code only the call's fall-through reached
+goes with it, unless that code was the only ordinary entry of a block the
+exception runtime or a code address enters: the proofs over the decoded CFG
+would still see that edge, so such a function keeps its runtime calls, as
+does a call whose target the runtime itself enters.
+`MedFunc::SEHLocalUnwindExits` records each exit and the handlers it runs,
+and HighIR keeps it. Where structuring puts the
+rest of a protected body in the other arm of an `if` whose arm takes the exit,
+HighIR makes that arm a guard clause first, so the body stays in one slice. A
+handler that fills its clause runs there for the jump, as C's `goto` and
+`return` run a `__finally`: the explicit call goes, and the jump, marked
+`HighStmt::AbnormalExit`, prints neither as `__leave` nor as the try's
+fall-through, so the clause runs on the jump and the normal-path copy on the
+fall-through, each once. A handler that cannot fill its clause keeps its
+address comment, and the exit keeps the call, which runs it as the runtime
+did.
+
+The frame argument is a reload: the compiler stores TargetFrame (on x64 the
+EstablisherFrame, the stack pointer the prologue leaves for the body) to a
+frame slot and reloads it at each call. `certifyLowSEHLocalUnwinds`
+(`lib/ir/low/SEHLocalUnwindProtocol.cpp`, with each architecture's convention
+in its own file, `X86/SEHLocalUnwindX64.cpp`) certifies a call only when its
+callee is the authenticated `_local_unwind` import, its target an exact code
+address that starts a block of the function, it runs on the body's stack
+pointer, and its frame is an exact reload of one slot that every store of the
+function fills with TargetFrame, that no store at an inexact frame address and
+no callee's home area may reach, and that no out-of-line filter or termination
+handler of the function writes through its EstablisherFrame: each handler's
+body must be in the view, and one that stores through frame arithmetic it
+cannot bound refuses. TargetFrame, the body's stack pointer and the slot's
+address may reach only that slot, the runtime and the handlers; any other
+escape refuses the function, whose calls keep their runtime form. Like the
+SavedESP word, this trusts that the compiler's saved-frame slot is written
+only by its own prologue protocol, and models only in-bounds frame accesses.
+A single-function view holds the function's handlers, so it certifies the
+same exits as the whole unit.
 
 An ARM or AArch64 termination handler takes only the abnormal flag. The
 unwinder restores the parent's callee-saved registers to their values where

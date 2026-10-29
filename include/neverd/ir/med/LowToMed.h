@@ -281,6 +281,10 @@ private:
   /// Keep the architectural data registers of checked ordinary SEH callbacks
   /// on explicit state edges before SSA applies the ordinary calling ABI.
   void modelSEHFinallyRegisters(MedFunc &Func);
+  /// Replace each certified same-frame Windows local unwind by the
+  /// termination-handler calls it makes and a jump to its target, before SSA
+  /// (MedFunc::SEHLocalUnwindExits).
+  void modelSEHLocalUnwindExits(MedFunc &Func, const LowFunc &Low);
 
   // --- Architecture-specific sub-register fixups (LLVM target-dispatch) ---
   // Each helper guards on TargetArch internally and is a no-op on other
