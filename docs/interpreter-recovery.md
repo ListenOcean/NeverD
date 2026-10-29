@@ -637,3 +637,9 @@ With either proof strategy enabled, recovery also retains exhaustively proved fi
 ## Finite indexed frame reads
 
 An ordinary `LOAD` with an exhaustively proved finite set of entry-frame offsets reads the current frame bytes at every candidate and retains a conditional symbolic value. The runtime read stays in the residual, with its full width and byte order. External origin requires that provenance for every byte at every candidate. Unknown bytes and invalidated values remain unknown; incomplete enumeration keeps ordinary symbolic memory behavior. Existing control-tuple, solver, node and operation budgets apply. This creates no immutable-read witness or new nonalias contract.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Runtime validity across graph boundaries
+
+With control-state discovery enabled, a nonconstant runtime validity predicate can request the producer bits lost at a graph boundary. Recovery then retries under the existing shared budgets and must prove validity for every reachable incoming state. This preserves established alignment and masked control-register values across nodes and loops; it does not assume that rejected states are impossible or remove the original runtime operation.

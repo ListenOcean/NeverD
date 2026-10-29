@@ -400,3 +400,9 @@ Lorsqu’une de ces stratégies est activée, la récupération conserve aussi e
 ## Lectures de trame à index fini
 
 Un `LOAD` ordinaire dont l’ensemble fini des décalages depuis la trame d’entrée est prouvé exhaustivement lit les octets actuels de chaque candidat et conserve une valeur symbolique conditionnelle. La lecture à l’exécution reste dans le résidu, avec sa largeur complète et son ordre des octets. L’origine externe exige cette provenance pour chaque octet de chaque candidat. Les octets inconnus et les valeurs invalidées restent inconnus ; une énumération incomplète conserve le comportement habituel de la mémoire symbolique. Les budgets existants de tuples de contrôle, solveur, nœuds et opérations s’appliquent. Aucun témoin de lecture immuable ni nouveau contrat de non-alias n’est créé.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Validité à l’exécution aux frontières du graphe
+
+Lorsque la découverte de l’état de contrôle est activée, un prédicat non constant de validité à l’exécution peut demander les bits du producteur perdus à une frontière du graphe. La récupération réessaie avec les budgets partagés existants et doit prouver la validité de chaque état entrant atteignable. Cela conserve l’alignement établi et les valeurs masquées des registres de contrôle entre nœuds et dans les boucles, sans supposer les états rejetés impossibles ni supprimer l’opération d’origine.

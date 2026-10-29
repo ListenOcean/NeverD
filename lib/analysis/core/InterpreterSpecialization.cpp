@@ -3711,18 +3711,26 @@ bool Specializer::evaluate(int Id) {
                         "runtime control symbolic-node budget exhausted");
         }
         if (Transition->Rejected) {
-          const auto Bad =
-              enumerate(Ctx, Exec.pathPredicate(),
-                        {Exec.operandValue(*Transition->Rejected)}, 1);
+          const auto Rejected = Exec.operandValue(*Transition->Rejected);
+          const auto Bad = enumerate(Ctx, Exec.pathPredicate(), {Rejected}, 1);
           if (Failed)
             return false;
           if (Bad.Status == FiniteValueStatus::Unknown)
             return fail(SpecializationStatus::BudgetExceeded,
                         "runtime control validity proof exceeded its budget");
           if (Bad.Status != FiniteValueStatus::Complete ||
-              Bad.Tuples != std::vector<std::vector<uint64_t>>{{0}})
+              Bad.Tuples != std::vector<std::vector<uint64_t>>{{0}}) {
+            // A node boundary may have dropped the input bits establishing
+            // validity, e.g. an aligned cursor's low bits in a loop. Request
+            // their producers, then re-prove the complete transition on a
+            // fresh attempt. Never assume the rejection predicate is false.
+            if (!Ctx.asConst(Rejected)) {
+              discover(State, Rejected, FrameRoot, ControlDemand::Target);
+              Refinement.PrecisionFailure = true;
+            }
             return fail(SpecializationStatus::Unsupported,
                         Transition->InvalidValueDiagnostic);
+          }
         }
         if (Transition->OutputState) {
           const auto &[Index, Value] = *Transition->OutputState;
