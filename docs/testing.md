@@ -15951,6 +15951,11 @@ the original control flow must close the old register input first. Its
 compiled source and original machine execution retain both external calls.
 The branching consumer variant exercises both overwrite arms with varied image
 data, through selected and omitted bodies, both C routes and SDK replay.
+Whole-register forwarding variants have no spill or narrow view in their
+wrappers. One and two wrapper levels must retain the descendant's original
+destruction proof across later opaque calls. Original Win64 bytes and both C
+routes execute the same varied inputs at O0/O2 with UBSan; selected and omitted
+body queries must agree. SDK cache replay also covers the full-width case.
 `InputDestructionNeedsOriginalEntryAndCompleteOverwrites` retains partial writes,
 register/temporary copies, source-dead restores, partial memory resets, stale
 store/call occurrences, independent entries and exhausted budgets.

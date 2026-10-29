@@ -35,6 +35,21 @@
 
 namespace neverd {
 
+bool forwardsSourceEntryRegister(const MedOp &Call,
+                                 const IntegerArgumentLayout &Layout) {
+  if (Call.Opcode != NdOp::CALL || Call.SourceCallHint || !Call.NumInputs ||
+      !Call.Inputs[0].isConst())
+    return false;
+  for (size_t P = 0; P < Layout.Registers.size() && P + 1 < Call.NumInputs;
+       ++P) {
+    const auto &Input = Call.Inputs[P + 1];
+    if (Input.Kind == MedVar::Reg && Input.SSAVer == 0 && Input.Size &&
+        Input.Size <= Layout.SlotBytes && Input.RegOff == Layout.Registers[P])
+      return true;
+  }
+  return false;
+}
+
 bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff) {
   if (Func.Blocks.empty())
     return false;

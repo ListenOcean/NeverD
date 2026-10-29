@@ -269,6 +269,11 @@ candidates; it is part of that reader's cache identity. Both emitters and SDK
 replay consume the same post-recovery CallInfos. Exact scalar prefix slices
 through COPY/CONCAT/SUBBYTES/ZEXT can choose zero for unobserved high bytes;
 unknown retained bytes, address constants and producer effects stay intact.
+Full-register forwarding wrappers now enter that same bounded proof even when
+they have no local spill or narrow register view. One shared admission predicate
+serves omitted-body discovery, original CFG retention and proof scheduling.
+Multi-level forwarding still requires each descendant's actual destruction
+proof before a later opaque call; admission alone supplies no unused-input fact.
 A source-dead input can now end at a separately checked overwrite on every
 original CFG path. The bounded signature memo retains operations and edges for
 spill and partial-register candidates, without duplicating instruction boundaries;

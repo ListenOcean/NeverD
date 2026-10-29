@@ -457,8 +457,8 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
 }
 
 /// Cheap source-query candidates, not an observation proof. Register spills,
-/// narrow entry views, assembled partial arguments and positional stack holes
-/// may need a callee body even when native arity is already known.
+/// narrow entry views, forwarded entry registers, assembled partial arguments
+/// and positional stack holes may need a body even when native arity is known.
 std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
                                       const BinaryImage &Image) {
   std::vector<va_t> Result;
@@ -496,7 +496,8 @@ std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
       if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
           !Op.SourceCallHint) {
         Calls.push_back(&Op);
-        if (Op.CalleeStackArgs > int(Layout.Registers.size()))
+        if (Op.CalleeStackArgs > int(Layout.Registers.size()) ||
+            forwardsSourceEntryRegister(Op, Layout))
           Result.push_back(Op.Inputs[0].ConstVal);
       }
     }
@@ -682,10 +683,17 @@ public:
                                       getTargetRegInfo(Img.Arch).PointerSize &&
                                   Layout.registerIndex(Parameter.RegOff) >= 0;
                          }) ||
-            llvm::any_of(Lifted.Blocks.front().Ops, [&](const LowOp &Op) {
-              return Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
-                     Op.Inputs[1].isReg() &&
-                     Layout.registerIndex(Op.Inputs[1].Offset) >= 0;
+            llvm::any_of(Lifted.Blocks.front().Ops,
+                         [&](const LowOp &Op) {
+                           return Op.Opcode == NdOp::STORE &&
+                                  Op.NumInputs == 2 && Op.Inputs[1].isReg() &&
+                                  Layout.registerIndex(Op.Inputs[1].Offset) >=
+                                      0;
+                         }) ||
+            llvm::any_of(Converted.Body->Blocks, [&](const MedBlock &Block) {
+              return llvm::any_of(Block.Ops, [&](const MedOp &Op) {
+                return forwardsSourceEntryRegister(Op, Layout);
+              });
             })) {
           // Keep the original operations and edges under this conversion's
           // existing memory budget. Instruction boundaries are not read by

@@ -185,6 +185,7 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
     for (const auto &Block : Func->Blocks) {
       Weight += Block.Ops.size();
       for (const auto &Op : Block.Ops) {
+        Candidate |= forwardsSourceEntryRegister(Op, Arguments);
         if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2)
           Candidate |= Op.Inputs[1].Kind == MedVar::Reg &&
                        Op.Inputs[1].SSAVer == 0 &&

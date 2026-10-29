@@ -26,6 +26,7 @@
 
 namespace neverd {
 struct BinaryImage;
+struct IntegerArgumentLayout;
 
 /// Whether \p V is the value register \p RegOff holds at \p Func's entry:
 /// its version zero, or the entry seed that copies it (`COPY RSI.1 = RSI`).
@@ -36,6 +37,13 @@ bool isEntryLiveInValue(const MedFunc &Func, const MedVar &V, uint64_t RegOff);
 bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
                                 BinaryFormat Format, int64_t Offset,
                                 uint16_t Bytes);
+
+/// Cheap source-proof admission for an entry register forwarded in its own
+/// ordinary argument position. This requests the callee's current body; it
+/// grants no unused-input or destruction fact. Body discovery, retained LowIR
+/// and proof scheduling must admit the same full-width forwarding chains.
+bool forwardsSourceEntryRegister(const MedOp &Call,
+                                 const IntegerArgumentLayout &Layout);
 
 /// Mark source-mode prologue saves, unobserved scratch spills and
 /// return-address reads using one frame access analysis. Complete fixed integer

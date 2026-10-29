@@ -209,7 +209,7 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   Object.Size = 8;
   State.Img.Symbols.push_back(std::move(Object));
   const auto OriginalImage = State.Img;
-  for (unsigned Variant : {0, 1, 2, 3}) {
+  for (unsigned Variant : {0, 1, 2, 3, 4}) {
     SCOPED_TRACE(Variant);
     const bool ThroughWrapper = Variant != 0;
     State.Img = OriginalImage;
@@ -235,12 +235,19 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
                         0x48, 0x89, 0xD8,             // mov rax,rbx
                         0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
       }
+      if (Variant == 4) {
+        // A full-width forward has no local spill or narrow entry view.
+        Wrapper.erase(Wrapper.begin() + 1, Wrapper.begin() + 4);
+        Wrapper[6] += 3;    // consumer rel32
+        Wrapper[11] = 0x89; // mov rbx,rax instead of adding an old rbx
+        Wrapper[15] += 3;   // rand IAT rel32
+      }
       std::copy(CallerCode.begin(), CallerCode.end(), Code.begin());
       std::copy(Wrapper.begin(), Wrapper.end(), Code.begin() + 0x20);
       auto Symbol = Symbol::makeFunc(Caller + 0x20);
       Symbol.Name = "spill_prefix_forwarder";
       State.Img.Symbols.push_back(std::move(Symbol));
-      if (Variant == 3) {
+      if (Variant >= 3) {
         // Both arms destroy the incoming RCX before strlen, so a later
         // opaque call in the wrapper cannot revive its unused high bytes.
         auto BranchingBody = Body;
@@ -276,7 +283,7 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
         ASSERT_EQ(Calls.front().Args.size(), 1U);
         EXPECT_TRUE(Calls.front().Args.front().isConst());
         EXPECT_EQ(Calls.front().Args.front().ConstVal,
-                  ThroughWrapper ? 0x5AU : 0U);
+                  ThroughWrapper && Variant != 4 ? 0x5AU : 0U);
         EXPECT_EQ(State.ensureFunctionLlvmModule(Caller, NoOpt, true), Shown);
       }
     }
