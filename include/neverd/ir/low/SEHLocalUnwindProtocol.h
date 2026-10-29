@@ -17,6 +17,7 @@
 #ifndef NEVERD_IR_LOW_SEHLOCALUNWINDPROTOCOL_H
 #define NEVERD_IR_LOW_SEHLOCALUNWINDPROTOCOL_H
 
+#include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/LowIR.h"
 
 #include "llvm/ADT/StringRef.h"
@@ -107,11 +108,15 @@ sehLocalUnwindConvention(const LowFunc &Function, const TargetRegInfo &TRI,
 /// XORed with the same frame, which leaves the cookie.  This trusts that only
 /// in-bounds accesses reach a frame object, so a pointer to one never reaches
 /// the compiler's saved-frame slot, which only its own prologue protocol
-/// writes.  Any other shape refuses the function, and its calls keep their
-/// runtime form.
+/// writes.  An argument register a direct callee provably never observes
+/// (\p Unread, the callee summaries' proof over complete bodies, which never
+/// covers a result register) passes it nothing; any other callee may read
+/// all four.  Any other shape refuses the
+/// function, and its calls keep their runtime form.
 llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     const LowFunc &Function, const BinaryImage &Image, const TargetRegInfo &TRI,
-    const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining);
+    const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining,
+    const std::map<va_t, GPRFamilyMask> *Unread = nullptr);
 
 } // namespace neverd
 

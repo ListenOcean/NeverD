@@ -711,11 +711,24 @@ BinaryImage makeCookieImage(CookieShape Kind) {
   return Img;
 }
 
+/// Who receives the frame in makeSetjmpImage.
+enum class FrameTaker {
+  /// The runtime's `__intrinsic_setjmpex`.
+  Setjmp,
+  /// A function of the image that reads it.
+  Reader,
+  /// A function of the image that reads only the jump buffer, with the frame
+  /// in R8: the unread-register proof never covers RDX, which a callee that
+  /// leaves it alone would hand back as the high half of a result.
+  Ignorer,
+};
+
 /// The Guarded shape with MSVC's saved-frame slot, and a setjmp that takes
 /// the frame first: `setjmp(Buffer)` passes the jump buffer and the
-/// EstablisherFrame, as MSVC x64 calls `__intrinsic_setjmpex`.  Unless
-/// \p Authenticated, the call enters a function of the image that reads it.
-BinaryImage makeSetjmpImage(bool Authenticated) {
+/// EstablisherFrame, as MSVC x64 calls `__intrinsic_setjmpex`.  \p Taker
+/// says what the call enters.
+BinaryImage makeSetjmpImage(FrameTaker Taker) {
+  const bool Authenticated = Taker == FrameTaker::Setjmp;
   BinaryImage Img;
   Img.Arch = Arch::X64;
   Img.Bits = Bitness::Bits64;
@@ -732,46 +745,20 @@ BinaryImage makeSetjmpImage(bool Authenticated) {
   // mov [rsp+0x10],rdx; push rbx; sub rsp,0x40; mov rbx,rdx;
   // mov [rsp+0x30],rsp; mov [rsp+0x28],ecx; lea rcx,[rsp+0x38];
   // mov rdx,rsp; call setjmp; mov ecx,[rsp+0x28]
-  place(D, 0x00,
-        {0x48,
-         0x89,
-         0x54,
-         0x24,
-         0x10,
-         0x53,
-         0x48,
-         0x83,
-         0xec,
-         0x40,
-         0x48,
-         0x8b,
-         0xda,
-         0x48,
-         0x89,
-         0x64,
-         0x24,
-         0x30,
-         0x89,
-         0x4c,
-         0x24,
-         0x28,
-         0x48,
-         0x8d,
-         0x4c,
-         0x24,
-         0x38,
-         0x48,
-         0x8b,
-         0xd4,
-         0xe8,
-         Authenticated ? uint8_t(0x55) : uint8_t(0x45),
-         Authenticated ? uint8_t(0x01) : uint8_t(0),
-         0,
-         0,
-         0x8b,
-         0x4c,
-         0x24,
-         0x28});
+  place(D, 0x00, {0x48, 0x89, 0x54, 0x24, 0x10, 0x53, 0x48, 0x83, 0xec, 0x40,
+                  0x48, 0x8b, 0xda, 0x48, 0x89, 0x64, 0x24, 0x30, 0x89, 0x4c,
+                  0x24, 0x28, 0x48, 0x8d, 0x4c, 0x24, 0x38, 0x48, 0x8b, 0xd4,
+                  0xe8, 0x55, 0x01, 0,    0,    0x8b, 0x4c, 0x24, 0x28});
+  if (Taker != FrameTaker::Setjmp) {
+    // call the image's function at 0x68 instead
+    D[0x1f] = 0x45;
+    D[0x20] = 0;
+  }
+  if (Taker == FrameTaker::Ignorer) {
+    // mov r8,rsp
+    D[0x1b] = 0x4c;
+    D[0x1d] = 0xc4;
+  }
   // test ecx,ecx; jz work; mov rcx,[rsp+0x30]; lea rdx,[done];
   // call _local_unwind; nop | work: call foo; nop | mov dword [rbx],100 |
   // done: add rsp,0x40; pop rbx; ret
@@ -779,9 +766,11 @@ BinaryImage makeSetjmpImage(bool Authenticated) {
                   0x8d, 0x15, 0x12, 0,    0,    0,    0xe8, 0x44, 0x01, 0,
                   0,    0x90, 0xe8, 0x1e, 0,    0,    0,    0x90, 0xc7, 0x03,
                   0x64, 0,    0,    0,    0x48, 0x83, 0xc4, 0x40, 0x5b, 0xc3});
-  // foo: ret | reader: mov rax,rdx; ret
+  // foo: ret | reader: mov rax,rdx; ret (or the ignorer: mov rax,rcx; ret)
   place(D, 0x60, {0xc3});
-  place(D, 0x68, {0x48, 0x89, 0xd0, 0xc3});
+  place(D, 0x68,
+        {0x48, 0x89,
+         Taker == FrameTaker::Ignorer ? uint8_t(0xc8) : uint8_t(0xd0), 0xc3});
   // The Guarded handler, which finds Counter's home 0x58 above its frame.
   place(D, 0x80,
         {0x40, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xea, 0x0f, 0xb6,
@@ -970,7 +959,8 @@ TEST(SEHLocalUnwind, AnUnmaskedFrameInTheCookieSlotKeepsTheCall) {
 TEST(SEHLocalUnwind, AnAuthenticatedSetjmpTakesTheFrame) {
   // The runtime's setjmp keeps the frame in the jump buffer, where only
   // longjmp reads it to unwind back here: the saved-frame slot certifies.
-  const std::string P = parentText(decompileHighC(makeSetjmpImage(true)));
+  const std::string P =
+      parentText(decompileHighC(makeSetjmpImage(FrameTaker::Setjmp)));
   ASSERT_FALSE(P.empty());
   EXPECT_EQ(P.find("_local_unwind"), std::string::npos) << P;
 }
@@ -978,9 +968,19 @@ TEST(SEHLocalUnwind, AnAuthenticatedSetjmpTakesTheFrame) {
 TEST(SEHLocalUnwind, AFrameAFunctionOfTheImageReadsKeepsTheCall) {
   // The same frame handed to code of the image that reads it may reach the
   // saved-frame slot: the call keeps its runtime form.
-  const std::string P = parentText(decompileHighC(makeSetjmpImage(false)));
+  const std::string P =
+      parentText(decompileHighC(makeSetjmpImage(FrameTaker::Reader)));
   ASSERT_FALSE(P.empty());
   EXPECT_NE(P.find("_local_unwind"), std::string::npos) << P;
+}
+
+TEST(SEHLocalUnwind, AFrameItsCalleeNeverObservesPassesNothing) {
+  // The frame left in R8 for a function of the image whose register
+  // summary proves it never observes R8 reaches nothing there.
+  const std::string P =
+      parentText(decompileHighC(makeSetjmpImage(FrameTaker::Ignorer)));
+  ASSERT_FALSE(P.empty());
+  EXPECT_EQ(P.find("_local_unwind"), std::string::npos) << P;
 }
 
 } // namespace

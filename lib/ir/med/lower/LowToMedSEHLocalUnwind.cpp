@@ -109,7 +109,8 @@ void LowToMedConverter::modelSEHLocalUnwindExits(MedFunc &Func,
   static const std::map<va_t, const LowFunc *> NoBodies;
   size_t Work = limits::kMaxSEHEstablisherFrameWork;
   auto Sites = certifyLowSEHLocalUnwinds(
-      Low, *Image, TRI, SEHFrameCallees ? *SEHFrameCallees : NoBodies, Work);
+      Low, *Image, TRI, SEHFrameCallees ? *SEHFrameCallees : NoBodies, Work,
+      CallUnreadGPRs);
   if (!Sites) {
     // An uncertified call keeps its runtime form.
     llvm::consumeError(Sites.takeError());

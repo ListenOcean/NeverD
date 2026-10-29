@@ -13043,16 +13043,20 @@ body must be in the view, and one that stores through frame arithmetic it
 cannot bound refuses. TargetFrame, the body's stack pointer and the slot's
 address may reach only that slot, the runtime (the local unwind, and an
 authenticated setjmp, which keeps the frame in its jump buffer for
-longjmp's unwind) and the handlers; any other
-escape refuses the function, whose calls keep their runtime form. The one
+longjmp's unwind) and the handlers. A call passes it in an argument register
+only where its direct callee may observe that register: the callee
+summaries' unread proof (`PipelineResult::CallUnreadGPRs`), which takes an
+opaque call to read everything and never covers a result register, rules a
+register out; any other callee may read all four. Any other escape refuses
+the function, whose calls keep their runtime form. The one
 other place the frame may go is the GS cookie: XORed with a value that holds
 no frame, it may be stored to the slot the function's GS data places
 (`__GSHandlerCheckCommon` reads it at the EstablisherFrame plus that offset
 and unmasks it with the EstablisherFrame), and what that slot holds may only
 be XORed with the same frame again, which leaves the cookie for the check.
-Like the
-SavedESP word, this trusts that the compiler's saved-frame slot is written
-only by its own prologue protocol, and models only in-bounds frame accesses.
+Like the SavedESP word, this trusts that the compiler's saved-frame slot is
+written only by its own prologue protocol, and models only in-bounds frame
+accesses.
 A single-function view holds the function's handlers, so it certifies the
 same exits as the whole unit.
 

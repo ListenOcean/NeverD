@@ -184,6 +184,8 @@ struct UseEvent {
   va_t At = InvalidVA;
   int Seq = -1;
   bool Call = false;
+  /// The direct callee, or InvalidVA.
+  va_t Callee = InvalidVA;
   /// A call of the authenticated local unwind routine.
   bool Runtime = false;
   /// A call of an authenticated runtime routine the frame may reach: the
@@ -466,6 +468,8 @@ bool Interpreter::transfer(const LowBlock &Block, State &S, bool Record,
         Use.Seq = Op.Seq;
         Use.Call = Op.Opcode != NdOp::INTRINSIC;
         Use.Runtime = isRuntime(Op);
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
+          Use.Callee = static_cast<va_t>(Op.Inputs[0].Offset);
         Use.TakesFrame = Use.Runtime || takesFrame(Img, Op);
         if (Use.Call) {
           for (uint64_t Reg : TRI.integerParamRegs(BinaryFormat::COFF))
@@ -603,6 +607,22 @@ llvm::Error Interpreter::run(const State &Entry, const State &RootTemplate) {
   return refuse("root registers do not settle in " + hex(F.Entry));
 }
 
+/// Whether the call \p Use passes its argument at position \p Index: a direct
+/// callee whose unread-register proof covers that register never observes
+/// it.
+bool passesArgument(const UseEvent &Use, size_t Index,
+                    llvm::ArrayRef<uint64_t> Registers,
+                    const std::map<va_t, GPRFamilyMask> *Unread) {
+  if (!Use.Call || !Unread || Use.Callee == InvalidVA ||
+      Index >= Registers.size())
+    return true;
+  const auto Proof = Unread->find(Use.Callee);
+  const std::optional<unsigned> Family =
+      gprFamilyOf(Arch::X64, Registers[Index]);
+  return Proof == Unread->end() || !Family ||
+         !((Proof->second >> *Family) & 1u);
+}
+
 /// Whether \p F's handler has any independent entry, which would need its
 /// own frame convention.
 bool hasIndependentEntry(const LowFunc &F) {
@@ -622,7 +642,8 @@ bool hasIndependentEntry(const LowFunc &F) {
 llvm::Error checkHandler(const LowFunc &Handler, const TargetRegInfo &TRI,
                          const BinaryImage &Img, llvm::StringRef Routine,
                          int64_t SlotFromFrame, int64_t TargetFromFrame,
-                         size_t &Work) {
+                         size_t &Work,
+                         const std::map<va_t, GPRFamilyMask> *Unread) {
   const std::string Name = hex(Handler.Entry);
   if (Handler.Blocks.empty() || !Handler.hasCompleteLiftCoverage())
     return refuse("handler " + Name + " is not completely decoded");
@@ -673,8 +694,8 @@ llvm::Error checkHandler(const LowFunc &Handler, const TargetRegInfo &TRI,
       return refuse("work budget exhausted in " + Name);
     if (Use.TakesFrame)
       continue;
-    for (const Val &Arg : Use.Args)
-      if (Escapes(Arg))
+    for (size_t K = 0; K < Use.Args.size(); ++K)
+      if (passesArgument(Use, K, Args, Unread) && Escapes(Use.Args[K]))
         return refuse("handler " + Name + " passes the frame on at " +
                       hex(Use.At));
   }
@@ -707,7 +728,8 @@ sehLocalUnwindConvention(const LowFunc &Function, const TargetRegInfo &TRI,
 
 llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     const LowFunc &Function, const BinaryImage &Image, const TargetRegInfo &TRI,
-    const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining) {
+    const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining,
+    const std::map<va_t, GPRFamilyMask> *Unread) {
   if (!Function.ExceptionMetadata || !Function.ExceptionMetadata->SEH ||
       Function.Blocks.empty() || !Function.hasCompleteLiftCoverage())
     return refuse("no complete SEH body");
@@ -826,8 +848,8 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
       }
       if (Use.TakesFrame)
         continue;
-      for (const Val &Arg : Use.Args)
-        if (Escapes(Arg))
+      for (size_t K = 0; K < Use.Args.size(); ++K)
+        if (passesArgument(Use, K, Args, Unread) && Escapes(Use.Args[K]))
           return refuse("the frame is passed on at " + hex(Use.At));
     }
     // Every handler this frame passes its EstablisherFrame to.
@@ -849,7 +871,7 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
               checkHandler(*Body->second, TRI, Image, Convention->Routine,
                            S - Convention->HandlerFrame,
                            Convention->TargetFrame - Convention->HandlerFrame,
-                           WorkRemaining))
+                           WorkRemaining, Unread))
         return std::move(Error);
     }
   }

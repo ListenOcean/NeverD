@@ -14638,7 +14638,9 @@ data places the masked frame or the frame reaches the cookie slot unmasked.
 `AnAuthenticatedSetjmpTakesTheFrame` hands the frame to the runtime's
 `__intrinsic_setjmpex`, which still certifies, and
 `AFrameAFunctionOfTheImageReadsKeepsTheCall` keeps the runtime call when the
-same frame reaches a function of the image that reads it.
+same frame reaches a function of the image that reads it, and
+`AFrameItsCalleeNeverObservesPassesNothing` certifies the frame left in R8
+for a function whose unread proof covers R8.
 Its `ARMSEHFinallyBodyTests.cpp`
 builds AArch64 and
 Thumb parents whose handler reads them through callee-saved registers:
