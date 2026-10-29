@@ -14,6 +14,7 @@ add_neverd_component_library(NeverDPipeline
   PipelineFormattedCalls.cpp
   PipelineFuncDetect.cpp
   PipelineHighIR.cpp
+  PipelineSourcePointerParameters.cpp
   PipelineLLVM.cpp
   PipelineLibraryRecognition.cpp
   PipelineLowIR.cpp

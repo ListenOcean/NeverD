@@ -34,6 +34,7 @@
 #include <vector>
 
 namespace neverd {
+class DebugContext;
 
 struct BinaryImage;
 struct AnalysisCacheWarmup;
@@ -312,6 +313,13 @@ private:
 /// projection. Derived bodies and memo ownership remain the caller's choice.
 void copyCallSignatureFacts(const PipelineResult &Source,
                             PipelineResult &Destination);
+
+/// Refine source-only integer carriers whose complete uses forward pointers
+/// to admitted imported declarations. Shared by HighC and LLVM-to-C; native
+/// lifting and patching retain their independent machine type contracts.
+void refineSourcePointerParameters(const BinaryImage &Image,
+                                   PipelineResult &Result,
+                                   const DebugContext *Debug);
 
 /// Recover every call's arguments in \p Result, and the parameters each
 /// forwarder passes straight through, from the setup its caller writes

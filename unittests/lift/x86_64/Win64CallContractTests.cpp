@@ -5170,8 +5170,8 @@ void checkPointerQualifiers(bool Local) {
               " *input = &value;\n  uint32_t output = 41;\n"
               "  " +
               (VoidResult ? "" : "uintptr_t result = ") +
-              "forward_qualified((uintptr_t)" + (Nested ? "&input" : "input") +
-              ", (uintptr_t)&output);\n"
+              "forward_qualified((void*)" + (Nested ? "&input" : "input") +
+              ", &output);\n"
               "  return " +
               (VoidResult ? "" : "result != (uintptr_t)&value || ") +
               "output != 42;\n}\n";

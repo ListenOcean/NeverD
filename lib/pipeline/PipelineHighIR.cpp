@@ -249,6 +249,7 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
           return Callee;
         });
   }
+  refineSourcePointerParameters(Img, Result, Dbg);
   prepareRecoveredSourceStackAccesses(Img, Result, Result.LowFuncs);
   // Both C projections consume these original-machine observations after
   // source ABI remodeling. They never participate in type or call recovery.

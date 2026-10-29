@@ -146,6 +146,15 @@ so different MSVCRT/UCRT definitions cannot silently substitute one another.
 Public source execution and the complete MinGW toy own qualification; native
 Windows kernel and ARM64 execution remain separate evidence requirements.
 
+Inferred x64/AArch64 wrapper parameters now retain pointer roles from admitted
+fixed scalar import declarations in both C routes, including explicit call
+operands on independent register-bank ABIs. The shared COPY/PHI proof excludes
+scalar conflicts, truncated inputs and call-clobbered version-zero values;
+independent narrow register writes do not invalidate earlier full-width inputs.
+Explicit entry declarations still win. The result is a generic `void*` carrier,
+not a recovered named pointee type. General local wrapper-chain propagation,
+missing runtime state and native Windows execution remain separate work.
+
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
 the call target, including when the current import slot can no longer name it.
