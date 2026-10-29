@@ -39,12 +39,12 @@ class DwarfIntervalTests(unittest.TestCase):
             corpus.inherited_attribute(root, "DW_AT_decl_file")
 
     def test_definition_unit_follows_origin_but_not_a_declaration_specification(self):
-        root = Path("/source-corpus")
+        root = Path("/source-corpus").resolve()
 
         def unit(name):
             top = SimpleNamespace(attributes={
                 "DW_AT_name": SimpleNamespace(value=name.encode()),
-                "DW_AT_comp_dir": SimpleNamespace(value=b"/source-corpus")})
+                "DW_AT_comp_dir": SimpleNamespace(value=str(root).encode())})
             return SimpleNamespace(get_top_DIE=lambda: top, header=SimpleNamespace(version=4))
 
         def die(offset, cu, attributes=None, references=None):
