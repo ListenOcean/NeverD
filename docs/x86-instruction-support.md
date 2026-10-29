@@ -2873,3 +2873,44 @@ x87 interface, source-stack and machine-state tests on each SDK, all passing.
 These native interfaces do not close the complete-machine-state, continuation
 or physical qualification gaps listed above. LLVM release, the production SDK
 pin and the LLVM gitlink remain unchanged until those global gaps close.
+
+## Native x87 environment and register-image interfaces
+
+The LLVM fork and NeverC provide eight fixed interfaces for
+`FNSTENV / FLDENV / FNSAVE / FRSTOR`: the `16` suffix selects 14-byte
+environments or 94-byte register images, and `32` selects 28 or 108 bytes.
+Each LLVM interface takes one pointer; NeverC exposes matching header-free
+`__builtin_ia32_<operation><format>` builtins, with const pointers for restores.
+Their volatile native memory accesses retain exact sizes and byte alignment.
+
+FNSTENV masks exceptions after saving the incoming environment. FNSAVE also
+saves register payloads and initializes the FPU. Restores check already
+pending exceptions before reading memory and defer exceptions loaded from the
+image until a later waiting operation. Changes to TOP/tags invalidate
+compiler-owned x87/MMX values even when physical payloads survive; scheduling
+boundaries and register clobbers preserve those compiler values through
+spills/reloads.
+
+The unowned NeverD lifter now retains operand-size-16 images explicitly.
+Previously the generic memory path discarded that format and could issue a
+28/108-byte access for a 14/94-byte operand. REX.W retains its precedence over
+66 in long mode. The LLVM emitter selects registered native APIs when
+available; r6 retains exact format prefixes and full state clobbers in its
+fallback. HighC and LLVM-C share builtin/fallback rendering, including FS/GS
+overrides. Owned restore/operation/save sequences remain atomic in their
+existing context boundary.
+
+Full LLVM `f35c3ce214cd0bb12849ea46fdb826864444786b` and NeverC
+`5382a3f7f8aaebb26cf04f2f53f217e456ad0bc5` pass six native Linux x64
+profiles: direct LLVM, NeverC and NeverC IR through full LLVM at O0/O2.
+Independent raw-byte references check 55,296 state observations, 480 expected
+faults in 624 fault/nonfault cases, 96 protected-page boundaries and 3,072
+live x87/MMX cases. All six observation streams match byte-for-byte. The
+compiler regression includes 43 LLVM tests, 115 NeverC frontend tests, seven
+backend tests, 60 generator tests and 16 synchronization checks.
+
+Physical evidence is limited to the recorded Intel Core i9-13900H Linux x64
+host. i386 runtime, privileged #NM, alignment-check exceptions and historical
+processors remain unqualified. These pointer APIs do not establish a complete
+opaque machine context. Global completion and the LLVM release/production
+pin update remain separate work.

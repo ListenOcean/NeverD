@@ -8071,6 +8071,15 @@ payload provenance after FEMMS, and establishes only the written destination.
 Typed/unowned and i386 projections remain explicit refusals; no duplicate
 scalar arithmetic model substitutes for the native operation.
 
+Native ambient x87 environment operations use the shared
+`LLVMX87NativeState` contract for LLVM-call validation, image format and C
+builtin selection. The typed 16-bit image IDs remain distinct from the
+28/108-byte defaults; both native LLVM and the older-SDK assembly fallback
+preserve that distinction. Restore/TOP/tag transitions clobber compiler-owned
+x87/MMX values. These ambient calls remain separate from the owned context's
+atomic restore/step/save boundary, which continues to use its established
+state transport.
+
 ## IR representations and routes
 
 `X86Virtualization.def` owns the implemented VMX/SVM operation inventory and

@@ -15909,6 +15909,29 @@ The format/architecture matrix uses shared image models; it is not native
 execution qualification for every listed architecture or host platform.
 
 
+### Native x87 environment formats
+
+`NeverDX86X87ConstantTests` includes `X87Environment.*` and
+`X87EnvironmentProjection.*`. They check operand-size prefixes independently
+of address width through all three x86/x64 decoder routes, native versus r6
+LLVM selection, and both C routes against original instruction bytes. Set
+`NEVERD_TEST_NEVERC` to a rebuilt NeverC compiler to exercise its builtin
+branch; Clang exercises the assembly fallback. The shared
+`X87NativeStateContract` negative matrix also covers all eight environment
+interfaces before function filtering.
+
+```sh
+python3 scripts/build.py build-release --target NeverDX86X87ConstantTests --parallel 4
+ctest --test-dir build-release -R '^X87(Environment|NativeState|ControlProjection)' --output-on-failure
+```
+
+Native compiler qualification additionally lives in NeverC's
+`tests/neverc/X86/verify_x87_environment.py`. It retains exact commands,
+compiler and artifact hashes for direct LLVM, NeverC and the text-IR bridge at
+O0/O2. Original byte oracles check image bounds, full tags and raw payloads,
+pending/deferred exceptions and live compiler values. i386 runtime and
+privileged fault environments are outside that Linux x64 harness.
+
 ### Bounded ENCLU/GETSEC state
 
 `NeverDX86BoundedLeafTests` checks both modes, CFG joins/loops/partial writes,
