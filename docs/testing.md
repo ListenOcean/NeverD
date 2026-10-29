@@ -17301,3 +17301,5 @@ The repeated-image regression also covers unrelated function-pointer relocations
 ## Image storage reached through advancing cursors
 
 `CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` executes forward/backward cursor loops, intermediate copies, same-width casts and read/write or store-only paths for COFF/ELF/Mach-O at O0/O2 with ASan/UBSan. `CursorStorageNeedsAnAddressPreservingMemoryPath` rejects scalar constants, loaded pointers, narrowing conversions and arithmetic without a memory consumer; `DirectBoundedTablesKeepTheirExtent` retains the bounded direct-index path. Build `NeverDLiftTests`, then run `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.
+
+Synthetic LLVM C stack slots retain the complete 128-bit integer store before a runtime selection reads either 64-bit half. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` covers addition and alignment-based OR addressing at O0/O2 with ASan/UBSan and the documented `-fno-strict-aliasing` contract. Run `NeverDLLVMCValueTests`; related frame, vector and display-record suites check the surrounding storage paths.
