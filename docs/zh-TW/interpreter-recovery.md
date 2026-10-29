@@ -318,3 +318,5 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 `--vm-prove-store-return-separation` 在保留返回位址單元、已儲存的框架指標和目前純量框架單元之前，證明完整寫入與它們不相交。`--vm-prove-store-frame-separation` 亦檢查宣告的框架和目前絕對位址單元，需要 `--vm-machine-state` 與 `--vm-entry-frame`。兩者都需要 `--devirtualize`，預設關閉，共用既有證明與工作預算，不增加無別名前提。未證明的寫入仍依通常規則使資訊失效；恢復不完整時不發布原始碼。可搭配既有鏈控制保留迴圈。
 
 v9 介面 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` 接受 `neverd_devirtualize_options_v9`。將結構清零，並將 v1 前綴的 `struct_size` 設為完整大小。旗標為 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`；`reserved` 必須為零。舊介面忽略此尾部。Python 提供 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`。報告含 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`。回歸透過兩條 C 路徑，在 O0/O2 與 ASan/UBSan 下執行動態索引區域陣列迴圈，並檢查整個提供的堆疊儲存區。
+
+啟用任一證明策略後，恢復過程也會在控制流程節點間保留經窮盡證明的暫存器相對入口堆疊框架的有限偏移。合流取所有傳入偏移的聯集；缺少事實或聯集超過現有控制元組上限時，退化為未知。這不會保留跨暫存器相關性，也不增加別名假設。

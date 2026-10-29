@@ -1059,48 +1059,51 @@ TEST_F(DevirtualizationSourceTest, CLIStoreProofsPreserveIndexedFrameLoops) {
     GTEST_SKIP() << "store proof source checks require clang";
   const auto Binary = tmpFile("generic-store-proofs.elf");
   ASSERT_TRUE(buildFixture(Binary, "generic_recovery_contract.S").ok());
-  for (bool LLVM : {false, true})
-    for (bool Prove : {false, true})
-      for (bool Frame : {false, true}) {
-        const auto Stem = std::to_string(LLVM) + std::to_string(Prove) +
-                          std::to_string(Frame);
-        SCOPED_TRACE(Stem);
-        const auto Source = tmpFile("proof-" + Stem + ".c");
-        const auto Report = tmpFile("proof-" + Stem + ".json");
-        std::vector<std::string> Args{
-            "decompile",
-            Binary.string(),
-            "--func",
-            "generic_recovery_indexed_store",
-            "--devirtualize",
-            "--vm-machine-state",
-            "--vm-entry-frame=-64:8",
-            "--vm-chain-transfers=32",
-            "--vm-chain-stop-at-repeat",
-            "--vm-prove-store-return-separation=" + std::to_string(Prove),
-            "--vm-prove-store-frame-separation=" + std::to_string(Frame),
-            "--recovery-report=" + Report.string(),
-            "-o",
-            Source.string()};
-        if (LLVM)
-          Args.push_back("--llvm");
-        const auto Recovered = exec(ndBin(), Args);
-        EXPECT_EQ(Recovered.ok(), Prove) << Recovered.err;
-        ASSERT_EQ(fs::exists(Source), Prove);
-        auto Parsed = llvm::json::parse(readSource(Report));
-        ASSERT_TRUE(bool(Parsed));
-        const auto *Object = Parsed->getAsObject();
-        ASSERT_NE(Object, nullptr);
-        EXPECT_EQ(Object->getBoolean("complete"), Prove);
-        EXPECT_EQ(Object->getBoolean("proveStoreReturnSlotSeparation"), Prove);
-        EXPECT_EQ(Object->getBoolean("proveStoreFrameSeparation"), Frame);
-        if (!Prove) {
-          EXPECT_EQ(Object->getInteger("residualBlocks"), 0);
-          continue;
-        }
-        const auto Harness = tmpFile("proof-" + Stem + "-run.c");
-        std::ofstream OS(Harness);
-        OS << readSource(Source) << R"C(
+  for (const char *Name : {"generic_recovery_indexed_store",
+                           "generic_recovery_carried_indexed_store"})
+    for (bool LLVM : {false, true})
+      for (bool Prove : {false, true})
+        for (bool Frame : {false, true}) {
+          const auto Stem = std::string(Name) + std::to_string(LLVM) +
+                            std::to_string(Prove) + std::to_string(Frame);
+          SCOPED_TRACE(Stem);
+          const auto Source = tmpFile("proof-" + Stem + ".c");
+          const auto Report = tmpFile("proof-" + Stem + ".json");
+          std::vector<std::string> Args{
+              "decompile",
+              Binary.string(),
+              "--func",
+              Name,
+              "--devirtualize",
+              "--vm-machine-state",
+              "--vm-entry-frame=-64:8",
+              "--vm-chain-transfers=32",
+              "--vm-chain-stop-at-repeat",
+              "--vm-prove-store-return-separation=" + std::to_string(Prove),
+              "--vm-prove-store-frame-separation=" + std::to_string(Frame),
+              "--recovery-report=" + Report.string(),
+              "-o",
+              Source.string()};
+          if (LLVM)
+            Args.push_back("--llvm");
+          const auto Recovered = exec(ndBin(), Args);
+          EXPECT_EQ(Recovered.ok(), Prove) << Recovered.err;
+          ASSERT_EQ(fs::exists(Source), Prove);
+          auto Parsed = llvm::json::parse(readSource(Report));
+          ASSERT_TRUE(bool(Parsed));
+          const auto *Object = Parsed->getAsObject();
+          ASSERT_NE(Object, nullptr);
+          EXPECT_EQ(Object->getBoolean("complete"), Prove);
+          EXPECT_EQ(Object->getBoolean("proveStoreReturnSlotSeparation"),
+                    Prove);
+          EXPECT_EQ(Object->getBoolean("proveStoreFrameSeparation"), Frame);
+          if (!Prove) {
+            EXPECT_EQ(Object->getInteger("residualBlocks"), 0);
+            continue;
+          }
+          const auto Harness = tmpFile("proof-" + Stem + "-run.c");
+          std::ofstream OS(Harness);
+          OS << readSource(Source) << R"C(
 #include <stdint.h>
 #include <string.h>
 int main(void) {
@@ -1116,28 +1119,30 @@ int main(void) {
     state[4] = (uintptr_t)(stack + 128);
     state[7] = inputs[n];
     state[16] = 2;
-    if (generic_recovery_indexed_store((uint8_t *)state) != 0 ||
+    if ()C" << Name
+             << R"C(((uint8_t *)state) != 0 ||
         state[0] != 37 || state[4] != (uintptr_t)(stack + 128) ||
         memcmp(stack, expected, sizeof(stack))) return 1;
   }
   return 0;
 }
 )C";
-        OS.close();
-        std::ofstream(tmpFile("immintrin.h")).close();
-        for (const char *Optimization : {"-O0", "-O2"}) {
-          const auto Program = tmpFile("proof-" + Stem + "-run" +
-                                       neverd::test::executableSuffix());
-          const auto Built = exec(
-              NEVERD_TEST_CLANG,
-              {"-std=c11", Optimization, "-fno-strict-aliasing",
-               "-fsanitize=address,undefined", "-fno-sanitize-recover=all",
-               "-I", tmp().string(), Harness.string(), "-o", Program.string()});
-          ASSERT_TRUE(Built.ok()) << Built.err;
-          const auto Ran = exec(Program.string(), {});
-          EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+          OS.close();
+          std::ofstream(tmpFile("immintrin.h")).close();
+          for (const char *Optimization : {"-O0", "-O2"}) {
+            const auto Program = tmpFile("proof-" + Stem + "-run" +
+                                         neverd::test::executableSuffix());
+            const auto Built =
+                exec(NEVERD_TEST_CLANG,
+                     {"-std=c11", Optimization, "-fno-strict-aliasing",
+                      "-fsanitize=address,undefined",
+                      "-fno-sanitize-recover=all", "-I", tmp().string(),
+                      Harness.string(), "-o", Program.string()});
+            ASSERT_TRUE(Built.ok()) << Built.err;
+            const auto Ran = exec(Program.string(), {});
+            EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+          }
         }
-      }
 }
 
 TEST_F(DevirtualizationSourceTest, CLIDestinationVisitsKeepRepeatedRelations) {

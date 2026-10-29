@@ -542,6 +542,78 @@ TEST(InterpreterTransferChain, EntryFrameBoundsDoNotAuthorizeUnknownStores) {
   EXPECT_TRUE(R.Residual.Blocks.empty());
 }
 
+TEST(InterpreterTransferChain, FiniteFrameOffsetsSurviveOrdinaryNodeCuts) {
+  Program P;
+  P.add(Entry, {op(NdOp::INT_AND, r(16), {r(8), c(7)}),
+                op(NdOp::INT_SUB, r(64), {r(32), c(32)}),
+                op(NdOp::INT_ADD, r(64), {r(64), r(16)}), jump(Middle)});
+  P.add(Middle, {op(NdOp::STORE, {}, {r(64), NdVar::scalar(90, 1)}),
+                 op(NdOp::COPY, r(0), {c(37)}), ret()});
+  SpecializationOptions O;
+  O.FrameBaseRegister = SymRegisterRange{32, 8};
+  O.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+  O.RequireRestoredFrameAtReturn = true;
+  O.ProveStoreReturnSlotSeparation = true;
+  const auto R = specializeInterpreter(P, {Entry}, O);
+  ASSERT_TRUE(R.complete()) << R.Diagnostic;
+  for (uint64_t Input : {0u, 1u, 6u, 7u, 8u, 255u})
+    for (uint64_t Root : {0x1000u, 0x1008u, 0x8000u})
+      EXPECT_EQ(execute(R.Residual, Input, Root), 37u);
+
+  O.ProveStoreReturnSlotSeparation = false;
+  EXPECT_FALSE(specializeInterpreter(P, {Entry}, O).complete());
+  O.ProveStoreReturnSlotSeparation = true;
+  O.MaxControlTuples = 4;
+  const auto TooWide = specializeInterpreter(P, {Entry}, O);
+  EXPECT_FALSE(TooWide.complete());
+  EXPECT_TRUE(TooWide.Residual.Blocks.empty());
+  O.MaxControlTuples = 8;
+  O.MaxSolverQueries = 1;
+  const auto Exhausted = specializeInterpreter(P, {Entry}, O);
+  EXPECT_EQ(Exhausted.Status, SpecializationStatus::BudgetExceeded);
+  EXPECT_TRUE(Exhausted.Residual.Blocks.empty());
+}
+
+TEST(InterpreterTransferChain, FrameOffsetJoinsKeepEveryPossibleWriteExtent) {
+  for (bool Unknown : {false, true})
+    for (uint16_t Width : {1, 8})
+      for (uint64_t Other : {0u, 4u, 8u}) {
+        Program P;
+        const auto Flag = NdVar::reg(48, 1);
+        P.add(Entry,
+              {op(NdOp::INT_EQUAL, Flag, {r(8), c(0)}),
+               op(NdOp::COND_BR, {}, {NdVar::cst(Middle, 8), Flag})},
+              Dispatch);
+        P.add(Middle, {op(NdOp::INT_SUB, r(64), {r(32), c(16)}), jump(Exit)});
+        if (Unknown)
+          P.add(Dispatch, {op(NdOp::COPY, r(64), {r(8)}), jump(Exit)});
+        else
+          P.add(Dispatch,
+                {op(NdOp::INT_SUB, r(64), {r(32), c(Other)}), jump(Exit)});
+        P.add(Exit, {op(NdOp::STORE, {}, {r(64), NdVar::scalar(90, Width)}),
+                     op(NdOp::COPY, r(0), {c(37)}), ret()});
+        SpecializationOptions O;
+        O.FrameBaseRegister = SymRegisterRange{32, 8};
+        O.EntryFrameBounds = SpecializationEntryFrameBounds{-64, 8};
+        O.RequireRestoredFrameAtReturn = true;
+        O.ProveStoreReturnSlotSeparation = true;
+        const auto R = specializeInterpreter(P, {Entry}, O);
+        const bool Safe = !Unknown && Other >= Width;
+        EXPECT_EQ(R.complete(), Safe) << R.Diagnostic;
+        if (!Safe) {
+          EXPECT_TRUE(R.Residual.Blocks.empty());
+          continue;
+        }
+        for (uint64_t Input : {0u, 1u, 255u})
+          EXPECT_EQ(execute(R.Residual, Input), 37u);
+        O.MaxControlTuples = 1;
+        const auto Widened = specializeInterpreter(P, {Entry}, O);
+        EXPECT_FALSE(Widened.complete());
+        EXPECT_TRUE(Widened.Residual.Blocks.empty());
+        EXPECT_GT(Widened.RelationalWidenings, 0u);
+      }
+}
+
 TEST(InterpreterTransferChain, FrameBoundsStayOnEntryRootAfterStackAdjustment) {
   Program P;
   const auto Flag = NdVar::reg(48, 1);
