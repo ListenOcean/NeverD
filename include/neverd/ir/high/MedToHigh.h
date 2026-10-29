@@ -611,12 +611,11 @@ private:
   const MedCallClobber *findCallClobber(const MedVar &V) const;
   /// Per-function indexes for the Win64 callee-save parameter mapping in
   /// medvarToExpr: register COPYs whose source is an entry parameter (in
-  /// block/op order, with that parameter's index), and every (Id, SSAVer)
-  /// with a computed def (anything but a COPY of a register or parameter).
+  /// block/op order, with that parameter's index), and every defined SSA value.
   /// Built lazily for \c ParamCopyIndexFunc.
   const MedFunc *ParamCopyIndexFunc = nullptr;
   std::vector<std::pair<const MedOp *, int>> ParamSourceCopies;
-  std::set<std::pair<int, int>> ComputedVersions;
+  VarKeySet DefinedVersions;
   /// A native read is evaluated at its statement, then used as an SSA value.
   /// Re-expanding it at a use could cross an aliasing write or repeat the read.
   VarKeySet MemoryReadOutputs;

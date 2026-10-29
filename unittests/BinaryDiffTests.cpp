@@ -1622,8 +1622,18 @@ TEST(BinaryDiff, SavedComparisonsRoundTripAndRefuseOtherInputs) {
   EXPECT_EQ(Why, BindFailure::StaleInput);
   const Program Reanalyzed =
       build(Old, 0x400000, {}, std::string(64, 'b'), "other settings");
-  EXPECT_TRUE(bindComparison(*Read, Reanalyzed, S, Bound, &Why));
+  const auto SettingsError = bindComparison(*Read, Reanalyzed, S, Bound, &Why);
+  ASSERT_TRUE(SettingsError);
+  EXPECT_NE(SettingsError->find("other settings"), std::string::npos);
   EXPECT_EQ(Why, BindFailure::StaleAnalysis);
+  auto Recovered = P;
+  Recovered.Identity.Revision = "newly-discovered-functions";
+  const auto SnapshotError = bindComparison(*Read, Recovered, S, Bound, &Why);
+  ASSERT_TRUE(SnapshotError);
+  EXPECT_NE(SnapshotError->find("analyzed snapshot"), std::string::npos);
+  EXPECT_EQ(SnapshotError->find("other settings"), std::string::npos);
+  EXPECT_EQ(Why, BindFailure::StaleAnalysis);
+  EXPECT_EQ(savedWithoutTimings(Bound, P, S), savedWithoutTimings(R, P, S));
   std::vector<Fn> Fewer = Old;
   llvm::erase_if(Fewer, [](const Fn &F) { return F.Name == "leaf3"; });
   const Program Lost = build(Fewer, 0x400000, {}, std::string(64, 'b'));

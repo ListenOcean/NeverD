@@ -844,12 +844,20 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
                   std::string("the ") + Name + " input changed: SHA-256 " +
                       Now->SHA256 + ", the comparison was made from " +
                       Was->SHA256);
-    if (programAnalysisIdentity(*Was) != programAnalysisIdentity(*Now))
+    if (programAnalysisIdentity(*Was) != programAnalysisIdentity(*Now)) {
+      if (Was->Analysis == Now->Analysis)
+        return Fail(
+            BindFailure::StaleAnalysis,
+            std::string("the ") + Name +
+                " input's analyzed snapshot no longer matches the saved "
+                "comparison; run a new comparison to use the current "
+                "analysis");
       return Fail(BindFailure::StaleAnalysis,
                   std::string("the ") + Name +
                       " input was analyzed with other settings: \"" +
                       Now->Analysis + "\", the comparison used \"" +
                       Was->Analysis + "\"");
+    }
   }
   if (const auto Conflict = decisionConflict(Saved, Control))
     return Fail(BindFailure::InvalidEvidence, *Conflict);

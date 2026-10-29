@@ -403,9 +403,9 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   const bool IsX86LinkedCOFF = Img.Arch == Arch::X86 &&
                                Img.Format == BinaryFormat::COFF &&
                                !Img.IsRelocatable;
-  const bool IsX64LinkedCOFF = Img.Arch == Arch::X64 &&
-                               Img.Format == BinaryFormat::COFF &&
-                               !Img.IsRelocatable;
+  const bool IsX64LinkedCodeAddresses =
+      Img.Arch == Arch::X64 && !Img.IsRelocatable &&
+      (Img.Format == BinaryFormat::COFF || Img.Format == BinaryFormat::ELF);
   std::set<va_t> RelocationCodeTargets;
   // What code names, as (naming address, code named): decided below, once the
   // entries that bound each naming function are known.
@@ -479,8 +479,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   }
 
   std::set<va_t> DirectCallTargets;
-  // Functions a binary file's code takes the address of, whose prologue
-  // already vouches for them.
+  // Raw-image prologues and addressed x64 IBT markers supply entry evidence
+  // independently of a return inside the bounded candidate probe.
   std::set<va_t> CodePointerTargets;
   // The entries other evidence found before the prologue scan adds its own.
   std::set<va_t> EvidencedX86Entries;
@@ -555,6 +555,15 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       });
   }
 
+  std::set<va_t> X64BoundaryGuesses;
+  if (IsX64LinkedCodeAddresses) {
+    X64BoundaryGuesses = Img.boundaryGuessFunctionStarts();
+    std::erase_if(X64BoundaryGuesses, [&](va_t Addr) {
+      return IndependentEntries.count(Addr) || DirectCallTargets.count(Addr) ||
+             RelocationCodeTargets.count(Addr);
+    });
+  }
+
   // Code that other code names is a function of its own, except inside the
   // function naming it, where it is that function's label: a pointer table
   // among the code names its dispatcher's cases, which the jump-table
@@ -563,12 +572,18 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   // function the code only takes the address of.  The bounded decoder below
   // still decides whether a target is an entry.
   std::set<va_t> CodeNamedTargets;
-  if ((IsX86LinkedCOFF || IsX64LinkedCOFF) && Img.Entry != 0) {
+  if ((IsX86LinkedCOFF || IsX64LinkedCodeAddresses) && Img.Entry != 0) {
     const size_t TableNames = IsX86LinkedCOFF ? CodeNamedByCode.size() : 0;
     if (IsX86LinkedCOFF && !RelocationsOnly)
       func_detect_detail::scanCodeAddressImmediatesX86(
           Img, Dec, CodeNamedByCode, Cancellation);
-    const std::vector<va_t> Starts(Entries.begin(), Entries.end());
+    // A padding/data guess cannot end the namer's body and turn its own
+    // address-taken label into independently evidenced callable code.
+    std::vector<va_t> Starts;
+    Starts.reserve(Entries.size());
+    for (va_t Entry : Entries)
+      if (!X64BoundaryGuesses.count(Entry))
+        Starts.push_back(Entry);
     // The function an address lies in: the entry before it, and the next.
     auto functionOf = [&](va_t Addr) -> std::optional<std::pair<va_t, va_t>> {
       const auto Next = std::upper_bound(Starts.begin(), Starts.end(), Addr);
@@ -617,7 +632,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       func_detect_detail::checkCancellation(Cancellation);
       const auto &[Namer, Target] = CodeNamedByCode[I];
       if (NamesOwnLabel(Namer, Target) &&
-          (IsX64LinkedCOFF || I < TableNames ||
+          (IsX64LinkedCodeAddresses || I < TableNames ||
            !func_detect_detail::isX86EscapingCodeImmediate(Img, Namer) ||
            Reaches(Namer, Target)))
         Labels.insert(Target);
@@ -626,8 +641,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       func_detect_detail::checkCancellation(Cancellation);
       const va_t Target = Named.second;
       // An instruction starts with its opcode, never with a relocated field.
-      if (Entries.count(Target) || Labels.count(Target) ||
-          ExceptionThunks.count(Target) ||
+      if ((!IsX64LinkedCodeAddresses && Entries.count(Target)) ||
+          Labels.count(Target) || ExceptionThunks.count(Target) ||
           Img.CodePtrRelocSlots.count(Target) ||
           Img.DataPtrRelocSlots.count(Target) ||
           Img.CodeAddressRelocOperands.count(Target) ||
@@ -639,6 +654,15 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
           RegistrationPointerRoles->RuntimeOnlyPointerTargets.count(Target))
         continue;
       CodeNamedTargets.insert(Target);
+      // A reference from outside the owner to an ENDBR64 marks an indirect
+      // entry even when hand-written assembly has no unwind row or ordinary
+      // prologue. Keep a long body for the formal audit; definite decode and
+      // ownership failures still reject it. ENDBR32 is not an x64 marker.
+      if (IsX64LinkedCodeAddresses)
+        if (const uint8_t *Bytes = Img.readVA(Target, 4);
+            Bytes && Bytes[3] == 0xfa &&
+            x86BranchTargetMarkerLength(Bytes, 4) == 4)
+          CodePointerTargets.insert(Target);
     }
     Entries.insert(CodeNamedTargets.begin(), CodeNamedTargets.end());
   }
@@ -750,16 +774,19 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
     // and stays single-threaded, avoiding pointless thread-spawn overhead.
     auto verifyIdx = [&](Decoder &LocalDec, size_t I) {
       const va_t Addr = Results[I].first;
-      Keep[I] = verifyFunctionDecode(
-                    Img, LocalDec, Addr,
-                    UntypedCOFFExports.count(Addr) != 0 ||
-                        UnsymbolizedX86Entries.count(Addr) != 0 ||
-                        IsX86LinkedCallOrRelocTarget(Addr) ||
-                        CodePointerTargets.count(Addr) != 0 ||
-                        (!IsX64LinkedCOFF && CodeNamedTargets.count(Addr) != 0),
-                    IsX64LinkedCOFF && CodeNamedTargets.count(Addr) != 0)
-                    ? 1
-                    : 0;
+      Keep[I] =
+          verifyFunctionDecode(Img, LocalDec, Addr,
+                               UntypedCOFFExports.count(Addr) != 0 ||
+                                   UnsymbolizedX86Entries.count(Addr) != 0 ||
+                                   IsX86LinkedCallOrRelocTarget(Addr) ||
+                                   CodePointerTargets.count(Addr) != 0 ||
+                                   (!IsX64LinkedCodeAddresses &&
+                                    CodeNamedTargets.count(Addr) != 0),
+                               IsX64LinkedCodeAddresses &&
+                                   CodeNamedTargets.count(Addr) != 0 &&
+                                   !CodePointerTargets.count(Addr))
+              ? 1
+              : 0;
     };
     if (NeedVerify.size() < limits::kMinParallelVerify) {
       // Most targets classify the initial linear probe from the instruction id
@@ -922,6 +949,29 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       }
       Results = std::move(Filtered);
     }
+  }
+
+  // Now that code-address candidates have passed admission, let their own
+  // reachable instructions disprove weak x64 starts. This also covers an
+  // unrelocated data word whose value happens to name an instruction, or an
+  // immediate ending in INT3 bytes. Only surviving independent entries may
+  // own the proof, and genuine calls, symbols and relocated pointers remain
+  // independent even where their code overlaps.
+  if (IsX64LinkedCodeAddresses && !RelocationsOnly &&
+      !X64BoundaryGuesses.empty()) {
+    std::set<va_t> Evidenced, Guessed;
+    for (const auto &[Addr, Name] : Results) {
+      (void)Name;
+      if (X64BoundaryGuesses.count(Addr) && !CodeNamedTargets.count(Addr))
+        Guessed.insert(Addr);
+      else
+        Evidenced.insert(Addr);
+    }
+    const auto Interior =
+        rejectX86InteriorEntries(Img, Dec, Evidenced, Guessed, {});
+    if (!Interior.empty())
+      llvm::erase_if(
+          Results, [&](const auto &R) { return Interior.count(R.first) != 0; });
   }
 
   std::sort(Results.begin(), Results.end());
@@ -1293,7 +1343,7 @@ void FuncDetector::scanCallTargets(
         AddRange(&Seg, Seg.VA, Seg.Data.size());
     }
 
-  // An x86 sweep reads sizes and ids, call targets and linked PE code
+  // An x86 sweep reads sizes and ids, call targets and linked PE/ELF code
   // addresses.
   const bool SweepWithoutDetail =
       Img.Arch == Arch::X86 || Img.Arch == Arch::X64;

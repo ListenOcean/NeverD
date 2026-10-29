@@ -554,7 +554,21 @@ The COFF loader separates V2 epilogue positions from prologue operations. V2 res
 
 Only the leading `UWOP_EPILOG` sequence defines V2 epilogues. Later markers consume two slots without restoring state or affecting prologue offset ordering; a truncated pair remains malformed.
 
-Linked x64 PE discovery collects canonical RIP-relative LEA code addresses during the existing call sweep. Targets still need independent ownership and a bounded callable-exit proof; internal labels, continuations and unsupported bodies remain excluded. Discovery and signature references share the address-encoding classifier. COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
+Linked x64 PE and ELF discovery collects canonical RIP-relative LEA code
+addresses during the existing call sweep. Targets need independent ownership
+and a bounded callable-exit proof. An independently addressed ENDBR64 also
+supplies entry evidence for long assembly bodies without conventional prologues
+or unwind rows; the bounded probe still rejects definite decode and ownership
+failures, and the formal pipeline reports unsupported or incomplete bodies.
+An ENDBR32 or a marker on the namer's own label supplies no such evidence.
+After admission, reachable instruction ownership can disprove padding and
+unrelocated-data guesses, including immediate bytes mistaken for INT3 padding.
+Independent symbols, calls and relocated pointers retain their entries;
+unresolved transfers, possible tails and call-return boundaries remain
+conservative. Discovery and signature references share the address-encoding
+classifier.
+
+COFF conditional rel32 references additionally require explicit source function symbols and zero-addend relocations. Offline `--single-reference-context` audits each complete single-site clause against every overlapping raw source claim, retaining all alternatives at that site.
 
 PE GuardCFFunctionTable parsing belongs to the COFF loader. Its complete,
 immutable table supplies address-taken function identities, without asserting

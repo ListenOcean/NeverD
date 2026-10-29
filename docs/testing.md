@@ -7889,7 +7889,20 @@ withholding one member cannot leave an unqualified survivor.
 Source-driven refinement still requires held-out CLI accuracy and performance qualification;
 these unit tests do not establish source identity for a matching body.
 
-`PEFunctionAddresses.*` checks stackless x64 PE leaves, ownership and instruction boundaries, rejected prefixes and narrower operands, callable exits, cancellation and identical results with 1/2/4/16 workers. Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
+`X64FunctionAddresses.*` in `NeverDImageAnalysisBoundaryTests` checks
+stackless PE/ELF leaves, ownership and instruction boundaries, rejected prefixes
+and narrower operands, callable exits, cancellation and identical results with
+1/2/4/16 workers. Long independently addressed ENDBR64 bodies remain candidates;
+wrong-mode markers, own labels and definite decode/ownership failures do not.
+`ELFFunctionAddresses.AddressTakenBodyOwnsPaddingAndDataPointerGuesses` recovers
+one assembly body while refuting two interior weak starts. Independent symbols,
+calls and relocated pointers, possible tails, call-return boundaries and
+unresolved transfers retain their separate controls.
+`SessionFunctionDiscovery.AddressedAssemblyKeepsOneCompleteNativeBody` verifies
+the public function inventory, full LowIR extent and complete native DIFF body
+through the same shared discovery result.
+
+Signature tests cover all 16 conditional rel32 forms in both directions, explicit entry scope and source relocation constraints. Python supplement tests require each single-site clause to distinguish every raw counterclaim, preserving alternatives and jointly necessary sites without duplicating existing claims.
 
 `SignatureCodeLayoutContext.*` checks complete nonsplittable source layouts,
 independent ordinary roots, unchanged name admission, shared zero-filled data,

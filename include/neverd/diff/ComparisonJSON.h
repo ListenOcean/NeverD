@@ -112,7 +112,7 @@ readComparison(llvm::StringRef Text, std::string &Error,
 enum class BindFailure : uint8_t {
   /// An input's file hash differs.
   StaleInput,
-  /// An input was analyzed with other settings.
+  /// An input's analysis settings or captured native state differ.
   StaleAnalysis,
   /// A function the comparison names is not in the program.
   MissingFunction,
