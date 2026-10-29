@@ -2234,6 +2234,8 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 
 `X86LegacyAtomic.LockedArithmetic*` は x86/x64 の幅、独立した算術フラグ、入力レジスタとキャリーの保持、符号付き即値、非整列の隣接バイト、読み取り専用・部分マッピング、FS/GS、ロックなしの対照を検証します。未対応のロック付き演算を通常のストアに変換しません。`InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` は四種類の命令の特化と、順序付きメモリの証明拒否を確認します。
 
+`X86LegacyAtomic.NeutralLogic*` は各幅と FS/GS でメモリ、定義済みフラグ、DF を保持し、書き込み拒否、不完全なアクセス、他の即値、HLE を検証します。`NeverDX86NeutralAtomicSourceTests` は x64 ホストで COFF/ELF/MachO の両 C 経路を O0/O2 と UBSan で実行し、上位ビットと八つのバイト位置を検証します。宣言型の変更には `NeverDHighControlFlowTests` と `NeverDHighCIntegerWidthTests` も実行します。
+
 ## スカラー分岐の検証
 
 `NeverDConstantBranchTests` は x86/x64/ARM64 と PE、ELF、Mach-O で直接先行辺、全経路が一致する合流、不変読み取りを検証します。競合、未定義入力、呼び出しによる破壊、独立入口では動的分岐を維持します。`NeverDConstantBranchSourceTests` は最適化の有無、O0/O2、UBSan で x64/ARM64 の両 C 経路をコンパイルして実行します。整数のみの関数本体にはホスト標準ヘッダーを使い、ネイティブ ARM64 や Windows ドライバーの認証とは区別します。worker の独立した ELF x64 機械語との比較は、コールド状態の移動、参照、飛び越された E9 バイトも検証します。
@@ -2247,3 +2249,5 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 `RelroKeepsPartialPagesAndStaticStartupWritable` は x86、x64、ARM、ARM64 のページ境界と明示的なローダー保証を確認します。ネイティブポインターテストは Linux x64 の部分 RELRO とローダーなし静的プログラムを独立に実行し、グローバル変数への書き込み後の読み出しを検証します。`NeverDDataSymbolBindingTests` はポインター全体の保護と両 C 経路を確認します。実機 ARM のページ構成を認証するものではありません。
 
 `NeverDLowScalarConstantTests` と `NeverDIndirectCallValueSourceTests` はブロック間呼び出しと拒否条件を両 C 経路の実行で検証します。`NeverDLLVMCSourcePointerTests` はポインター、コールバック、別名、外部宣言を O0/O2 と UBSan で実行します。ネイティブ境界テストは公開 MinGW 例をコンパイルし、MSVCRT/UCRT の配置不一致を拒否します。カーネルや ARM64 のネイティブ実行を保証するものではありません。
+
+`X86RepState.ImageCopiesRetainEveryAccessedByte` は x64 COFF、ELF、Mach-O で両方向のコピーと同一領域の埋め込み後のコピーを検証します。両 C 経路を O0/O2 と UBSan でコンパイルして実行し、独立に計算した結果で全コピー済みバイトを確認します。x64 以外のホストでは実行検証を明示的にスキップします。

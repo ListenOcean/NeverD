@@ -724,6 +724,13 @@ private:
   llvm::Constant *tryResolveOwnedGlobalData(uint64_t Addr, uint64_t OwnerVA,
                                             uint16_t DataSizeHint = 0,
                                             bool WholeOwner = false);
+  /// \p Addr in the image's own PE headers, or one past them for the header
+  /// owner, as `@__ImageBase + offset` (BinaryImage::imageBaseOffset).  The
+  /// module declares the linker's symbol and never copies a header byte.
+  /// Null for any other address or owner, and when another module identity
+  /// holds the name, which refuses the emission.
+  llvm::Constant *tryResolveImageHeaderData(uint64_t Addr,
+                                            uint64_t OwnerVA = InvalidVA);
 
   /// True when tryResolveGlobalData has a concrete address-local route for
   /// \p Addr. Loader relocation evidence identifies pointer intent, but it does

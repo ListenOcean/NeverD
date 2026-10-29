@@ -378,7 +378,11 @@ scope table, handler) and saves ESP in the SavedESP word below the node FS:[0]
 links. When every exact store to that word saves one entry stack offset, each
 exact pointer-wide reload is seeded with it, which places the CALLs after a
 handler restores ESP; only a write outside every source object, corrupting the
-runtime's record, could change the word otherwise. A CALL whose stack derives
+runtime's record, could change the word otherwise. The saved-frame slot of a
+Windows local unwind is read the same way (`certifyLowSEHLocalUnwinds`, with
+the `__finally` exits below): the compiler's slot is written only by its own
+prologue protocol, and only in-bounds frame accesses are modeled.
+A CALL whose stack derives
 from one runtime callback's stack root alone, at or below that root, runs on
 the dispatcher's stack below the parent frame and writes no parent byte.
 Pruning unreached arms still needs the complete proof. Low-to-Med also applies
@@ -1085,9 +1089,11 @@ value before publishing results or writes.
 Four-vector operations require eight LowIR inputs and five private intrinsic
 results. The shared representation limits live in `OperationLimits.def`;
 construction rejects excess inputs. Existing six-slot undefined-operation
-identities retain their v1 bytes when extension slots are default. Extended
-operands or stored extension bits select a separate v2 digest domain, including
-all eight slots. This does not extend the public native vector calling ABI.
+identities and raw-environment graph and evidence digests retain their v1 bytes
+when extension slots are default; `lowOperationFitsV1InputSlots` decides this
+for each digest. Extended operands or stored extension bits select a separate
+v2 digest domain, including all eight slots. This does not extend the public
+native vector calling ABI.
 For x1 SP-based structure memory, analysis retains the original SP and nominal
 footprint. Image source conversion and execution reject the unsupported stack
 environment. Fixed-image bases using register post-index remain outside the
@@ -4307,7 +4313,11 @@ result. A local the text declares a pointer takes an integer,
 as an indirect call's result, as the address it is. A C library routine
 takes a pointer to a typedef of its header's (bionic's long time_t, which the
 unit's exact widths call int32_t) and an array parameter (jmp_buf) through
-void *, as it takes a pointer to a record of its header's. An indirect call
+void *, as it takes a pointer to a record of its header's. In LLVM C, an
+object pointer parameter its header declares takes a frame member's address
+the same way where the member has another type (`frameAddressOfOtherType`):
+the start of a stack buffer `snprintf` formats into is a `uint64_t` member of
+the frame record, whose address C converts to no `char *`. An indirect call
 whose callee is unknown names its own instruction (`lowerCallInd`), where
 debug information finds its caller: it takes no signature from there
 (`debugFunctionCalled`), so the caller's `void *` result is not the call's. A function the image defines under the name of a routine
@@ -6503,7 +6513,12 @@ relocated owns whether a slot load can become a symbolic address, as
 segment, an explicit normalized loader protection guarantee, or complete
 PT_GNU_RELRO coverage in a linked ELF image. Names such as `.data.rel.ro` and
 `__DATA_CONST` never prove protection: `-z norelro` and a missing Mach-O
-SG_READ_ONLY flag retain writable storage. Relocation classification, scalar
+SG_READ_ONLY flag retain writable storage. A relocatable ELF object has no
+mapping yet, and the loader is the one that maps its sections. It gives a
+`.data.rel.ro*` section the protection the compiler asks for there: the
+section holds constant data that needs relocations, and a linker's RELRO
+maps it read-only once relocated (`Segment::ReadOnlyAfterRelocations`).
+Relocation classification, scalar
 folding and LLVM data materialization share this address-specific authority.
 An ELF load segment keeps its `LOAD_n` name because it holds sections of both
 kinds. Writable slots retain
@@ -6620,6 +6635,14 @@ instruction lands on the literal word itself, as in a getter whose literal
 follows its `bx lr`: the PC then equals a literal-pool address, and treating it
 as a reference to that word made the rebuilt access depend on where the copied
 code sat.
+
+On x86-64, `mov r32, imm32` sets a register's low half to an absolute 32-bit
+field and zero-extends it into the whole register. Where the field's relocation
+occurrence names a target that is the field's own zero extension
+(`R_X86_64_32`), LowToMed (`x86ZeroExtendedAddressOutputs`) gives the zero
+extension that whole address. The 32-bit half stays a fragment, so a use that
+truncates the address still refuses, while the full register passes the
+pointer itself: a format string a non-PIC object passes to `printf`.
 
 ARM and Thumb control comes from the decoded instruction
 (`ARMLifter::classifyControl`). A load of PC returns only when it pops:
@@ -7183,11 +7206,29 @@ passes a prologue save of a callee-saved or link register, a scratch register's
 undefined incoming value (an alignment `push rax`), a slot past a gap in its
 stack arguments, or the register that holds its own target, unless the routine
 takes that register (`cb(ctx, x, y, cb)` may pass and call through one).
-HighIR drops the store itself when it lands in the function's own frame below
-the entry stack pointer: those bytes held no defined value before it and hold
-none after, so C does not read the register only to fail. A variadic
-function's register save area is not such a store; its registers carry what
-its callers pass.
+Source preparation leaves the store itself out of both C routes when it lands
+in the function's own frame below the entry stack pointer and no load or stack
+variable of the function reads those bytes back
+(`markUndefinedScratchStores`, after call recovery, by
+`holdsUndefinedIncomingScratch`): those bytes held no defined value before it
+and hold none after, so C does not read the register only to fail. The slot's
+address reaching a call is no such read: the function may overwrite the slot
+first (`double v = a * 0.75; return pf(a, &v);`, whose push reserves `v`), or
+the routine may write it, where the LLVM route's C stored the unknown value
+and trapped. HighIR drops such a store too once its own
+forwarding has removed the reads (`elimUndefinedEntryScratchStores`). A store
+of the variadic count register (System V's RAX), which carries nothing into a
+function that is not variadic, goes even where the bytes are read back, if on
+every path a call receives an address in the slot before anything may read
+them: a local a routine fills through its address (`int x; get(&x, a); return
+x + 2;`), whose read sees what the routine wrote or bytes the program never
+defined, as the C local's does. That rests on the standard convention
+recovery assumes everywhere; `__regcall` and hand-written conventions that
+pass a value in RAX are not modeled. Any other store whose bytes the function
+reads back stays, so that the read fails where it uses the value: a spill
+read back before a call has its slot, or R10, which carries a nested
+function's static chain. A variadic function's register save area is not
+such a store; its registers carry what its callers pass.
 Recovery records where it ended the register arguments at the target
 (`MedCallInfo::TargetRegisterArgIdx`): HighIR's own scan does not extend them
 past it, since dead-code elimination leaves only stale earlier writes of that
@@ -7256,7 +7297,15 @@ caller passes. This is a limitation, which System V x86-64 calls share: a
 register the caller passes on untouched counts as not set, so a caller that
 passes its own argument on that way, as
 `long g(long a, long b) { return logv("x", b); }` does, passes zero where the
-program passes `b`, and its C takes no such parameter.
+program passes `b`, and its C takes no such parameter. Call recovery counts
+System V's named registers by the gp_offset va_start stores into its va_list,
+eight per register (`MedFunc::VaStartNamedGPRs`), as it counts AAPCS's by the
+save area (`callRegisterArity`), so the LLVM route's C follows the rule as
+HighC does: `long gdc(void) { return logv("y") + 1; }` takes no parameter,
+and a second call to logv passes zero where the first left its registers,
+not their unknown values. Where no store of that constant into a va_list
+shows, the count stays unknown and every saved register remains one a call
+passes.
 
 System V's vector registers do not share it. A call that loads AL with a
 constant, in its own block (`lowByteConstantAtCall`, which gives
@@ -7437,7 +7486,11 @@ keeps their reaching definitions through multiple predecessor blocks.
 A formatted call's MedIR inputs are every argument its format names, in the
 source's order, a floating one as the scalar in its vector register's low lane
 (`MedOp::ExactArguments`, `MedOp::ExactFloatInputs`); HighIR passes them as
-they are. Call recovery for LLVM takes the same inputs for a call that reaches
+they are. HighC prints a floating one as the value it is where no parameter
+types it: a constant the call loads from read-only data as its literal
+(`printf("%f %d\n", 2.5, a)`), not as the integer its bits make, which C
+would pass in an integer register.
+Call recovery for LLVM takes the same inputs for a call that reaches
 an import (`recoverCallAbi`), after its own scan has found the registers the
 function passes on, and the emitter passes a floating one into the routine's
 `...` as a `double`, which System V and AAPCS64 carry in a vector register.
@@ -8038,6 +8091,15 @@ requires explicit native reference mode and CPUID support, retains unknown
 payload provenance after FEMMS, and establishes only the written destination.
 Typed/unowned and i386 projections remain explicit refusals; no duplicate
 scalar arithmetic model substitutes for the native operation.
+
+Native ambient x87 environment operations use the shared
+`LLVMX87NativeState` contract for LLVM-call validation, image format and C
+builtin selection. The typed 16-bit image IDs remain distinct from the
+28/108-byte defaults; both native LLVM and the older-SDK assembly fallback
+preserve that distinction. Restore/TOP/tag transitions clobber compiler-owned
+x87/MMX values. These ambient calls remain separate from the owned context's
+atomic restore/step/save boundary, which continues to use its established
+state transport.
 
 ## IR representations and routes
 
@@ -9016,7 +9078,9 @@ Windows process and driver admission share `COFFLoader::hasExpectedPEMappingInve
 
 `PEHeaderInitialization` bounds the loader write footprint before publishing this read-only mapping. Ordinary import lookup/IAT extents, scalar base relocations and legacy load-configuration cookie destinations must exclude header pages. `PELoaderWriteRanges` shares the metadata-overlap rule with the fixed-image reader, so one write cannot change a later descriptor, terminator or configuration field. A rebased cookie destination requires its own complete scalar fixup. TLS, delay/bound imports, extended load configurations and other unmodeled writer protocols retain the refusal. The four-million-unit budget charges visited metadata bytes and section/record queries; fixed-image validation also charges that work to its caller's limits. This proves storage initialization, not a callee's effects or an unreachable control branch.
 
-The optional-header ImageBase field keeps an absolute data-pointer identity in DataPtrRelocSlots and DataPtrRelocTargetOwners, separately from the file's explicit BaseRelocations. Ordinary immutable-read queries exclude this field, and mirrored headers retain their own base address; a rebasing loader may replace that field. Other header bytes still pass ordinary immutable-read and fixup checks. The fixed preferred-base view independently binds both mapped copies to the raw snapshot, and its v5 digest includes the changed mapping contract. Raw-environment evidence and external-exit encodings are unchanged.
+The optional-header ImageBase field keeps an absolute data-pointer identity in DataPtrRelocSlots and DataPtrRelocTargetOwners, separately from the file's explicit BaseRelocations. Ordinary immutable-read queries exclude this field; a rebasing loader may replace it. The other header bytes pass ordinary immutable-read and fixup checks, so they stay readable for storage and initialization proofs and for the raw and fixed-image interpreter views. A decompiled route reads them through `__ImageBase` and never folds or copies them, as below. The fixed preferred-base view independently binds both mapped copies to the raw snapshot, and its v5 digest includes the changed mapping contract. Raw-environment evidence and external-exit encodings are unchanged.
+
+`BinaryImage::PEHeaderBytes` records a linked PE image's SizeOfHeaders, up to the first section that maps over it, whether or not `<PE headers>` is mapped. An image without a nonzero 64 KiB-aligned base records none: there a small number cannot be told from a header address. `imageBaseOffset` places an address in those headers. `isPotentiallyRelocatableAddress` and absolute pointer relocations treat it as the headers' own relocatable data, so MedIR folds RIP-relative and ADRP/ADD header addresses as it folds a mapped target, with Address provenance, and an x86 base relocation names its header target. Code reaches the headers through the linker's `__ImageBase` (`kPEImageBaseSymbol`). HighC declares `extern unsigned char __ImageBase[];` when the unit reaches them and prints `&__ImageBase[offset]`, or `(uintptr_t)&__ImageBase[offset]` for a value. LLVM declares `@__ImageBase = external global [0 x i8]` at the owned-global resolution point, and LLVM C declares it the same way. Patching resolves the symbol to the image base. `imageBaseOffset` is the one rule every decompiling consumer of header bytes asks: MedIR immutable table scans, LowIR scalar-branch proofs and jump-table finite-state evaluation keep a header read a read; HighC and LLVM C fold, copy or quote no header byte; and no module mirrors the ImageBase slot. The headers a rebuilt image runs with describe that image, not this file.
 
 Raw recovery's explicit `X64TerminalImports` domain describes stable named PE
 bindings whose callees neither return nor reenter the residual graph, including
@@ -11415,6 +11479,14 @@ objects. The caller provides the required original guest mappings; recovery
 proofs and reports remain attached to the input image. This machine-state
 contract does not change ordinary decompilation's address-binding policy.
 
+The machine-state wrapper also rejects residual CALL, INDIR_CALL and INDIR_BR
+operations. Guest call-stack effects have already become explicit memory
+operations. The fresh source conversion therefore omits the ordinary native
+CALL return-slot observation proof for this constructed wrapper, while keeping
+stack alignment and access preparation. Ordinary source conversion, including
+32-bit wide-return reconversion, retains that proof and its existing budget.
+Source declaration hints cannot establish the wrapper's call-free property.
+
 Interpreter specialization owns finite-query reuse in its run-local
 `FiniteQueryCache`. Complete domains and proved domain-limit excesses are
 keyed by the full ordered expression DAG under consistent free-variable
@@ -11947,6 +12019,18 @@ pointers). The layer places them past the object's sections in a writable
 there and data a symbol; a weak reference takes no address, since the null test
 its code makes is the program's.
 
+An undefined data symbol is another module's storage. The layer records
+each one's extern address and the bytes it keeps past it in
+`BinaryImage::ObjectExternDataSymbols`, and each ELF or Mach-O GOT entry
+holding that address in `ObjectExternDataCells`. `collectDataSymbolBindings`
+binds those entries as it binds a linked image's `GLOB_DAT` slots. Both C
+routes declare the symbol as bytes the linker binds by name
+(`extern unsigned char neverd_data_X[] __asm__("X")`), and reach every
+address in its storage through that declaration. Neither defines storage
+there. An object a C library header declares stays the header's at its own
+address (`LibCDataObjects.def`), and a common symbol stays the object's
+tentative definition.
+
 `ObjectExterns` also records each undefined callable identity in
 `BinaryImage::ObjectExternFunctionEntries`. CFG recovery uses that provenance
 for direct external tail calls in relocatable objects without admitting the
@@ -12073,6 +12157,8 @@ Mach-O loading preserves the segment’s explicit read-only-after-fixups guarant
 A bounded indexed load may rebuild an immutable Objective-C object-pointer table when its range proof covers a complete prefix, every eight-byte slot is either an authenticated relocation to a rebuildable constant object or exact relocation-free null, and every occurrence uses the same table contract. The generated table initializes each slot from the shared rebuilt object identity and publishes its address only to those contextual loads. An integer machine carrier is accepted only when direct local copies lead to a declared pointer parameter or pointer return and every use in that chain has pointer semantics. Publication revalidates the bounds, slot relocations, target objects, helper metadata and non-escaping use; arbitrary pointers, partial slots, arithmetic consumers, writable storage and unbounded indexes remain unresolved.
 
 For an immutable scalar byte table, a small fixed addition or subtraction in the address expression may be folded into the table base before the indexed range proof. The emitted offset then contains only the bounded index and stride. Publication rejects any later fixed-bias edit to that offset, so the helper's base and byte count continue to cover every load exactly.
+
+The LLVM backend embeds neighbouring read-only segments as one run, crossing at most `kMaxRodataRunPaddingBytes` of alignment padding between two of them. No other segment may map that padding. A writable object between two constant sections, such as a relocatable object's `.data` double between its constant pool and its strings, is never part of a run, so an access to it reaches the object itself.
 
 An immutable scalar table indexed by an unbounded runtime value, such as a field an object holds (`table[obj->field]`), has a proven base but no provable index bound, so the scalar-offset proof rejects the offset. When the literal-table audit has reached exactly one read-only base, and no pointer merge, PHI, frame reload or mutable base, the LLVM backend reads the table through its region's read-only run mirror at the table's own offset plus the runtime index (`tryResolveRuntimeIndexedReadOnlyTable`). The mirror keeps the region's byte layout, so an in-region index reads the original element and an out-of-region one is the program's own undefined behaviour, as for a pointer table's run redirect. The offset proof itself is unchanged: a loaded index is still a stable offset only under a dominating guard or a low-bit mask (`RuntimeScalarBoundsBelongToTheScaledDefinition`).
 
@@ -12880,12 +12966,62 @@ and its statements equal that copy, the copy is removed and the clause holds
 the whole body; otherwise the copy stays and the clause holds only the abnormal
 work under `if (AbnormalTermination())`. A handler whose frame is not certified,
 whose body is unavailable or has its own exception scope, or whose `__try`
-transfers control out, nests a region with a handler or calls `_local_unwind`
-keeps its address comment (a reducible inner `__try/__finally` resumes
-nowhere and leaves by falling through, so it may nest): the machine runs the handler on such an exit while C would
-not, so the clause stays out of line until that call becomes a structured
-jump. The projection runs in the plain-C view as well as the C++ one, because
-SEH is C.
+transfers control out other than by a local-unwind exit (below), nests a
+region with a handler or still calls `_local_unwind` keeps its address comment
+(a reducible inner `__try/__finally` resumes nowhere and leaves by falling
+through, so it may nest): the machine runs the handler on such an exit while
+C would not, so the clause stays out of line. The projection runs in the
+plain-C view as well as the C++ one, because SEH is C.
+
+A `return` or `goto` out of a `__try` compiles to a call of the runtime's
+`_local_unwind(TargetFrame, TargetIp)`. It runs the termination handler of
+each scope the jump leaves, innermost first, with the abnormal flag set and
+the EstablisherFrame, and resumes at TargetIp in the same frame; the call
+never returns. Low-to-Med (`lib/ir/med/lower/LowToMedSEHLocalUnwind.cpp`)
+replaces each call the saved-frame protocol certifies (below), before SSA, by
+what it does: a call of each handler `__C_specific_handler` would run, with
+the flag 1 and the EstablisherFrame as the LLVM route's cleanup passes them,
+the value the routine resumes with in RAX (`RtlUnwind`'s `ReturnValue`,
+zero), and a jump to TargetIp. The code only the call's fall-through reached
+goes with it, unless that code was the only ordinary entry of a block the
+exception runtime or a code address enters: the proofs over the decoded CFG
+would still see that edge, so such a function keeps its runtime calls, as
+does a call whose target the runtime itself enters.
+`MedFunc::SEHLocalUnwindExits` records each exit and the handlers it runs,
+and HighIR keeps it. Where structuring puts the
+rest of a protected body in the other arm of an `if` whose arm takes the exit,
+HighIR makes that arm a guard clause first, so the body stays in one slice.
+A short return tail that structuring copied into every exit jumping there is
+dropped before the try regions are cut, once nothing enters it and the
+statement before it never runs into it: its addresses, past the protected
+ranges, would otherwise split a region around a loop the exits leave. A
+handler that fills its clause runs there for the jump, as C's `goto` and
+`return` run a `__finally`: the explicit call goes, and the jump, marked
+`HighStmt::AbnormalExit`, prints neither as `__leave` nor as the try's
+fall-through, so the clause runs on the jump and the normal-path copy on the
+fall-through, each once. A handler that cannot fill its clause keeps its
+address comment, and the exit keeps the call, which runs it as the runtime
+did.
+
+The frame argument is a reload: the compiler stores TargetFrame (on x64 the
+EstablisherFrame, the stack pointer the prologue leaves for the body) to a
+frame slot and reloads it at each call. `certifyLowSEHLocalUnwinds`
+(`lib/ir/low/SEHLocalUnwindProtocol.cpp`, with each architecture's convention
+in its own file, `X86/SEHLocalUnwindX64.cpp`) certifies a call only when its
+callee is the authenticated `_local_unwind` import, its target an exact code
+address that starts a block of the function, it runs on the body's stack
+pointer, and its frame is an exact reload of one slot that every store of the
+function fills with TargetFrame, that no store at an inexact frame address and
+no callee's home area may reach, and that no out-of-line filter or termination
+handler of the function writes through its EstablisherFrame: each handler's
+body must be in the view, and one that stores through frame arithmetic it
+cannot bound refuses. TargetFrame, the body's stack pointer and the slot's
+address may reach only that slot, the runtime and the handlers; any other
+escape refuses the function, whose calls keep their runtime form. Like the
+SavedESP word, this trusts that the compiler's saved-frame slot is written
+only by its own prologue protocol, and models only in-bounds frame accesses.
+A single-function view holds the function's handlers, so it certifies the
+same exits as the whole unit.
 
 An ARM or AArch64 termination handler takes only the abnormal flag. The
 unwinder restores the parent's callee-saved registers to their values where
@@ -14108,6 +14244,8 @@ Core retains exact root/offset relations through complete registers and frame sp
 
 Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
 
+LLVM C writes an atomic store with `__atomic_store` of the store's order, as it reads an atomic load with `__atomic_load`. A release or sequentially consistent store never becomes a plain assignment, whether it writes through a pointer or into a local whose address escapes.
+
 Entry-stack offset recovery accepts a narrower scalar displacement only when
 its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The
@@ -14356,7 +14494,7 @@ below a proved mask window; no runtime input value is assumed. A root rewrite
 keeps its retained words verbatim, so the deep simplifier walks them under the
 same work allowance before returning.
 
-`X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the memory operation; `INC/DEC` preserve CF. FS/GS address spaces remain attached. Other locked core arithmetic is refused until it has an ordered model. This is a LowIR lifting contract; emitted native alignment and fault behavior need their own qualification.
+`X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the transaction; `INC/DEC` preserve CF and FS/GS address spaces remain attached. Neutral immediate `LOCK OR/XOR 0` and `LOCK AND -1` use that same transaction with a zero addend. Their logical flags use the old value, clear CF/OF and leave AF undefined. Other logical values, register sources and HLE remain refused. HighC retains the type of an explicit atomic-result declaration so signed comparisons use its actual C carrier. This does not establish missing frame inputs, MMIO behavior or concurrent execution equivalence.
 
 LLVM C owns one cached pointer-type projection per emitted definition. Its
 parameter-location binding selects the same object/function pointer declarations
@@ -14366,3 +14504,12 @@ their own contracts. Materialized record-member loads use the same pointer-to-
 integer bridge as inlined reads. Embedded CRT records reuse a target header
 only with size, field-offset and member-type checks; MSVCRT and UCRT sharing `_iobuf` does
 not establish layout compatibility.
+
+## Bounded repeated image objects
+
+HighC records constant-count, constant-direction, natural-address-width MOVS
+and STOS accesses in its existing image-object collector. Their complete mapped
+ranges share the ordinary overlapping byte backing, including backwards access
+and copies extending beyond a guessed scalar or string terminator. A range
+crossing its mapped segment refuses source emission. This does not infer the
+extent of a dynamic count, a segmented address or an address-size override.

@@ -345,8 +345,9 @@ void attachARM(std::vector<HighFunc> &Funcs, Arch TargetArch,
     // A region nested in another keeps its place: unlike x64's clean form,
     // the guarded clause removes nothing around it.
     std::vector<HighStmt *> Regions;
+    const UnwindExits Exits(Parent);
     walkStmts(Parent.Body, [&](HighStmt &S) {
-      if (isEmptyFinallyRegion(S) && protectedBodyQualifies(S))
+      if (isEmptyFinallyRegion(S) && protectedBodyQualifies(S, Exits))
         Regions.push_back(&S);
     });
     if (Regions.empty())

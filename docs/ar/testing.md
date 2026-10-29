@@ -2260,6 +2260,8 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 
 `X86LegacyAtomic.LockedArithmetic*` من عروض x86/x64 والأعلام الحسابية المستقلة وحفظ سجلات المصدر والحمل والثوابت الموقعة والبايتات المجاورة غير المحاذاة والتعيينات المبتورة أو المخصصة للقراءة وFS/GS والحالات دون قفل. لا تتحول العمليات المقفلة غير المدعومة إلى عمليات تخزين عادية. تتحقق `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof` من الأشكال الأربعة وتحافظ على رفض إثبات الذاكرة المرتبة.
 
+تتحقق `X86LegacyAtomic.NeutralLogic*` من العروض وFS/GS وحفظ الذاكرة والأعلام المعرّفة وDF، مع رفض الكتابة المحظورة والوصول الناقص والثوابت الأخرى وHLE. تنفّذ `NeverDX86NeutralAtomicSourceTests` مساري C لصيغ COFF/ELF/MachO عند O0/O2 مع UBSan والبتات العليا وثماني إزاحات على مضيف x64. عند تغيير أنواع التصريحات تُشغّل أيضًا `NeverDHighControlFlowTests` و`NeverDHighCIntegerWidthTests`.
+
 ## اختبار القفزات العددية
 
 يغطي `NeverDConstantBranchTests` معماريات x86/x64/ARM64 وصيغ PE وELF وMach-O: الأسلاف المباشرة والمسارات المتفقة والقراءات الثابتة. تبقى التعارضات والمدخلات غير المعرفة والسجلات التي تغيرها الاستدعاءات والمداخل المستقلة ديناميكية. يترجم `NeverDConstantBranchSourceTests` مساري C لمعمارتي x64/ARM64 وينفذهما مع تحسين خط المعالجة وبدونه، عند O0/O2 وباستخدام UBSan. تستخدم أجسام الدوال الصحيحة العددية ترويسات المضيف القياسية؛ وهذا لا يثبت التشغيل الأصلي على ARM64 أو صحة برامج تشغيل Windows. تقارن اختبارات worker أيضًا التنقل البارد والمراجع وبايتات E9 المتجاوزة بكود آلة ELF x64 مستقل.
@@ -2273,3 +2275,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 يفحص `RelroKeepsPartialPagesAndStaticStartupWritable` حدود صفحات x86 وx64 وARM وARM64 وضمانات المُحمّل الصريحة. تنفّذ اختبارات المؤشرات الأصلية أمثلة Linux x64 مستقلة ذات RELRO جزئي أو بلا مُحمّل ديناميكي، وتكتب المتغير العام ثم تقرؤه. يفحص `NeverDDataSymbolBindingTests` حماية المؤشر بالكامل ومساري C. لا تثبت هذه الاختبارات اعتماد تكوينات صفحات ARM الأصلية.
 
 تختبر `NeverDLowScalarConstantTests` و`NeverDIndirectCallValueSourceTests` الاستدعاءات بين الكتل وحدود الرفض مع تنفيذ مساري C. تنفذ `NeverDLLVMCSourcePointerTests` المؤشرات وردود النداء والأسماء البديلة والتصريحات الخارجية عند O0/O2 مع UBSan. تختبر المجموعة الأصلية ترجمة مثال MinGW علني وترفض اختلاف تخطيطات MSVCRT/UCRT. لا يثبت ذلك تنفيذًا أصليًا للنواة أو ARM64.
+
+يتحقق `X86RepState.ImageCopiesRetainEveryAccessedByte` من النسخ في الاتجاهين ومن النسخ بعد ملء المخزن نفسه لتنسيقات x64 COFF وELF وMach-O. يُترجم مسارا C ويُنفذان عند O0/O2 مع UBSan، وتفحص نتيجة محسوبة بصورة مستقلة كل بايت منسوخ. تتخطى الأجهزة غير x64 اختبار التنفيذ صراحةً.

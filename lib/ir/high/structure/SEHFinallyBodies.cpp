@@ -632,9 +632,11 @@ int maxRenameTag(const std::vector<HighStmt> &Stmts) {
 /// function (`_local_unwind`, ARM's `__jump_unwind`, `RtlUnwind[Ex]`).  The
 /// machine then runs the termination handler with the abnormal flag set, but C
 /// reads the call as an ordinary one followed by a normal exit, so a filled
-/// `__finally` would not run there.  Such a region keeps its out-of-line form
-/// until the call becomes a structured jump.  A handler body that makes such a
-/// call leaves its `__finally` by a jump C would not take either.
+/// `__finally` would not run there.  LowToMed replaces each call it proves
+/// unwinds this frame by the handler calls and a jump
+/// (MedSEHLocalUnwindExit); a region holding one it did not keeps its
+/// out-of-line form.  A handler body that makes such a call leaves its
+/// `__finally` by a jump C would not take either.
 bool callsLocalUnwind(const std::vector<HighStmt> &Stmts) {
   bool Found = false;
   auto IsUnwind = [](llvm::StringRef Name) {
@@ -657,14 +659,385 @@ bool callsLocalUnwind(const std::vector<HighStmt> &Stmts) {
   return Found;
 }
 
-bool protectedBodyQualifies(const HighStmt &Try) {
+UnwindExits::UnwindExits(HighFunc &Parent) : Parent(Parent) { rebuild(); }
+
+void UnwindExits::rebuild() {
+  Copies.clear();
+  Unstructured.clear();
+  Jumps.clear();
+  if (Parent.SEHLocalUnwindExits.empty())
+    return;
+  collect(Parent.Body);
+  for (const Copy &C : Copies)
+    Jumps.emplace(&(*C.List)[C.Jump], C.Exit->CallAddr);
+  // A handler call no copy holds, such as one whose result the parent
+  // reads, leaves its exit unstructured.
+  std::map<va_t, size_t> Held;
+  for (const Copy &C : Copies)
+    Held[C.Exit->CallAddr] += C.Calls.size();
+  std::map<va_t, size_t> Made;
+  walkStmts(Parent.Body, [&](const HighStmt &S) {
+    forEachExpr(S, [&](const ExprPtr &Root) {
+      std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+        if (!E)
+          return;
+        if (E->Kind == ExprKind::Call)
+          for (const MedSEHLocalUnwindExit &Exit : Parent.SEHLocalUnwindExits)
+            if (Exit.CallAddr == E->CallSiteAddr &&
+                llvm::any_of(Exit.Handlers, [&](const auto &H) {
+                  return H.Entry == E->CallAddr;
+                }))
+              ++Made[Exit.CallAddr];
+        E->forEachChildExpr(Visit);
+      };
+      Visit(Root);
+    });
+  });
+  for (const auto &[Site, Count] : Made)
+    if (Held[Site] != Count)
+      Unstructured.insert(Site);
+}
+
+const MedSEHLocalUnwindExit::Handler *
+UnwindExits::handlerCall(const HighStmt &S,
+                         const MedSEHLocalUnwindExit *&Exit) const {
+  const HighExpr *Call = nullptr;
+  if (S.Kind == StmtKind::Call)
+    Call = S.CallExpr.get();
+  else if (S.Kind == StmtKind::ExprStmt && S.Val &&
+           S.Val->Kind == ExprKind::Call)
+    Call = S.Val.get();
+  if (!Call || Call->Kind != ExprKind::Call || Call->IndirectTarget)
+    return nullptr;
+  for (const MedSEHLocalUnwindExit &Candidate : Parent.SEHLocalUnwindExits) {
+    if (Candidate.CallAddr != Call->CallSiteAddr)
+      continue;
+    for (const MedSEHLocalUnwindExit::Handler &H : Candidate.Handlers)
+      if (H.Entry == Call->CallAddr) {
+        Exit = &Candidate;
+        return &H;
+      }
+  }
+  return nullptr;
+}
+
+namespace {
+
+/// Whether \p S only moves values between variables: what a jump's block
+/// sets for its target.  Run before or after a handler, it reads and writes
+/// nothing the handler does.
+bool movesValuesOnly(const HighStmt &S) {
+  if (S.Kind == StmtKind::Nop)
+    return true;
+  if (S.Kind != StmtKind::Assign || !S.Dst || S.Dst->Kind != ExprKind::Var ||
+      !S.Val)
+    return false;
+  bool Pure = true;
+  std::function<void(const ExprPtr &)> Visit = [&](const ExprPtr &E) {
+    if (!E || !Pure)
+      return;
+    if (E->Kind == ExprKind::Call || E->Kind == ExprKind::Load ||
+        E->Kind == ExprKind::Store || E->Kind == ExprKind::Undef ||
+        E->MemoryOrdering != NdMemoryOrdering::None ||
+        E->MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      Pure = false;
+    E->forEachChildExpr(Visit);
+  };
+  Visit(S.Val);
+  return Pure;
+}
+
+} // namespace
+
+void UnwindExits::collect(std::vector<HighStmt> &Stmts) {
+  for (size_t I = 0; I < Stmts.size();) {
+    const MedSEHLocalUnwindExit *Exit = nullptr;
+    if (!handlerCall(Stmts[I], Exit)) {
+      ++I;
+      continue;
+    }
+    // The handlers in the exit's order, innermost first, and the values the
+    // jump's block moves for its target.
+    Copy C;
+    C.List = &Stmts;
+    C.Exit = Exit;
+    const MedSEHLocalUnwindExit::Handler *Last = nullptr;
+    size_t J = I;
+    for (; J < Stmts.size(); ++J) {
+      const MedSEHLocalUnwindExit *Next = nullptr;
+      const MedSEHLocalUnwindExit::Handler *H = handlerCall(Stmts[J], Next);
+      if (!H && movesValuesOnly(Stmts[J]))
+        continue;
+      if (!H || Next != Exit || (Last && H <= Last))
+        break;
+      C.Calls.push_back(J);
+      Last = H;
+    }
+    if (J == Stmts.size() || !((Stmts[J].Kind == StmtKind::Goto &&
+                                Stmts[J].GotoTarget == Exit->Target) ||
+                               Stmts[J].Kind == StmtKind::Return)) {
+      Unstructured.insert(Exit->CallAddr);
+      I = J;
+      continue;
+    }
+    C.Jump = J;
+    Copies.push_back(std::move(C));
+    I = J + 1;
+  }
+  for (HighStmt &S : Stmts) {
+    collect(S.Body);
+    collect(S.ElseBody);
+    for (SwitchCase &Case : S.Cases)
+      collect(Case.Body);
+    collect(S.DefaultBody);
+    for (auto &ClauseBody : S.EHClauseBodies)
+      collect(ClauseBody);
+  }
+}
+
+const MedSEHLocalUnwindExit *
+UnwindExits::fallingCopy(const std::vector<HighStmt> &Stmts, size_t End) const {
+  const MedSEHLocalUnwindExit *Found = nullptr;
+  for (size_t J = std::min(End, Stmts.size()); J-- > 0;) {
+    const MedSEHLocalUnwindExit *Exit = nullptr;
+    if (handlerCall(Stmts[J], Exit)) {
+      if (Found && Exit != Found)
+        break;
+      Found = Exit;
+      continue;
+    }
+    if (!movesValuesOnly(Stmts[J]))
+      break;
+  }
+  return Found;
+}
+
+bool UnwindExits::endsCopy(const HighStmt &S) const {
+  const auto It = Jumps.find(&S);
+  return It != Jumps.end() && !Unstructured.count(It->second);
+}
+
+namespace {
+
+/// The statement lists of \p Body and of everything nested in it, and the
+/// addresses its statements print labels at.
+void protectedContents(const std::vector<HighStmt> &Body,
+                       std::set<const std::vector<HighStmt> *> &Lists,
+                       std::set<va_t> &Labels) {
+  Lists.insert(&Body);
+  for (const HighStmt &S : Body) {
+    if (S.Addr && S.Addr != InvalidVA)
+      Labels.insert(S.Addr);
+    if (S.Kind == StmtKind::While && S.LoopHeaderAddr)
+      Labels.insert(S.LoopHeaderAddr);
+    protectedContents(S.Body, Lists, Labels);
+    protectedContents(S.ElseBody, Lists, Labels);
+    for (const SwitchCase &Case : S.Cases)
+      protectedContents(Case.Body, Lists, Labels);
+    protectedContents(S.DefaultBody, Lists, Labels);
+    for (const auto &ClauseBody : S.EHClauseBodies)
+      protectedContents(ClauseBody, Lists, Labels);
+  }
+}
+
+} // namespace
+
+bool UnwindExits::canRunInClause(const HighStmt &Try, va_t Handler) const {
+  std::set<const std::vector<HighStmt> *> Lists;
+  std::set<va_t> Labels;
+  protectedContents(Try.Body, Lists, Labels);
+  // An exit leaves the try when its call is guarded by it and it runs the
+  // try's handler.  Every copy of such an exit, and only of such an exit,
+  // must call the handler in the try, as its last explicit call: an outer
+  // handler still called explicitly would run before the clause does.
+  for (const MedSEHLocalUnwindExit &Exit : Parent.SEHLocalUnwindExits) {
+    const bool Leaves = Try.EHRange.contains(Exit.CallAddr) &&
+                        llvm::any_of(Exit.Handlers, [&](const auto &H) {
+                          return H.Entry == Handler;
+                        });
+    if (Leaves && Unstructured.count(Exit.CallAddr))
+      return false;
+  }
+  for (const Copy &C : Copies) {
+    std::optional<size_t> Position;
+    for (size_t K = 0; K < C.Calls.size(); ++K) {
+      const MedSEHLocalUnwindExit *Exit = nullptr;
+      const auto *H = handlerCall((*C.List)[C.Calls[K]], Exit);
+      if (H && H->Entry == Handler)
+        Position = K;
+    }
+    if (!Position)
+      continue;
+    const bool Inside = Lists.count(C.List);
+    const bool Leaves = Try.EHRange.contains(C.Exit->CallAddr);
+    if (!Inside && !Leaves)
+      continue;
+    if (!Inside || !Leaves || *Position + 1 != C.Calls.size())
+      return false;
+    const HighStmt &Jump = (*C.List)[C.Jump];
+    if (Jump.Kind == StmtKind::Goto && Labels.count(Jump.GotoTarget))
+      return false;
+  }
+  return true;
+}
+
+void UnwindExits::runInClause(const HighStmt &Try, va_t Handler) {
+  std::set<const std::vector<HighStmt> *> Lists;
+  std::set<va_t> Labels;
+  protectedContents(Try.Body, Lists, Labels);
+  std::map<std::vector<HighStmt> *, std::set<size_t>> Erase;
+  for (const Copy &C : Copies) {
+    if (!Lists.count(C.List) || !Try.EHRange.contains(C.Exit->CallAddr))
+      continue;
+    for (size_t Position : C.Calls) {
+      const MedSEHLocalUnwindExit *Exit = nullptr;
+      const auto *H = handlerCall((*C.List)[Position], Exit);
+      if (!H || H->Entry != Handler)
+        continue;
+      Erase[C.List].insert(Position);
+      // C runs the clause only when the goto leaves the try as a jump.
+      (*C.List)[C.Jump].AbnormalExit = true;
+    }
+  }
+  for (auto &[List, Positions] : Erase)
+    for (auto It = Positions.rbegin(); It != Positions.rend(); ++It)
+      List->erase(List->begin() + static_cast<ptrdiff_t>(*It));
+  rebuild();
+}
+
+std::set<va_t> fallthroughAddresses(const std::vector<HighStmt> &Stmts,
+                                    size_t Index) {
+  // Empty anchors print nothing: each of their addresses is the point the
+  // first statement that runs starts at.
+  std::set<va_t> Addresses;
+  for (size_t J = Index + 1; J < Stmts.size(); ++J) {
+    const HighStmt &Next = Stmts[J];
+    if (Next.Addr && Next.Addr != InvalidVA)
+      Addresses.insert(Next.Addr);
+    if (Next.Kind == StmtKind::While && Next.LoopHeaderAddr)
+      Addresses.insert(Next.LoopHeaderAddr);
+    if (Next.Kind != StmtKind::Nop &&
+        !(Next.Kind == StmtKind::Block && Next.Body.empty()))
+      break;
+  }
+  return Addresses;
+}
+
+void dropFallthroughExits(HighStmt &Try, const std::set<va_t> &Continuation,
+                          const std::set<va_t> &Labels,
+                          const UnwindExits &Exits) {
+  auto Hidden = [](const HighStmt &S) {
+    return S.Kind == StmtKind::Nop ||
+           (S.Kind == StmtKind::Block && S.Body.empty());
+  };
+  // Only what runs last can fall through: the end of a branch, of a nested
+  // try's body, or of an `__except` arm that resumes after its try.
+  std::function<void(std::vector<HighStmt> &)> Tail =
+      [&](std::vector<HighStmt> &Stmts) {
+        size_t End = Stmts.size();
+        while (End && Hidden(Stmts[End - 1]))
+          --End;
+        if (!End)
+          return;
+        HighStmt &Last = Stmts[End - 1];
+        switch (Last.Kind) {
+        case StmtKind::Goto:
+          if (Continuation.count(Last.GotoTarget) && !Labels.count(Last.Addr) &&
+              !Last.AbnormalExit && !Exits.endsCopy(Last)) {
+            Stmts.erase(Stmts.begin() + static_cast<ptrdiff_t>(End - 1));
+            Tail(Stmts);
+          }
+          return;
+        case StmtKind::If:
+        case StmtKind::IfElse:
+          Tail(Last.Body);
+          Tail(Last.ElseBody);
+          return;
+        case StmtKind::Block:
+          Tail(Last.Body);
+          return;
+        case StmtKind::SEHTry:
+          if (!Last.EHIsReducible)
+            return;
+          Tail(Last.Body);
+          for (size_t I = 0;
+               I < Last.EHClauses.size() && I < Last.EHClauseBodies.size(); ++I)
+            if (Last.EHClauses[I].Kind == HighEHClauseKind::SEHExcept)
+              Tail(Last.EHClauseBodies[I]);
+          return;
+        default:
+          return;
+        }
+      };
+  Tail(Try.Body);
+}
+
+void restoreFallingUnwindJumps(HighStmt &Try,
+                               const std::set<va_t> &Continuation,
+                               const UnwindExits &Exits) {
+  auto Hidden = [](const HighStmt &S) {
+    return S.Kind == StmtKind::Nop ||
+           (S.Kind == StmtKind::Block && S.Body.empty());
+  };
+  std::function<void(std::vector<HighStmt> &)> Tail =
+      [&](std::vector<HighStmt> &Stmts) {
+        size_t End = Stmts.size();
+        while (End && Hidden(Stmts[End - 1]))
+          --End;
+        if (!End)
+          return;
+        if (const MedSEHLocalUnwindExit *Exit = Exits.fallingCopy(Stmts, End)) {
+          // Before any anchor that ends the list: a jump landing there still
+          // falls out normally.
+          if (Continuation.count(Exit->Target)) {
+            HighStmt Jump;
+            Jump.Kind = StmtKind::Goto;
+            Jump.Addr = Stmts[End - 1].Addr;
+            Jump.GotoTarget = Exit->Target;
+            Stmts.insert(Stmts.begin() + static_cast<ptrdiff_t>(End),
+                         std::move(Jump));
+          }
+          return;
+        }
+        HighStmt &Last = Stmts[End - 1];
+        switch (Last.Kind) {
+        case StmtKind::If:
+        case StmtKind::IfElse:
+          Tail(Last.Body);
+          Tail(Last.ElseBody);
+          return;
+        case StmtKind::Block:
+          Tail(Last.Body);
+          return;
+        case StmtKind::SEHTry:
+          if (!Last.EHIsReducible)
+            return;
+          Tail(Last.Body);
+          for (size_t I = 0;
+               I < Last.EHClauses.size() && I < Last.EHClauseBodies.size(); ++I)
+            if (Last.EHClauses[I].Kind == HighEHClauseKind::SEHExcept)
+              Tail(Last.EHClauseBodies[I]);
+          return;
+        default:
+          return;
+        }
+      };
+  Tail(Try.Body);
+}
+
+bool protectedBodyQualifies(const HighStmt &Try, const UnwindExits &Exits) {
   // A protected body that itself transfers control cannot gain a non-empty
-  // finally: the writer no longer redirects its `__leave` to the finally.
-  // A nested exception region with a handler is also left alone: a same-range
-  // inner `__except` reaches its handler by a `goto` that leaves this try,
-  // and a filled `__finally` would run on that edge, before the handler. An
-  // inner `__try/__finally` resumes nowhere, so it runs its own finally and
-  // leaves by falling through, as C does.
+  // finally: the writer no longer redirects its `__leave` to the finally,
+  // and C would run the clause on a jump the machine leaves by normally.
+  // The jump that ends a local unwind is the exception: the machine runs
+  // the handler there, as an abnormal termination.  A nested exception
+  // region with a handler outside its clause is also left alone: a
+  // same-range inner `__except` then reaches its handler by a `goto` that
+  // leaves this try, and a filled `__finally` would run on that edge,
+  // before the handler.  An inner `__except` whose handler runs in its
+  // clause stays in the try, as it does in the machine, and an inner
+  // `__try/__finally` resumes nowhere, so it runs its own finally and leaves
+  // by falling through, as C does.
   bool TransfersOut = false;
   walkStmts(Try.Body, [&](const HighStmt &S) {
     // A region the writer renders with fallback jumps is not one.
@@ -673,9 +1046,20 @@ bool protectedBodyQualifies(const HighStmt &Try) {
         llvm::all_of(S.EHClauses, [](const HighEHClause &Clause) {
           return Clause.Kind == HighEHClauseKind::SEHFinally;
         });
-    if (S.Kind == StmtKind::Return || S.Kind == StmtKind::Goto ||
+    const bool InlineExcept =
+        S.Kind == StmtKind::SEHTry && S.EHIsReducible && !S.EHClauses.empty() &&
+        S.EHClauseBodies.size() == S.EHClauses.size() &&
+        llvm::all_of(S.EHClauses,
+                     [](const HighEHClause &Clause) {
+                       return Clause.Kind == HighEHClauseKind::SEHExcept;
+                     }) &&
+        llvm::none_of(
+            S.EHClauseBodies,
+            [](const std::vector<HighStmt> &Clause) { return Clause.empty(); });
+    if (((S.Kind == StmtKind::Return || S.Kind == StmtKind::Goto) &&
+         !Exits.endsCopy(S)) ||
         S.Kind == StmtKind::Break || S.Kind == StmtKind::Continue ||
-        (S.Kind == StmtKind::SEHTry && !FinallyOnly) ||
+        (S.Kind == StmtKind::SEHTry && !FinallyOnly && !InlineExcept) ||
         S.Kind == StmtKind::CxxTry || S.Kind == StmtKind::ItaniumTry)
       TransfersOut = true;
   });

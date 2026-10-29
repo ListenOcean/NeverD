@@ -3003,7 +3003,8 @@ LLVMCWriter::definitionPointerTypes(const llvm::Function &Fn) const {
     llvm::consumeError(Entry.takeError());
     return Types;
   }
-  if (!*Entry || !**Entry)
+  // An object's first function sits at address zero, an entry like any.
+  if (!*Entry)
     return Types;
   const auto Signature = Dbg->resolveFunction(static_cast<va_t>(**Entry));
   if (!Signature)

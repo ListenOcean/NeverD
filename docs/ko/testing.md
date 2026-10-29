@@ -2224,6 +2224,8 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 
 `X86LegacyAtomic.LockedArithmetic*`는 x86/x64 너비, 독립 산술 플래그, 원본 레지스터와 캐리 보존, 부호 있는 즉시 값, 비정렬 인접 바이트, 읽기 전용·잘린 매핑, FS/GS 및 잠금 없는 대조군을 검사합니다. 지원하지 않는 잠금 연산은 일반 저장을 게시할 수 없습니다. `InterpreterLLVMRefinement.RawAtomicsStopBeforeLLVMProof`는 네 가지 잠금 산술의 특화와 순서 메모리 증명 거부를 확인합니다.
 
+`X86LegacyAtomic.NeutralLogic*`는 각 너비와 FS/GS에서 메모리, 정의된 플래그와 DF를 보존하고 쓰기 거부, 불완전한 접근, 다른 즉시 값과 HLE를 검사합니다. `NeverDX86NeutralAtomicSourceTests`는 x64 호스트에서 COFF/ELF/MachO의 두 C 경로를 O0/O2 및 UBSan으로 실행하며 상위 비트와 여덟 바이트 오프셋을 다룹니다. 선언 타입 변경에는 `NeverDHighControlFlowTests`와 `NeverDHighCIntegerWidthTests`도 실행합니다.
+
 ## 스칼라 분기 검증
 
 `NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 충돌, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
@@ -2237,3 +2239,5 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 `RelroKeepsPartialPagesAndStaticStartupWritable`는 x86, x64, ARM, ARM64의 페이지 경계와 명시적인 로더 보장을 검사합니다. 네이티브 포인터 테스트는 독립적인 Linux x64 부분 RELRO 및 로더 없는 정적 예제를 실행하여 전역 변수 쓰기 후 읽기를 검증합니다. `NeverDDataSymbolBindingTests`는 전체 포인터 보호와 두 C 경로를 검사합니다. 실제 ARM 페이지 구성의 인증을 의미하지는 않습니다.
 
 `NeverDLowScalarConstantTests`와 `NeverDIndirectCallValueSourceTests`는 블록 간 호출과 거부 조건을 두 C 경로의 실행으로 확인합니다. `NeverDLLVMCSourcePointerTests`는 포인터, 콜백, 별칭과 외부 선언을 O0/O2 및 UBSan으로 실행합니다. 네이티브 경계 테스트는 공개 MinGW 예제를 컴파일하고 MSVCRT/UCRT 배치 불일치를 거부합니다. 커널 또는 ARM64 네이티브 실행 인증은 아닙니다.
+
+`X86RepState.ImageCopiesRetainEveryAccessedByte`는 x64 COFF, ELF, Mach-O에서 양방향 복사와 같은 저장소를 채운 뒤 복사하는 경우를 검증합니다. 두 C 경로를 O0/O2 및 UBSan으로 컴파일하고 실행하며, 독립적으로 계산한 결과로 복사한 모든 바이트를 확인합니다. x64가 아닌 호스트에서는 실행 검사를 명시적으로 건너뜁니다.

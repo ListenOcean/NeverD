@@ -58,11 +58,14 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
   // bytes. The cache is scoped to this unchanged-image CFG construction.
   auto ReadImage = [&](const LowOp &Op,
                        uint64_t Address) -> std::optional<uint64_t> {
+    // The image's own headers describe the image that runs, not this file:
+    // a read of them stays a read (BinaryImage::imageBaseOffset).
     if (Op.Opcode != NdOp::LOAD || Op.NumInputs != 1 || !Op.Output.Size ||
         Op.Output.Size > sizeof(uint64_t) ||
         Op.Inputs[0].Size < Img.getPointerSize() ||
         Op.MemoryOrdering != NdMemoryOrdering::None ||
-        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        Img.imageBaseOffset(Address))
       return {};
     const auto Key = std::make_pair(Address, Op.Output.Size);
     auto [It, Inserted] = ImageScalars.try_emplace(Key);

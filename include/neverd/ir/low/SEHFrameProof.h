@@ -72,6 +72,15 @@ llvm::Expected<uint64_t> proveLowSEHTerminationFrame(const LowFunc &Parent,
                                                      const TargetRegInfo &TRI,
                                                      size_t &WorkRemaining);
 
+/// The bytes below its entry SP at which a Windows x64 function without a
+/// frame register runs its body: the allocations its unwind codes record,
+/// which its decoded prologue makes exactly.  This is the EstablisherFrame
+/// the runtime computes for it.  Chained or incomplete unwind data, a frame
+/// register and a prologue write that is no recorded allocation refuse.
+llvm::Expected<uint64_t> proveLowSEHFixedFrame(const LowFunc &Function,
+                                               const TargetRegInfo &TRI,
+                                               size_t &WorkRemaining);
+
 /// The certified frame bytes of every termination handler of \p Parent, by
 /// handler entry. A handler whose frame is not proved is absent; each handler
 /// has its own `kMaxSEHEstablisherFrameWork` budget.

@@ -92,6 +92,10 @@ inline constexpr size_t kSourceVariableFlowMaxWork = 2000000;
 inline constexpr size_t kUnwrittenSourceFrameReadWork = 262144;
 // Shared per-function budget for source-only scratch spill overwrite proofs.
 inline constexpr size_t kSourceEntrySpillWork = 262144;
+// Per-function budget for proving that a call receives the slot of an
+// undefined scratch store before anything reads it
+// (markUndefinedScratchStores).
+inline constexpr size_t kUndefinedScratchEscapeWork = 262144;
 // Bounded scalar/CPUID leaf summaries and total source expansion per function.
 inline constexpr size_t kSourceRegisterLeafOps = 256;
 inline constexpr size_t kSourceRegisterCallOps = 4096;

@@ -18,6 +18,13 @@ redirect its callers. Chained collisions and reversed input order preserve
 each body's return value and call target across all four native architectures,
 all three native formats, and serial or sharded emission.
 
+Neutral immediate locked logic now keeps one ordered read-modify-write and
+its defined logical flags across both C routes. HighC retains explicit atomic
+result types when rendering signed comparisons. Public execution regressions
+cover all scalar widths, formats, offsets and optimization levels; this does
+not supply missing entry-frame state or a general model for other locked
+logical operands, MMIO or concurrency.
+
 LLVM C compare-exchange now retains the old value, success flag and memory
 effect at the original instruction position. Native 8/16/32/64-bit integers
 and ordinary pointers retain weak/strong, volatile and memory-order semantics,
@@ -783,3 +790,9 @@ conditional memory, invocation lifetime and both C routes remain open.
    corpus producer verification when corpus code changes.
 4. Keep private binaries, PDBs, decompiler comparisons, addresses, names, and
    timing logs in local scratch storage, outside Git.
+
+- Bounded natural-width REP MOVS/STOS now contribute their complete forward or
+  backward image ranges to HighC's shared object backing. The x64 COFF, ELF and
+  Mach-O execution matrix compares both C routes at O0/O2 and rejects ranges
+  beyond mapped storage, including extra file padding. Dynamic counts,
+  segmented operands and address-size overrides retain their previous limits.

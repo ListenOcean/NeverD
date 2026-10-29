@@ -232,6 +232,7 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
   Func.VaListDisplacement.reset();
   Func.VaRegisterSaveArea.reset();
   Func.VaNamedIntegerRegisters = -1;
+  Func.VaStartNamedGPRs = -1;
   switch (TargetArch) {
   case Arch::X64: {
     uint64_t VaStartWord = 0;
@@ -306,6 +307,12 @@ void detectVariadic(MedFunc &Func, const TargetRegInfo &TRI, Arch TargetArch,
       Func.VaNamedIntegerRegisters = static_cast<int>(
           (*X64VaStartWord & 0xFFFFFFFFu) / limits::kX64VaGpOffsetStep);
     }
+  // gp_offset alone counts the named integer registers, whatever the rest of
+  // the va_list shows (va_arg's update of overflow_arg_area hides where
+  // va_start pointed it).  Past them a call passes what its caller sets.
+  if (X64VaStartWord)
+    if (const auto Named = x64VaStartNamedGPRs(S, *X64VaStartWord))
+      Func.VaStartNamedGPRs = *Named;
   // q0-q7 carry only the floating and vector arguments a caller passes, and
   // this function's va_arg reads none: it saves them where no read observes
   // them, so neither C route writes their unknown entry values.  The stores

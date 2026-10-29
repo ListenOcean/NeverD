@@ -2880,7 +2880,7 @@ TEST(BinaryLowIRRefinement, PartitionedCoverageKeepsAllNativeAndCandidateArms) {
     EXPECT_EQ(Good.Proof.OriginalPaths, Paths);
     EXPECT_EQ(Good.Proof.CandidatePaths, Paths);
     EXPECT_EQ(Good.Proof.TerminalPairs, Paths * Paths);
-    EXPECT_EQ(Good.Proof.SolverQueries, Branches == 2 ? 88U : 270U);
+    EXPECT_EQ(Good.Proof.SolverQueries, Branches == 2 ? 77U : 201U);
     Limits.Execution.MaxSolverQueries = Good.Proof.SolverQueries;
     ASSERT_TRUE(
         P.check(Recovery.Residual, Witness::LiftedBits, Limits).proved());

@@ -313,6 +313,9 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
 
   if (!IsRelocatable) {
     const auto Bytes = llvm::arrayRefFromStringRef(Buffer.getBuffer());
+    // Where the headers are does not depend on whether they can be mapped:
+    // base relocations and the emitters use the extent either way.
+    Img.PEHeaderBytes = coff_loader::getPEHeaderBytes(Bytes);
     auto Headers = coff_loader::getPEHeaderMapping(Bytes);
     if (Headers)
       coff_loader::appendPEHeaderMapping(Img, *Headers, Bytes);

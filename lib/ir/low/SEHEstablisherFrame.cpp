@@ -1051,6 +1051,51 @@ llvm::Expected<uint64_t> proveLowSEHTerminationFrame(const LowFunc &Low,
   return proveTerminationHandler(Low, *Frame, Handler, TRI, WorkRemaining);
 }
 
+llvm::Expected<uint64_t> proveLowSEHFixedFrame(const LowFunc &Low,
+                                               const TargetRegInfo &TRI,
+                                               size_t &WorkRemaining) {
+  auto Frame = prepareTerminationFrame(Low, TRI, WorkRemaining);
+  if (!Frame)
+    return Frame.takeError();
+  // The decoded prologue makes exactly the allocations the unwind codes
+  // record, at the same instruction ends.
+  std::map<uint32_t, uint64_t> ActualAdjustments;
+  const LowBlock &Prologue = Low.Blocks.front();
+  if (!chargeTerminationWork(WorkRemaining,
+                             Prologue.Ops.size() +
+                                 Prologue.InstructionBoundaries.size()))
+    return terminationFrameError("work budget exhausted");
+  for (const LowInstructionBoundary &Boundary :
+       Prologue.InstructionBoundaries) {
+    if (Boundary.Address >= Frame->PrologueEnd)
+      break;
+    for (size_t I = Boundary.FirstOp;
+         I < Boundary.FirstOp + Boundary.OpCount && I < Prologue.Ops.size();
+         ++I) {
+      const LowOp &Op = Prologue.Ops[I];
+      if (!Op.Output.isReg() || !Op.Output.Size ||
+          Op.Output.Offset >= TRI.StackPointer + 8 ||
+          Op.Output.Offset + Op.Output.Size <= TRI.StackPointer)
+        continue;
+      if (Op.Opcode != NdOp::INT_SUB || Op.Output.Size != 8 ||
+          Op.Output.Offset != TRI.StackPointer || Op.NumInputs != 2 ||
+          Op.Inputs[0] != NdVar::reg(TRI.StackPointer, 8) ||
+          !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 8 ||
+          !ActualAdjustments
+               .emplace(static_cast<uint32_t>(Boundary.Address + Boundary.Size -
+                                              Low.Entry),
+                        Op.Inputs[1].Offset)
+               .second)
+        return terminationFrameError(
+            "prologue SP write is not an unwind allocation");
+    }
+  }
+  if (ActualAdjustments != Frame->ExpectedAdjustments)
+    return terminationFrameError(
+        "decoded prologue disagrees with unwind allocation");
+  return Frame->FrameBytes;
+}
+
 std::map<va_t, uint64_t> collectLowSEHTerminationFrames(const LowFunc &Low,
                                                         Arch TargetArch) {
   std::map<va_t, uint64_t> Frames;

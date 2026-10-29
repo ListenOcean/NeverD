@@ -344,7 +344,8 @@ std::string LLVMCWriter::resolveNdDataName(llvm::StringRef Name) const {
 }
 
 bool LLVMCWriter::isImageDataAddress(va_t Addr) const {
-  if (!Img || Addr == 0 || Addr == InvalidVA)
+  // The image's own headers are `__ImageBase`, never a copied object.
+  if (!Img || Addr == 0 || Addr == InvalidVA || Img->imageBaseOffset(Addr))
     return false;
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
@@ -414,7 +415,9 @@ LLVMCWriter::uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const {
 
 std::optional<std::pair<std::string, std::string>>
 LLVMCWriter::imageDataSymbolName(va_t Addr) const {
-  if (!Img)
+  // An undefined data symbol names another module's storage, never the
+  // image's own at its extern address.
+  if (!Img || Img->ObjectExternDataSymbols.count(Addr))
     return std::nullopt;
   const Symbol *Sym = Img->findSymbolAt(Addr);
   if (!Sym || Sym->IsFunc || Sym->Name.empty() ||
@@ -684,7 +687,8 @@ std::optional<uint64_t> LLVMCWriter::foldReadonlyScalar(va_t Addr,
                   llvm::dyn_cast<llvm::ArrayType>(Global.getValueType());
               Array && Addr >= *Base && Addr - *Base < Array->getNumElements())
             return std::nullopt;
-  if (!Img)
+  // A header byte describes the image that runs, never this file's copy.
+  if (!Img || Img->imageBaseOffset(Addr))
     return std::nullopt;
   const Segment *Seg = Img->getSegmentFor(Addr);
   if (!Seg || Seg->isWritable())

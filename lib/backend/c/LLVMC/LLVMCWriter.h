@@ -170,6 +170,17 @@ public:
                                    llvm::StringRef Text);
   void writeForwardDecls(llvm::Module &Mod);
 
+  //--- PE image headers (COFF/LLVMCImageBase.cpp) ---
+  /// Whether \p Global is the linker's `__ImageBase`, through which the
+  /// module reaches the image's own PE headers
+  /// (MedLLVMEmitter::tryResolveImageHeaderData), not a data symbol binding.
+  static bool isImageBaseDeclaration(const llvm::GlobalVariable &Global);
+  /// Name \p Global `__ImageBase` in C, or another identifier when a name
+  /// the unit already gave holds that spelling.
+  void allocateImageBaseIdentifier(const llvm::GlobalVariable &Global);
+  /// Declare `__ImageBase` as \p Identifier, bound to the linker's symbol.
+  void writeImageBaseDeclaration(llvm::StringRef Identifier);
+
   //--- Function rendering (LLVMCFuncWriter.cpp) ---
   bool isAnalysisOnlyFunction(const llvm::Function &Fn) const;
   /// Whether printed code or data names \p Fn: a body's instruction, a
@@ -695,6 +706,13 @@ public:
   bool declaredParameterIsInteger(const llvm::CallBase &Call,
                                   llvm::StringRef CalleeName,
                                   unsigned ArgIdx) const;
+  /// Whether \p Text, \p Pointer as the call spells it, is the address of a
+  /// frame member whose type, which the frame record lays the member out as,
+  /// \p Declared does not point to: C converts it to such a parameter only
+  /// through void *.  A void * parameter takes it as it is; where no
+  /// declaration types the parameter, any such address counts.
+  bool frameAddressOfOtherType(const llvm::Value &Pointer, llvm::StringRef Text,
+                               const TypeRef &Declared) const;
   std::optional<std::string> enumeratorDisplay(const TypeRef &Ty,
                                                uint64_t Val) const;
   TypeRef enumTypeUsedAsCallArg(const llvm::AllocaInst *Slot) const;

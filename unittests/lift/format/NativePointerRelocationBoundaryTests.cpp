@@ -24,6 +24,7 @@
 #include "llvm/BinaryFormat/COFF.h"
 #include "llvm/BinaryFormat/ELF.h"
 #include "llvm/BinaryFormat/MachO.h"
+#include "llvm/IR/Constants.h"
 #include "llvm/IR/Verifier.h"
 #include "llvm/Object/ELFTypes.h"
 #include "llvm/Support/Error.h"
@@ -79,9 +80,9 @@ protected:
 };
 
 TEST_F(NativePointerRelocationBoundary,
-       PEHeaderImageBaseRetainsItsMirroredStorageIdentity) {
+       PEHeaderAddressesReachTheLinkerImageBase) {
   if (!hasCrossTargetClang())
-    GTEST_SKIP() << "header mirror code generation requires Clang";
+    GTEST_SKIP() << "header address code generation requires Clang";
   for (const auto [Is64, Machine] :
        {std::pair{false, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_I386)},
         {true, uint16_t(llvm::COFF::IMAGE_FILE_MACHINE_AMD64)},
@@ -101,8 +102,12 @@ TEST_F(NativePointerRelocationBoundary,
         (Is64 ? offsetof(llvm::object::pe32plus_header, ImageBase)
               : offsetof(llvm::object::pe32_header, ImageBase));
     auto Loaded = COFFLoader().loadBuffer(
-        llvm::MemoryBufferRef(Bytes, "header-mirror.exe"));
+        llvm::MemoryBufferRef(Bytes, "header-image-base.exe"));
     ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+    // The headers are mapped and their ImageBase field stays a relocated
+    // slot, which no module mirrors.
+    ASSERT_NE(Loaded->readVA(Base, 2), nullptr);
+    ASSERT_TRUE(Loaded->DataPtrRelocSlots.count(Base + BaseOffset));
     std::vector<MedFunc> Functions;
     for (bool LoadBase : {false, true}) {
       MedFunc F;
@@ -140,12 +145,23 @@ TEST_F(NativePointerRelocationBoundary,
     }
     llvm::LLVMContext Context;
     auto Module =
-        MedLLVMEmitter().emit(Functions, Context, "pe-header-mirror",
+        MedLLVMEmitter().emit(Functions, Context, "pe-header-image-base",
                               Loaded->Arch, {}, &*Loaded, BinaryFormat::COFF);
     ASSERT_NE(Module, nullptr);
     ASSERT_FALSE(llvm::verifyModule(*Module, &llvm::errs()));
-    const fs::path IR = tmpFile("pe-header-mirror.ll");
-    const fs::path Object = tmpFile("pe-header-mirror.obj");
+    // Both functions reach the headers through the linker's symbol, which the
+    // module declares; no global copies a header byte.
+    const auto *ImageBase = Module->getNamedGlobal("__ImageBase");
+    ASSERT_NE(ImageBase, nullptr);
+    EXPECT_TRUE(ImageBase->isDeclaration());
+    for (const auto &Global : Module->globals())
+      if (Global.hasInitializer())
+        if (const auto *Data = llvm::dyn_cast<llvm::ConstantDataSequential>(
+                Global.getInitializer()))
+          EXPECT_FALSE(Data->getRawDataValues().starts_with("MZ"))
+              << Global.getName().str();
+    const fs::path IR = tmpFile("pe-header-image-base.ll");
+    const fs::path Object = tmpFile("pe-header-image-base.obj");
     std::error_code EC;
     llvm::raw_fd_ostream OS(IR.string(), EC);
     ASSERT_FALSE(EC);
@@ -159,22 +175,25 @@ TEST_F(NativePointerRelocationBoundary,
     if (Loaded->Arch != Arch::X64)
       continue;
     // This executes authored data-access functions only. The no-argument
-    // integer returns agree between the target and host ABIs. Check every
-    // original header byte except the field that must name this new storage.
-    const fs::path Harness = tmpFile("pe-header-mirror.c");
-    const fs::path Program = tmpFile("pe-header-mirror");
+    // integer returns agree between the target and host ABIs. The harness
+    // provides the running image's headers and, as a rebasing loader does,
+    // stores their own address in the ImageBase field.
+    const fs::path Harness = tmpFile("pe-header-image-base.c");
+    const fs::path Program = tmpFile("pe-header-image-base");
     std::ofstream C(Harness);
     C << "extern unsigned long long header_address(void), header_base(void);\n"
-         "static const unsigned char expected[] = {";
+         "unsigned char __ImageBase["
+      << Size << "] = {";
     for (size_t I = 0; I != Size; ++I)
       C << unsigned(static_cast<uint8_t>(Bytes[I])) << ',';
     C << "};\nint main(void) {\n"
-         "const unsigned char *p = (void *)header_address();\n"
-         "if (header_base() != (unsigned long long)p) return 1;\n"
-         "for (unsigned i=0; i<sizeof(expected); ++i)\n"
-         "if ((i<"
-      << BaseOffset << " || i>=" << BaseOffset + Width
-      << ") && p[i]!=expected[i]) return 2;\nreturn 0; }\n";
+         "unsigned long long self = (unsigned long long)__ImageBase;\n"
+         "__builtin_memcpy(__ImageBase + "
+      << BaseOffset
+      << ", &self, sizeof(self));\n"
+         "if (header_address() != self) return 1;\n"
+         "if (header_base() != self) return 2;\n"
+         "return 0; }\n";
     C.close();
     for (const char *Optimization : {"-O0", "-O2"}) {
       const auto Linked =
