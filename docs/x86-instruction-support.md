@@ -2914,3 +2914,21 @@ host. i386 runtime, privileged #NM, alignment-check exceptions and historical
 processors remain unqualified. These pointer APIs do not establish a complete
 opaque machine context. Global completion and the LLVM release/production
 pin update remain separate work.
+
+NeverD feature `02adae41c2` and integrated source
+`fd261b092bc2ccf324f130f3b8e8f166e94654ae` pass the final 18-target matrix:
+r6 passes 348 of 349 cases, with the existing REP native-contract case skipped
+because that SDK does not register its APIs; the local native SDK passes all
+347 cases. The native profile excludes two optional Unicorn references.
+Both profiles include 144 decoder combinations, 16 FS/GS variants through
+both C routes, and 3,072 C-route comparisons per SDK against original bytes.
+NeverC IR audits confirm native calls in all 16 generated environment functions
+at O0/O2 for direct-call and legacy-assembly inputs.
+
+The wider run exposed a stock-Clang fixture gap for the fork's older control,
+status and reset APIs. `LLVMHostX87Fixture.h` now adapts only the cloned
+host-compiler fixture; a regression confirms the production module retains
+its native calls. Those source-oracle checks are separate from the six native
+compiler qualification profiles. The [qualification ledger](evidence/x86-x87-environment-2026-10-28.json)
+records source identities, both SDK matrices, stable compiler inputs and
+rehashed artifacts, including the initial failures and their focused repair.
