@@ -652,18 +652,31 @@ bool isPrivateFrameAccess(const MedFunc &Func,
          Bytes <= Layout.EntryStackBase - Offset;
 }
 
-/// Every plain load and store of \p Func whose address resolves against the
-/// entry stack pointer, all by one proof.
+bool isNeutralAtomic(const MedOp &Op, unsigned PointerSize) {
+  return Op.Opcode == NdOp::ATOMIC_ADD && Op.NumInputs == 2 &&
+         Op.MemoryOrdering == NdMemoryOrdering::SequentiallyConsistent &&
+         Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
+         Op.Inputs[0].Size == PointerSize && Op.Inputs[1].isConst() &&
+         Op.Inputs[1].ConstVal == 0 && Op.Inputs[1].Size == Op.Output.Size &&
+         Op.Output.Id >= 0 && llvm::isPowerOf2_32(Op.Output.Size) &&
+         Op.Output.Size <= PointerSize && Op.IntrinsicOutputs.empty();
+}
+
+/// Every plain load/store and requested neutral transaction whose address
+/// resolves against the entry stack pointer, all by one proof.
 void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
                      StackEntryKind Entry, std::vector<FrameAccess> &Loads,
-                     std::vector<FrameAccess> &Stores) {
+                     std::vector<FrameAccess> &Stores,
+                     std::vector<FrameAccess> *NeutralAtomics = nullptr) {
+  const unsigned PointerSize = getTargetRegInfo(Architecture).PointerSize;
   std::vector<MedOp *> Accesses;
   for (MedBlock &Block : Func.Blocks)
     for (MedOp &Op : Block.Ops)
-      if ((Op.Opcode == NdOp::LOAD ||
-           (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)) &&
-          Op.NumInputs >= 1 && Op.MemoryOrdering == NdMemoryOrdering::None &&
-          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default)
+      if (((Op.Opcode == NdOp::LOAD ||
+            (Op.Opcode == NdOp::STORE && Op.NumInputs >= 2)) &&
+           Op.NumInputs >= 1 && Op.MemoryOrdering == NdMemoryOrdering::None &&
+           Op.MemoryAddressSpace == NdMemoryAddressSpace::Default) ||
+          (NeutralAtomics && isNeutralAtomic(Op, PointerSize)))
         Accesses.push_back(&Op);
   std::vector<MedVar> Addresses;
   Addresses.reserve(Accesses.size());
@@ -677,16 +690,18 @@ void frameAccessesOf(MedFunc &Func, Arch Architecture, BinaryFormat Format,
     MedOp &Op = *Accesses[I];
     if (Op.Opcode == NdOp::LOAD)
       Loads.push_back({*Offsets[I], Op.Output.Size, &Op});
-    else
+    else if (Op.Opcode == NdOp::STORE)
       Stores.push_back({*Offsets[I], Op.Inputs[1].Size, &Op});
+    else
+      NeutralAtomics->push_back({*Offsets[I], Op.Output.Size, &Op});
   }
 }
 
-void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
-                                 BinaryFormat Format, StackEntryKind Entry,
-                                 std::vector<FrameAccess> &Loads,
-                                 std::vector<FrameAccess> &Stores,
-                                 const ValueReads &Reads) {
+void markCalleeSavePrologueSaves(
+    MedFunc &Func, Arch Architecture, BinaryFormat Format, StackEntryKind Entry,
+    std::vector<FrameAccess> &Loads, std::vector<FrameAccess> &Stores,
+    const ValueReads &Reads,
+    std::vector<FrameAccess> *NeutralAtomics = nullptr) {
   const auto &TRI = getTargetRegInfo(Architecture);
   const BinaryFormat Convention =
       Func.CC == CallingConv::Win64 ? BinaryFormat::COFF : BinaryFormat::ELF;
@@ -695,7 +710,8 @@ void markCalleeSavePrologueSaves(MedFunc &Func, Arch Architecture,
   const IntegerArgumentLayout Layout =
       TRI.integerArgumentLayout(Convention == BinaryFormat::COFF);
 
-  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores);
+  frameAccessesOf(Func, Architecture, Format, Entry, Loads, Stores,
+                  NeutralAtomics);
 
   size_t ReadBudget = limits::ir::kSourceEntrySpillWork;
   std::vector<MedOp *> Saves;
@@ -762,6 +778,36 @@ void markReturnAddressReads(unsigned PointerSize,
   for (const FrameAccess &Read : Loads)
     if (Read.Offset == 0 && Read.Size == PointerSize)
       Read.Op->ReturnAddressRead = true;
+}
+
+/// The compiler owns the relocated CALL return slot. Only an unchanged
+/// transaction with no value observers can use that different address and
+/// contents; flags derived from the old bytes count as ordinary readers too.
+void markNeutralReturnSlotTransactions(MedFunc &Func, Arch Architecture,
+                                       StackEntryKind Entry,
+                                       llvm::ArrayRef<FrameAccess> Atomics,
+                                       const ValueReads &Reads) {
+  if (Atomics.empty() ||
+      (Architecture != Arch::X86 && Architecture != Arch::X64) ||
+      Entry != StackEntryKind::Call || Func.SkippedSSA ||
+      Func.AnalystStackFrame || Func.Blocks.empty() ||
+      Func.Blocks.front().StartAddr != Func.Entry ||
+      !Func.Blocks.front().Preds.empty() ||
+      !Func.Blocks.front().ExceptionalPreds.empty())
+    return;
+  // A disconnected or exceptional entry has its own stack context. The
+  // ordinary entry-SP proof cannot grant that context the caller's slot.
+  if (llvm::any_of(Func.Blocks, [&](const MedBlock &Block) {
+        return !Block.ExceptionalPreds.empty() ||
+               (Block.Id != Func.Blocks.front().Id && Block.Preds.empty());
+      }))
+    return;
+  const unsigned PointerSize = getTargetRegInfo(Architecture).PointerSize;
+  for (const FrameAccess &Access : Atomics)
+    if (Access.Offset >= 0 && Access.Offset < PointerSize &&
+        Access.Size <= PointerSize - Access.Offset &&
+        Reads.unread(Access.Op->Output))
+      Access.Op->SourceReturnSlotOffset = uint16_t(Access.Offset);
 }
 
 /// A status-word transfer has no implicit access to the lifted frame: the x86
@@ -1551,16 +1597,19 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
     for (MedOp &Op : Block.Ops) {
       Op.PrologueSave = false;
       Op.ReturnAddressRead = false;
+      Op.SourceReturnSlotOffset.reset();
     }
-  std::vector<FrameAccess> Loads, Stores;
+  std::vector<FrameAccess> Loads, Stores, NeutralAtomics;
   const ValueReads Reads(Func);
   markCalleeSavePrologueSaves(Func, Architecture, Format, Entry, Loads, Stores,
-                              Reads);
+                              Reads, &NeutralAtomics);
   // Annotate before source-only replacement. No access proof survives the
   // replacements at the end of this preparation.
   if (hasStackReturnAddress(Architecture, Entry))
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
                            Stores);
+  markNeutralReturnSlotTransactions(Func, Architecture, Entry, NeutralAtomics,
+                                    Reads);
   markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores, Reads,
                             Image, Overwritten);
   replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);

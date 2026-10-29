@@ -46,7 +46,10 @@ bool forwardsSourceEntryRegister(const MedOp &Call,
                                  const IntegerArgumentLayout &Layout);
 
 /// Mark source-mode prologue saves, unobserved scratch spills and
-/// return-address reads using one frame access analysis. Complete fixed integer
+/// return-address reads and neutral return-slot transactions using one frame
+/// access analysis. An unread atomic addition of zero wholly within an x86
+/// CALL return slot retains its transaction on the compiler-owned slot.
+/// Complete fixed integer
 /// call operands reading private frame bytes proved never written on any
 /// incoming path become explicit unavailable values in source only. General
 /// partial-byte observations are separate. The analysis is discarded before
