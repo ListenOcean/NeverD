@@ -209,7 +209,9 @@ void Pipeline::prepareSourceMedIR(const BinaryImage &Img,
   if (Convention && (Convention->ArgumentsFromCallSetup ||
                      (Convention->StackArgumentSummary &&
                       Convention->PositionalArgumentSlots))) {
-    recoverModuleCallAbi(Img, Result, AllFuncNames);
+    recoverModuleCallAbi(Img, Result, AllFuncNames,
+                         /*SourceDeclarations=*/false,
+                         /*SourceParameterReads=*/true);
     propagateForwardedPointerParams(Result.MedFuncs, Img.Arch);
     // A variadic callee takes its call sites' overflow arguments as trailing
     // stack parameters, which MedToHigh seeds where its va_arg walk reads

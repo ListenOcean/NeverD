@@ -15928,7 +15928,15 @@ only one arm overwrites the saved bytes.
 callees through both C routes. Selected bodies execute with 64 varied incoming
 register values and globals at O0/O2 under UBSan; on Linux x64, each comparison
 also runs the original Win64 machine bytes. Distinct imports in the same IAT
-object must keep their slot offsets and actual call identities.
+object must keep their slot offsets and actual call identities. A three-function
+variant forwards a byte or word flag while its incoming register's unused upper
+bytes flow to a discarded spill. Both selected and omitted queries must recover
+the exact constant prefix; selected bodies also execute the original bytes and
+both source routes. `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
+observed high bytes, changed call bindings, other physical registers, exceptional
+observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`
+keeps unknown retained bytes, relocation-dependent constants and ordered
+producers conservative without deleting memory effects or shifting later slots.
 `DiscardedSpillInputsStillNeedImplicitCallProofs` retains partial register writes,
 copies to another physical argument register, observed return values, exceptional
 edges and stale call proofs. `OnlyCompleteImageReadsCanCrossACompleteOverwrite`
@@ -15937,8 +15945,8 @@ accesses. `AnnihilatingMaskKeepsMemoryEffectsAndProvenance` covers direct and
 copied masks across x86/Arm widths and ELF/COFF/Mach-O while retaining ordered
 loads and relocation-dependent values.
 `SessionLLVMTest.CallRecoveryKeepsUnobservedSourceSpillArguments` repeats the
-source proof after SDK call recovery and checks selected/omitted bodies and
-optimized/unoptimized cache hits.
+source proof after SDK call recovery and checks selected/omitted bodies,
+three-function low-prefix forwarding and optimized/unoptimized cache hits.
 `OverwrittenCallClobberSpills.*` checks post-call scratch stores,
 with and without flags transfers and unused restores. Both source routes keep
 the call and flags effects while discarding overwritten values. COFF, ELF and

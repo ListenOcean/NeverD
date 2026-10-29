@@ -17,6 +17,8 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include <cstddef>
+#include <cstdint>
 #include <map>
 #include <set>
 
@@ -52,6 +54,29 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
 /// must supply a complete current body with freshly prepared source stores.
 /// This does not remove parameter slots or authorize a native ABI rewrite.
 std::set<unsigned> unobservedSourceSpillParameters(const MedFunc &Func);
+
+/// Source-only low-prefix demand, by positional Win64 integer parameter.
+/// Missing entries retain the whole carrier; zero requires a proved discarded
+/// spill or forwarding to another proved unobserved input. Facts are local to
+/// one preparation of complete bodies and must never enter native summaries.
+using SourceRegisterParameterReads = std::map<unsigned, uint16_t>;
+using SourceCalleeParameterReads = std::map<va_t, SourceRegisterParameterReads>;
+
+/// Extend source spill evidence through current direct calls. Identity copies
+/// and PHIs retain byte positions; narrow views may read the retained prefix.
+/// Opaque implicit readers, changed call bindings and other transports reject
+/// a suffix proof. The shared per-function budget also bounds repeated queries.
+SourceRegisterParameterReads
+sourceRegisterParameterReads(const MedFunc &Func,
+                             const SourceCalleeParameterReads &Callees,
+                             size_t &Remaining);
+
+/// Choose zero for unobserved argument bytes only when the complete retained
+/// prefix is an exact scalar constant. Follow COPY/CONCAT/SUBBYTES/ZEXT views
+/// without evaluating an unavailable neighbor or removing producer effects.
+/// Parameter positions, widths, native operands and signatures stay intact.
+void replaceKnownSourceCallArguments(MedFunc &Func,
+                                     const SourceCalleeParameterReads &Callees);
 
 /// After call argument recovery, omit private stores only when a complete
 /// noncapturing use proof of the frame finds no reads of their surviving

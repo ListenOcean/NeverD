@@ -259,6 +259,16 @@ Its full-use and physical-register walks reject partial writes, exceptional
 observers, another register's implicit input and stale unread-call evidence.
 SDK single-function LLVM queries repeat the shared proof after rebuilding
 CallInfos, using borrowed LowIR coverage instead of copying the image's bodies.
+Source observation now composes through current direct calls: a caller may
+retain only the low prefix of an incoming register when every higher-byte use
+is a proved discarded spill, identity transport or another proved unread
+source input. Dependency waves begin without optimistic recursive assumptions,
+share bounded work and leave cached bodies immutable. A source-only request
+mode extends the existing bounded omitted-body reader for partial-register
+candidates; it is part of that reader's cache identity. Both emitters and SDK
+replay consume the same post-recovery CallInfos. Exact scalar prefix slices
+through COPY/CONCAT/SUBBYTES/ZEXT can choose zero for unobserved high bytes;
+unknown retained bytes, address constants and producer effects stay intact.
 This is not a native ABI rewrite or proof that missing interior stack arguments
 are unused. LLVMC import naming also retains nonzero GEP offsets within IAT
 objects; stripping those offsets could select a different imported routine.

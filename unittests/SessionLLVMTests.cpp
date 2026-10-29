@@ -203,28 +203,57 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   Object.Name = "spill_global";
   Object.Size = 8;
   State.Img.Symbols.push_back(std::move(Object));
-  for (bool Omitted : {false, true}) {
-    SCOPED_TRACE(Omitted);
-    State.NativeMedFuncs.reset();
-    State.FunctionLlvmModules.clear();
-    PipelineOptions Options;
-    Options.EmitDumpOutput = false;
-    Options.OnlyFunctionEntries = {Caller};
-    if (!Omitted)
-      Options.OnlyFunctionEntries.insert(Consumer);
-    State.PipeResult = Pipeline().run(State.Img, *State.LLVMCtx, Options);
-    ASSERT_TRUE(State.PipeResult.Success) << State.PipeResult.Error;
-    for (bool NoOpt : {false, true}) {
-      SCOPED_TRACE(NoOpt);
-      const auto *Shown = State.ensureFunctionLlvmModule(Caller, NoOpt, true);
-      ASSERT_TRUE(Shown) << State.LastError;
-      ASSERT_TRUE(State.NativeMedFuncs);
-      const auto &Calls = State.NativeMedFuncs->front().CallInfos;
-      ASSERT_EQ(Calls.size(), 1U);
-      ASSERT_EQ(Calls.front().Args.size(), 1U);
-      EXPECT_TRUE(Calls.front().Args.front().isConst());
-      EXPECT_EQ(Calls.front().Args.front().ConstVal, 0U);
-      EXPECT_EQ(State.ensureFunctionLlvmModule(Caller, NoOpt, true), Shown);
+  const auto OriginalImage = State.Img;
+  for (bool ThroughWrapper : {false, true}) {
+    SCOPED_TRACE(ThroughWrapper);
+    State.Img = OriginalImage;
+    if (ThroughWrapper) {
+      auto &Code = State.Img.Segments.front().Data;
+      const std::vector<uint8_t> CallerCode = {
+          0x48, 0x83, 0xEC, 0x28,    // sub rsp,28h
+          0xB1, 0x5A,                // mov cl,5Ah
+          0xE8, 0x15, 0,    0,    0, // call wrapper
+          0x48, 0x83, 0xC4, 0x28, 0xC3};
+      const std::vector<uint8_t> Wrapper = {
+          0x53,                      // push rbx
+          0x0F, 0xB6, 0xD9,          // movzx ebx,cl
+          0x48, 0x83, 0xEC, 0x20,    // sub rsp,20h
+          0xE8, 0x13, 0,    0,    0, // call consumer
+          0x48, 0x01, 0xD8,          // add rax,rbx
+          0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};
+      std::copy(CallerCode.begin(), CallerCode.end(), Code.begin());
+      std::copy(Wrapper.begin(), Wrapper.end(), Code.begin() + 0x20);
+      auto Symbol = Symbol::makeFunc(Caller + 0x20);
+      Symbol.Name = "spill_prefix_forwarder";
+      State.Img.Symbols.push_back(std::move(Symbol));
+    }
+    for (bool Omitted : {false, true}) {
+      SCOPED_TRACE(Omitted);
+      State.NativeMedFuncs.reset();
+      State.FunctionLlvmModules.clear();
+      PipelineOptions Options;
+      Options.EmitDumpOutput = false;
+      Options.OnlyFunctionEntries = {Caller};
+      if (!Omitted) {
+        Options.OnlyFunctionEntries.insert(Consumer);
+        if (ThroughWrapper)
+          Options.OnlyFunctionEntries.insert(Caller + 0x20);
+      }
+      State.PipeResult = Pipeline().run(State.Img, *State.LLVMCtx, Options);
+      ASSERT_TRUE(State.PipeResult.Success) << State.PipeResult.Error;
+      for (bool NoOpt : {false, true}) {
+        SCOPED_TRACE(NoOpt);
+        const auto *Shown = State.ensureFunctionLlvmModule(Caller, NoOpt, true);
+        ASSERT_TRUE(Shown) << State.LastError;
+        ASSERT_TRUE(State.NativeMedFuncs);
+        const auto &Calls = State.NativeMedFuncs->front().CallInfos;
+        ASSERT_EQ(Calls.size(), 1U);
+        ASSERT_EQ(Calls.front().Args.size(), 1U);
+        EXPECT_TRUE(Calls.front().Args.front().isConst());
+        EXPECT_EQ(Calls.front().Args.front().ConstVal,
+                  ThroughWrapper ? 0x5AU : 0U);
+        EXPECT_EQ(State.ensureFunctionLlvmModule(Caller, NoOpt, true), Shown);
+      }
     }
   }
 }

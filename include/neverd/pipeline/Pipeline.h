@@ -322,6 +322,9 @@ struct OmittedCalleeBodies {
   /// Include direct callees whose arity is known but whose source types are
   /// not.
   bool IncludesSourceDeclarations = false;
+  /// Include bounded callees needed to distinguish an observed low register
+  /// prefix from obsolete full-width spill inputs in source projections.
+  bool IncludesSourceParameterReads = false;
 };
 
 struct PipelineResult {

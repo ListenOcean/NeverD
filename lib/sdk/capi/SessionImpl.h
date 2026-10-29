@@ -1218,7 +1218,8 @@ struct Session {
       // callees, which serve where this recovery reads the same.
       Recovery.CalleeSignatureMemo = PipeResult.CalleeSignatureMemo;
       recoverModuleCallAbi(Img, Recovery, FuncNames,
-                           /*SourceDeclarations=*/true);
+                           /*SourceDeclarations=*/true,
+                           /*SourceParameterReads=*/true);
       // Recovery rebuilds CallInfos. Reapply the same source observation
       // proof as module emission before caching these single-function views.
       prepareRecoveredSourceStackAccesses(Img, Recovery, PipeResult.LowFuncs);

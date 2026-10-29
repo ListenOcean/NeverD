@@ -141,12 +141,27 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   if (Image.Arch != Arch::X64 || Image.abiFormat() != BinaryFormat::COFF)
     return;
   std::set<va_t> Referenced;
+  std::vector<va_t> Pending;
+  const auto Reference = [&](va_t Target) {
+    if (!Result.CallPrototypeArguments.count(Target) &&
+        !Result.CallUserPrototypes.count(Target) &&
+        Referenced.insert(Target).second)
+      Pending.push_back(Target);
+  };
   for (const auto &Func : Result.MedFuncs)
     for (const auto &Call : Func.CallInfos)
       if (!Call.IsIndirect && !Call.SourceCallHint &&
-          !Call.ArgumentsInCalleeRegisterOrder &&
-          !Result.CallPrototypeArguments.count(Call.TargetAddr))
-        Referenced.insert(Call.TargetAddr);
+          !Call.ArgumentsInCalleeRegisterOrder)
+        Reference(Call.TargetAddr);
+  // Follow only bodies already admitted by the bounded signature reader.
+  // Reading a callee's source inputs never starts an unbounded image walk.
+  for (size_t I = 0; I < Pending.size(); ++I)
+    if (const auto At = Callees.find(Pending[I]); At != Callees.end())
+      for (const auto &Block : At->second->Blocks)
+        for (const auto &Op : Block.Ops)
+          if (Op.Opcode == NdOp::CALL && Op.NumInputs &&
+              Op.Inputs[0].isConst() && !Op.SourceCallHint)
+            Reference(Op.Inputs[0].ConstVal);
   std::vector<const MedFunc *> Sources;
   std::vector<uint64_t> Weights;
   const auto Arguments =
@@ -154,55 +169,94 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   for (const auto &[Entry, Func] : Callees) {
     if (!Referenced.count(Entry))
       continue;
-    bool HasSpill = false;
+    bool Candidate = false;
     uint64_t Weight = 1;
     for (const auto &Block : Func->Blocks) {
       Weight += Block.Ops.size();
-      for (const auto &Op : Block.Ops)
-        HasSpill |= Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
-                    Op.Inputs[1].Kind == MedVar::Reg &&
-                    Op.Inputs[1].SSAVer == 0 &&
-                    Arguments.registerIndex(Op.Inputs[1].RegOff) >= 0;
+      for (const auto &Op : Block.Ops) {
+        if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2)
+          Candidate |= Op.Inputs[1].Kind == MedVar::Reg &&
+                       Op.Inputs[1].SSAVer == 0 &&
+                       Arguments.registerIndex(Op.Inputs[1].RegOff) >= 0;
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1)
+          Candidate |=
+              Op.Inputs[0].Kind == MedVar::Reg && Op.Inputs[0].SSAVer == 0 &&
+              Op.Inputs[0].Size < getTargetRegInfo(Image.Arch).PointerSize &&
+              Arguments.registerIndex(Op.Inputs[0].RegOff) >= 0;
+      }
     }
-    if (HasSpill) {
+    if (Candidate) {
       Sources.push_back(Func);
       Weights.push_back(Weight);
     }
   }
-  // Cached signature bodies stay immutable. Prepare a local copy only for
-  // an actually referenced omitted body with a possible incoming spill.
-  std::vector<std::set<unsigned>> Unobserved(Sources.size());
+  // Cached bodies are immutable. Prepare each candidate once; independent
+  // functions and each dependency wave run in weighted parallel batches.
+  std::vector<std::optional<MedFunc>> Prepared(Sources.size());
   parallelForEachWeighted(Weights, [&](auto Claim, size_t N) {
-    for (size_t I; (I = Claim()) < N;) {
-      const auto &Func = *Sources[I];
-      if (Complete.count(Func.Entry)) {
-        Unobserved[I] = unobservedSourceSpillParameters(Func);
-      } else {
-        MedFunc Prepared = Func;
-        markSourceStackAccesses(Prepared, Image.Arch, Image.abiFormat(),
-                                Prepared.EntryKind, &Image);
-        Unobserved[I] = unobservedSourceSpillParameters(Prepared);
+    for (size_t I; (I = Claim()) < N;)
+      if (!Complete.count(Sources[I]->Entry)) {
+        auto &Func = Prepared[I].emplace(*Sources[I]);
+        markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(),
+                                Func.EntryKind, &Image);
+        Sources[I] = &Func;
       }
-    }
   });
-  std::map<va_t, const std::set<unsigned> *> ByEntry;
+  std::map<va_t, std::set<size_t>> Callers;
   for (size_t I = 0; I < Sources.size(); ++I)
-    if (!Unobserved[I].empty())
-      ByEntry.emplace(Sources[I]->Entry, &Unobserved[I]);
-  for (auto &Func : Result.MedFuncs)
-    for (auto &Call : Func.CallInfos) {
-      if (Call.IsIndirect || Call.SourceCallHint ||
-          Call.ArgumentsInCalleeRegisterOrder ||
-          Result.CallPrototypeArguments.count(Call.TargetAddr))
-        continue;
-      const auto Found = ByEntry.find(Call.TargetAddr);
-      if (Found == ByEntry.end())
-        continue;
-      for (unsigned P : *Found->second)
-        if (P < Call.Args.size())
-          Call.Args[P] = MedVar::makeConst(0, Call.Args[P].Size,
-                                           ConstantAddressProvenance::Scalar);
+    for (const auto &Block : Sources[I]->Blocks)
+      for (const auto &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst())
+          Callers[Op.Inputs[0].ConstVal].insert(I);
+  std::vector<size_t> Work;
+  for (size_t I = 0; I < Sources.size(); ++I)
+    Work.push_back(I);
+  std::vector<size_t> Remaining(Sources.size(),
+                                limits::ir::kSourceEntrySpillWork);
+  SourceCalleeParameterReads Facts;
+  while (!Work.empty()) {
+    std::vector<uint64_t> WaveWeights;
+    for (size_t I : Work)
+      WaveWeights.push_back(Weights[I]);
+    std::vector<SourceRegisterParameterReads> Reads(Work.size());
+    parallelForEachWeighted(WaveWeights, [&](auto Claim, size_t N) {
+      for (size_t W; (W = Claim()) < N;) {
+        const size_t I = Work[W];
+        Reads[W] =
+            sourceRegisterParameterReads(*Sources[I], Facts, Remaining[I]);
+      }
+    });
+    std::set<size_t> Next;
+    for (size_t W = 0; W < Work.size(); ++W) {
+      const va_t Entry = Sources[Work[W]]->Entry;
+      auto &Known = Facts[Entry];
+      bool Changed = false;
+      for (const auto &[P, Bytes] : Reads[W]) {
+        auto [At, Added] = Known.emplace(P, Bytes);
+        if (Added || Bytes < At->second) {
+          At->second = Bytes;
+          Changed = true;
+        }
+      }
+      if (Changed)
+        if (const auto At = Callers.find(Entry); At != Callers.end())
+          for (size_t I : At->second)
+            if (Remaining[I])
+              Next.insert(I);
     }
+    Work.assign(Next.begin(), Next.end());
+  }
+  std::vector<uint64_t> CallerWeights;
+  for (const auto &Func : Result.MedFuncs) {
+    uint64_t Weight = 1;
+    for (const auto &Block : Func.Blocks)
+      Weight += Block.Ops.size();
+    CallerWeights.push_back(Weight);
+  }
+  parallelForEachWeighted(CallerWeights, [&](auto Claim, size_t N) {
+    for (size_t I; (I = Claim()) < N;)
+      replaceKnownSourceCallArguments(Result.MedFuncs[I], Facts);
+  });
 }
 
 void omitRefusedFunctions(PipelineResult &Result,

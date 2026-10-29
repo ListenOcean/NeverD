@@ -395,6 +395,142 @@ TEST(SourceStackSpills, DiscardedSpillInputsStillNeedImplicitCallProofs) {
   }
 }
 
+TEST(SourceStackSpills, RegisterSuffixesNeedCurrentSourceCalleeProofs) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedVar Low = reg(4, x86reg::RCX, 0);
+    Low.Size = 1;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}), op(NdOp::COPY, Low, {Low})};
+    auto Call = op(NdOp::CALL, temp(10),
+                   {MedVar::makeConst(Mode == 2 ? 0x4000 : 0x3000, 8), rcx(0)});
+    Call.Addr = 0x1010;
+    Call.OriginSeq = 7;
+    Call.CallSiteId = 1;
+    MedCallInfo Info;
+    Info.BlockId = 0;
+    Info.OpIdx = Block.Ops.size();
+    Info.TargetAddr = 0x3000;
+    Info.Args = {rcx(0)};
+    Info.IsIndirect = Mode == 3;
+    if (Mode != 9)
+      Func.CallInfos.push_back(Info);
+    Block.Ops.push_back(Call);
+    if (Mode == 5)
+      Block.Ops.push_back(op(NdOp::COPY, reg(5, x86reg::RDX, 1), {rcx(0)}));
+    if (Mode == 6) {
+      auto High = temp(11);
+      High.Size = 1;
+      Block.Ops.push_back(
+          op(NdOp::SUBBYTES, High, {rcx(0), MedVar::makeConst(1, 1)}));
+      Block.Ops.push_back(op(NdOp::RETURN, none(), {High}));
+    } else {
+      Block.Ops.push_back(op(NdOp::RETURN, none(), {Mode == 4 ? rcx(0) : Low}));
+    }
+    if (Mode == 7)
+      Block.ExceptionalSuccs.resize(1);
+    if (Mode == 8)
+      Func.SourceParametersBound = true;
+    if (Mode == 12)
+      Func.ModuleAnalysisRoots = {Func.Entry, 0x1010};
+    Func.Blocks.push_back(std::move(Block));
+    SourceCalleeParameterReads Callees;
+    if (Mode != 1)
+      Callees[0x3000][0] = Mode == 10 ? 4 : 0;
+    size_t Budget = Mode == 11 ? 1 : 4096;
+    const auto Reads = sourceRegisterParameterReads(Func, Callees, Budget);
+    const SourceRegisterParameterReads Expected =
+        Mode == 0 || Mode == 9 ? SourceRegisterParameterReads{{0, 1}}
+        : Mode == 10           ? SourceRegisterParameterReads{{0, 4}}
+                               : SourceRegisterParameterReads{};
+    EXPECT_EQ(Reads, Expected);
+  }
+}
+
+TEST(SourceStackSpills, ADiscardedSpillDoesNotEraseADynamicCallTarget) {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.CC = CallingConv::Win64;
+  Func.FrameSize = 40;
+  Func.Params = {rcx(0)};
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  const auto Home = temp(10), Target = temp(11);
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::COPY, rcx(0), {rcx(0)}),
+               op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+               op(NdOp::STORE, none(), {Home, rcx(0)}),
+               op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)}),
+               op(NdOp::COPY, Target, {rcx(0)}),
+               op(NdOp::COPY, rcx(1), {MedVar::makeConst(0, 8)}),
+               op(NdOp::CALL, temp(12), {Target}),
+               op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+  Func.Blocks.push_back(std::move(Block));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(Func.Blocks[0].Ops[3].PrologueSave);
+  EXPECT_TRUE(unobservedSourceSpillParameters(Func).empty());
+}
+
+TEST(SourceStackSpills, ConstantPrefixesNeverEvaluateUnavailableNeighbors) {
+  for (unsigned Mode = 0; Mode < 10; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    MedBlock Block;
+    Block.Id = 0;
+    MedVar High = temp(1), Low = temp(2), Joined = temp(3), Copied = temp(4);
+    High.Size = 7;
+    Low.Size = 1;
+    auto Literal = MedVar::makeConst(0x5A, 1);
+    if (Mode == 3)
+      Literal.Provenance = ConstantAddressProvenance::DataAddress;
+    // This effect remains even when its loaded bytes are not call inputs.
+    Block.Ops = {
+        op(NdOp::LOAD, High, {MedVar::makeConst(0x2000, 8)}),
+        op(NdOp::COPY, Low, {Literal}),
+        op(NdOp::CONCAT, Joined,
+           {High, Mode == 1 ? MedVar::makeUnspecified(1, Arch::X64) : Low}),
+        op(NdOp::COPY, Copied, {Joined})};
+    if (Mode == 4)
+      Block.Ops[1].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 5)
+      Block.Ops[3].Inputs[0] = Copied;
+    auto Call = op(NdOp::CALL, temp(5),
+                   {MedVar::makeConst(Mode == 6 ? 0x4000 : 0x3000, 8), Copied});
+    MedCallInfo Info;
+    Info.BlockId = 0;
+    Info.OpIdx = Block.Ops.size();
+    Info.TargetAddr = 0x3000;
+    Info.Args = {Copied, MedVar::makeUnspecified(8, Arch::X64)};
+    Info.IsIndirect = Mode == 7;
+    Info.ArgumentsInCalleeRegisterOrder = Mode == 8;
+    if (Mode == 9)
+      Info.OpIdx = 0;
+    Func.CallInfos.push_back(Info);
+    Block.Ops.push_back(Call);
+    Func.Blocks.push_back(std::move(Block));
+    const auto Before = Func.CallInfos[0].Args;
+    replaceKnownSourceCallArguments(Func, {{0x3000, {{0, Mode == 2 ? 2 : 1}}}});
+    if (Mode == 0) {
+      ASSERT_TRUE(Func.CallInfos[0].Args[0].isConst());
+      EXPECT_EQ(Func.CallInfos[0].Args[0].ConstVal, 0x5Au);
+      EXPECT_EQ(Func.CallInfos[0].Args[0].Size, 8u);
+    } else {
+      EXPECT_EQ(Func.CallInfos[0].Args[0], Before[0]);
+    }
+    EXPECT_EQ(Func.CallInfos[0].Args.size(), 2u);
+    EXPECT_EQ(Func.CallInfos[0].Args[1], Before[1]);
+    EXPECT_EQ(Func.Blocks[0].Ops.front().Opcode, NdOp::LOAD);
+    EXPECT_EQ(Func.Blocks[0].Ops.back().Inputs[1], Copied);
+  }
+}
+
 TEST(SourceStackSpills, FlagsTransfersDoNotObserveScratchButKeepTheirEffects) {
   for (Arch Architecture : {Arch::X86, Arch::X64})
     for (unsigned Mode = 0; Mode < 9; ++Mode) {

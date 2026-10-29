@@ -34,6 +34,7 @@
 #include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExecutableCodeOwnerIndex.h"
 #include "neverd/pipeline/Pipeline.h"
+#include "neverd/support/Parallel.h"
 
 #include "llvm/ADT/STLExtras.h"
 
@@ -443,6 +444,59 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
   return Callees;
 }
 
+/// Cheap source-query candidates, not an observation proof. A narrow entry
+/// view forwarded in its full register, or an assembled partial argument,
+/// may need a callee body even when native arity is already known.
+std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
+                                      const BinaryImage &Image) {
+  std::vector<va_t> Result;
+  if (Image.Arch != Arch::X64 || Image.abiFormat() != BinaryFormat::COFF ||
+      Func.CC != CallingConv::Win64 || Func.Blocks.empty() ||
+      Func.SourceTypeHint || Func.SourceParametersBound)
+    return Result;
+  const auto &TRI = getTargetRegInfo(Image.Arch);
+  const auto Layout = TRI.integerArgumentLayout(Image.abiFormat());
+  std::map<uint64_t, uint16_t> Narrow;
+  for (const auto &Op : Func.Blocks.front().Ops) {
+    if (Op.Opcode != NdOp::COPY)
+      break;
+    if (Op.NumInputs == 1 && Op.Inputs[0].Kind == MedVar::Reg &&
+        Op.Inputs[0].SSAVer == 0 && Op.Inputs[0].Size < TRI.PointerSize &&
+        Layout.registerIndex(Op.Inputs[0].RegOff) >= 0)
+      Narrow.emplace(Op.Inputs[0].RegOff, Op.Inputs[0].Size);
+  }
+  using Key = std::tuple<MedVar::VarKind, int, int>;
+  const auto KeyOf = [](const MedVar &V) -> Key {
+    return {V.Kind, V.Id, V.SSAVer};
+  };
+  std::set<Key> Assembled;
+  std::vector<const MedOp *> Calls;
+  for (const auto &Block : Func.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (Op.Opcode == NdOp::CONCAT && Op.NumInputs == 2 &&
+          Op.Output.Size == TRI.PointerSize &&
+          Op.Inputs[1].Size < TRI.PointerSize)
+        Assembled.insert(KeyOf(Op.Output));
+      if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
+          !Op.SourceCallHint)
+        Calls.push_back(&Op);
+    }
+  if (Narrow.empty() && Assembled.empty())
+    return Result;
+  for (const auto *Op : Calls)
+    for (unsigned K = 1; K < Op->NumInputs; ++K) {
+      const auto &Argument = Op->Inputs[K];
+      const auto At = Narrow.find(Argument.RegOff);
+      if ((Argument.Kind == MedVar::Reg && At != Narrow.end() &&
+           At->second < Argument.Size) ||
+          Assembled.count(KeyOf(Argument))) {
+        Result.push_back(Op->Inputs[0].ConstVal);
+        break;
+      }
+    }
+  return Result;
+}
+
 /// The target of each direct call of \p F, in order.
 std::vector<va_t> directCallTargets(const MedFunc &F) {
   std::vector<va_t> Targets;
@@ -653,10 +707,9 @@ private:
   CFGBuilder Builder;
 };
 
-std::vector<std::shared_ptr<const MedFunc>>
-omittedDirectCalleeSignatures(const BinaryImage &Img,
-                              const PipelineResult &Result,
-                              bool SourceDeclarations) {
+std::vector<std::shared_ptr<const MedFunc>> omittedDirectCalleeSignatures(
+    const BinaryImage &Img, const PipelineResult &Result,
+    bool SourceDeclarations, bool SourceParameterReads) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return {};
@@ -680,6 +733,32 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
   };
   for (const MedFunc &F : Result.MedFuncs)
     enqueueCallees(calleesToRead(F, Img, Result));
+  const auto enqueueSourcePrefixes = [&](const MedFunc &Func) {
+    if (SourceParameterReads)
+      for (va_t Target : sourcePrefixCallees(Func, Img))
+        if (!Result.CallPrototypeArguments.count(Target) &&
+            !Result.CallUserPrototypes.count(Target))
+          enqueue(Target);
+  };
+  if (SourceParameterReads) {
+    std::vector<uint64_t> Weights;
+    for (const auto &Func : Result.MedFuncs) {
+      uint64_t Weight = 1;
+      for (const auto &Block : Func.Blocks)
+        Weight += Block.Ops.size();
+      Weights.push_back(Weight);
+    }
+    std::vector<std::vector<va_t>> Prefixes(Result.MedFuncs.size());
+    parallelForEachWeighted(Weights, [&](auto Claim, size_t N) {
+      for (size_t I; (I = Claim()) < N;)
+        Prefixes[I] = sourcePrefixCallees(Result.MedFuncs[I], Img);
+    });
+    for (const auto &Targets : Prefixes)
+      for (va_t Target : Targets)
+        if (!Result.CallPrototypeArguments.count(Target) &&
+            !Result.CallUserPrototypes.count(Target))
+          enqueue(Target);
+  }
   // A complete entry-read summary proves argument count, not pointer types.
   // Source LLVM also needs the typed declarations of these direct callees.
   // Share the existing read budget and memo; descendants still follow only
@@ -733,6 +812,9 @@ omittedDirectCalleeSignatures(const BinaryImage &Img,
       enqueueCallees(Conversion.CalleesRead);
     else
       enqueueCallees(calleesToRead(*Conversion.Body, Img, Result));
+    // Descendants retain this reader's deterministic breadth-first budget:
+    // a late child cannot consume another direct callee's support allowance.
+    enqueueSourcePrefixes(*Conversion.Body);
     // System V's model takes every register a variadic prologue saves: as an
     // omitted callee's signature it would make its callers pass registers
     // they never set.
@@ -1442,7 +1524,7 @@ AnalysisCacheWarmup warmOmittedCallees(const BinaryImage &Img,
 
 void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
                           const std::map<va_t, std::string> &AllFuncNames,
-                          bool SourceDeclarations) {
+                          bool SourceDeclarations, bool SourceParameterReads) {
   Result.OmittedCalleeDeclarations.clear();
   const CallArgumentConvention *Convention =
       callArgumentConvention(Img.Arch, Img.abiFormat());
@@ -1468,12 +1550,15 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   if (Memo)
     Memo->adopt(Img, Result);
   if (!Result.OmittedCallees || Result.OmittedCallees->Functions != Functions ||
-      Result.OmittedCallees->IncludesSourceDeclarations != SourceDeclarations)
+      Result.OmittedCallees->IncludesSourceDeclarations != SourceDeclarations ||
+      Result.OmittedCallees->IncludesSourceParameterReads !=
+          SourceParameterReads)
     Result.OmittedCallees =
         std::make_shared<const OmittedCalleeBodies>(OmittedCalleeBodies{
             Functions,
-            omittedDirectCalleeSignatures(Img, Result, SourceDeclarations),
-            SourceDeclarations});
+            omittedDirectCalleeSignatures(Img, Result, SourceDeclarations,
+                                          SourceParameterReads),
+            SourceDeclarations, SourceParameterReads});
   // The passes before recovery read the kept bodies in place.
   const std::vector<std::shared_ptr<const MedFunc>> &OmittedCallees =
       Result.OmittedCallees->Bodies;

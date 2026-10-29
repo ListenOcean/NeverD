@@ -343,6 +343,22 @@ omitted-callee memoization includes it. Source scratch-restore liveness can cros
 only a still-matching call. Private-byte overwrite and escape checks stay in
 `MedPrologueSaves`; physical CALL return-slot writes are not C frame stores.
 
+Source register-prefix observation uses the same spill owner after call
+recovery. A complete ordinary Win64 body may prove that only the low bytes of
+a positional integer input are read, including through current direct calls
+whose discarded spills are already proved. Identity SSA/PHI transport retains
+byte positions; physical-register observations still require an independent
+full overwrite, bound native unread evidence, or the current source callee's
+prefix proof. Exceptional observers and ambiguous transports keep the full
+carrier. Dependency waves start without optimistic facts, share a per-function
+work budget, and analyze independent bodies in weighted parallel batches.
+The bounded omitted-callee reader admits additional partial-register candidates
+for source queries; its memo identity includes that request mode. This does not
+change the native entry-read summary. Exact scalar COPY/CONCAT/SUBBYTES/ZEXT
+slices can replace a source call argument when every retained byte is known;
+unavailable neighbors are never evaluated. Original operations, effects,
+parameter positions and widths remain. SDK replay repeats the same owner.
+
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
 use the resulting byte-read intervals to suppress private stores that cannot
