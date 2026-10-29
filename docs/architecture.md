@@ -385,14 +385,22 @@ A complete scalar register-read summary can precede a separately recovered stack
 parameter. Win64 call assembly preserves the unused register positions as padding
 and keeps that later stack operand. Scratch register values cannot replace the
 padding; missing required operands retain their explicit unknown value.
-Straight-line Win64 wrappers can also prove a positional stack parameter
-unobserved. The complete original body supplies every load interval, including
-loads removed by source conversion. Only exact SP-relative accesses and
-currently bound ordinary calls with fixed native stack bounds are admitted.
+Win64 wrappers can also prove a positional stack parameter unobserved over
+their complete original CFG. Exact branch targets, fallthrough and reciprocal
+edges must agree; unreachable or exceptional blocks supply no evidence.
+Stack coordinates must agree at joins. Frame-derived flag taint is unioned and
+propagated again when another predecessor adds an observation; stable loops
+reach the same bounded fixed point. Every original load supplies its complete
+interval, including loads removed by source conversion. Only exact SP-relative
+accesses and currently bound ordinary calls with fixed native stack bounds are
+admitted.
 The callee's home and argument area remains an implicit read range; missing
 source operands alone prove nothing. Frame addresses cannot escape through
 other registers, stored values or lossy arithmetic. Source preparation shares
 these facts with both emitters and SDK replay without compacting native slots.
+Original stack facts are computed once per prepared body, independently of the
+register-summary dependency waves. Temporary address intervals retain subrange
+taint; overlapping partial writes cannot authenticate a stale whole address.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
