@@ -2228,7 +2228,7 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 
 ## 스칼라 분기 검증
 
-`NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 충돌, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
+`NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 증명되지 않은 후보, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
 
 먼저 현재 기본 블록만으로 증명할 수 있는 대상을 검사하여 무관한 선행 경로가 작업 예산을 소모하지 않도록 합니다. 긴 선행 경로 회귀 테스트도 이 경계를 검증합니다.
 
@@ -2241,3 +2241,5 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 `NeverDLowScalarConstantTests`와 `NeverDIndirectCallValueSourceTests`는 블록 간 호출과 거부 조건을 두 C 경로의 실행으로 확인합니다. `NeverDLLVMCSourcePointerTests`는 포인터, 콜백, 별칭과 외부 선언을 O0/O2 및 UBSan으로 실행합니다. 네이티브 경계 테스트는 공개 MinGW 예제를 컴파일하고 MSVCRT/UCRT 배치 불일치를 거부합니다. 커널 또는 ARM64 네이티브 실행 인증은 아닙니다.
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte`는 x64 COFF, ELF, Mach-O에서 양방향 복사와 같은 저장소를 채운 뒤 복사하는 경우를 검증합니다. 두 C 경로를 O0/O2 및 UBSan으로 컴파일하고 실행하며, 독립적으로 계산한 결과로 복사한 모든 바이트를 확인합니다. x64가 아닌 호스트에서는 실행 검사를 명시적으로 건너뜁니다.
+
+`NeverDFiniteScalarBranchTests`는 x86/x64/AArch64와 COFF/ELF/Mach-O의 테이블 없는 산술 분기, 희소 마스크, 모듈러 연산, 부분 쓰기, 값 손실, 임시값 수명, 예산, 외부 진입점과 새 간선을 검사합니다. `NeverDFiniteScalarBranchSourceTests`는 최적화 켜기/끄기, O0/O2, UBSan에서 두 C 경로의 모든 사례를 실행하고 동시에 저장되는 코드 포인터의 정체성과 SSA 생략 시 거부를 확인합니다.

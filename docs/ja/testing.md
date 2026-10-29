@@ -2238,7 +2238,7 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 
 ## スカラー分岐の検証
 
-`NeverDConstantBranchTests` は x86/x64/ARM64 と PE、ELF、Mach-O で直接先行辺、全経路が一致する合流、不変読み取りを検証します。競合、未定義入力、呼び出しによる破壊、独立入口では動的分岐を維持します。`NeverDConstantBranchSourceTests` は最適化の有無、O0/O2、UBSan で x64/ARM64 の両 C 経路をコンパイルして実行します。整数のみの関数本体にはホスト標準ヘッダーを使い、ネイティブ ARM64 や Windows ドライバーの認証とは区別します。worker の独立した ELF x64 機械語との比較は、コールド状態の移動、参照、飛び越された E9 バイトも検証します。
+`NeverDConstantBranchTests` は x86/x64/ARM64 と PE、ELF、Mach-O で直接先行辺、全経路が一致する合流、不変読み取りを検証します。未証明の候補、未定義入力、呼び出しによる破壊、独立入口では動的分岐を維持します。`NeverDConstantBranchSourceTests` は最適化の有無、O0/O2、UBSan で x64/ARM64 の両 C 経路をコンパイルして実行します。整数のみの関数本体にはホスト標準ヘッダーを使い、ネイティブ ARM64 や Windows ドライバーの認証とは区別します。worker の独立した ELF x64 機械語との比較は、コールド状態の移動、参照、飛び越された E9 バイトも検証します。
 
 まず現在の基本ブロックだけで証明できる対象を調べ、無関係な先行経路による予算消費を避けます。長い先行経路の回帰テストでもこの境界を検証します。
 
@@ -2251,3 +2251,5 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 `NeverDLowScalarConstantTests` と `NeverDIndirectCallValueSourceTests` はブロック間呼び出しと拒否条件を両 C 経路の実行で検証します。`NeverDLLVMCSourcePointerTests` はポインター、コールバック、別名、外部宣言を O0/O2 と UBSan で実行します。ネイティブ境界テストは公開 MinGW 例をコンパイルし、MSVCRT/UCRT の配置不一致を拒否します。カーネルや ARM64 のネイティブ実行を保証するものではありません。
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` は x64 COFF、ELF、Mach-O で両方向のコピーと同一領域の埋め込み後のコピーを検証します。両 C 経路を O0/O2 と UBSan でコンパイルして実行し、独立に計算した結果で全コピー済みバイトを確認します。x64 以外のホストでは実行検証を明示的にスキップします。
+
+`NeverDFiniteScalarBranchTests` は x86/x64/AArch64、COFF/ELF/Mach-O のテーブルなし算術分岐、疎なマスク、剰余算術、部分書き込み、破壊、テンポラリーの寿命、予算、外部入口、新しい辺を検証します。`NeverDFiniteScalarBranchSourceTests` は最適化の有無、O0/O2、UBSan で両 C 経路の全ケースを実行し、同時に保存するコードポインターの識別と SSA 省略時の拒否も確認します。

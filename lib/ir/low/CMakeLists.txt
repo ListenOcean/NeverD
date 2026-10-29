@@ -102,6 +102,7 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilderException.cpp
   CFGBuilderInsn.cpp
   CFGBuilderScalarBranch.cpp
+  LowScalarFiniteExpression.cpp
   LowScalarExpression.cpp
   LowScalarSymbolic.cpp
   X86/CFGBuilderX86Fpu.cpp

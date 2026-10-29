@@ -2339,7 +2339,7 @@ Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallE
 
 ## Validación de saltos escalares
 
-`NeverDConstantBranchTests` cubre x86/x64/ARM64 con PE, ELF y Mach-O: predecesores directos, uniones unánimes y lecturas inmutables. Los conflictos, entradas indefinidas, registros alterados por llamadas y entradas independientes siguen siendo dinámicos. `NeverDConstantBranchSourceTests` compila y ejecuta ambas rutas C de x64/ARM64, con y sin optimización del pipeline, en O0/O2 con UBSan. Los cuerpos de enteros usan cabeceras estándar del anfitrión; esto no certifica ARM64 nativo ni controladores Windows. La comparación del worker con código máquina ELF x64 independiente también comprueba navegación en frío, referencias y bytes E9 omitidos.
+`NeverDConstantBranchTests` cubre x86/x64/ARM64 con PE, ELF y Mach-O: predecesores directos, uniones unánimes y lecturas inmutables. Las alternativas no demostradas, entradas indefinidas, registros alterados por llamadas y entradas independientes siguen siendo dinámicos. `NeverDConstantBranchSourceTests` compila y ejecuta ambas rutas C de x64/ARM64, con y sin optimización del pipeline, en O0/O2 con UBSan. Los cuerpos de enteros usan cabeceras estándar del anfitrión; esto no certifica ARM64 nativo ni controladores Windows. La comparación del worker con código máquina ELF x64 independiente también comprueba navegación en frío, referencias y bytes E9 omitidos.
 
 Primero se comprueba el destino demostrable en el bloque actual, evitando que predecesores irrelevantes agoten su presupuesto. Una regresión con un prefijo largo verifica este límite.
 
@@ -2352,3 +2352,5 @@ La propagación de constantes y copias de MedIR comparte `canPropagateConstantTo
 `NeverDLowScalarConstantTests` y `NeverDIndirectCallValueSourceTests` cubren llamadas entre bloques y rechazos ejecutando ambas rutas C. `NeverDLLVMCSourcePointerTests` ejecuta punteros, callbacks, alias y declaraciones externas con O0/O2 y UBSan. La suite nativa compila un ejemplo público MinGW y rechaza disposiciones MSVCRT/UCRT incompatibles. No certifica ejecución nativa del kernel ni ARM64.
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` comprueba las copias en ambos sentidos y después de rellenar el mismo almacenamiento en x64 COFF, ELF y Mach-O. Ambas rutas C se compilan y ejecutan con O0/O2 y UBSan; un resultado calculado de forma independiente comprueba cada byte copiado. Los hosts que no son x64 omiten explícitamente esta comprobación de ejecución.
+
+`NeverDFiniteScalarBranchTests` cubre despachos aritméticos sin tabla en x86/x64/AArch64 y COFF/ELF/Mach-O: máscaras dispersas, aritmética modular, escrituras parciales, valores alterados, temporales, presupuestos, entradas ajenas y nuevas aristas. `NeverDFiniteScalarBranchSourceTests` ejecuta todos los casos por ambas rutas C con y sin optimización, O0/O2 y UBSan, y verifica punteros de código almacenados independientes y el rechazo cuando se omite SSA.
