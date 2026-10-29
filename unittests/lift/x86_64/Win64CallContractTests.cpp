@@ -1639,7 +1639,7 @@ int main(void) { return read_neighbor() != 37 || observed != 1; }
 
 TEST(Win64CallContract,
      ParameterCopiesDistinguishEntrySeedsFromFirstDefinitions) {
-  for (unsigned Mode = 0; Mode < 3; ++Mode) {
+  for (unsigned Mode = 0; Mode < 4; ++Mode) {
     SCOPED_TRACE(Mode);
     BinaryImage Image;
     Image.Arch = Arch::X64;
@@ -1684,6 +1684,20 @@ TEST(Win64CallContract,
       Append(NdOp::COPY, RDX, RDX);
       Append(NdOp::INT_NEGATE, RCX, RDX);
     }
+    if (Mode == 3) {
+      Append(NdOp::COPY, RDX, RDX);
+      Append(NdOp::BRANCH, {}, MedVar::makeConst(Text + 0x10, 8));
+      Block.Succs = {1};
+      Func.Blocks.push_back(std::move(Block));
+      Block = MedBlock{};
+      Block.Id = 1;
+      Block.StartAddr = Text + 0x10;
+      Block.Preds = {0};
+      PhiNode Phi;
+      Phi.Output = RCX;
+      Phi.Args = {{0, RDX}};
+      Block.Phis.push_back(std::move(Phi));
+    }
     Append(NdOp::COPY, RDI, RCX);
     Append(NdOp::RETURN, {}, RDI);
     Func.Blocks.push_back(std::move(Block));
@@ -1714,7 +1728,8 @@ int main(void) {
   uint64_t a = UINT64_C(0xfedcba9876543210);
   for (unsigned i = 0; i < 64; ++i) {
     uint64_t b = a ^ UINT64_C(0x1020304050607080);
-    if ((uint64_t)copy_value(a, b) != (LOCAL_VALUE ? ~b : a)) return 1;
+    uint64_t expected = MODE == 3 ? b : MODE == 2 ? ~b : a;
+    if ((uint64_t)copy_value(a, b) != expected) return 1;
     a ^= a << 13;
     a ^= a >> 7;
     a ^= a << 17;
@@ -1724,8 +1739,7 @@ int main(void) {
 )";
       for (llvm::StringRef Level : {"-O0", "-O2"})
         source_call_execution_test::compileAndRun(
-            Source + "\n#define LOCAL_VALUE " + std::to_string(Mode == 2) +
-                "\n" + Harness,
+            Source + "\n#define MODE " + std::to_string(Mode) + "\n" + Harness,
             {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
     }
   }

@@ -552,10 +552,14 @@ ExprPtr MedToHighConverter::medvarToExpr(const MedVar &V) {
       ParamCopyIndexFunc = CurMed;
       ParamSourceCopies.clear();
       DefinedVersions.clear();
-      for (const auto &Blk : CurMed->Blocks)
+      for (const auto &Blk : CurMed->Blocks) {
+        for (const auto &Phi : Blk.Phis)
+          if (Phi.Output.Kind == MedVar::Reg)
+            DefinedVersions.insert(varKey(Phi.Output));
         for (const auto &Op : Blk.Ops)
           if (Op.Output.Kind == MedVar::Reg)
             DefinedVersions.insert(varKey(Op.Output));
+      }
       for (const auto &Blk : CurMed->Blocks)
         for (const auto &Op : Blk.Ops) {
           if (Op.Opcode != NdOp::COPY || Op.NumInputs < 1 ||
