@@ -287,6 +287,15 @@ MedLLVMEmitter::tryResolveDirectGlobalDataAddress(const MedVar &Address,
   std::optional<uint64_t> NumericAddress =
       Address.isConst() ? std::optional<uint64_t>(Address.ConstVal)
                         : traceSSAConst(Address);
+  // A completed REP address followed by a constant displacement is still a
+  // direct access. Resolve the complete expression at this memory use, while
+  // its register value remains in the original coordinate model.
+  if (!NumericAddress)
+    if (const MedOp *Def = lookupDef(Address);
+        Def && (Def->Opcode == NdOp::INT_ADD || Def->Opcode == NdOp::INT_SUB) &&
+        Def->NumInputs == 2 && traceSSAConst(Def->Inputs[0]) &&
+        traceSSAConst(Def->Inputs[1]))
+      NumericAddress = traceValueVA(Address);
   if (!NumericAddress)
     NumericAddress = traceAuthenticatedI386PicAddress();
   if (!NumericAddress)
