@@ -320,3 +320,9 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 v9 API `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` は `neverd_devirtualize_options_v9` を受け取ります。ゼロ初期化し、v1 接頭部の `struct_size` を全体のサイズに設定します。フラグは `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION` で、`reserved` はゼロです。旧 API はこの末尾を無視します。Python は `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9` を公開し、報告には `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation` を含めます。回帰テストは両 C 経路の添字付きローカル配列ループを O0/O2、ASan/UBSan で実行し、渡されたスタック領域全体を検査します。
 
 いずれかの証明戦略を有効にすると、入口フレームからのレジスタの有限オフセットも、網羅的に証明したうえで制御フローのノード間に保持します。合流では入力オフセットの和集合を取り、情報が欠ける場合や既存の制御タプル上限を超える場合は不明に戻します。レジスタ間の相関や新たなエイリアス前提は導入しません。
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## 有限インデックスによるフレーム読み取り
+
+通常の `LOAD` の入口フレーム相対オフセットが有限集合として網羅的に証明された場合、各候補の現在のフレームバイトを読み、条件付きのシンボリック値を保持します。残留コードには実行時の読み取り、完全な幅、バイト順を保持します。外部由来と認めるには、全候補の全バイトにその由来が必要です。未知のバイトや無効化された値は未知のままで、不完全な列挙では通常のシンボリックメモリ動作を維持します。既存の制御タプル、ソルバー、ノード、操作予算を使い、不変読み取り証拠や新たな非エイリアス契約は作成しません。

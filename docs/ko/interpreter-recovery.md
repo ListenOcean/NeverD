@@ -320,3 +320,9 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 v9 API `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9`는 `neverd_devirtualize_options_v9`을 받습니다. 0으로 초기화하고 v1 접두부의 `struct_size`를 전체 크기로 설정합니다. 플래그는 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`이며 `reserved`는 0이어야 합니다. 이전 API는 이 꼬리를 무시합니다. Python은 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`를 제공하고 보고서에는 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`가 포함됩니다. 회귀는 두 C 경로의 인덱스 지역 배열 루프를 O0/O2 및 ASan/UBSan으로 실행하고 제공된 전체 스택 저장소를 검사합니다.
 
 어느 증명 전략이든 활성화하면 진입 프레임에 대한 레지스터의 유한 오프셋도 완전하게 증명한 뒤 제어 흐름 노드 사이에 유지합니다. 합류에서는 들어오는 오프셋의 합집합을 사용하며, 정보가 없거나 기존 제어 튜플 한도를 넘으면 미상으로 처리합니다. 레지스터 간 상관관계나 새로운 별칭 가정을 추가하지 않습니다.
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## 유한 인덱스 프레임 읽기
+
+일반 `LOAD`의 진입 프레임 오프셋이 유한 집합임을 빠짐없이 증명하면 각 후보의 현재 프레임 바이트를 읽고 조건부 기호 값을 유지합니다. 잔여 코드에는 런타임 읽기와 전체 너비, 바이트 순서가 유지됩니다. 외부 출처로 인정하려면 모든 후보의 모든 바이트에 해당 출처가 있어야 합니다. 알 수 없는 바이트와 무효화된 값은 그대로 알 수 없는 상태이며, 불완전한 열거에는 일반 기호 메모리 동작을 적용합니다. 기존 제어 튜플, 솔버, 노드, 연산 예산을 사용하며 불변 읽기 증거나 새로운 비별칭 계약을 만들지 않습니다.

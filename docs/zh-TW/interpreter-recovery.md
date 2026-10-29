@@ -320,3 +320,9 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 v9 介面 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` 接受 `neverd_devirtualize_options_v9`。將結構清零，並將 v1 前綴的 `struct_size` 設為完整大小。旗標為 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`；`reserved` 必須為零。舊介面忽略此尾部。Python 提供 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`。報告含 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`。回歸透過兩條 C 路徑，在 O0/O2 與 ASan/UBSan 下執行動態索引區域陣列迴圈，並檢查整個提供的堆疊儲存區。
 
 啟用任一證明策略後，恢復過程也會在控制流程節點間保留經窮盡證明的暫存器相對入口堆疊框架的有限偏移。合流取所有傳入偏移的聯集；缺少事實或聯集超過現有控制元組上限時，退化為未知。這不會保留跨暫存器相關性，也不增加別名假設。
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## 有限索引的堆疊框架讀取
+
+一般 `LOAD` 的入口堆疊框架偏移經窮盡證明為有限集合後，會讀取每個候選位置的目前框架位元組，並保留條件符號值。殘留程式碼保留原始執行時讀取、完整寬度和位元組順序。只有所有候選位置的每個位元組都具備外部來源，輸出才取得該來源。未知位元組及已失效值仍為未知；列舉不完整時沿用一般符號記憶體行為。沿用既有控制元組、求解器、節點及操作預算，不產生不可變讀取證據，也不增加無別名契約。

@@ -1145,6 +1145,83 @@ int main(void) {
         }
 }
 
+TEST_F(DevirtualizationSourceTest, CLIIndexedFrameLoadKeepsSelectedPointer) {
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "indexed frame read source checks require clang";
+  const auto Binary = tmpFile("generic-indexed-load.elf");
+  ASSERT_TRUE(buildFixture(Binary, "generic_recovery_contract.S").ok());
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const auto Source = tmpFile("indexed-load.c");
+    std::vector<std::string> Args{"decompile",
+                                  Binary.string(),
+                                  "--func",
+                                  "generic_recovery_indexed_load",
+                                  "--devirtualize",
+                                  "--vm-machine-state",
+                                  "--vm-entry-frame=-64:8",
+                                  "--vm-entry-alignment=16:8",
+                                  "--vm-external-stores-disjoint-frame",
+                                  "--vm-chain-transfers=16",
+                                  "-o",
+                                  Source.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    const auto Recovered = exec(ndBin(), Args);
+    ASSERT_TRUE(Recovered.ok()) << Recovered.err;
+    const auto Harness = tmpFile("indexed-load-run.c");
+    std::ofstream OS(Harness);
+    OS << readSource(Source) << R"C(
+#include <stdint.h>
+#include <string.h>
+int main(void) {
+  const uint64_t inputs[] = {0, 1, 2, 255, UINT64_MAX};
+  const uint64_t values[] = {0, 37, UINT64_MAX, UINT64_C(0x123456789abcdef0)};
+  for (unsigned n = 0; n != sizeof(inputs)/sizeof(inputs[0]); ++n)
+    for (unsigned v = 0; v != sizeof(values)/sizeof(values[0]); ++v)
+      for (unsigned alias = 0; alias != 2; ++alias) {
+        _Alignas(16) uint8_t stack[256], expected[256];
+        uint64_t cells[4] = {11, 29, 41, 53}, wanted[4];
+        memcpy(wanted, cells, sizeof(cells));
+        memset(stack, 0xa5, sizeof(stack));
+        memcpy(expected, stack, sizeof(stack));
+        uint64_t pointers[2] = {(uintptr_t)&cells[1],
+                               (uintptr_t)&cells[alias ? 1 : 2]};
+        memcpy(expected + 112, pointers, sizeof(pointers));
+        wanted[1 + (!alias && (inputs[n] & 1))] = values[v];
+        uint64_t state[17] = {0};
+        state[1] = values[v];
+        state[2] = inputs[n];
+        state[4] = (uintptr_t)(stack + 136);
+        state[6] = pointers[1];
+        state[7] = pointers[0];
+        state[16] = 2;
+        if (generic_recovery_indexed_load((uint8_t *)state) != 0 ||
+            state[0] != pointers[inputs[n] & 1] ||
+            state[4] != (uintptr_t)(stack + 136) ||
+            memcmp(stack, expected, sizeof(stack)) ||
+            memcmp(cells, wanted, sizeof(cells))) return 1;
+      }
+  return 0;
+}
+)C";
+    OS.close();
+    std::ofstream(tmpFile("immintrin.h")).close();
+    for (const char *Optimization : {"-O0", "-O2"}) {
+      const auto Program = tmpFile(std::string("indexed-load-run") +
+                                   neverd::test::executableSuffix());
+      const auto Built = exec(
+          NEVERD_TEST_CLANG,
+          {"-std=c11", Optimization, "-fno-strict-aliasing",
+           "-fsanitize=address,undefined", "-fno-sanitize-recover=all", "-I",
+           tmp().string(), Harness.string(), "-o", Program.string()});
+      ASSERT_TRUE(Built.ok()) << Built.err;
+      const auto Ran = exec(Program.string(), {});
+      EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode;
+    }
+  }
+}
+
 TEST_F(DevirtualizationSourceTest, CLIDestinationVisitsKeepRepeatedRelations) {
   if (!hasCrossTargetClang())
     GTEST_SKIP() << "public recovery chain checks require clang";

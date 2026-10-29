@@ -124,4 +124,17 @@ generic_recovery_carried_indexed_store:
   addq $64, %rsp
   ret
 .size generic_recovery_carried_indexed_store,.-generic_recovery_carried_indexed_store
+.globl generic_recovery_indexed_load
+.type generic_recovery_indexed_load,@function
+generic_recovery_indexed_load:
+  subq $24, %rsp
+  movq %rdi, (%rsp)
+  movq %rsi, 8(%rsp)
+  movl %edx, %eax
+  andl $1, %eax
+  movq (%rsp,%rax,8), %rax
+  movq %rcx, (%rax)
+  addq $24, %rsp
+  ret
+.size generic_recovery_indexed_load,.-generic_recovery_indexed_load
 .section .note.GNU-stack,"",@progbits
