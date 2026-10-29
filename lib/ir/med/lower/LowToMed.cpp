@@ -964,6 +964,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   using OccurrenceKey = std::pair<va_t, int>;
   const RelativeLiteralOutputs RelativeLiterals =
       armRelativeLiteralOutputs(Low, TheArch, Fmt);
+  const auto ZeroExtendedAddresses =
+      x86ZeroExtendedAddressOutputs(Low, TheArch);
 
   MedFunc Func;
   Func.Entry = Low.Entry;
@@ -1424,6 +1426,20 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.NumInputs = 0;
         MOp.addInput(MedVar::makeConst(Proof.TargetVA, 4, Proof.Provenance,
                                        Proof.TargetOwnerVA));
+      }
+      // The zero extension that completes an x86-64 relocated 32-bit address
+      // holds that whole address.
+      if (const auto Completed = ZeroExtendedAddresses.find(MaterializationKey);
+          Completed != ZeroExtendedAddresses.end() &&
+          MOp.Opcode == NdOp::INT_ZEXT && MOp.Output.Size == 8 &&
+          MOp.IntrinsicOutputs.empty() &&
+          MOp.MemoryOrdering == NdMemoryOrdering::None &&
+          MOp.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        const auto &Field = *Completed->second;
+        MOp.Opcode = NdOp::COPY;
+        MOp.NumInputs = 0;
+        MOp.addInput(MedVar::makeConst(Field.TargetVA, 8, Field.Provenance,
+                                       Field.TargetOwnerVA));
       }
       const ImportedCallSlotFacts::Operation Position{LB.Id, LowOpIndex};
       if (const auto Reload = CachedImports.Reloads.find(Position);

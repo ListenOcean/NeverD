@@ -54,15 +54,15 @@ int entry(int a) { return gx(a) + gx(1); }
                                 true, {"entry", "gx"});
 }
 
-// The C library's stdout, read through its GOT entry, is the program's.
-// (Without PIC the format string's absolute address stays a separate limit
-// of LLVM C, which leaves that function out.)
-TEST_F(X86_64_ObjectExtern, TheLibrarysStreamIsReadThroughItsGOTEntry) {
+// The C library's stdout, read directly or through its GOT entry, is the
+// program's.  Without PIC the format string's absolute address in a 32-bit
+// register is its whole address once zero-extended.
+TEST_F(X86_64_ObjectExtern, TheLibrarysStreamIsTheProgramsOwn) {
   expectBothRoutesRunLikeSource(R"C(
 #include <stdio.h>
 int ff(int a) __attribute__((noinline));
 int ff(int a) { return fprintf(stdout, "%d\n", a); }
 int entry(int a) { return ff(a) * 3 + ff(-a); }
 )C",
-                                false, {"entry", "ff"});
+                                true, {"entry", "ff"});
 }

@@ -6632,6 +6632,14 @@ follows its `bx lr`: the PC then equals a literal-pool address, and treating it
 as a reference to that word made the rebuilt access depend on where the copied
 code sat.
 
+On x86-64, `mov r32, imm32` sets a register's low half to an absolute 32-bit
+field and zero-extends it into the whole register. Where the field's relocation
+occurrence names a target that is the field's own zero extension
+(`R_X86_64_32`), LowToMed (`x86ZeroExtendedAddressOutputs`) gives the zero
+extension that whole address. The 32-bit half stays a fragment, so a use that
+truncates the address still refuses, while the full register passes the
+pointer itself: a format string a non-PIC object passes to `printf`.
+
 ARM and Thumb control comes from the decoded instruction
 (`ARMLifter::classifyControl`). A load of PC returns only when it pops:
 `pop {..., pc}`, an LDM from SP, or `ldr pc, [sp], #N` with N a positive
