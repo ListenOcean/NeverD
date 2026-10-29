@@ -5900,6 +5900,12 @@ matching Codegen's baseline. No native APX hardware oracle is claimed.
 65/96/128-bit carriers at O0/O2 with undefined-behavior traps and independent
 APInt expectations; general wide-integer runtime/ABI support is not certified.
 
+`DataSymbolBindingTest.IntegerX87LoadsKeepTheirExponentBias` links an x86-64
+shared library whose first segment, at VA 0, spans 0x403E, with a `long` to
+`long double` conversion. Both C routes keep the FILD lowering's exponent
+bias a number, and the rebuilt function converts 0, -5 and 2^40 exactly in a
+native harness.
+
 `NeverDX86X87IntegerLoadTests` compares original `FILD m16/m32/m64`
 with Codegen, HighC and LLVMC at default/NoOpt and C O0/O2. Raw binary80
 values, complete output guards, control words and defined C1 cover all RC,

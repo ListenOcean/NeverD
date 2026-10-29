@@ -8818,10 +8818,14 @@ an IDIV's divide-error precondition, leave the register stack alone. The success
 shared integer LowIR. Zero has a guarded shift, and unsigned magnitude handles
 the signed minimum without overflow. Waiting precedes the source memory load.
 Unknown/occupied destinations remain incomplete instead of inventing stack
-overflow behavior. The pure concrete integer-to-binary80 conversion uses exact
-APFloat semantics and preserves floating state independently of that machine
-instruction admission. General x87 TOP/tag/status and fault ordering remain
-outside this projection.
+overflow behavior. Each constant this lowering places in a numeric operand
+position is a Scalar, as the lifter's own emission makes it
+(`isNumericConstantOperand`). The exponent bias 0x403E therefore stays a
+number where an image maps that address, as a shared library's first
+segment at VA 0 can; LLVM C read it as `unk_0 + 0x403E`. The pure concrete
+integer-to-binary80 conversion uses exact APFloat semantics and preserves
+floating state independently of that machine instruction admission. General
+x87 TOP/tag/status and fault ordering remain outside this projection.
 
 Both typed x87 tag seeds and owned-context captures consume the final CFG's
 source-counted relocation-root suppression. A switch label whose every
