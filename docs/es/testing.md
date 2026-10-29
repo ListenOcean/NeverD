@@ -2358,3 +2358,12 @@ La propagación de constantes y copias de MedIR comparte `canPropagateConstantTo
 `NeverDCalleeSourceCLI` comprueba cadenas x64 PE/ELF codificadas de forma independiente mediante la CLI real: selección por dirección/nombre, definiciones transitivas, exclusión de funciones ajenas, salida de una sola función, límites de profundidad exactos/superados, ciclos y rechazo de raíces/destinos. Si falla el cierre, conserva la salida existente. La unidad C completa de tres funciones se compila y ejecuta en O0/O2 con un resultado esperado independiente; los casos recursivos solo se inspeccionan.
 
 La regresión incluye reubicaciones ajenas de punteros a función en el mismo almacenamiento, destinos en la imagen, patrones enteros similares a direcciones, el desplazamiento final de origen y lecturas mediante ambos registros actualizados. `ConstantAddressFactsExcludeUnprovedAndNonAddressResults` verifica los límites x86/x64 para entradas dinámicas, segmentos, ancho reducido, interfaces malformadas y salidas que no son direcciones. `ZeroCountAndOffsetFormsKeepTheirNumericInputs` comprueba que se conserven las entradas; solo ejecuta en el anfitrión los casos de contador cero y ancho natural. Rechaza mapas truncados y contadores desbordados. Las comprobaciones de intrinsics nativos se omiten explícitamente si el LLVM instalado carece de ellos.
+
+## Transacciones neutras en la ranura de retorno
+
+`NeverDMedPrologueSavesTests` cubre anchuras, desplazamientos, valores vivos, lecturas de indicadores/PHI e invalidación tras editar el cuerpo. `NeverDPipelineOutcomeTests` comprueba la separación de solicitudes de máquina y parche. `NeverDX86NeutralAtomicSourceTests` compara instrucciones originales escritas de forma independiente con ambas rutas C para COFF/ELF/MachO, incluida la modificación del puntero de pila, en O0/O2 con UBSan. La ejecución requiere Linux x64; las pruebas de i386 no certifican ejecución nativa i386.
+
+
+## Auditorías de lecturas canónicas de supervisor
+
+`InterpreterSpecialization.SupervisorRead*` usa la elevación estricta real y rechaza una auditoría degradada a `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` comprueba el límite de recuperación de los bytes originales y el rechazo continuado de pruebas nativas y envolturas de fuente.

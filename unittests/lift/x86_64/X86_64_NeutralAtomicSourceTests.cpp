@@ -122,4 +122,95 @@ int main(void) {
                 {Optimization, "-fsanitize=undefined", "-fsanitize-trap=all"});
         }
 }
+
+TEST(X86NeutralAtomicSource, EntryReturnSlotKeepsNeutralTransactions) {
+#if !defined(__x86_64__) || defined(_WIN32) || defined(__APPLE__)
+  GTEST_SKIP()
+      << "the independent original-instruction control needs Linux x64";
+#endif
+  for (auto Format :
+       {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+    for (unsigned Width : {1u, 2u, 4u, 8u})
+      for (unsigned End : {0u, 1u}) {
+        if (Width == 8 && End)
+          continue;
+        const unsigned Offset = End ? 8 - Width : 0;
+        for (bool LLVM : {false, true}) {
+          SCOPED_TRACE(testing::Message() << unsigned(Format) << '/' << Width
+                                          << '/' << Offset << '/' << LLVM);
+          BinaryImage Image;
+          Image.Arch = Arch::X64;
+          Image.Bits = Bitness::Bits64;
+          Image.Format = Format;
+          Image.Base = Image.Entry = 0x1000;
+          Segment Text;
+          Text.VA = Image.Entry;
+          Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+          // A neutral transaction observes the real CALL return slot. Its old
+          // byte and flags are dead, but the transaction itself must remain.
+          // Include a changed stack pointer; the address is still
+          // entry-SP+Offset.
+          const uint8_t FrameBytes = Width == 2 ? 32 : 0;
+          Text.Data = {0x48, 0x83, 0xec, FrameBytes, 0xf0};
+          if (Width == 2)
+            Text.Data.push_back(0x66);
+          if (Width == 8)
+            Text.Data.push_back(0x48);
+          Text.Data.insert(Text.Data.end(),
+                           {uint8_t(Width == 1 ? 0x80 : 0x83), 0x4c, 0x24,
+                            uint8_t(Offset + FrameBytes), 0, 0x48, 0x83, 0xc4,
+                            FrameBytes, 0xb8, 0x57, 0x23, 0, 0, 0xc3});
+          std::string OriginalBytes;
+          for (uint8_t Byte : Text.Data) {
+            if (!OriginalBytes.empty())
+              OriginalBytes += ',';
+            OriginalBytes += std::to_string(Byte);
+          }
+          Text.Size = Text.FileSz = Text.Data.size();
+          auto Function = Symbol::makeFunc(Image.Entry, Text.Size);
+          Function.Name = "return_slot_transaction";
+          Image.Symbols.push_back(std::move(Function));
+          Image.Segments.push_back(std::move(Text));
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.SourceProjection = true;
+          Options.LiftMode = LLVM;
+          Options.OnlyFunctionEntries = {Image.Entry};
+          llvm::LLVMContext Context;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+          }
+          CEmitterOptions COptions;
+          COptions.TheArch = Arch::X64;
+          COptions.Format = Format;
+          COptions.Image = &Image;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          ASSERT_TRUE(
+              LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions)
+                   : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          Output.flush();
+          EXPECT_NE(Source.find("lock xadd"), std::string::npos);
+          EXPECT_NE(Source.find("llvm.addressofreturnaddress.p0"),
+                    std::string::npos);
+          const auto Oracle = std::string(R"C(
+extern uint64_t original_return_slot(void);
+__asm__(".text\n.globl original_return_slot\noriginal_return_slot:\n"
+        ".byte )C") + OriginalBytes +
+                              R"C(\n");
+int main(void) {
+  if (original_return_slot() != 0x2357) return 1;
+  return return_slot_transaction() != 0x2357;
+}
+)C";
+          for (const auto *Optimization : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Optimization, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+      }
+}
 } // namespace

@@ -1445,6 +1445,147 @@ MedFunc readsReturnAddress() {
 
 const MedOp &read(const MedFunc &Func) { return Func.Blocks[0].Ops[1]; }
 
+MedFunc neutralReturnSlot(unsigned Width = 1, int64_t Offset = 0,
+                          Arch Architecture = Arch::X64) {
+  auto Func = readsReturnAddress();
+  const auto PointerSize = getTargetRegInfo(Architecture).PointerSize;
+  auto Stack = sp(0);
+  Stack.TheArch = Architecture;
+  Stack.Size = PointerSize;
+  auto Address = temp(21);
+  Address.TheArch = Architecture;
+  Address.Size = PointerSize;
+  auto Old = temp(20);
+  Old.TheArch = Architecture;
+  Old.Size = Width;
+  Func.Blocks[0].Ops = {
+      op(NdOp::COPY, Stack, {Stack}),
+      op(NdOp::INT_ADD, Address,
+         {Stack, MedVar::makeConst(uint64_t(Offset), PointerSize)}),
+      op(NdOp::ATOMIC_ADD, Old, {Address, MedVar::makeConst(0, Width)}),
+      op(NdOp::RETURN, none(), {MedVar::makeConst(7, PointerSize)})};
+  Func.Blocks[0].Ops[2].MemoryOrdering =
+      NdMemoryOrdering::SequentiallyConsistent;
+  return Func;
+}
+
+TEST(MedNeutralReturnSlot, OnlyCompleteUnobservedSlotTransactionsAreProjected) {
+  for (auto Architecture : {Arch::X86, Arch::X64})
+    for (auto Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (unsigned Width : {1u, 2u, 4u, 8u})
+        for (int64_t Offset = -1; Offset <= 8; ++Offset) {
+          SCOPED_TRACE(testing::Message()
+                       << unsigned(Architecture) << '/' << unsigned(Format)
+                       << '/' << Width << '/' << Offset);
+          auto Func = neutralReturnSlot(Width, Offset, Architecture);
+          markSourceStackAccesses(Func, Architecture, Format);
+          const auto &Atomic = Func.Blocks[0].Ops[2];
+          const int64_t End = getTargetRegInfo(Architecture).PointerSize;
+          const bool Fits =
+              Offset >= 0 && Offset < End && Width <= End - Offset;
+          EXPECT_EQ(Atomic.SourceReturnSlotOffset.has_value(), Fits);
+          if (Fits && Atomic.SourceReturnSlotOffset)
+            EXPECT_EQ(*Atomic.SourceReturnSlotOffset, Offset);
+          EXPECT_EQ(Atomic.Opcode, NdOp::ATOMIC_ADD);
+          EXPECT_FALSE(Atomic.PrologueSave);
+          EXPECT_EQ(Func.Blocks[0].Ops.size(), 4u);
+        }
+}
+
+TEST(MedNeutralReturnSlot, ChangedBodiesCannotRetainTheAddressProof) {
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Func = neutralReturnSlot();
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    ASSERT_EQ(Func.Blocks[0].Ops[2].SourceReturnSlotOffset, 0);
+    auto &Ops = Func.Blocks[0].Ops;
+    auto &Atomic = Ops[2];
+    auto Entry = StackEntryKind::Call;
+    switch (Case) {
+    case 0:
+      Atomic.Inputs[1].ConstVal = 1;
+      break;
+    case 1:
+      Atomic.Opcode = NdOp::ATOMIC_XCHG;
+      break;
+    case 2:
+      Atomic.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 3:
+      Atomic.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      break;
+    case 4:
+      Atomic.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 5:
+      Atomic.Inputs[0].Size = 4;
+      break;
+    case 6:
+      Atomic.Inputs[1].Size = 2;
+      break;
+    case 7:
+      Ops[3].Inputs[0] = Atomic.Output;
+      break;
+    case 8:
+      Ops[1].Inputs[0] = rcx(0);
+      break;
+    case 9:
+      Entry = StackEntryKind::ProcessEntry;
+      break;
+    case 10:
+      Func.Blocks[0].Preds.push_back(0);
+      break;
+    case 11:
+      Func.SkippedSSA = true;
+      break;
+    case 12:
+      Ops[1].Inputs[1].ConstVal = 8;
+      break;
+    case 13:
+      Func.AnalystStackFrame = true;
+      break;
+    }
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF, Entry);
+    EXPECT_FALSE(Atomic.SourceReturnSlotOffset);
+    EXPECT_FALSE(Atomic.PrologueSave);
+  }
+}
+
+TEST(MedNeutralReturnSlot, FlagAndPhiReadersKeepOriginalReturnSlotBytes) {
+  for (bool PhiRead : {false, true}) {
+    auto Func = neutralReturnSlot();
+    auto &Block = Func.Blocks[0];
+    const auto Old = Block.Ops[2].Output;
+    if (PhiRead) {
+      PhiNode Phi;
+      Phi.Output = temp(22);
+      Phi.Args.emplace_back(0, Old);
+      Block.Phis.push_back(std::move(Phi));
+    } else {
+      Block.Ops.insert(
+          Block.Ops.end() - 1,
+          op(NdOp::INT_EQUAL, temp(22), {Old, MedVar::makeConst(0, Old.Size)}));
+      Block.Ops.back().Inputs[0] = temp(22);
+    }
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_FALSE(Block.Ops[2].SourceReturnSlotOffset);
+  }
+}
+
+TEST(MedNeutralReturnSlot, AnotherEntryDoesNotInheritTheCallersSlot) {
+  auto Func = neutralReturnSlot();
+  MedBlock Other;
+  Other.Id = 1;
+  Other.StartAddr = Func.Entry + 16;
+  Other.Ops = {Func.Blocks[0].Ops[2], Func.Blocks[0].Ops.back()};
+  Other.Ops.front().Output.Id = 30;
+  Func.Blocks.push_back(std::move(Other));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  EXPECT_FALSE(Func.Blocks[0].Ops[2].SourceReturnSlotOffset);
+  EXPECT_FALSE(Func.Blocks[1].Ops[0].SourceReturnSlotOffset);
+}
+
 TEST_P(MedPrologueSaves, ALoadOfTheEntrySlotIsTheReturnAddress) {
   MedFunc Func = readsReturnAddress();
   markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);

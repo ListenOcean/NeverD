@@ -96,6 +96,9 @@ struct HighExpr {
   NdOp Op = NdOp::NOP;
   NdMemoryOrdering MemoryOrdering = NdMemoryOrdering::None;
   NdMemoryAddressSpace MemoryAddressSpace = NdMemoryAddressSpace::Default;
+  /// ATOMIC_ADD's source-only return-slot address, proved by MedIR. Preserve
+  /// the transaction but address the compiled function's actual return slot.
+  std::optional<uint16_t> SourceReturnSlotOffset;
   TypeRef Type;
 
   /// For Var

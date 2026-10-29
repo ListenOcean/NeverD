@@ -14903,3 +14903,12 @@ extent of a dynamic count, a segmented address or an address-size override.
 `--func --callees` loads the complete function inventory before querying the shared call tree and selecting a source unit. Single-function loading must not hide unselected callees from that query. The CLI reuses the SDK graph limits and refuses both a truncated listing and a depth-limited tree before writing output. Imports and signature-identified library code remain declarations; refused selected callees retain their existing diagnostic notes.
 
 HighC and LLVM emission share `x86RepAccessSpan` for these complete ranges. At the actual MOVS/STOS memory operand, LLVM selects ordinary image backing even when an unrelated function-pointer relocation shares its owner. Counts and unproven immediate fill patterns retain their integer bits. Rebased operands translate the actual hardware completion delta back to the input address model; they do not reconstruct runtime results from the count. `x86RepConstantAddressOutput` supplies normal-completion address facts for later memory uses, including the auxiliary MOVS destination result. These facts require constant address, count and direction with flat natural-width addressing; they neither eliminate the instruction nor prove that it cannot fault. Zero-count, segmented and reduced-address-width forms retain their existing input handling.
+
+## Neutral return-slot transactions
+
+For source projection, `markSourceStackAccesses` can bind an x86 atomic addition of zero wholly within the CALL return slot to the compiled function’s actual return slot. The old value must be unread, including flag and PHI consumers. Both C routes retain the native transaction and use `llvm.addressofreturnaddress`, through a local Clang intrinsic declaration in C. They do not substitute a temporary object or a frame-pointer offset. Segmented or narrow addresses, nonneutral operations, incomplete slot spans, unknown stack coordinates and non-CALL entries retain their original behavior. Binary lifting and patching never acquire this source annotation.
+
+
+## Canonical supervisor-read audits
+
+Canonical `RDMSR` recovery requires the lifter’s `Complete` undefined-output audit, including the exact operation digest. A `Missing` audit is refused. Audit completeness does not grant supervisor execution, MSR accessibility, exception handling or native/source proof authority; the existing explicit nonfaulting kernel profile and complete instruction-bundle checks remain required.

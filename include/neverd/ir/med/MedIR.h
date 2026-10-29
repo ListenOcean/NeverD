@@ -252,6 +252,11 @@ struct MedOp {
   /// Source views only: this LOAD reads the return address the call pushed,
   /// in a function that never overwrites it (markReturnAddressReads).
   bool ReturnAddressRead = false;
+  /// Source views only: a neutral atomic transaction whose unread old value
+  /// permits addressing the compiled function's real CALL return slot.
+  /// The complete access lies within that slot, at this byte offset. The
+  /// transaction stays observable; this never authorizes its removal.
+  std::optional<uint16_t> SourceReturnSlotOffset;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably
   /// never writes, so SSA keeps their pre-call values across this call.

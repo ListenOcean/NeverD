@@ -4511,6 +4511,16 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
        << "(0);\n";
     return true;
   }
+  if (IID == llvm::Intrinsic::addressofreturnaddress) {
+    if ((Opts.TheArch != Arch::X86 && Opts.TheArch != Arch::X64) ||
+        !Call.getType()->isPointerTy() || Call.arg_size() != 0 ||
+        Call.getType()->getPointerAddressSpace() != 0)
+      throw std::invalid_argument("unsupported return-slot address intrinsic");
+    emitIndent(Indent);
+    OS << getName(&Call) << " = "
+       << renderX86ReturnSlotAddress(freshVar("llvm_return_slot")) << ";\n";
+    return true;
+  }
   if (IID == llvm::Intrinsic::localaddress) {
     if (!SEHParentFrameName.empty()) {
       emitIndent(Indent);

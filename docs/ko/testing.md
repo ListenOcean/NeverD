@@ -2247,3 +2247,12 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 `NeverDCalleeSourceCLI`는 독립적으로 인코딩한 x64 PE/ELF 호출 체인을 실제 CLI로 검사합니다. 주소/이름 선택, 전이적 정의, 무관한 함수 제외, 단일 함수 출력, 깊이 한계와 초과, 순환, 루트/피호출 함수 거부를 다룹니다. 호출 폐쇄 실패 시 기존 출력을 보존합니다. 완전한 세 함수 C 단위를 O0/O2로 컴파일하고 실행해 독립적인 예상 결과를 확인합니다. 재귀 사례는 검사만 합니다.
 
 반복 이미지 접근 회귀는 같은 데이터 영역의 무관한 함수 포인터 재배치, 이미지 목적지, 주소처럼 보이는 정수 채움 값, 완료된 소스 변위와 갱신된 두 레지스터를 통한 후속 읽기도 검사한다. `ConstantAddressFactsExcludeUnprovedAndNonAddressResults`는 x86/x64에서 동적 입력, 세그먼트, 축소 폭, 잘못된 인터페이스 및 주소가 아닌 출력을 배제한다. `ZeroCountAndOffsetFormsKeepTheirNumericInputs`는 입력 유지를 검사하며 자연 폭의 횟수 0 사례만 호스트에서 실행한다. 전체 범위 검사는 잘린 매핑과 횟수 오버플로를 거부한다. 설치된 LLVM에 해당 네이티브 intrinsic이 없으면 관련 검사는 명시적으로 건너뛴다.
+
+## 반환 슬롯의 중립 원자 연산
+
+`NeverDMedPrologueSavesTests`는 폭, 오프셋, 사용 중인 값, 플래그/PHI 읽기, 본문 변경 후 증거 무효화를 검사합니다. `NeverDPipelineOutcomeTests`는 기계 및 패치 요청의 분리를 검사합니다. `NeverDX86NeutralAtomicSourceTests`는 독립적으로 작성한 원본 명령과 COFF/ELF/MachO의 두 C 경로를 비교하며, 조정된 스택 포인터도 O0/O2 및 UBSan으로 실행합니다. 실행 대조에는 Linux x64가 필요하며 i386 증명 테스트는 네이티브 i386 실행 검증을 의미하지 않습니다.
+
+
+## 표준 감독 모드 읽기 감사
+
+`InterpreterSpecialization.SupervisorRead*`는 실제 엄격한 리프트를 사용하고 `Missing`으로 낮춘 감사를 거부합니다. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery`는 원본 바이트 복원 경계 및 네이티브 증명과 소스 래핑의 지속적인 거부를 확인합니다.

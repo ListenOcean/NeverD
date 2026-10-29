@@ -1754,6 +1754,81 @@ TEST(LLVMCIntrinsicSemantics,
   compileAndCheck(Text, true);
 }
 
+TEST(LLVMCIntrinsicSemantics, ReturnSlotAddressTracksTheCompiledFrame) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the return-slot execution control requires x64";
+#endif
+  llvm::LLVMContext C;
+  llvm::Module M("return_slot", C);
+  M.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getInt64Ty()}, false),
+      llvm::GlobalValue::ExternalLinkage, "slot_matches", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  auto *Storage = B.CreateAlloca(B.getInt8Ty(), Fn->getArg(0));
+  Storage->setAlignment(llvm::Align(64));
+  B.CreateStore(B.getInt8(37), Storage)->setVolatile(true);
+  auto *Last = B.CreateGEP(B.getInt8Ty(), Storage,
+                           B.CreateSub(Fn->getArg(0), B.getInt64(1)));
+  B.CreateStore(B.getInt8(37), Last)->setVolatile(true);
+  auto *Address = B.CreateIntrinsic(llvm::Intrinsic::addressofreturnaddress,
+                                    {B.getPtrTy()}, {});
+  auto *Expected = B.CreateIntrinsic(llvm::Intrinsic::returnaddress,
+                                     {B.getPtrTy()}, {B.getInt32(0)});
+  auto *Actual = B.CreateLoad(B.getInt64Ty(), Address);
+  auto *Marker = B.CreateLoad(B.getInt8Ty(), Last);
+  Marker->setVolatile(true);
+  B.CreateRet(B.CreateZExt(
+      B.CreateAnd(
+          B.CreateICmpEQ(Actual, B.CreatePtrToInt(Expected, B.getInt64Ty())),
+          B.CreateICmpEQ(Marker, B.getInt8(37))),
+      B.getInt64Ty()));
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  const auto Text = "#include <stdint.h>\n" + emit(M) + R"C(
+int main(void) {
+  for (unsigned n = 1; n <= 96; ++n)
+    if (!slot_matches(n)) return 1;
+  return 0;
+}
+)C";
+  for (auto Optimization : {"-O0", "-O2"})
+    for (auto Frame : {"-fomit-frame-pointer", "-fno-omit-frame-pointer"})
+      compileAndCheck(Text, false, {}, Optimization, true, {}, {Frame});
+}
+
+TEST(LLVMCIntrinsicSemantics, ReturnSlotAddressRejectsUnrepresentedTargets) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (unsigned Space : {0u, 1u}) {
+      SCOPED_TRACE(testing::Message()
+                   << unsigned(Architecture) << '/' << Space);
+      llvm::LLVMContext C;
+      llvm::Module M("return_slot", C);
+      M.setDataLayout(Architecture == Arch::X86 ? "e-p:32:32" : "e-p:64:64");
+      llvm::IRBuilder<> B(C);
+      auto *Pointer = B.getPtrTy(Space);
+      auto *Fn = llvm::Function::Create(llvm::FunctionType::get(Pointer, false),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "get_slot", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+      B.CreateRet(B.CreateIntrinsic(llvm::Intrinsic::addressofreturnaddress,
+                                    {Pointer}, {}));
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      std::string Text;
+      llvm::raw_string_ostream Output(Text);
+      if (Space || Architecture == Arch::AArch64)
+        EXPECT_THROW(LLVMCEmitter().emit(M, Output, Options),
+                     std::invalid_argument);
+      else {
+        ASSERT_TRUE(LLVMCEmitter().emit(M, Output, Options));
+        EXPECT_NE(Text.find("llvm.addressofreturnaddress.p0"),
+                  std::string::npos);
+      }
+    }
+}
+
 TEST(LLVMCIntrinsicSemantics, IntegerAddressAdditionUsesIntegerArithmetic) {
   llvm::LLVMContext C;
   llvm::Module M("address-add", C);

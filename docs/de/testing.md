@@ -2373,3 +2373,12 @@ Konstanten- und Kopierpropagation in MedIR teilen `canPropagateConstantToOperand
 `NeverDCalleeSourceCLI` prüft unabhängig codierte x64-PE/ELF-Aufrufketten über die produktive CLI: Adress-/Namensauswahl, transitive Definitionen, Ausschluss unbeteiligter Funktionen, Einzelfunktionsausgabe, genaue/überschrittene Tiefengrenzen, Zyklen und abgelehnte Wurzeln/Aufrufziele. Scheitert die vollständige Erfassung, bleibt vorhandene Ausgabe erhalten. Die vollständige C-Einheit mit drei Funktionen wird mit O0/O2 kompiliert und gegen ein unabhängig erwartetes Ergebnis ausgeführt; rekursive Fälle werden nur untersucht.
 
 Der Test umfasst auch unabhängige Funktionszeigerrelokationen im selben Speicher, Abbildziele, adressähnliche Integer-Füllmuster, die abschließende Quellverschiebung und spätere Lesezugriffe über beide aktualisierten Register. `ConstantAddressFactsExcludeUnprovedAndNonAddressResults` prüft die x86/x64-Grenzen für dynamische Eingaben, Segmente, reduzierte Breite, fehlerhafte Schnittstellen und Nichtadressausgaben. `ZeroCountAndOffsetFormsKeepTheirNumericInputs` prüft den Eingabeerhalt; nur Nullzählerfälle natürlicher Breite laufen auf dem Host. Bereichstests lehnen verkürzte Abbildungen und überlaufende Zähler ab. Fehlen die nativen Intrinsics im installierten LLVM, werden deren Prüfungen ausdrücklich übersprungen.
+
+## Neutrale Transaktionen im Rücksprungslot
+
+`NeverDMedPrologueSavesTests` prüft Breiten, Versätze, lebende Werte, Flag-/PHI-Leser und die Invalidierung nach Änderungen. `NeverDPipelineOutcomeTests` prüft die Trennung von Maschinen- und Patchanforderungen. `NeverDX86NeutralAtomicSourceTests` vergleicht unabhängig geschriebene Originalinstruktionen mit beiden C-Wegen für COFF/ELF/MachO, einschließlich verändertem Stackpointer, unter O0/O2 und UBSan. Die Ausführung erfordert Linux x64; die i386-Beweise ersetzen keine native i386-Ausführungsprüfung.
+
+
+## Audits kanonischer Supervisor-Lesezugriffe
+
+`InterpreterSpecialization.SupervisorRead*` verwendet das tatsächliche strikte Lifting und lehnt ein auf `Missing` herabgestuftes Audit ab. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` prüft die Wiederherstellungsgrenze anhand der Originalbytes sowie die weiterhin verweigerten nativen Beweise und Quellcode-Wrapper.
