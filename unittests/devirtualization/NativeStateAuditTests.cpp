@@ -936,6 +936,62 @@ TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
   }
 }
 
+TEST(X86NativeStateAudit, InterruptVectorsBindUnsignedImmediateAndExtent) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  for (unsigned Vector = 0; Vector != 256; ++Vector) {
+    SCOPED_TRACE(Vector);
+    const std::vector<uint8_t> Bytes{0xcd, uint8_t(Vector)};
+    EXPECT_FALSE(lift(Bytes).empty());
+    const auto Decode = [&] {
+      DecodedInsn I{};
+      EXPECT_EQ(
+          Dec.decodeOneForLift(Bytes.data(), Bytes.size(), CodeAddress, I),
+          int(Bytes.size()));
+      return I;
+    };
+    auto Insn = Decode();
+    EXPECT_TRUE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X86));
+    for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+      SCOPED_TRACE(Mutation);
+      Insn = Decode();
+      auto &X = Insn.Raw->detail->x86;
+      switch (Mutation) {
+      case 0:
+        Insn.Raw->bytes[1] ^= 1;
+        break;
+      case 1:
+        X.operands[0].imm = int64_t(Vector) - 256;
+        break;
+      case 2:
+        X.operands[0].size = 8;
+        break;
+      case 3:
+        X.operands[0].access = CS_AC_READ;
+        break;
+      case 4:
+        X.encoding.imm_offset = 0;
+        break;
+      case 5:
+        X.encoding.imm_size = 2;
+        break;
+      case 6:
+        X.op_count = 0;
+        break;
+      case 7:
+        X.eflags = 0;
+        break;
+      case 8:
+        X.prefix[0] = 0xf3;
+        break;
+      }
+      expectUnaudited(Dec, Insn);
+    }
+  }
+}
+
 TEST(X86NativeStateAudit, CR3EncodingKeepsArbitraryFlagsAndRejectsForgedBank) {
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));

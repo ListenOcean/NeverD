@@ -163,6 +163,49 @@ static neverd_x64_state_v6 seed(void) {
 }
 )C";
 
+TEST_F(X64ContinuationExportTest, SoftwareInterruptStopsBeforeSelectedHandler) {
+  load({0xcd, 0xff, 0xcd, 0x2d, 0xb8, 7, 0, 0, 0});
+  const auto Request = request(R"("instructions":[4096,4098,4100])");
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    auto [Source, Manifest] = source(Request, LLVM);
+    auto Parsed = llvm::json::parse(Manifest);
+    ASSERT_TRUE(bool(Parsed));
+    EXPECT_EQ(Parsed->getAsObject()->getInteger("native_requests"), 0);
+    execute(Source, std::string(Seed) + R"C(
+int main(void) {
+    uint64_t gdt[4]={0,0,0,0x00af9b000000ffffULL},idt[512]={0};
+    unsigned char stack[256];
+    const unsigned vectors[]={255,45};
+    for(unsigned i=0;i<2;++i) {
+        neverd_x64_state_v6 s=seed();s.PC=0x1000+2*i;
+        const uint64_t old_sp=(uintptr_t)(stack+231),old_ax=s.GPR[0];
+        s.GPR[4]=old_sp;s.GDTR.Base=(uintptr_t)gdt;s.GDTR.Limit=sizeof(gdt)-1;
+        s.IDTR.Base=(uintptr_t)idt;s.IDTR.Limit=16*vectors[i]+15;
+        idt[2*vectors[i]]=0x1004|(24ULL<<16)|(0x8eULL<<40);
+        uint64_t budget=0;neverd_x64_state_v6 saved=s;
+        CHECK(neverd_x64_continue_v6(&s,&budget)==9 && !memcmp(&s,&saved,sizeof(s)));
+        --s.IDTR.Limit;saved=s;budget=2;
+        memset(stack,0xa5,sizeof(stack));
+        CHECK(neverd_x64_continue_v6(&s,&budget)==5 && budget==2);
+        CHECK(!memcmp(&s,&saved,sizeof(s)));
+        for(unsigned j=0;j<sizeof(stack);++j)CHECK(stack[j]==0xa5);
+        ++s.IDTR.Limit;
+        CHECK(neverd_x64_continue_v6(&s,&budget)==7 && budget==1);
+        CHECK(s.PC==0x1004 && s.GPR[0]==old_ax && s.NMIBlocked==1);
+        uint64_t frame[5];memcpy(frame,(void *)(uintptr_t)s.GPR[4],sizeof(frame));
+        CHECK(frame[0]==0x1002+2*i && frame[1]==8 && frame[2]==0x246);
+        CHECK(frame[3]==old_sp && frame[4]==16);
+        budget=2;
+        CHECK(neverd_x64_continue_v6(&s,&budget)==8 && budget==1);
+        CHECK(s.PC==0x1009 && s.GPR[0]==7);
+    }
+    return 0;
+}
+)C");
+  }
+}
+
 TEST_F(X64ContinuationExportTest, DriverRetainsPhysicalCallsPivotsAndReentry) {
   load({0x48, 0x89, 0x4c, 0x24, 0x08,         // mov [rsp+8],rcx
         0xe8, 0x06, 0x00, 0x00, 0x00,         // call 1010

@@ -222,18 +222,52 @@ bool sysretIntrinsic(const LowOp &Op,
          Op.MemoryOrdering == NdMemoryOrdering::None;
 }
 
-bool eventIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs) {
+bool eventIntrinsic(const LowOp &Op, Intrinsic Id, unsigned Inputs,
+                    NdVar Output = {}) {
   return Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == Inputs &&
-         !Op.Output.Size && Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
-         Op.Inputs[0].Offset == uint64_t(Id) &&
+         Op.Output.Size == Output.Size &&
+         (!Output.Size || Op.Output == Output) && Op.Inputs[0].isConst() &&
+         Op.Inputs[0].Size == 2 && Op.Inputs[0].Offset == uint64_t(Id) &&
          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
          Op.MemoryOrdering == NdMemoryOrdering::None;
 }
 
-bool int3Instruction(const SpecializationInstruction &Instruction) {
-  return Instruction.NativeBytes == std::vector<uint8_t>{0xcc} &&
-         Instruction.Ops.size() == 1 &&
-         eventIntrinsic(Instruction.Ops.front(), Intrinsic::Int3, 1);
+std::optional<uint8_t>
+softwareInterruptVector(const SpecializationInstruction &Instruction) {
+  const auto &Bytes = Instruction.NativeBytes;
+  if (Instruction.Ops.size() != 1)
+    return std::nullopt;
+  const auto &Op = Instruction.Ops.front();
+  if (Bytes == std::vector<uint8_t>{0xcc})
+    return eventIntrinsic(Op, Intrinsic::Int3, 1) ? std::optional<uint8_t>(3)
+                                                  : std::nullopt;
+  if (Bytes.size() != 2 || Bytes[0] != 0xcd)
+    return std::nullopt;
+  const uint8_t Vector = Bytes[1];
+  if (Vector == 3)
+    return eventIntrinsic(Op, Intrinsic::Int3, 1) ? std::optional(Vector)
+                                                  : std::nullopt;
+  // The strict binary provider also supplies ordinary source service shapes.
+  // This explicit CPL0 profile owns the original IDT transfer, including those
+  // vectors: it neither invokes an OS service nor invents its return in RAX.
+  if (Vector == 0x2d) {
+    if (!eventIntrinsic(Op, Intrinsic::DebugService, 6,
+                        NdVar::reg(x86reg::RAX, 8)))
+      return std::nullopt;
+    const uint64_t Registers[] = {x86reg::RAX, x86reg::RCX, x86reg::RDX,
+                                  x86reg::R8, x86reg::R9};
+    for (unsigned I = 0; I != std::size(Registers); ++I)
+      if (Op.Inputs[I + 1] != NdVar::reg(Registers[I], 8))
+        return std::nullopt;
+  } else {
+    const bool Void = Vector == 0x29 || Vector == 0x2c;
+    if (!eventIntrinsic(Op, Intrinsic::IntN, Vector == 0x29 ? 3 : 2,
+                        Void ? NdVar{} : NdVar::reg(x86reg::RAX, 8)) ||
+        Op.Inputs[1] != NdVar::cst(Vector, 1) ||
+        (Vector == 0x29 && Op.Inputs[2] != NdVar::reg(x86reg::RCX, 4)))
+      return std::nullopt;
+  }
+  return Vector;
 }
 
 bool iretInstruction(const SpecializationInstruction &Instruction) {
@@ -943,11 +977,12 @@ buildInstruction(SpecializationInstruction Instruction,
       sysretIntrinsic(Instruction.Ops.front(), Options) &&
       Instruction.Origin.Control == LowInstructionControl::Terminator;
   const bool Iret = Events && iretInstruction(Instruction);
-  const bool Int3 = Events && int3Instruction(Instruction);
+  const auto Interrupt =
+      Events ? softwareInterruptVector(Instruction) : std::nullopt;
   if (Instruction.ProfileProjection != InterpreterProfileProjection::None ||
       Instruction.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete ||
       (Instruction.Origin.Control == LowInstructionControl::Terminator &&
-       !Sysret && !Iret && !Int3))
+       !Sysret && !Iret && !Interrupt))
     RequireNative("instruction requires an explicit native environment");
   if (Instruction.UndefinedEffects.Effects.size() >
       std::size(State{}.Undefined))
@@ -967,7 +1002,7 @@ buildInstruction(SpecializationInstruction Instruction,
                                            NdVar::tmp(ScratchBase - 16, 16))
           : std::nullopt;
   for (const LowOp &Op : Instruction.Ops) {
-    if (!Timestamp && !Sysret && !Iret && !Int3 &&
+    if (!Timestamp && !Sysret && !Iret && !Interrupt &&
         !supportedOperation(Op, Options, WideDivision)) {
       std::string Detail = "unsupported continuation operation: ";
       Detail += ndOpName(Op.Opcode);
@@ -1020,7 +1055,7 @@ buildInstruction(SpecializationInstruction Instruction,
              {Guard.load(offsetof(State, PC)), constant(Result.Address)});
   const NdVar Packed = Guard.load(offsetof(State, RFlags));
   const uint64_t EntryFlags =
-      Int3 ? 0x3d7fd7 : Flags::entryMask(flagsProfile(Options));
+      Interrupt ? 0x3d7fd7 : Flags::entryMask(flagsProfile(Options));
   Guard.emit(NdOp::INT_AND, FlagBits, {Packed, constant(~EntryFlags)});
   Guard.emit(NdOp::INT_NOTEQUAL, FlagsBad, {FlagBits, constant(0)});
   Guard.emit(NdOp::INT_AND, Fixed, {Packed, constant(2)});
@@ -1076,12 +1111,12 @@ buildInstruction(SpecializationInstruction Instruction,
   Writer W{Function, &Body, Options};
   if (Result.RequiresNativeExecution) {
     W.leave(Exit::NativeInstruction);
-  } else if (Iret || Int3) {
+  } else if (Iret || Interrupt) {
     detail::X64ContinuationEvents<Writer> Event(W, *Options.PagingAddressBits);
     if (Iret)
       Event.iret();
     else
-      Event.int3(Instruction.Fallthrough.Address);
+      Event.softwareInterrupt(*Interrupt, Instruction.Fallthrough.Address);
   } else if (Sysret) {
     W.sysret();
   } else {

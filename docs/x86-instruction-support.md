@@ -217,8 +217,8 @@ sources, host diagnosis and results in
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
-| RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The integrated `af8d5e86a5` change supplies terminal analysis intrinsics with explicit frame-cell operands; the named no-return calls do not implement native restoration or an executable continuation. |
-| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Complete register, privilege, segment and SMM continuation state. Integrated `c464c93243` supplies terminal analysis intrinsics for SYSRET/SYSEXIT with explicit target state; their named no-return calls do not implement native restoration. SYSENTER and RSM remain refused. |
+| RETF/RETFQ, IRET/IRETD/IRETQ | Ordinary source still lacks complete frame, privilege, segment and flag restoration. The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile owns successful IRETQ to long-mode CPL0..3, including hidden caches, descriptor accesses and NMI unblocking. It does not cover faulting execution, compatibility returns, CET/FRED or the other far-return forms. |
+| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Ordinary source still lacks complete register, privilege, segment and SMM continuation state. The separate explicit x64 continuation V5/V6 profiles own successful SYSRETQ with STAR and CS/SS caches. Other forms and faulting transitions remain unqualified; SYSENTER and RSM remain refused. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
@@ -748,8 +748,21 @@ registers and stack restoration. Each route also passes 524 Linux x64 native
 sigreturn comparisons and four unhandled-fault checks against independent
 INT 2C bytes. Both C routes retain two Microsoft assertion contracts through
 object emission. All 54 focused intrinsic/header tests and 81 binary
-regressions pass. This does not qualify privileged interrupt gates or an
-arbitrary handler's machine-state ABI.
+regressions pass. Those raw compiler-interface checks do not qualify privileged
+interrupt gates or an arbitrary handler's machine-state ABI.
+
+The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile
+now owns canonical `INT3` and all 256 `INT imm8` vectors at CPL0. It reads the
+selected IDT gate, applies descriptor accessed-bit effects, writes the complete
+five-word stack frame and returns the handler state before executing it. The
+source uses explicit architectural state instead of an inferred service ABI,
+including vectors 0x29/0x2c/0x2d. Both C routes at O0/O2 compare 65,536 INT imm8
+state/RAM outcomes against original bytes on an independent KVM vCPU. The
+[qualification record](evidence/x86-software-interrupts-2026-10-29.json)
+binds these checks and 363 passing continuation, audit, export and proof
+regressions to the tested sources and dependency snapshots. This
+does not cover prefixed encodings, INT1, CPL3 entry, hardware exception error
+codes, fault delivery, CET/FRED or execution of an arbitrary handler.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute
