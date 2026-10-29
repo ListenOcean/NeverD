@@ -2377,3 +2377,8 @@ Der Test umfasst auch unabhängige Funktionszeigerrelokationen im selben Speiche
 ## Neutrale Transaktionen im Rücksprungslot
 
 `NeverDMedPrologueSavesTests` prüft Breiten, Versätze, lebende Werte, Flag-/PHI-Leser und die Invalidierung nach Änderungen. `NeverDPipelineOutcomeTests` prüft die Trennung von Maschinen- und Patchanforderungen. `NeverDX86NeutralAtomicSourceTests` vergleicht unabhängig geschriebene Originalinstruktionen mit beiden C-Wegen für COFF/ELF/MachO, einschließlich verändertem Stackpointer, unter O0/O2 und UBSan. Die Ausführung erfordert Linux x64; die i386-Beweise ersetzen keine native i386-Ausführungsprüfung.
+
+
+## Audits kanonischer Supervisor-Lesezugriffe
+
+`InterpreterSpecialization.SupervisorRead*` verwendet das tatsächliche strikte Lifting und lehnt ein auf `Missing` herabgestuftes Audit ab. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` prüft die Wiederherstellungsgrenze anhand der Originalbytes sowie die weiterhin verweigerten nativen Beweise und Quellcode-Wrapper.

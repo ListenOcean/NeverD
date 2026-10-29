@@ -2261,3 +2261,8 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 ## 戻りアドレス領域の中立なアトミック操作
 
 `NeverDMedPrologueSavesTests` は幅、オフセット、生きた値、フラグ/PHI の参照、編集後の証拠失効を検査します。`NeverDPipelineOutcomeTests` は機械・パッチ要求の分離を検査します。`NeverDX86NeutralAtomicSourceTests` は独立に作成した元命令と COFF/ELF/MachO の両 C 経路を比較し、スタックポインタ変更も含め O0/O2 と UBSan で実行します。この実行比較には Linux x64 が必要です。i386 の証明テストはネイティブ実行の検証ではありません。
+
+
+## 標準のスーパーバイザー読み取り監査
+
+`InterpreterSpecialization.SupervisorRead*` は実際の厳密なリフトを使用し、`Missing` に格下げした監査を拒否します。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` は元のバイト列の復元境界を検査し、ネイティブ証明とソースラップの拒否も確認します。

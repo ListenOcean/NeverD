@@ -2251,3 +2251,8 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 ## 반환 슬롯의 중립 원자 연산
 
 `NeverDMedPrologueSavesTests`는 폭, 오프셋, 사용 중인 값, 플래그/PHI 읽기, 본문 변경 후 증거 무효화를 검사합니다. `NeverDPipelineOutcomeTests`는 기계 및 패치 요청의 분리를 검사합니다. `NeverDX86NeutralAtomicSourceTests`는 독립적으로 작성한 원본 명령과 COFF/ELF/MachO의 두 C 경로를 비교하며, 조정된 스택 포인터도 O0/O2 및 UBSan으로 실행합니다. 실행 대조에는 Linux x64가 필요하며 i386 증명 테스트는 네이티브 i386 실행 검증을 의미하지 않습니다.
+
+
+## 표준 감독 모드 읽기 감사
+
+`InterpreterSpecialization.SupervisorRead*`는 실제 엄격한 리프트를 사용하고 `Missing`으로 낮춘 감사를 거부합니다. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery`는 원본 바이트 복원 경계 및 네이티브 증명과 소스 래핑의 지속적인 거부를 확인합니다.

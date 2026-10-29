@@ -2287,3 +2287,8 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## المعاملات المحايدة في خانة العودة
 
 تغطي `NeverDMedPrologueSavesTests` العروض والإزاحات والقيم المستخدمة وقراءات الأعلام وPHI وإبطال الدليل بعد التعديل. تتحقق `NeverDPipelineOutcomeTests` من فصل طلبات الآلة والترقيع. تقارن `NeverDX86NeutralAtomicSourceTests` تعليمات أصلية مكتوبة بصورة مستقلة بمساري C لصيغ COFF/ELF/MachO، بما فيها تغيير مؤشر المكدس، عند O0/O2 مع UBSan. يتطلب التنفيذ Linux x64؛ ولا تثبت اختبارات i386 تنفيذًا أصليًا على i386.
+
+
+## تدقيق قراءات المشرف القياسية
+
+تستخدم اختبارات `InterpreterSpecialization.SupervisorRead*` الرفع الصارم الفعلي وترفض تخفيض التدقيق إلى `Missing`. يتحقق `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` من حدود استعادة البايتات الأصلية واستمرار رفض الإثبات الأصلي وتغليف المصدر.

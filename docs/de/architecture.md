@@ -2073,3 +2073,8 @@ HighC und LLVM verwenden für vollständige Bereiche gemeinsam `x86RepAccessSpan
 ## Neutrale Transaktionen im Rücksprungslot
 
 Bei der Quellprojektion bindet `markSourceStackAccesses` eine atomare Addition von null vollständig innerhalb des CALL-Rücksprungslots an den tatsächlichen Slot der kompilierten Funktion. Der alte Wert darf auch von Flags oder PHIs nicht gelesen werden. Beide C-Wege erhalten die Transaktion und verwenden `llvm.addressofreturnaddress` über eine lokale Clang-Deklaration. Weder ein temporäres Objekt noch ein fester Framepointer-Versatz ersetzt den Slot. Segmentierte oder schmale Adressen, nichtneutrale Operationen, unvollständige Bereiche, unbekannte Stackkoordinaten und andere Eintrittsarten behalten ihr Verhalten. Binärlifting und Patching erhalten diese Annotation nicht.
+
+
+## Audits kanonischer Supervisor-Lesezugriffe
+
+Die Wiederherstellung von kanonischem `RDMSR` verlangt das `Complete`-Audit undefinierter Ausgaben des Lifters mit exaktem Operations-Digest und lehnt `Missing` ab. Ein vollständiges Audit erlaubt weder Supervisor-Ausführung, MSR-Zugriff, Ausnahmebehandlung noch native oder Quellcodebeweise. Das explizite fehlerfreie Kernelprofil und die Prüfung des vollständigen Instruktionsbündels bleiben erforderlich.

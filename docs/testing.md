@@ -17231,3 +17231,8 @@ The repeated-image regression also covers unrelated function-pointer relocations
 ## Neutral return-slot transactions
 
 `NeverDMedPrologueSavesTests` covers slot widths and offsets, live values, flag/PHI readers and invalidation after body edits. `NeverDPipelineOutcomeTests` checks that machine and patch requests do not acquire the projection. `NeverDX86NeutralAtomicSourceTests` compares independently authored original instructions with both C routes for COFF/ELF/MachO, including adjusted stack pointers, at O0/O2 with UBSan. This execution control requires Linux x64; the i386 proof cases do not establish native i386 execution coverage.
+
+
+## Canonical supervisor-read audits
+
+`InterpreterSpecialization.SupervisorRead*` uses the actual strict lift and rejects a downgraded `Missing` audit. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` checks the original-byte recovery boundary and continued refusal of native proofs and source wrapping.

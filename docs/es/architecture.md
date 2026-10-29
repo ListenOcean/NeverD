@@ -2072,3 +2072,8 @@ HighC y LLVM comparten `x86RepAccessSpan` para los rangos completos. En el opera
 ## Transacciones neutras en la ranura de retorno
 
 En la proyección de código fuente, `markSourceStackAccesses` vincula una suma atómica de cero contenida por completo en la ranura de retorno de CALL con la ranura real de la función compilada. Nadie debe leer el valor anterior, incluidos los consumidores de indicadores y PHI. Ambas rutas C conservan la transacción y usan `llvm.addressofreturnaddress` mediante una declaración local de Clang. No sustituyen la ranura por un objeto temporal ni un desplazamiento del puntero de marco. Las direcciones segmentadas o estrechas, operaciones no neutras, rangos incompletos, coordenadas de pila desconocidas y entradas distintas de CALL conservan su comportamiento. El lifting binario y los parches no reciben esta anotación.
+
+
+## Auditorías de lecturas canónicas de supervisor
+
+La recuperación de `RDMSR` canónico exige la auditoría `Complete` de salidas indefinidas del elevador, con el resumen exacto de operaciones, y rechaza `Missing`. La auditoría completa no autoriza ejecución de supervisor, acceso a MSR, manejo de excepciones ni pruebas nativas o de fuente. Se mantienen el perfil explícito de núcleo sin fallos y las comprobaciones del conjunto completo de operaciones de la instrucción.

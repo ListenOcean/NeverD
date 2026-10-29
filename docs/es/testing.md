@@ -2362,3 +2362,8 @@ La regresión incluye reubicaciones ajenas de punteros a función en el mismo al
 ## Transacciones neutras en la ranura de retorno
 
 `NeverDMedPrologueSavesTests` cubre anchuras, desplazamientos, valores vivos, lecturas de indicadores/PHI e invalidación tras editar el cuerpo. `NeverDPipelineOutcomeTests` comprueba la separación de solicitudes de máquina y parche. `NeverDX86NeutralAtomicSourceTests` compara instrucciones originales escritas de forma independiente con ambas rutas C para COFF/ELF/MachO, incluida la modificación del puntero de pila, en O0/O2 con UBSan. La ejecución requiere Linux x64; las pruebas de i386 no certifican ejecución nativa i386.
+
+
+## Auditorías de lecturas canónicas de supervisor
+
+`InterpreterSpecialization.SupervisorRead*` usa la elevación estricta real y rechaza una auditoría degradada a `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` comprueba el límite de recuperación de los bytes originales y el rechazo continuado de pruebas nativas y envolturas de fuente.

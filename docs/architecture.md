@@ -14893,3 +14893,8 @@ HighC and LLVM emission share `x86RepAccessSpan` for these complete ranges. At t
 ## Neutral return-slot transactions
 
 For source projection, `markSourceStackAccesses` can bind an x86 atomic addition of zero wholly within the CALL return slot to the compiled function’s actual return slot. The old value must be unread, including flag and PHI consumers. Both C routes retain the native transaction and use `llvm.addressofreturnaddress`, through a local Clang intrinsic declaration in C. They do not substitute a temporary object or a frame-pointer offset. Segmented or narrow addresses, nonneutral operations, incomplete slot spans, unknown stack coordinates and non-CALL entries retain their original behavior. Binary lifting and patching never acquire this source annotation.
+
+
+## Canonical supervisor-read audits
+
+Canonical `RDMSR` recovery requires the lifter’s `Complete` undefined-output audit, including the exact operation digest. A `Missing` audit is refused. Audit completeness does not grant supervisor execution, MSR accessibility, exception handling or native/source proof authority; the existing explicit nonfaulting kernel profile and complete instruction-bundle checks remain required.

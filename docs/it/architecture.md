@@ -2069,3 +2069,8 @@ HighC e LLVM condividono `x86RepAccessSpan` per gli intervalli completi. Nell’
 ## Transazioni neutre nello slot di ritorno
 
 Nella proiezione sorgente, `markSourceStackAccesses` collega un’addizione atomica di zero interamente contenuta nello slot di ritorno CALL allo slot reale della funzione compilata. Il vecchio valore non deve essere letto, neppure da flag o PHI. Entrambi i percorsi C mantengono la transazione e usano `llvm.addressofreturnaddress` tramite una dichiarazione Clang locale. Non sostituiscono lo slot con un oggetto temporaneo o uno scostamento dal frame pointer. Indirizzi segmentati o stretti, operazioni non neutre, intervalli incompleti, coordinate dello stack sconosciute e ingressi diversi da CALL mantengono il comportamento originale. Lifting binario e patch non ricevono questa annotazione.
+
+
+## Audit delle letture canoniche del supervisore
+
+Il recupero di `RDMSR` canonico richiede l’audit `Complete` degli output indefiniti del lifter, incluso il digest esatto delle operazioni, e rifiuta `Missing`. Un audit completo non autorizza esecuzione supervisore, accesso MSR, gestione delle eccezioni o prove native e del sorgente. Restano necessari il profilo kernel esplicito senza fault e i controlli del gruppo completo di operazioni.

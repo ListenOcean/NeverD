@@ -2226,3 +2226,8 @@ MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计
 ## 返回槽上的中性原子操作
 
 `NeverDMedPrologueSavesTests` 覆盖槽宽度、偏移、活跃值、标志位/PHI 读取和修改后的证据失效。`NeverDPipelineOutcomeTests` 检查机器和补丁请求不会获得此投影。`NeverDX86NeutralAtomicSourceTests` 使用独立编写的原始指令，对照 COFF/ELF/MachO 的两条 C 路线，包含调整过的栈指针，并以 O0/O2 和 UBSan 执行。执行对照需要 Linux x64；i386 证明测试不代表原生 i386 执行覆盖。
+
+
+## 规范的监督态读取审计
+
+`InterpreterSpecialization.SupervisorRead*` 使用真实严格提升，并拒绝降级为 `Missing` 的审计。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` 检查原始字节恢复边界，同时继续拒绝原生证明和源码包装。

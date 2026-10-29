@@ -2329,3 +2329,8 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## Нейтральные транзакции в слоте возврата
 
 `NeverDMedPrologueSavesTests` проверяет ширины, смещения, живые значения, чтения флагов/PHI и аннулирование доказательства после правок. `NeverDPipelineOutcomeTests` проверяет разделение машинных запросов и патчей. `NeverDX86NeutralAtomicSourceTests` сравнивает независимо написанные исходные инструкции с обоими путями C для COFF/ELF/MachO, включая изменение указателя стека, при O0/O2 с UBSan. Исполнение требует Linux x64; доказательства i386 не подтверждают нативное исполнение i386.
+
+
+## Аудит канонических чтений в режиме супервизора
+
+`InterpreterSpecialization.SupervisorRead*` использует фактический строгий лифтинг и отклоняет аудит, пониженный до `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` проверяет границу восстановления исходных байтов и сохранение отказа от нативных доказательств и обёртки исходного кода.

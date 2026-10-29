@@ -2376,3 +2376,8 @@ La régression couvre aussi les relocations de pointeurs de fonction sans rappor
 ## Transactions neutres dans le slot de retour
 
 `NeverDMedPrologueSavesTests` couvre les largeurs, décalages, valeurs vivantes, lecteurs d’indicateurs/PHI et l’invalidation après modification. `NeverDPipelineOutcomeTests` vérifie la séparation des requêtes machine et correctif. `NeverDX86NeutralAtomicSourceTests` compare des instructions originales écrites indépendamment aux deux voies C pour COFF/ELF/MachO, y compris un pointeur de pile modifié, en O0/O2 avec UBSan. Cette exécution exige Linux x64 ; les preuves i386 ne certifient pas une exécution native i386.
+
+
+## Audits des lectures superviseur canoniques
+
+`InterpreterSpecialization.SupervisorRead*` utilise le lifting strict réel et refuse un audit dégradé à `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` vérifie la limite de récupération des octets originaux et le refus maintenu des preuves natives et de l’encapsulation source.
