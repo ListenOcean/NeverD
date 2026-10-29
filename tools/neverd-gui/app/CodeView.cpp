@@ -2019,14 +2019,28 @@ void CodeText::keepPlace(Address address) {
       {address, *function_, representation_, sourceOptions_, currentPlace()});
 }
 
-bool CodeText::returnToPlace(Address address) {
+const CodeText::KeptPlace *CodeText::keptPlace(Address address) const {
   const auto kept = std::find_if(
       keptPlaces_.cbegin(), keptPlaces_.cend(),
       [address](const KeptPlace &kept) { return kept.address == address; });
-  // Another function, representation or option set lays out other lines.
-  if (kept == keptPlaces_.cend() || kept->function != function_ ||
-      kept->representation != representation_ ||
-      kept->options != sourceOptions_ || interrupted_)
+  // Another representation or option set lays out other lines.
+  if (kept == keptPlaces_.cend() || kept->representation != representation_ ||
+      kept->options != sourceOptions_)
+    return nullptr;
+  return &*kept;
+}
+
+std::optional<int> CodeText::keptLine(Address address, Address function) const {
+  if (const KeptPlace *kept = keptPlace(address);
+      kept && kept->function == function)
+    return kept->place.cursorLine + 1;
+  return std::nullopt;
+}
+
+bool CodeText::returnToPlace(Address address) {
+  const KeptPlace *kept = keptPlace(address);
+  // Another function lays out other lines too.
+  if (!kept || kept->function != function_ || interrupted_)
     return false;
   if (loading_) {
     placeAfterLoad_ = kept->place;

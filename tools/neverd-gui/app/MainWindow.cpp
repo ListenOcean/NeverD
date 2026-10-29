@@ -1869,6 +1869,9 @@ void MainWindow::showHistoryList(QMenu &menu, bool forward) {
   menu.clear();
   const auto stops = disassembly_->stops(forward);
   const int digits = session_.bitness() == 64 ? 16 : 8;
+  // The code in focus goes back along: a stop it left names the line it
+  // returns to, as Hex-Rays' history names it.
+  const QPointer<CodeView> code = focusedCodeView();
   for (std::size_t i = 0;
        i < std::min(stops.size(),
                     ::neverd::limits::gui::kMainWindowHistoryListStops);
@@ -1886,7 +1889,7 @@ void MainWindow::showHistoryList(QMenu &menu, bool forward) {
          {"after", 0},
          {"complete_anchor_item", true}},
         action,
-        [this, action, address, digits](const QJsonObject &payload) {
+        [this, action, address, digits, code](const QJsonObject &payload) {
           for (const auto &value : payload.value("lines").toArray()) {
             const auto line = value.toObject();
             const auto kind = line.value("kind").toString();
@@ -1896,7 +1899,11 @@ void MainWindow::showHistoryList(QMenu &menu, bool forward) {
             if (const auto function =
                     addressValue(line.value("function_address"))) {
               place = line.value("function").toString();
-              if (address != *function)
+              if (const auto kept =
+                      code ? code->text()->keptLine(address, *function)
+                           : std::nullopt)
+                place += QLatin1Char(':') + QString::number(*kept);
+              else if (address != *function)
                 place += QLatin1Char('+') + displayAddress(address - *function);
               place += QStringLiteral(" (%1)").arg(displayAddress(address));
             } else if (const auto *region = space_.regionOf(address)) {

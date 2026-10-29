@@ -100,6 +100,10 @@ public:
   /// once the text on its way completes. Only the same function, shown the
   /// same way, has that place; false otherwise.
   bool returnToPlace(Address address);
+  /// The number the margin shows for the line Back returns to at
+  /// \p address, when the place kept there is in \p function and the code is
+  /// shown as it was then.
+  std::optional<int> keptLine(Address address, Address function) const;
   QString currentToken() const;
   /// The selected source name's image address or declared-local identity.
   std::optional<QJsonObject> renameTarget() const;
@@ -344,6 +348,8 @@ private:
     SourcePlace place;
   };
   QVector<KeptPlace> keptPlaces_;
+  /// The place kept at \p address, if the code is shown as it was then.
+  const KeptPlace *keptPlace(Address address) const;
   SourcePlace currentPlace() const;
   /// The first shown line at or after a source line.
   int shownLine(int sourceLine) const;

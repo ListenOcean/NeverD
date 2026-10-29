@@ -12093,6 +12093,86 @@ private slots:
     QCOMPARE(disassembly->stops(false).front(), called);
   }
 
+  void historyListsNameTheCodeLineBackReturnsTo() {
+    // As Hex-Rays' history does, a stop the code in focus left reads as the
+    // line Back returns the code to, numbered as its margin numbers it; with
+    // the code shown another way, or the disassembly in focus, it reads as
+    // the listing names its place.
+    QTemporaryDir directory;
+    Workbench bench;
+    bench.window->openFile(
+        writeFixture(directory, QStringLiteral("pseudocode-navigation.bin")));
+    QTRY_VERIFY_WITH_TIMEOUT(bench.session.loaded(), OpenTimeoutMs);
+    auto *disassembly = bench.window->disassembly();
+    const Address caller = Base + 0x140, callee = Base + 0x160;
+    disassembly->navigate(caller);
+    QTRY_COMPARE(disassembly->currentFunction(),
+                 std::optional<Address>(caller));
+    bench.action(ActionId::ViewPseudocode)->trigger();
+    auto *view = bench.codeView(QStringLiteral("source"));
+    QVERIFY(view);
+    view->setRepresentation(QStringLiteral("source"));
+    auto *code = view->text();
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    bench.window->activateWindow();
+    QVERIFY(QTest::qWaitForWindowActive(bench.window.get()));
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    // The call is the C's second line, which maps to the caller's entry.
+    const QFontMetricsF metrics(Theme::instance().codeFont());
+    const QPoint point(
+        qRound(6 + 17 * metrics.horizontalAdvance(QLatin1Char('M'))),
+        qRound(1.5 * std::ceil(metrics.lineSpacing())));
+    QTest::mouseClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QCOMPARE(code->currentToken(), QStringLiteral("function_22"));
+    QTest::mouseDClick(code->viewport(), Qt::LeftButton, Qt::NoModifier, point);
+    QTRY_COMPARE_WITH_TIMEOUT(code->function(), std::optional<Address>(callee),
+                              OpenTimeoutMs);
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading(), OpenTimeoutMs);
+    QTRY_VERIFY(code->hasFocus());
+    QCOMPARE(disassembly->stops(false).front(), caller);
+    QMenu *back = nullptr;
+    for (auto *toolbar : bench.window->findChildren<QToolBar *>())
+      if (auto *button = qobject_cast<QToolButton *>(
+              toolbar->widgetForAction(bench.action(ActionId::JumpBack))))
+        back = button->menu();
+    QVERIFY(back);
+    // The first entry's place, once the listing names it.
+    QString place;
+    const auto first = [&] {
+      emit back->aboutToShow();
+      const QString provisional = back->actions().first()->text();
+      QTRY_VERIFY_WITH_TIMEOUT(back->actions().first()->text() != provisional,
+                               OpenTimeoutMs);
+      place = back->actions().first()->text().section(QLatin1Char('\t'), 0, 0);
+    };
+    const QString address = QStringLiteral(" (%1)").arg(displayAddress(caller));
+    first();
+    QCOMPARE(place, QStringLiteral("function_20:2") + address);
+    // Shown as LLVM C, the code would not return to that line.
+    view->setRepresentation(QStringLiteral("llvmc"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    first();
+    QCOMPARE(place, QStringLiteral("function_20") + address);
+    // Shown as C again, it would; with the disassembly in focus, the code
+    // does not go back along.
+    view->setRepresentation(QStringLiteral("source"));
+    QTRY_VERIFY_WITH_TIMEOUT(!code->loading() && code->lineCount() > 1,
+                             OpenTimeoutMs);
+    code->setFocus();
+    QTRY_VERIFY(code->hasFocus());
+    first();
+    QCOMPARE(place, QStringLiteral("function_20:2") + address);
+    disassembly->listing()->setFocus();
+    QTRY_VERIFY(disassembly->listing()->hasFocus());
+    first();
+    QCOMPARE(place, QStringLiteral("function_20") + address);
+  }
+
   void laterLinksSupersedeAQueuedGraphView() {
     QTemporaryDir directory;
     Workbench bench;
