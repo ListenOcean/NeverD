@@ -390,3 +390,9 @@ Le regioni macchina grezze esplicite possono seguire istruzioni near CALL e RET 
 Le API v9 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` accettano `neverd_devirtualize_options_v9`. Inizializzare a zero e impostare `struct_size` del prefisso v1 alla dimensione completa. I flag sono `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`; `reserved` deve essere zero. Le API precedenti ignorano questa coda. Python espone `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`; i rapporti includono `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`. Il test esegue un ciclo su un array locale indicizzato tramite entrambi i percorsi C in O0/O2 con ASan/UBSan e controlla tutta la memoria di stack fornita.
 
 Con una delle strategie attiva, il recupero conserva tra i nodi anche gli offset finiti dei registri rispetto al frame di ingresso, dopo una prova esaustiva. Le confluenze uniscono gli offset in ingresso; fatti mancanti o unioni oltre il limite esistente delle tuple di controllo diventano sconosciuti. Non vengono introdotte correlazioni tra registri né ulteriori ipotesi di alias.
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## Letture del frame con indice finito
+
+Un normale `LOAD` con un insieme finito di offset dal frame d’ingresso dimostrato esaustivamente legge i byte correnti di ogni candidato e conserva un valore simbolico condizionale. La lettura a runtime rimane nel residuo con larghezza completa e ordine dei byte. L’origine esterna richiede tale provenienza per ogni byte di ogni candidato. Byte sconosciuti e valori invalidati restano sconosciuti; un’enumerazione incompleta mantiene il normale comportamento della memoria simbolica. Si applicano i budget esistenti per tuple di controllo, solver, nodi e operazioni. Non viene creato alcun testimone di lettura immutabile né un nuovo contratto di non alias.

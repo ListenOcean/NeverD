@@ -320,3 +320,9 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 v9 接口 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` 接受 `neverd_devirtualize_options_v9`。将结构清零，并将 v1 前缀的 `struct_size` 设为完整大小。标志为 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`；`reserved` 必须为零。旧接口忽略此尾部。Python 提供 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`。报告含 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`。回归通过两条 C 路径，在 O0/O2 和 ASan/UBSan 下执行动态索引局部数组循环，并检查整个提供的栈存储。
 
 启用任一种证明策略后，恢复过程还会在控制流节点间保留经穷尽证明的寄存器相对入口栈帧的有限偏移。合流取所有传入偏移的并集；缺少事实或并集超过现有控制元组上限时，退化为未知。这不会保留跨寄存器相关性，也不增加别名假设。
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## 有限索引的栈帧读取
+
+普通 `LOAD` 的入口栈帧偏移经穷尽证明为有限集合后，会读取每个候选位置的当前帧字节，并保留条件符号值。残留代码保留原始运行时读取、完整宽度和字节序。只有所有候选位置的每个字节都具备外部来源，输出才获得该来源。未知字节和已失效值仍为未知；枚举不完整时继续采用通常的符号内存行为。沿用现有控制元组、求解器、节点和操作预算，不生成不可变读取证据，也不增加不别名契约。

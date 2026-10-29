@@ -631,3 +631,9 @@ Explicit raw machine regions can follow internal near CALL and RET instructions 
 The v9 APIs `neverd_devirtualize_source_v9` and `neverd_devirtualize_machine_source_v9` accept `neverd_devirtualize_options_v9`. Zero-initialize it and set the v1 prefix’s `struct_size` to the complete size. The flags are `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION` and `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`; `reserved` must be zero. Older entry points ignore this tail. Python exposes `NeverDDevirtualizeOptionsV9` and `DevirtualizeFlagsV9`. Reports include `proveStoreReturnSlotSeparation` and `proveStoreFrameSeparation`. The source regression runs an indexed local-array loop through both C routes at O0/O2 with ASan/UBSan and checks the entire supplied stack storage.
 
 With either proof strategy enabled, recovery also retains exhaustively proved finite register offsets from the entry frame across control-flow nodes. Joins take the union of incoming offsets; missing facts or a union exceeding the existing control-tuple limit become unknown. This retains no cross-register correlation and adds no aliasing premise.
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## Finite indexed frame reads
+
+An ordinary `LOAD` with an exhaustively proved finite set of entry-frame offsets reads the current frame bytes at every candidate and retains a conditional symbolic value. The runtime read stays in the residual, with its full width and byte order. External origin requires that provenance for every byte at every candidate. Unknown bytes and invalidated values remain unknown; incomplete enumeration keeps ordinary symbolic memory behavior. Existing control-tuple, solver, node and operation budgets apply. This creates no immutable-read witness or new nonalias contract.

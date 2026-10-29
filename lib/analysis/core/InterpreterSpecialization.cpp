@@ -2960,6 +2960,7 @@ bool Specializer::evaluate(int Id) {
       // arbitrary base. Keep that value unsafe through copies and frame spills.
       bool OutputUnsafe = EnvironmentRead || AtomicWrite;
       bool ExactFrameAddress = false;
+      SymRef FiniteFrameReadValue;
       bool StoreWithinEntryFrame = false;
       bool ProvedFrameSeparation = false;
       std::optional<SymStorePreservation> StorePreservation;
@@ -2975,11 +2976,13 @@ bool Specializer::evaluate(int Id) {
         // the offset itself contains the frame root. Separation checks below
         // use the executed full address; ordinary unknown writes invalidate
         // every unproved frame fact.
+        bool RootDependent = false;
         const auto Displacement =
-            RuntimeMemory ? std::nullopt
-                          : frameOffset(Ctx, Exec.pathPredicate(),
-                                        Exec.operandValue(*Memory.Address),
-                                        FrameRoot, FrameOffsetProof::Required);
+            RuntimeMemory
+                ? std::nullopt
+                : frameOffset(Ctx, Exec.pathPredicate(),
+                              Exec.operandValue(*Memory.Address), FrameRoot,
+                              FrameOffsetProof::Required, &RootDependent);
         if (Failed)
           return false;
         if (Displacement) {
@@ -3011,6 +3014,68 @@ bool Specializer::evaluate(int Id) {
             for (unsigned B = 0; B < Memory.AccessSize; ++B)
               OutputUnsafe |=
                   !Origins.ExternalFrameBytes.count(*Displacement + B);
+          } else if (Original.Opcode == NdOp::LOAD && !RuntimeMemory &&
+                     RootDependent) {
+            const auto Offset =
+                Ctx.mkSub(Exec.operandValue(*Memory.Address), FrameRoot);
+            // A symbolic index is not a distinct memory region. Reuse the
+            // current frame bytes only after proving the entire offset set.
+            // The original runtime LOAD remains in the residual; unknown
+            // bytes and mixed pointer origins stay unknown or unsafe.
+            if (!detail::hasUnconstrainedProjectionInput(
+                    Ctx, Exec.pathPredicate(), Offset, Options.MaxControlTuples,
+                    Options.MaxSymbolicNodes)) {
+              const auto UsefulRead = [&](llvm::ArrayRef<uint64_t> Tuple) {
+                if (Memory.AccessSize >
+                    Options.MaxOperations - Result.EvaluatedOperations)
+                  return fail(SpecializationStatus::BudgetExceeded,
+                              "indexed frame read inspection budget exhausted");
+                Result.EvaluatedOperations += Memory.AccessSize;
+                const auto At = Tuple.front();
+                if (State.hasMaterializedRegionRange(FrameRoot, At,
+                                                     Memory.AccessSize))
+                  return true;
+                // Stop at the first candidate with neither a complete
+                // current value nor complete external provenance. Enumerating
+                // a large uninitialized array cannot improve this load. This
+                // abandons the whole proof; it never filters an address out.
+                for (unsigned B = 0; B < Memory.AccessSize; ++B)
+                  if (!Origins.ExternalFrameBytes.count(At + B))
+                    return false;
+                return true;
+              };
+              const auto Domain =
+                  enumerate(Ctx, Exec.pathPredicate(), {Offset},
+                            Options.MaxControlTuples, UsefulRead);
+              if (Failed)
+                return false;
+              if (Domain.Status == FiniteValueStatus::Complete &&
+                  !Domain.Tuples.empty()) {
+                OutputUnsafe = false;
+                for (const auto &Tuple : Domain.Tuples) {
+                  if (Memory.AccessSize >
+                      Options.MaxOperations - Result.EvaluatedOperations)
+                    return fail(SpecializationStatus::BudgetExceeded,
+                                "indexed frame read byte budget exhausted");
+                  Result.EvaluatedOperations += Memory.AccessSize;
+                  const auto At = Tuple.front();
+                  for (unsigned B = 0; B < Memory.AccessSize; ++B)
+                    OutputUnsafe |= !Origins.ExternalFrameBytes.count(At + B);
+                  const auto Value =
+                      State.load(Ctx.mkAdd(FrameRoot, Ctx.mkConst(64, At)),
+                                 Memory.AccessSize);
+                  FiniteFrameReadValue =
+                      FiniteFrameReadValue
+                          ? Ctx.mkIte(Ctx.mkEq(Offset, Ctx.mkConst(64, At)),
+                                      Value, FiniteFrameReadValue)
+                          : Value;
+                  if (Ctx.numNodes() > Options.MaxSymbolicNodes)
+                    return fail(SpecializationStatus::BudgetExceeded,
+                                "indexed frame read symbolic-node budget "
+                                "exhausted");
+                }
+              }
+            }
           }
         }
         if (Original.Opcode == NdOp::STORE || AtomicWrite) {
@@ -3497,7 +3562,8 @@ bool Specializer::evaluate(int Id) {
       SymRef FiniteReadValue;
       // Admission above limits wide reads to the explicit nonfaulting domain.
       // Every feasible address still needs one complete, untruncated witness.
-      if (Original.Opcode == NdOp::LOAD && !RuntimeMemory && !ExternalExit) {
+      if (Original.Opcode == NdOp::LOAD && !RuntimeMemory && !ExternalExit &&
+          !FiniteFrameReadValue) {
         const auto Memory = lowMemoryOperands(Original);
         const SymRef Address = Exec.operandValue(*Memory.Address);
         // Exact root-relative translation preserves domain cardinality, even
@@ -3746,6 +3812,10 @@ bool Specializer::evaluate(int Id) {
       if (Ctx.numNodes() > Options.MaxSymbolicNodes)
         return fail(SpecializationStatus::BudgetExceeded,
                     "specialization symbolic-node budget exhausted");
+      if (FiniteFrameReadValue)
+        State.write(Original.Output.isReg() ? SymSpace::Register
+                                            : SymSpace::Temporary,
+                    Original.Output.Offset, FiniteFrameReadValue);
       if (FiniteReadValue) {
         State.write(Original.Output.isReg() ? SymSpace::Register
                                             : SymSpace::Temporary,
