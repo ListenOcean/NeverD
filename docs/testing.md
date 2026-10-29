@@ -3472,6 +3472,17 @@ alignment, not semantic equivalence or unique instruction correspondence.
 A separate matching fixture places the real changed pair below four misleading
 sketch candidates on both sides. An allowance of four leaves it undecided;
 allowances of six, sixteen and 256 recover it while retaining ambiguous decoys.
+`ShortLayoutEditsRetainCandidatesBeyondRunSketches` places a changed short
+function beside 260 indistinguishable background bodies, exceeding exhaustive
+candidate admission. Removing its landing instruction and moving padding
+break every common three-instruction run; a competing unrelated function shares
+its new CFG. The better body must still enter the candidate pool in both
+directions and after address reordering. Duplicate alternatives remain
+ambiguous, explicit Unmatch decisions remain effective, and disabling
+approximation does not accept the layout-body proposal as an exact identity.
+`PartialInstructionPairsDoNotIdentifyUnrelatedBodies` retains an unrelated
+reordered body as unmatched even though it shares an initial instruction pair,
+much of the instruction inventory and the same one-block CFG.
 
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
