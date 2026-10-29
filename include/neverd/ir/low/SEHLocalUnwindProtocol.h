@@ -45,6 +45,11 @@ struct SEHLocalUnwindConvention {
   /// The EstablisherFrame the runtime passes a filter or termination handler
   /// of this function.
   int64_t HandlerFrame = 0;
+  /// Where the GS cookie's slot offset and the frame value its prologue
+  /// masks the cookie with are taken from (`__GSHandlerCheckCommon`'s
+  /// CookieFrameBase and CookieXorValue), for a frame the GS data does not
+  /// realign.
+  int64_t GSCookieFrame = 0;
   /// Bytes above a call's stack pointer the callee may write without the
   /// caller storing them first (the Win64 home area).
   uint64_t CalleeHomeBytes = 0;
@@ -95,10 +100,13 @@ sehLocalUnwindConvention(const LowFunc &Function, const TargetRegInfo &TRI,
 /// The frame values the function computes may reach a callee or memory only
 /// as pointers to other frame objects: its TargetFrame, its body stack
 /// pointer and the slot's address reach only the slot itself, the runtime
-/// and the handlers.  This trusts that only in-bounds accesses reach a frame
-/// object, so a pointer to one never reaches the compiler's saved-frame slot,
-/// which only its own prologue protocol writes.  Any other shape refuses the
-/// function, and its calls keep their runtime form.
+/// and the handlers.  The GS cookie is the one other place a frame value may
+/// go: the frame its GS data names, XORed with a value of no frame, stored to
+/// the slot that data places, and read back only to be XORed with the same
+/// frame, which leaves the cookie.  This trusts that only in-bounds accesses
+/// reach a frame object, so a pointer to one never reaches the compiler's
+/// saved-frame slot, which only its own prologue protocol writes.  Any other
+/// shape refuses the function, and its calls keep their runtime form.
 llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     const LowFunc &Function, const BinaryImage &Image, const TargetRegInfo &TRI,
     const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining);

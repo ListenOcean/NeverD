@@ -582,6 +582,135 @@ BinaryImage makeLocalUnwindImage(LocalUnwindShape Kind) {
   return Img;
 }
 
+/// How the saved-frame parent below treats its GS cookie.
+enum class CookieShape {
+  /// The GS data places the cookie, which the prologue masks with the frame.
+  Masked,
+  /// The same code without GS data: nothing places the masked frame.
+  Undeclared,
+  /// The GS data places the cookie, but the prologue stores the frame there
+  /// unmasked.
+  Unmasked,
+};
+
+/// The Guarded shape with a GS cookie and MSVC's saved-frame slot: the
+/// prologue saves the frame at [rsp+0x30] and the local unwind reloads it.
+/// The parent homes Counter, `__try { if (Flag) return; foo(); }
+/// __finally { *Counter = abnormal ? 99 : 100; }`, and checks its cookie at
+/// [rsp+0x38] before it returns.
+BinaryImage makeCookieImage(CookieShape Kind) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = 0x181;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  auto &D = Text.Data;
+  // mov [rsp+0x10],rdx; push rbx; sub rsp,0x40; mov rbx,rdx;
+  // mov rax,[cookie]; xor rax,rsp (or mov rax,rsp); mov [rsp+0x38],rax;
+  // mov [rsp+0x30],rsp
+  place(D, 0x00,
+        {0x48, 0x89,
+         0x54, 0x24,
+         0x10, 0x53,
+         0x48, 0x83,
+         0xec, 0x40,
+         0x48, 0x8b,
+         0xda, 0x48,
+         0x8b, 0x05,
+         0x5c, 0x01,
+         0,    0,
+         0x48, Kind == CookieShape::Unmasked ? uint8_t(0x8b) : uint8_t(0x33),
+         0xc4, 0x48,
+         0x89, 0x44,
+         0x24, 0x38,
+         0x48, 0x89,
+         0x64, 0x24,
+         0x30});
+  // test ecx,ecx; jz work; mov rcx,[rsp+0x30]; lea rdx,[done];
+  // call _local_unwind; nop | work: call foo; nop | mov dword [rbx],100 |
+  // done: mov rcx,[rsp+0x38]; xor rcx,rsp; call check; add rsp,0x40;
+  // pop rbx; ret
+  place(D, 0x21,
+        {0x85, 0xc9, 0x74, 0x12, 0x48, 0x8b, 0x4c, 0x24, 0x30, 0x48, 0x8d,
+         0x15, 0x12, 0,    0,    0,    0xe8, 0x4a, 0x01, 0,    0,    0x90,
+         0xe8, 0x24, 0,    0,    0,    0x90, 0xc7, 0x03, 0x64, 0,    0,
+         0,    0x48, 0x8b, 0x4c, 0x24, 0x38, 0x48, 0x33, 0xcc, 0xe8, 0x18,
+         0,    0,    0,    0x48, 0x83, 0xc4, 0x40, 0x5b, 0xc3});
+  // foo: ret | check: ret
+  place(D, 0x60, {0xc3});
+  place(D, 0x68, {0xc3});
+  // The Guarded handler, which finds Counter's home 0x58 above its frame.
+  place(D, 0x80,
+        {0x40, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xea, 0x0f, 0xb6,
+         0xc1, 0xf7, 0xd8, 0x1b, 0xc9, 0x83, 0xc1, 0x64, 0x48, 0x8b, 0x45,
+         0x58, 0x89, 0x08, 0x48, 0x83, 0xc4, 0x20, 0x5d, 0xc3});
+  // The cookie, then the local unwind import's stub.
+  place(D, 0x170, {0x32, 0xa2, 0xdf, 0x2d, 0x99, 0x2b, 0, 0});
+  D[0x180] = 0xc3;
+  Img.Segments.push_back(std::move(Text));
+  Section Code;
+  Code.Name = ".text";
+  Code.VA = Entry;
+  Code.Size = 0x181;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Code));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry, 0x56));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x60, 1));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x68, 1));
+  Img.Symbols.push_back(Symbol::makeFunc(Funclet, 0x20));
+  Import LocalUnwind;
+  LocalUnwind.Name = "_local_unwind";
+  LocalUnwind.Module = "VCRUNTIME140.dll";
+  Img.Imports.push_back(LocalUnwind);
+  EXPECT_TRUE(Img.recordImportStub(LocalUnwindStub, 0));
+
+  ExceptionFunction Parent;
+  Parent.CodeRange = {Entry, Entry + 0x56};
+  Parent.Encoding = ExceptionEncoding::X64UnwindV1;
+  Parent.UnwindVersion = 1;
+  Parent.UnwindFlags = 3;
+  Parent.PrologueSize = 0x0a;
+  Parent.Personality = ExceptionPersonality::CSpecificHandler;
+  Parent.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::AllocateSmall, 0x0a, 0x40));
+  Parent.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::PushNonVolatile, 6, 0, 3));
+  Parent.SEH.emplace();
+  SEHScopeRecord Finally;
+  Finally.GuardedRange = {Entry + 0x21, Entry + 0x3d};
+  Finally.Kind = SEHScopeKind::Finally;
+  Finally.FilterOrFinallyVA = Funclet;
+  Finally.HandlerVA = Funclet;
+  Parent.SEH->Scopes.push_back(Finally);
+  if (Kind != CookieShape::Undeclared) {
+    GSCookieInfo Cookie;
+    Cookie.ParseStatus = ExceptionParseStatus::Complete;
+    Cookie.CookieOffset = 0x38;
+    Parent.GSCookie = Cookie;
+  }
+  Img.ExceptionMetadata.Functions.push_back(std::move(Parent));
+
+  ExceptionFunction Handler;
+  Handler.CodeRange = {Funclet, Funclet + 0x20};
+  Handler.Encoding = ExceptionEncoding::X64UnwindV1;
+  Handler.UnwindVersion = 1;
+  Handler.PrologueSize = 6;
+  Handler.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::AllocateSmall, 6, 0x20));
+  Handler.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::PushNonVolatile, 2, 0, 5));
+  Img.ExceptionMetadata.Functions.push_back(std::move(Handler));
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
 size_t occurrences(const std::string &Text, const std::string &Needle) {
   size_t Count = 0;
   for (size_t At = Text.find(Needle); At != std::string::npos;
@@ -667,6 +796,40 @@ TEST(SEHLocalUnwind, AnUnfilledFinallyRunsAsAnExplicitHandlerCall) {
   EXPECT_LT(Call, Finally) << P;
   EXPECT_NE(P.find("/* finally handler @ 0x140001080 */"), std::string::npos)
       << P;
+}
+
+TEST(SEHLocalUnwind, AGSCookieMasksTheFrameItsDataPlaces) {
+  // The prologue stores the frame XORed with the cookie in the slot the GS
+  // data names, and the epilogue XORs it with the frame again before the
+  // check: the frame itself reaches no memory and no callee, so the
+  // saved-frame slot still certifies and the return becomes its jump.
+  const std::string Full = decompileHighC(makeCookieImage(CookieShape::Masked));
+  const std::string P = parentText(Full);
+  ASSERT_FALSE(P.empty()) << Full;
+  EXPECT_EQ(P.find("_local_unwind"), std::string::npos) << P;
+  EXPECT_EQ(P.find("sub_140001080("), std::string::npos) << P;
+  const size_t Finally = P.find("} __finally {");
+  ASSERT_NE(Finally, std::string::npos) << P;
+  EXPECT_NE(P.find("if (AbnormalTermination())", Finally), std::string::npos)
+      << P;
+}
+
+TEST(SEHLocalUnwind, AMaskedFrameNoGSDataPlacesKeepsTheCall) {
+  // Without GS data, the masked frame lands in an ordinary slot, where any
+  // reader could unmask it: the call keeps its runtime form.
+  const std::string P =
+      parentText(decompileHighC(makeCookieImage(CookieShape::Undeclared)));
+  ASSERT_FALSE(P.empty());
+  EXPECT_NE(P.find("_local_unwind"), std::string::npos) << P;
+}
+
+TEST(SEHLocalUnwind, AnUnmaskedFrameInTheCookieSlotKeepsTheCall) {
+  // The GS data names the slot, but the prologue stores the frame there as
+  // it is: the slot is written another way.
+  const std::string P =
+      parentText(decompileHighC(makeCookieImage(CookieShape::Unmasked)));
+  ASSERT_FALSE(P.empty());
+  EXPECT_NE(P.find("_local_unwind"), std::string::npos) << P;
 }
 
 } // namespace

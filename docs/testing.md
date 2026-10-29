@@ -14629,7 +14629,13 @@ copy kept for the fall-through; a flag-independent handler fills the whole
 clause and loses the copy; a jump to where the try ends stays a jump rather
 than `__leave` or a fall-through; and a handler that keeps its comment runs
 as one explicit `handler(1, frame)` call before the jump. Each counts the
-handler's work so every exit runs it once. Its `ARMSEHFinallyBodyTests.cpp`
+handler's work so every exit runs it once.
+`AGSCookieMasksTheFrameItsDataPlaces` saves the frame in MSVC's slot and
+masks it into the cookie slot its GS data places, which still certifies;
+`AMaskedFrameNoGSDataPlacesKeepsTheCall` and
+`AnUnmaskedFrameInTheCookieSlotKeepsTheCall` keep the runtime call when no GS
+data places the masked frame or the frame reaches the cookie slot unmasked.
+Its `ARMSEHFinallyBodyTests.cpp`
 builds AArch64 and
 Thumb parents whose handler reads them through callee-saved registers:
 `ARMSEHFinallyRegisters.*` publishes a frame address set before the range, an

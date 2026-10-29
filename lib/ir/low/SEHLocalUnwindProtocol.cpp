@@ -66,6 +66,10 @@ struct Val {
     Load,
     /// A frame address of B at an unknown offset, or a value that may be one.
     Inexact,
+    /// B + Off XORed with a value that holds no frame address, as a GS
+    /// prologue stores it in the cookie slot.  Only an XOR with B + Off again
+    /// takes the mask off; any other use may unmask it, so it escapes.
+    Masked,
   };
   Kind K = Other;
   Base B = Base::Own;
@@ -73,7 +77,9 @@ struct Val {
   uint64_t C = 0;
 
   bool operator==(const Val &) const = default;
-  bool frame() const { return K == Frame || K == Load || K == Inexact; }
+  bool frame() const {
+    return K == Frame || K == Load || K == Inexact || K == Masked;
+  }
 
   static Val constant(uint64_t Value) {
     Val V;
@@ -97,6 +103,11 @@ struct Val {
     Val V;
     V.K = Inexact;
     V.B = B;
+    return V;
+  }
+  static Val masked(Base B, int64_t Off) {
+    Val V = at(B, Off);
+    V.K = Masked;
     return V;
   }
 };
@@ -193,8 +204,9 @@ class Interpreter {
 public:
   Interpreter(const LowFunc &F, const TargetRegInfo &TRI,
               const BinaryImage &Img, llvm::StringRef Routine,
-              std::optional<SlotView> Slot, va_t BodyStart, size_t &Work)
-      : F(F), TRI(TRI), Img(Img), Routine(Routine), Slot(Slot),
+              std::optional<SlotView> Slot, std::optional<SlotView> Cookie,
+              va_t BodyStart, size_t &Work)
+      : F(F), TRI(TRI), Img(Img), Routine(Routine), Slot(Slot), Cookie(Cookie),
         BodyStart(BodyStart), Work(Work), Pointer(TRI.PointerSize) {}
 
   llvm::Error run(const State &Entry, const State &Root);
@@ -208,6 +220,8 @@ private:
   const BinaryImage &Img;
   llvm::StringRef Routine;
   std::optional<SlotView> Slot;
+  /// The GS cookie slot, which holds the masked frame the GS check reads.
+  std::optional<SlotView> Cookie;
   /// Where the body starts past the prologue.
   va_t BodyStart;
   size_t &Work;
@@ -363,6 +377,31 @@ bool Interpreter::transfer(const LowBlock &Block, State &S, bool Record,
       write(S, Op.Output, X);
       break;
     }
+    case NdOp::INT_XOR: {
+      // A frame address masked with a value of no frame, and unmasked by
+      // the same address: the GS cookie's store and its check.
+      const Val A = Input(0), B = Input(1);
+      Val X;
+      if (A.K == Val::Const && B.K == Val::Const)
+        X = Val::constant(truncate(A.C ^ B.C, Op.Output.Size));
+      else if (A.K == Val::Frame && A == B)
+        X = Val::constant(0);
+      else if (Op.Output.Size == Pointer && A.K == Val::Frame &&
+               B.K == Val::Other)
+        X = Val::masked(A.B, A.Off);
+      else if (Op.Output.Size == Pointer && B.K == Val::Frame &&
+               A.K == Val::Other)
+        X = Val::masked(B.B, B.Off);
+      else if ((A.K == Val::Masked && B.K == Val::Frame &&
+                Val::at(A.B, A.Off) == B) ||
+               (B.K == Val::Masked && A.K == Val::Frame &&
+                Val::at(B.B, B.Off) == A))
+        X = {};
+      else if (A.frame() || B.frame())
+        X = Val::inexact(A.frame() ? A.B : B.B);
+      write(S, Op.Output, X);
+      break;
+    }
     case NdOp::INT_ZEXT:
     case NdOp::INT_SEXT: {
       const Val A = Input(0);
@@ -381,13 +420,19 @@ bool Interpreter::transfer(const LowBlock &Block, State &S, bool Record,
       const Val A = Input(0);
       Val X;
       if (A.K == Val::Frame) {
-        if (!Slot)
-          X = Val::loaded(A.B, A.Off);
-        else if (A.B == Slot->B &&
-                 overlaps(A.Off, Op.Output.Size, Slot->Off, Pointer))
-          X = A.Off == Slot->Off && Op.Output.Size == Pointer
-                  ? Slot->Holds
+        const SlotView *View = nullptr;
+        for (const std::optional<SlotView> *Candidate : {&Slot, &Cookie})
+          if (*Candidate && A.B == (*Candidate)->B &&
+              overlaps(A.Off, Op.Output.Size, (*Candidate)->Off, Pointer)) {
+            View = &**Candidate;
+            break;
+          }
+        if (View)
+          X = A.Off == View->Off && Op.Output.Size == Pointer
+                  ? View->Holds
                   : Val::inexact(A.B);
+        else if (!Slot)
+          X = Val::loaded(A.B, A.Off);
       } else if (A.frame()) {
         // An unknown frame address may read the saved frame.
         X = Val::inexact(A.B);
@@ -578,7 +623,8 @@ llvm::Error checkHandler(const LowFunc &Handler, const TargetRegInfo &TRI,
   Slot.B = Base::Parent;
   Slot.Off = SlotFromFrame;
   Slot.Holds = Val::at(Base::Parent, TargetFromFrame);
-  Interpreter Interp(Handler, TRI, Img, Routine, Slot, Handler.Entry, Work);
+  Interpreter Interp(Handler, TRI, Img, Routine, Slot, std::nullopt,
+                     Handler.Entry, Work);
   State Entry;
   Entry.Regs[TRI.StackPointer] = Val::at(Base::Own, 0);
   Entry.Regs[Args[1]] = Val::at(Base::Parent, 0);
@@ -587,7 +633,7 @@ llvm::Error checkHandler(const LowFunc &Handler, const TargetRegInfo &TRI,
   // The frame's own base, its TargetFrame and the slot's address may leave
   // the handler only toward the runtime.
   auto Escapes = [&](const Val &V) {
-    if (V.K == Val::Inexact)
+    if (V.K == Val::Inexact || V.K == Val::Masked)
       return V.B != Base::Own;
     return V.K == Val::Frame && V.B == Base::Parent &&
            (V.Off == 0 || V.Off == TargetFromFrame ||
@@ -671,11 +717,22 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
   State Root;
   Root.Regs[TRI.StackPointer] = Val::at(Base::Own, Convention->BodySP);
 
+  // The GS data places the cookie slot, which holds the masked frame.
+  std::optional<SlotView> Cookie;
+  if (EH.GSCookie &&
+      EH.GSCookie->ParseStatus == ExceptionParseStatus::Complete &&
+      !EH.GSCookie->HasAlignment) {
+    Cookie.emplace();
+    Cookie->B = Base::Own;
+    Cookie->Off = Convention->GSCookieFrame + EH.GSCookie->CookieOffset;
+    Cookie->Holds = Val::masked(Base::Own, Convention->GSCookieFrame);
+  }
+
   // The calls of the routine and what frame each passes: the frame itself,
   // or a reload of one slot.
   const va_t BodyStart = Function.Entry + EH.PrologueSize;
   Interpreter Survey(Function, TRI, Image, Convention->Routine, std::nullopt,
-                     BodyStart, WorkRemaining);
+                     Cookie, BodyStart, WorkRemaining);
   if (auto Error = Survey.run(Entry, Root))
     return std::move(Error);
   std::set<int64_t> Slots;
@@ -694,8 +751,8 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     Slot->Off = *Slots.begin();
     Slot->Holds = Val::at(Base::Own, Convention->TargetFrame);
   }
-  Interpreter Interp(Function, TRI, Image, Convention->Routine, Slot, BodyStart,
-                     WorkRemaining);
+  Interpreter Interp(Function, TRI, Image, Convention->Routine, Slot, Cookie,
+                     BodyStart, WorkRemaining);
   if (auto Error = Interp.run(Entry, Root))
     return std::move(Error);
 
@@ -704,7 +761,7 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     // The function's own frame values reach memory and callees only as
     // pointers to its other objects.
     auto Escapes = [&](const Val &V) {
-      if (V.K == Val::Inexact)
+      if (V.K == Val::Inexact || V.K == Val::Masked)
         return true;
       return V.K == Val::Frame &&
              (V.Off == Convention->TargetFrame || V.Off == Convention->BodySP ||
@@ -725,6 +782,14 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
           return refuse("the saved-frame slot is written another way at " +
                         hex(Store.At));
         Saved = true;
+        continue;
+      }
+      if (Cookie && Store.Addr.K == Val::Frame && Store.Addr.B == Cookie->B &&
+          overlaps(Store.Addr.Off, Store.Size, Cookie->Off, Pointer)) {
+        if (Store.Addr.Off != Cookie->Off || Store.Size != Pointer ||
+            Store.Value != Cookie->Holds)
+          return refuse("the GS cookie slot is written another way at " +
+                        hex(Store.At));
         continue;
       }
       if (Escapes(Store.Value))
