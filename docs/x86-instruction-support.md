@@ -169,11 +169,48 @@ verified `0f 01 de` instruction; they do not execute SKINIT or qualify reset,
 attestation, successful launch or architectural faults. Global completion and
 the later LLVM release/SDK/gitlink update remain separate work.
 
+## Native far-pointer compiler interfaces
+
+The LLVM fork provides `llvm.x86.lds16/32`, `llvm.x86.les16/32` and
+`llvm.x86.lfs16/32/64`, `llvm.x86.lgs16/32/64`, `llvm.x86.lss16/32/64`.
+Each takes a packed pointer image and returns its integer offset only after the
+native instruction completes. One instruction owns the 4/6/10-byte image read,
+selector validation, hidden segment installation and descriptor accessed-bit
+effects. Unknown descriptor reads/writes remain separate from the exact image
+read. Segment definitions and scheduling boundaries retain the state change;
+unused integer results do not remove it. NeverC exposes the nine valid long-mode
+`__builtin_ia32_lfs*`, `__builtin_ia32_lgs*` and `__builtin_ia32_lss*` spellings
+without inline assembly. LDS/LES require 32-bit code; 64-bit results require long
+mode, and code16 is explicitly refused.
+
+The selected segment remains ambient CPU state. Callers must maintain compiler
+ABI invariants, including TLS and the stack. The interface does not carry an
+original instruction's source segment, address-size/default-stack provenance,
+or an owned continuation. LSS's interrupt/debug inhibition applies to the next
+compiler-selected instruction. Consequently, NeverD still refuses far-pointer
+lifting in both policies until its GPR, selector, hidden descriptor and
+continuation have one complete state owner.
+
+Compiler checks cover both code modes, ELF/COFF/Mach-O, O0/O2, exact memory
+extents, segment effects, malformed signatures and invalid mode diagnostics.
+Six Linux x64 execution profiles compare LLVM, NeverC and NeverC IR through LLVM
+against original bytes. Each checks 4,320 paired state observations, 18 exact
+page boundaries and 186 faults. Faults retain the destination and all other
+GPRs, arithmetic flags/DF, selectors and FS/GS bases; page faults also check CR2.
+The 1,440 null-selector observations use the immediate debugger stop because a
+retained host reproduction shows Linux SIGTRAP return clearing selectors 1..3.
+They qualify the instruction result before return to userspace, without
+claiming post-interrupt continuation. No failing sample is retried or counted
+as passed. i386 execution, privileged descriptor-page faults, alignment checks
+and the LSS interrupt/debug shadow remain unqualified. See the exact tools,
+sources, host diagnosis and results in
+[the qualification record](evidence/x86-far-pointer-native-2026-10-29.json).
+
 ## Known remaining gaps
 
 | Instructions or family | Missing contract |
 | --- | --- |
-| LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
+| LDS, LES, LSS, LFS, LGS | LLVM now provides 13 native far-pointer load interfaces and NeverC exposes the nine valid long-mode builtins. NeverD still needs coupled GPR/selector completion, hidden descriptor state and original-instruction continuation. Native compiler support alone does not authorize strict or permissive lifting; both continue to refuse the former ordinary load/COPY approximation. |
 | Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 native and explicit portable paths retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. Portable MMX data operations remain outside the admitted profile. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |

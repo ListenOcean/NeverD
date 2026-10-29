@@ -1269,8 +1269,11 @@ remain positive controls. This is admission qualification, not completed
 segment or owned 3DNow! semantics. The owned context suite below independently
 qualifies the admitted x64 path.
 The pinned decoder corpus census shares these independent legacy encoding
-fixtures. Its unowned 3DNow! samples are explicit refusals, not successful lift counts;
-unexpected refusals of other instruction IDs still fail the corpus test.
+fixtures. Its unowned 3DNow! and FNOP/EMMS/FEMMS samples are explicit refusals,
+not successful lift counts; unexpected refusals of other instruction IDs still
+fail the corpus test. Native far-pointer compiler interfaces are independently
+qualified in [the far-pointer record](evidence/x86-far-pointer-native-2026-10-29.json).
+They do not change the far-pointer lifter's refusal contract.
 Both source inventories reject incomplete address fragments in addresses
 and stored/comparator values. i386 decoded absolute-address fixtures also
 check that a complete narrow displacement is normalized as a full address,
