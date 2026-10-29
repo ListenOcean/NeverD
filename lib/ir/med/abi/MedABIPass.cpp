@@ -1822,8 +1822,8 @@ void recoverCallAbi(
       }
       // A branch or EH boundary may split the setup from the call on any
       // architecture. Keep common stores and, for fixed Win64 scalar calls,
-      // an edge-complete plan for differing values at this call's join.
-      std::map<int64_t, PhiNode> StackJoins;
+      // an edge-complete plan through nested joins for differing values.
+      CallSetupStackJoins StackJoins;
       const bool RecoverStackJoins =
           TheArch == Arch::X64 && Fmt == BinaryFormat::COFF && !CI.IsIndirect &&
           !CI.ArgumentsInCalleeRegisterOrder && !Op.SourceCallHint &&
@@ -1832,15 +1832,16 @@ void recoverCallAbi(
           CalleeArgs > int(IntParamRegs.size());
       const auto ReachingStackStores =
           callSetupStackStores(Ctx, RecoverStackJoins ? &StackJoins : nullptr);
-      std::erase_if(StackJoins, [&](const auto &Item) {
+      std::erase_if(StackJoins.Slots, [&](const auto &Item) {
         const int64_t Slot =
             int64_t(IntParamRegs.size()) +
             (Item.first - CallLayout.CallStackBase) / CallLayout.SlotBytes;
         return Slot >= CalleeArgs || Slot >= MaxArgs;
       });
-      if (!StackJoins.empty()) {
+      if (!StackJoins.Slots.empty()) {
         HasStackArg = true;
-        HasStackArgAtCallSP |= StackJoins.count(CallLayout.CallStackBase) != 0;
+        HasStackArgAtCallSP |=
+            StackJoins.Slots.count(CallLayout.CallStackBase) != 0;
       }
       for (const auto &[Offset, Value] : ReachingStackStores) {
         if (UndefinedScratchSlot(Value))
@@ -2467,25 +2468,46 @@ void recoverCallAbi(
         FoundMask[Slot] = true;
         FromStackScan[Slot] = true;
       }
-      for (auto &[Offset, Join] : StackJoins) {
+      std::vector<std::optional<MedVar>> JoinedValues(StackJoins.Nodes.size());
+      const auto Materialize = [&](auto &&Self, size_t Index) -> MedVar {
+        if (JoinedValues[Index])
+          return *JoinedValues[Index];
+        const auto &Node = StackJoins.Nodes[Index];
+        PhiNode Join;
+        // Each edge keeps its original store width; no absent byte is filled.
+        Join.Output.Kind = MedVar::Temp;
+        Join.Output.Id = FreshId++;
+        Join.Output.Size = Node.Bytes;
+        Join.Output.TheArch = TheArch;
+        for (const auto &[Predecessor, Value] : Node.Args) {
+          const auto *Scalar = std::get_if<MedVar>(&Value);
+          Join.Args.emplace_back(Predecessor,
+                                 Scalar ? *Scalar
+                                        : Self(Self, std::get<size_t>(Value)));
+        }
+        const MedVar Output = Join.Output;
+        // The proof's block index remains valid: ABI recovery changes only
+        // operations and PHIs. Children are materialized before their users.
+        const auto Owner = BlockIds.first(Node.BlockId) - Func.Blocks.data();
+        Func.Blocks[Owner].Phis.push_back(std::move(Join));
+        JoinedValues[Index] = Output;
+        return Output;
+      };
+      bool MaterializedJoin = false;
+      for (const auto &[Offset, Index] : StackJoins.Slots) {
         const int64_t Slot =
             ReachingStackBase +
             (Offset - CallLayout.CallStackBase) / CallLayout.SlotBytes;
         if (Slot < 0 || Slot >= MaxArgs || Slot >= CalleeArgs ||
             FoundMask[Slot])
           continue;
-        // Each edge supplies its actual store width. A byte argument stays a
-        // byte; absent bytes and unequal-width arms never become padding.
-        Join.Output.Kind = MedVar::Temp;
-        Join.Output.Id = FreshId++;
-        Join.Output.Size = Join.Args.front().second.Size;
-        Join.Output.TheArch = TheArch;
-        Found[Slot] = Join.Output;
+        Found[Slot] = Materialize(Materialize, Index);
         FoundMask[Slot] = true;
         FromStackScan[Slot] = true;
-        Blk.Phis.push_back(std::move(Join));
-        DefSites.invalidate();
+        MaterializedJoin = true;
       }
+      if (MaterializedJoin)
+        DefSites.invalidate();
 
       // A call that takes every argument from the stack is passed nothing by
       // what a scratch register held at entry where this function takes no

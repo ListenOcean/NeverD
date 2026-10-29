@@ -276,9 +276,8 @@ TEST(LLVMCValues, AtomicStoresKeepTheirOrder) {
   Module.setDataLayout("e-p:64:64");
   llvm::IRBuilder<> B(Context);
   auto *F = llvm::Function::Create(
-      llvm::FunctionType::get(B.getInt32Ty(),
-                              {B.getPtrTy(), B.getPtrTy(), B.getInt32Ty()},
-                              false),
+      llvm::FunctionType::get(
+          B.getInt32Ty(), {B.getPtrTy(), B.getPtrTy(), B.getInt32Ty()}, false),
       llvm::GlobalValue::ExternalLinkage, "publish", Module);
   B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
   auto Store = [&](llvm::Value *Value, llvm::Value *Address,

@@ -11253,12 +11253,15 @@ x64 machine code and both optimized/unoptimized lifted LLVM at O0/O2, checking
 architecture/format cells, block-order changes, conflicting or missing stores,
 partial overwrites, opaque calls, aliases, provenance and independent/EH roots.
 Fixed direct Win64 calls also merge differing same-width outgoing values at
-the call block, retaining each predecessor's identity and address provenance.
-Missing or unequal-width writes, malformed edges, exhausted work, source hints
-and tail calls do not create these PHIs. `BranchStackArgumentsKeepTheirEdgeValues`
+the call block and preceding nested joins, retaining each predecessor's identity
+and address provenance. Recovery first builds a bounded plan, then materializes
+only the required roots and their dependencies. A later local overwrite leaves
+no unused PHIs. Missing or unequal-width writes, malformed edges, cycles,
+exhausted work, source hints and tail calls do not create these PHIs. `BranchStackArgumentsKeepTheirEdgeValues`
 compares original Win64 bytes with both C routes at O0/O2 under UBSan, covering
-branch-selected frame pointers and full-word/byte arguments, source optimization
-on/off, and selected versus omitted callee recovery.
+branch-selected frame pointers and full-word/byte arguments, two-level joins
+with an independently observed inner computation, source optimization on/off,
+and selected versus omitted callee recovery.
 `I386CallContract.SelectingTheCallerPreservesTheCalleeArgumentContract` compares
 selected and whole-function output, cdecl and register arguments, direct and
 forwarding callees, HighIR and LLVM, and default/NoOpt in all three formats.
