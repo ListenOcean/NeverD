@@ -120,6 +120,36 @@ sets `neverd_last_error`. The manifest contains exact original instruction bytes
 state layout, arbitrary-effect ordering, environment declarations and a SHA-256
 of the complete emitted C.
 
+Python plugins can use the same interface through `session.raw`. The owned-string
+helper releases the source; the caller must separately release the manifest:
+
+```python
+import ctypes
+import json
+
+request = json.dumps({
+    "profile": "kernel-events-v6",
+    "instructions": [0x140001000],
+    "mxcsr_mask": "0xffbf",
+    "paging_address_bits": 48,
+}).encode("utf-8")  # Use the execution environment's mask and paging width.
+manifest_pointer = ctypes.c_void_p()
+try:
+    source = session.raw.session_owned_string(
+        "neverd_x64_continuation_source_v1", request, len(request), 0,
+        ctypes.byref(manifest_pointer))
+    if source is None:
+        raise RuntimeError(session.raw.session_owned_string("neverd_last_error"))
+    manifest = json.loads(ctypes.string_at(manifest_pointer).decode("utf-8"))
+finally:
+    if manifest_pointer.value:
+        session.raw.call("neverd_free_string",
+                         ctypes.cast(manifest_pointer, ctypes.c_char_p))
+```
+
+Pass `None` as the last argument if no manifest is needed. Never use `c_char_p`
+as its output cell: implicit string conversion would lose the owned address.
+
 Build `NeverDX64ContinuationExportTests` and `NeverDX64ContinuationSourceTests`
 with `scripts/build.py`. The public exporter suite checks SDK/CLI parity,
 strict request failures, physical CALL/RET after a stack pivot, bounded loops,
