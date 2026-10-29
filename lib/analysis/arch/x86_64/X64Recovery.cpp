@@ -285,9 +285,7 @@ bool runtimeReadBundle(const SpecializationInstruction &I, NdVar Sample,
       I.NativeStackControl != SpecializationNativeStackControl::None ||
       I.ProfileProjection != InterpreterProfileProjection::None ||
       I.Ops.size() != Count ||
-      I.UndefinedEffects.Coverage != (Encoding == 0x32
-                                          ? LowUndefinedCoverage::Missing
-                                          : LowUndefinedCoverage::Complete) ||
+      I.UndefinedEffects.Coverage != LowUndefinedCoverage::Complete ||
       I.UndefinedEffects.OpCount != Count ||
       !I.UndefinedEffects.Effects.empty() ||
       I.UndefinedEffects.OperationDigest !=

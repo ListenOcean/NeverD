@@ -12,6 +12,20 @@ configurations remain separate coverage.
 
 ## Open
 
+HighC's Win64 saved-parameter aliases now stop at every new SSA definition,
+including register COPYs, PHIs and conditional call clobbers. A version-zero
+local or PHI definition is not an entry argument. Native/source execution tests
+cover 32/64-bit call-result replacements through a branch join, selected and omitted
+callees, both C routes, source optimization on/off, and O0/O2 with UBSan.
+This preserves returned status values; it does not prove unused stack arguments
+or a physical kernel continuation's ordinary ABI.
+
+The runtime RDMSR recovery bridge now requires the strict lifter's Complete
+undefined-output audit, consistently with the other canonical runtime reads.
+The obsolete Missing-only check rejected valid supervisor reads. Every sample
+remains an independent environment input under the declared kernel/nonfaulting
+profile; forged coverage grades and unknown address origins stay rejected.
+
 The x64 kernel call table now includes the 107 additional bundled DDK native
 service declarations whose parameter widths agree with the bundled native
 headers. Reverse inventory tests require exact arity and width coverage.

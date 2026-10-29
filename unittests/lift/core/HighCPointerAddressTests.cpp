@@ -41959,13 +41959,15 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
 }
 
-// A load certified immutable by MedIR can fold to its exact exception code.
+// A load certified immutable by MedIR can fold to its exact exception code,
+// including the signed decimal spelling converted by the uint32_t parameter.
 // Otherwise the LLVM projection must preserve its captured volatile value.
 void expectCapturedSehExceptionCode(const std::string &Source) {
   const auto Folded = lastCallArguments(
       sourceLineContaining(Source, "    RaiseException("), "RaiseException");
   if (Folded && Folded->size() == 4 &&
-      ((*Folded)[0] == "3762425857" || (*Folded)[0] == "0xE0421001")) {
+      ((*Folded)[0] == "3762425857" || (*Folded)[0] == "0xE0421001" ||
+       (*Folded)[0] == "-532541439")) {
     for (size_t I = 1; I < Folded->size(); ++I)
       EXPECT_EQ(llvm::StringRef((*Folded)[I]).trim(), "0") << Source;
     return;
