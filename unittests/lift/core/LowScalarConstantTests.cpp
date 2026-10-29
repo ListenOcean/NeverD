@@ -525,4 +525,59 @@ TEST(CallRegisterConstant, PartialWritesMatchIndependentByteStorage) {
       }
 }
 
+TEST(LowScalarConstant, AbsorbersRequireCurrentNumericBytes) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    LowBlock Block;
+    auto Set = unary(NdOp::COPY, 8, Mode == 1 ? 1 : 0, 8);
+    Set.Addr = 0x1000;
+    auto Mask = binary(NdOp::INT_AND, 8, 0, 0);
+    Mask.Addr = 0x1004;
+    Mask.Output = NdVar::tmp(TmpBase + 16, 8);
+    Mask.Inputs[0] = NdVar::tmp(TmpBase + 8, 8);
+    Mask.Inputs[1] = Set.Output;
+    Block.Ops = {Set, Mask};
+    if (Mode >= 2 && Mode <= 4) {
+      LowOp Barrier;
+      Barrier.Addr = 0x1002;
+      Barrier.Opcode = Mode == 2   ? NdOp::CALL
+                       : Mode == 3 ? NdOp::INDIR_CALL
+                                   : NdOp::INTRINSIC;
+      Block.Ops.insert(Block.Ops.begin() + 1, Barrier);
+    }
+    if (Mode == 5)
+      Block.Ops.front().Inputs[0].Provenance =
+          ConstantAddressProvenance::Address;
+    if (Mode == 6) {
+      auto Partial = unary(NdOp::COPY, 1, 1, 1);
+      Partial.Output.Offset = 3;
+      Block.Ops.insert(Block.Ops.begin() + 1, Partial);
+    }
+    if (Mode == 7 || Mode == 8) {
+      Block.Ops.front().Output = NdVar::tmp(TmpBase, 8);
+      Block.Ops.back().Inputs[1] = Block.Ops.front().Output;
+      Block.Ops.back().Addr = Set.Addr;
+      if (Mode == 8) {
+        auto Partial = unary(NdOp::COPY, 1, 1, 1);
+        Partial.Addr = Set.Addr;
+        Partial.Output = NdVar::tmp(TmpBase + 3, 1);
+        Block.Ops.insert(Block.Ops.begin() + 1, Partial);
+      }
+    }
+    if (Mode == 9)
+      Block.Ops.back().Inputs[1].Size = 4;
+    if (Mode == 10)
+      Block.Ops.front().MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+    std::vector<LowBlock> Blocks{Block};
+    if (Mode == 11) {
+      Blocks.emplace_back();
+      Blocks.back().Ops = {Blocks.front().Ops.back()};
+      Blocks.front().Ops.pop_back();
+    }
+    size_t Remaining = Mode == 12 ? 0 : 128;
+    const auto Absorbed = lowBlockAbsorbingConstants(Blocks, Remaining);
+    EXPECT_EQ(Absorbed.size(), Mode == 0 || Mode == 7 ? 1u : 0u);
+  }
+}
+
 } // namespace

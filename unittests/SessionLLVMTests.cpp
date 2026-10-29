@@ -209,7 +209,7 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   Object.Size = 8;
   State.Img.Symbols.push_back(std::move(Object));
   const auto OriginalImage = State.Img;
-  for (unsigned Variant : {0, 1, 2}) {
+  for (unsigned Variant : {0, 1, 2, 3}) {
     SCOPED_TRACE(Variant);
     const bool ThroughWrapper = Variant != 0;
     State.Img = OriginalImage;
@@ -227,7 +227,7 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
           0xE8, 0x13, 0,    0,    0, // call consumer
           0x48, 0x01, 0xD8,          // add rax,rbx
           0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};
-      if (Variant == 2) {
+      if (Variant >= 2) {
         Wrapper.resize(13);
         Wrapper.insert(Wrapper.end(),
                        {0x48, 0x01, 0xC3,             // add rbx,rax
@@ -240,6 +240,17 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
       auto Symbol = Symbol::makeFunc(Caller + 0x20);
       Symbol.Name = "spill_prefix_forwarder";
       State.Img.Symbols.push_back(std::move(Symbol));
+      if (Variant == 3) {
+        // Both arms destroy the incoming RCX before strlen, so a later
+        // opaque call in the wrapper cannot revive its unused high bytes.
+        auto BranchingBody = Body;
+        BranchingBody.insert(
+            BranchingBody.begin() + 23,
+            {0xF6, 0xC3, 1, 0x74, 7, 0x48, 0x8D, 0x4C, 0x24, 0x30, 0xEB, 5});
+        BranchingBody[42] -= 12; // adjust the strlen IAT displacement
+        std::copy(BranchingBody.begin(), BranchingBody.end(),
+                  Code.begin() + Consumer - Caller);
+      }
     }
     for (bool Omitted : {false, true}) {
       SCOPED_TRACE(Omitted);

@@ -455,7 +455,7 @@ TEST(SourceStackSpills, RegisterSuffixesNeedCurrentSourceCalleeProofs) {
 
 TEST(SourceStackSpills,
      InputDestructionNeedsOriginalEntryAndCompleteOverwrites) {
-  for (unsigned Mode = 0; Mode < 24; ++Mode) {
+  for (unsigned Mode = 0; Mode < 29; ++Mode) {
     SCOPED_TRACE(Mode);
     MedFunc Func;
     Func.Entry = 0x1000;
@@ -494,7 +494,7 @@ TEST(SourceStackSpills,
     markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
                             StackEntryKind::Call, nullptr, &Overwritten);
     const auto RCX = NdVar::reg(x86reg::RCX, 8);
-    const auto Address = NdVar::tmp(10, 8);
+    const auto Address = NdVar::tmp(Mode == 28 ? 10 : TmpBase, 8);
     auto Low = [&](va_t PC, NdOp Code, NdVar Out,
                    std::initializer_list<NdVar> Inputs) {
       LowOp O;
@@ -541,7 +541,7 @@ TEST(SourceStackSpills,
     if (Mode == 10)
       Original.insert(Original.begin() + 2,
                       Low(0x1006, NdOp::BRANCH, {}, {NdVar::cst(0x2000, 8)}));
-    if (Mode >= 14 && Mode < 20) {
+    if ((Mode >= 14 && Mode < 20) || Mode == 28) {
       auto Read = Low(0x1006, NdOp::LOAD, NdVar::tmp(12, 8), {Address});
       auto Mask = Low(0x1006, NdOp::INT_AND, NdVar::tmp(13, 8),
                       {Read.Output, NdVar::scalar(Mode == 16 ? 1 : 0, 8)});
@@ -566,13 +566,253 @@ TEST(SourceStackSpills,
       }
       Original.insert(Original.begin() + 2, {Read, Mask, Save});
     }
+    if (Mode >= 24 && Mode < 28) {
+      auto Read = Low(0x1006, NdOp::LOAD, NdVar::tmp(32, 8), {Address});
+      auto Reset =
+          Low(0x1006, NdOp::COPY, NdVar::tmp(34, 2), {NdVar::scalar(0, 2)});
+      Reset.Seq = 1;
+      // The middle bytes were reset; either side still carries the load.
+      auto Observe = Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 1),
+                         {NdVar::tmp(Mode == 24   ? 33
+                                     : Mode == 25 ? 36
+                                                  : 34,
+                                     1)});
+      Observe.Seq = 2;
+      if (Mode == 27) {
+        Reset.Output = NdVar::tmp(48, 2);
+        Reset.Inputs[0] = NdVar::tmp(33, 2);
+        Observe.Inputs[0] = NdVar::tmp(49, 1);
+      }
+      Original.insert(Original.begin() + 2, {Read, Reset, Observe});
+    }
     size_t Budget = Mode == 9 ? 1 : 4096;
+    LowBlock OriginalBlock;
+    OriginalBlock.Id = 0;
+    OriginalBlock.StartAddr = Func.Entry;
+    OriginalBlock.Ops = std::move(Original);
     const auto Killed = sourceRegisterInputOverwrites(
-        Func, Original, {{0, 0}}, Callees, Overwritten, Budget);
-    EXPECT_EQ(Killed,
-              Mode == 0 || Mode == 11 || Mode == 13 || Mode == 14 || Mode == 18
-                  ? std::set<unsigned>{0}
-                  : std::set<unsigned>{});
+        Func, {OriginalBlock}, {{0, 0}}, Callees, Overwritten, Budget);
+    EXPECT_EQ(Killed, Mode == 0 || Mode == 11 || Mode == 13 || Mode == 14 ||
+                              Mode == 18 || Mode == 26
+                          ? std::set<unsigned>{0}
+                          : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, InputDestructionCoversEveryOriginalBranch) {
+  for (unsigned Mode = 0; Mode < 25; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedBlock Current;
+    Current.Id = 0;
+    Current.StartAddr = Func.Entry;
+    Current.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                   op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    const auto Low = [](va_t PC, NdOp Code, NdVar Out,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    std::vector<LowBlock> Original(4);
+    for (size_t I = 0; I < Original.size(); ++I) {
+      Original[I].Id = I;
+      Original[I].StartAddr = Func.Entry + I * 0x10;
+      Original[I].EndAddr = Original[I].StartAddr + 8;
+    }
+    Original[0].EndAddr = Original[1].StartAddr;
+    Original[0].Succs = {1, 2};
+    Original[0].Ops = {Low(0x1000, NdOp::COND_BR, {},
+                           {NdVar::cst(0x1020, 8), NdVar::reg(x86reg::ZF, 1)})};
+    for (size_t I : {1u, 2u}) {
+      auto &Block = Original[I];
+      Block.Preds = {0};
+      Block.Succs = {3};
+      Block.Ops = {
+          Low(Block.StartAddr, NdOp::COPY,
+              NdVar::reg(x86reg::RCX, I == 1 ? 8 : 4), {NdVar::cst(I, 8)}),
+          Low(Block.StartAddr + 4, NdOp::BRANCH, {}, {NdVar::cst(0x1030, 8)})};
+    }
+    Original[3].Preds = {1, 2};
+    Original[3].Ops = {Low(0x1030, NdOp::RETURN, {}, {RAX})};
+    if (Mode == 1 || Mode == 7)
+      Original[1].Ops.front() = Low(0x1010, NdOp::RETURN, {}, {RAX});
+    if (Mode == 2)
+      Original[1].Ops.front().Output.Size = 2;
+    if (Mode == 3)
+      Original[1].Ops.front() = Low(0x1010, NdOp::COPY, RAX, {RCX});
+    if (Mode == 4) {
+      Original[1].Ops = {
+          Low(0x1010, NdOp::BRANCH, {}, {NdVar::cst(0x1010, 8)})};
+      Original[1].Succs = {1};
+      Original[1].Preds.push_back(1);
+    }
+    if (Mode == 5)
+      Original[0].Ops.back().Inputs[0] = NdVar::cst(0x2000, 8);
+    if (Mode == 6)
+      Original[0].EndAddr = 0x1011;
+    if (Mode == 7)
+      Original[0].Ops.front().Opcode = NdOp::RETURN;
+    if (Mode == 8)
+      Original[1].Ops.front() = Low(0x1010, NdOp::LOAD, RAX, {RCX});
+    if (Mode == 9)
+      Original[0].Ops.front().Opcode = NdOp::INDIR_BR;
+    if (Mode == 11)
+      Original[1].ExceptionalSuccs.resize(1);
+    if (Mode == 12)
+      Original[0].Preds = {1};
+    if (Mode == 13) {
+      // Control flow after destruction cannot revive an earlier input that
+      // left no copy in a register or live storage.
+      Original[1].Ops.back().Inputs[0] = NdVar::cst(0x1010, 8);
+      Original[1].Succs = {1};
+      Original[1].Preds.push_back(1);
+    }
+    if (Mode == 14) {
+      Original[1].Ops.front().Output = RAX;
+      Original[2].Ops.front().Output = RAX;
+      Original[3].Ops.insert(Original[3].Ops.begin(),
+                             Low(0x1030, NdOp::COPY, RCX, {NdVar::cst(0, 8)}));
+    }
+    if (Mode == 15) {
+      Original[0].Ops.front() =
+          Low(0x1000, NdOp::COPY, RAX, {NdVar::cst(0, 8)});
+      Original[0].Succs = {1};
+    }
+    if (Mode == 16)
+      Original[0].Succs.push_back(3);
+    SourceCalleeParameterOverwrites Callees;
+    if ((Mode >= 17 && Mode <= 20) || Mode == 22) {
+      const auto Call = Low(0x1010, NdOp::CALL, RAX, {NdVar::cst(0x3000, 8)});
+      if (Mode == 19)
+        Original[1].Ops.insert(Original[1].Ops.begin(), Call);
+      else
+        Original[1].Ops.front() = Call;
+      auto Bound = op(NdOp::CALL, temp(10),
+                      {MedVar::makeConst(Mode == 18 ? 0x4000 : 0x3000, 8)});
+      Bound.Addr = 0x1010;
+      Bound.OriginSeq = Mode == 22 ? 1 : 0;
+      Bound.CallSiteId = 1;
+      Current.Ops.insert(Current.Ops.begin() + 1, Bound);
+      if (Mode == 19) {
+        auto &Proof = Func.CallUnreadRegisters[1];
+        Proof.Instruction = 0x1010;
+        Proof.OriginSeq = 0;
+        Proof.Target = 0x3000;
+        Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+      } else if (Mode != 20)
+        Callees[0x3000].insert(0);
+    }
+    if (Mode == 21)
+      Original[0].Ops.front().Inputs[1] = RCX;
+    if (Mode == 23)
+      Original[1].Ops.clear();
+    if (Mode == 24)
+      Original[2].StartAddr = Original[1].StartAddr;
+    Func.Blocks.push_back(std::move(Current));
+    size_t Budget = Mode == 10 ? 1 : 4096;
+    const auto Killed = sourceRegisterInputOverwrites(Func, Original, {{0, 0}},
+                                                      Callees, {}, Budget);
+    EXPECT_EQ(Killed, Mode == 0 || Mode == 13 || Mode == 14 || Mode == 15 ||
+                              Mode == 17 || Mode == 19
+                          ? std::set<unsigned>{0}
+                          : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, InputDestructionChecksPromotedStackReads) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(5);
+    Func.Params[0] = rcx(0);
+    auto &Parameter = Func.Params[4];
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 4;
+    Parameter.Size = 8;
+    Parameter.RegOff = kNoParamReg;
+    MedBlock Current;
+    Current.Id = 0;
+    Current.StartAddr = Func.Entry;
+    Current.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                   op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    const auto Low = [](va_t PC, NdOp Code, NdVar Out,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto FP = NdVar::reg(x86reg::RBP, 8);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto Address = NdVar::tmp(TmpBase, 8);
+    const auto Value = NdVar::tmp(TmpBase + 8, 8);
+    LowBlock Original;
+    Original.Id = 0;
+    Original.StartAddr = Func.Entry;
+    Original.Ops = {
+        Low(0x1000, NdOp::COPY, FP, {SP}),
+        Low(0x1004, NdOp::INT_ADD, Address,
+            {FP, NdVar::scalar(Mode == 1 ? 32 : 40, 8)}),
+        Low(0x1004, NdOp::LOAD, Value, {Address}),
+        Low(0x1004, NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {Value}),
+        Low(0x1008, NdOp::COPY, RCX, {NdVar::scalar(0, 8)}),
+        Low(0x100C, NdOp::RETURN, {}, {})};
+    Original.Ops[2].Seq = 1;
+    Original.Ops[3].Seq = 2;
+    if (Mode == 2)
+      Original.Ops[0].Output.Size = 4;
+    if (Mode == 3)
+      Original.Ops[2].Output.Size = 16;
+    if (Mode == 4)
+      Parameter.Size = 4;
+    if (Mode == 5)
+      Parameter.Id = 5;
+    if (Mode == 6) {
+      Original.Ops.insert(
+          Original.Ops.begin() + 1,
+          Low(0x1002, NdOp::CALL, {}, {NdVar::scalar(0x2000, 8)}));
+      auto Bound = op(NdOp::CALL, temp(10), {MedVar::makeConst(0x2000, 8)});
+      Bound.Addr = 0x1002;
+      Bound.OriginSeq = 0;
+      Bound.CallSiteId = 1;
+      Current.Ops.insert(Current.Ops.begin() + 1, Bound);
+      auto &Proof = Func.CallUnreadRegisters[1];
+      Proof.Instruction = Bound.Addr;
+      Proof.OriginSeq = 0;
+      Proof.Target = 0x2000;
+      Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+    }
+    if (Mode == 7)
+      Original.Ops[0].Inputs[0] = RCX;
+    if (Mode == 9)
+      Func.Params.resize(4);
+    if (Mode == 10)
+      Parameter.RegOff = x86reg::RAX;
+    if (Mode == 11)
+      Original.Ops[1].Opcode = NdOp::INT_OR;
+    if (Mode == 12)
+      Original.Ops.insert(Original.Ops.begin() + 3, Original.Ops[2]);
+    Func.Blocks.push_back(std::move(Current));
+    size_t Remaining = Mode == 8 ? 1 : 2048;
+    const auto Killed = sourceRegisterInputOverwrites(
+        Func, {Original}, {{0, 0}}, {}, {}, Remaining);
+    EXPECT_EQ(Killed, Mode == 0 ? std::set<unsigned>{0} : std::set<unsigned>{});
   }
 }
 

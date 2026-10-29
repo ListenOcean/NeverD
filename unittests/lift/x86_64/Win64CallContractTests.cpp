@@ -757,6 +757,91 @@ TEST(SummarizedCallArguments, UnreadRegisterTailsDoNotBecomeArguments) {
     }
 }
 
+TEST(SummarizedCallArguments, LaterStackParametersKeepUnreadRegisterPositions) {
+  for (unsigned Count : {0u, 1u, 3u, 4u})
+    for (bool Stored : {false, true})
+      for (bool Scratch : {false, true}) {
+        SCOPED_TRACE(Count);
+        SCOPED_TRACE(Stored);
+        SCOPED_TRACE(Scratch);
+        BinaryImage Image;
+        Image.Arch = Arch::X64;
+        Image.Format = BinaryFormat::COFF;
+        Image.Bits = Bitness::Bits64;
+        MedFunc Function;
+        Function.Entry = 0x1000;
+        Function.Name = "caller";
+        MedBlock Block;
+        Block.Id = 0;
+        const auto Register = [](uint64_t Offset, int Version) {
+          MedVar Value;
+          Value.Kind = MedVar::Reg;
+          Value.TheArch = Arch::X64;
+          Value.Id = Offset / 8 + 1;
+          Value.RegOff = Offset;
+          Value.SSAVer = Version;
+          Value.Size = 8;
+          return Value;
+        };
+        const auto Registers =
+            getTargetRegInfo(Arch::X64).integerParamRegs(Image.Format);
+        if (Scratch)
+          for (unsigned I = Count; I < Registers.size(); ++I) {
+            MedOp Setup;
+            Setup.Opcode = NdOp::COPY;
+            Setup.Output = Register(Registers[I], 1);
+            Setup.addInput(MedVar::makeConst(100 + I, 8));
+            Block.Ops.push_back(Setup);
+          }
+        const auto Pointer = MedVar::makeConst(0x3000, 8);
+        if (Stored) {
+          MedOp Address;
+          Address.Opcode = NdOp::INT_ADD;
+          Address.Output.Kind = MedVar::Temp;
+          Address.Output.Id = 100;
+          Address.Output.SSAVer = 1;
+          Address.Output.Size = 8;
+          Address.Output.TheArch = Arch::X64;
+          Address.addInput(Register(x86reg::RSP, 0));
+          Address.addInput(MedVar::makeConst(32, 8));
+          Block.Ops.push_back(Address);
+          MedOp Store;
+          Store.Opcode = NdOp::STORE;
+          Store.addInput(Address.Output);
+          Store.addInput(Pointer);
+          Block.Ops.push_back(Store);
+        }
+        MedOp Call;
+        Call.Opcode = NdOp::CALL;
+        Call.Addr = 0x1010;
+        Call.addInput(MedVar::makeConst(0x2000, 8));
+        for (unsigned I = 0; I < Count; ++I)
+          Call.addInput(I ? MedVar::makeConst(7 + I, 8)
+                          : MedVar::makeUnspecified(8, Arch::X64));
+        Call.CalleeRegisterArgs = Count;
+        Call.CalleeVectorArgs = 0;
+        // Memory reached through an incoming pointer can leave the early
+        // stack summary unknown. The recovered callee still owns five slots.
+        Call.CalleeStackArgs = -1;
+        Block.Ops.push_back(Call);
+        Function.Blocks.push_back(std::move(Block));
+        std::map<va_t, int> RegisterArity{{0x2000, 4}};
+        std::map<va_t, int> TotalArity{{0x2000, 5}};
+        for (unsigned Repeat = 0; Repeat < 2; ++Repeat) {
+          recoverCallAbi(Function, Arch::X64, {{0x2000, "consumer"}}, &Image,
+                         &RegisterArity, &TotalArity);
+          ASSERT_EQ(Function.CallInfos.size(), 1u);
+          const auto &Arguments = Function.CallInfos.front().Args;
+          ASSERT_EQ(Arguments.size(), 5u);
+          for (unsigned I = 0; I < 4; ++I)
+            EXPECT_EQ(Arguments[I],
+                      I < Count ? Call.Inputs[I + 1] : MedVar::makeConst(0, 8));
+          EXPECT_EQ(Arguments[4],
+                    Stored ? Pointer : MedVar::makeUnspecified(8, Arch::X64));
+        }
+      }
+}
+
 TEST(SummarizedCallArguments, CountOnlyContractsStillReadTheirSetup) {
   for (Arch Architecture : {Arch::ARM, Arch::AArch64}) {
     SCOPED_TRACE(static_cast<unsigned>(Architecture));
@@ -2070,9 +2155,9 @@ TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
 }
 
 TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
-  for (unsigned Variant : {0, 1, 2, 3}) {
+  for (unsigned Variant : {0, 1, 2, 3, 4, 5}) {
     SCOPED_TRACE(Variant);
-    const bool CallAfterConsumer = Variant == 3;
+    const bool CallAfterConsumer = Variant >= 3;
     const unsigned PrefixBytes = CallAfterConsumer ? 1 : Variant;
     const unsigned ExpectedCalls = CallAfterConsumer ? 2 : 1;
     const bool ThroughWrapper = PrefixBytes != 0;
@@ -2098,13 +2183,27 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
     put(Code, Text, Caller);
     std::vector<uint8_t> Body = {0x48, 0x89, 0x4C, 0x24, 8, // mov [rsp+8],rcx
                                  0x53,                      // push rbx
-                                 0x48, 0x83, 0xEC, 0x20,    // sub rsp,20h
-                                 0x48, 0x8B, 0x1D}; // mov rbx,[rip+global]
-    const auto Data = rel32(Consumer + Body.size() + 4, Global);
-    Body.insert(Body.end(), Data.begin(), Data.end());
-    Body.insert(Body.end(),
-                {0x48, 0x83, 0x64, 0x24, 0x30, 0, // and [rsp+30h],0
-                 0x48, 0x8D, 0x4C, 0x24, 0x30});  // lea rcx,[rsp+30h]
+                                 0x48, 0x83, 0xEC, 0x20};   // sub rsp,20h
+    if (Variant == 5) {
+      Body.insert(Body.end(),
+                  {0x31, 0xC0,                   // xor eax,eax
+                   0x48, 0x21, 0x44, 0x24, 0x30, // and [rsp+30h],rax
+                   0x48, 0x8B, 0x5C, 0x24, 0x50, // mov rbx,[rsp+50h]
+                   0x48, 0x8B, 0x1B});           // mov rbx,[rbx]
+    } else {
+      Body.insert(Body.end(), {0x48, 0x8B, 0x1D}); // mov rbx,[rip+global]
+      const auto Data = rel32(Consumer + Body.size() + 4, Global);
+      Body.insert(Body.end(), Data.begin(), Data.end());
+      Body.insert(Body.end(),
+                  {0x48, 0x83, 0x64, 0x24, 0x30, 0}); // and [rsp+30h],0
+    }
+    if (Variant >= 4)
+      Body.insert(Body.end(),
+                  {0xF6, 0xC3, 1,                // test bl,1
+                   0x74, 7,                      // jz other overwrite
+                   0x48, 0x8D, 0x4C, 0x24, 0x30, // lea rcx,[rsp+30h]
+                   0xEB, 5});                    // jmp reader
+    Body.insert(Body.end(), {0x48, 0x8D, 0x4C, 0x24, 0x30});
     const auto Read = throughSlot(Consumer + Body.size(), Iat + 8);
     Body.insert(Body.end(), Read.begin(), Read.end());
     Body.insert(Body.end(), {0x48, 0x01, 0xD8, // add rax,rbx
@@ -2116,11 +2215,19 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
                                       0xE8};
     if (PrefixBytes == 2)
       Forwarder[2] = 0xB7; // movzx ebx,cx
+    if (Variant == 5) {
+      Forwarder[7] = 0x30; // room for the consumer's fifth argument
+      Forwarder.pop_back();
+      Forwarder.insert(Forwarder.end(), {0x48, 0x8D, 0x05});
+      const auto Pointer = rel32(Wrapper + Forwarder.size() + 4, Global);
+      Forwarder.insert(Forwarder.end(), Pointer.begin(), Pointer.end());
+      Forwarder.insert(Forwarder.end(), {0x48, 0x89, 0x44, 0x24, 0x20, 0xE8});
+    }
     const auto Forward = rel32(Wrapper + Forwarder.size() + 4, Consumer);
     Forwarder.insert(Forwarder.end(), Forward.begin(), Forward.end());
     if (CallAfterConsumer) {
       // The later opaque call can observe stale RCX unless the consumer's
-      // original entry prefix destroys it without leaving a live copy.
+      // original control flow destroys it without leaving a live copy.
       Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xC3}); // add rbx,rax
       const auto Observe = throughSlot(Wrapper + Forwarder.size(), Iat);
       Forwarder.insert(Forwarder.end(), Observe.begin(), Observe.end());
@@ -2128,8 +2235,9 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
     } else {
       Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xD8}); // add rax,rbx
     }
-    Forwarder.insert(Forwarder.end(), {0x48, 0x83, 0xC4, 0x20, // add rsp,20h
-                                       0x5B, 0xC3});           // pop rbx; ret
+    Forwarder.insert(Forwarder.end(),
+                     {0x48, 0x83, 0xC4, uint8_t(Variant == 5 ? 0x30 : 0x20),
+                      0x5B, 0xC3}); // restore rsp; pop rbx; ret
     put(Code, Wrapper, Forwarder);
     auto Image = makeImage(Code,
                            {{Text, "reset_spill"},

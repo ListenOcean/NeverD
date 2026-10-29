@@ -269,13 +269,23 @@ candidates; it is part of that reader's cache identity. Both emitters and SDK
 replay consume the same post-recovery CallInfos. Exact scalar prefix slices
 through COPY/CONCAT/SUBBYTES/ZEXT can choose zero for unobserved high bytes;
 unknown retained bytes, address constants and producer effects stay intact.
-A source-dead input can now end at a separately checked original entry overwrite.
-The bounded signature memo retains original entry operations for spill candidates;
+A source-dead input can now end at a separately checked overwrite on every
+original CFG path. The bounded signature memo retains operations and edges for
+spill and partial-register candidates, without duplicating instruction boundaries;
 a full reset with no prior byte read is stronger than a discarded source restore.
-Register/temporary copies, partial writes, stale occurrences and entry branches
-remain conservative. A callee's may-write mask alone still proves nothing about
+Exact branch/fallthrough targets and reciprocal edges must agree. Copies into
+registers/temporaries, partial writes, stale occurrences, exceptional edges and
+cycles or returns before destruction remain conservative. A callee's may-write
+mask alone proves nothing about
 input destruction. Both C routes and SDK replay share this fact, and restoring
 an older SSA value after an overwrite reopens its implicit observations.
+Promoted stack loads require exact original entry coordinates outside spill/home
+storage and inside a current parameter; calls and branches end that address
+prefix. A separately tracked numeric register can supply an absorbing mask,
+but provenance, overlapping writes and opaque effects invalidate it.
+Win64 call assembly also preserves a later recovered stack parameter when the
+earlier summary lists only its used register prefix. Unused positional gaps
+stay padding; required missing values retain their unknown state.
 Complete straight-line Win64 wrappers now have a separate proof for unused
 positional stack slots. Original byte reads, exact nonescaping SP offsets and
 fixed nested-call home/argument ranges must all exclude the slot. Selected,

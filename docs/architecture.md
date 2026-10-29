@@ -358,17 +358,33 @@ change the native entry-read summary. Exact scalar COPY/CONCAT/SUBBYTES/ZEXT
 slices can replace a source call argument when every retained byte is known;
 unavailable neighbors are never evaluated. Original operations, effects,
 parameter positions and widths remain. SDK replay repeats the same owner.
-A separate input-destruction fact requires the original entry operations: every
+A separate input-destruction fact requires the original control flow: every
 read before an independent full-register definition must be a private spill
 proved completely overwritten without an intervening read, or a bound unread
-call. Copies into another register or temporary, partial writes, lost original
-occurrences and control transfers keep the input live. Source-dead restores
-cannot supply this stronger fact. The bounded callee memo retains the original
-entry operations of spill candidates and charges their storage to its existing
-limit. These facts propagate in the same dependency waves and terminate stale
+call. Every reachable branch must reach such a definition. Exact branch targets,
+fallthrough addresses and reciprocal CFG edges must agree; a cycle or return
+before destruction refuses the proof. Copies into another register or temporary,
+partial writes, lost original occurrences and unresolved transfers keep the input
+live. Source-dead restores cannot supply this stronger fact. The bounded callee
+memo retains original operations and edges for spill and partial-register
+candidates and charges their storage to its existing limit. Instruction-boundary
+tables are not duplicated. These facts propagate in the same dependency waves
+and terminate stale
 physical input flow across a proved destructive callee. A later SSA copy or
 call setup that reintroduces the entry value makes it live again. This remains
 a source proof; native may-write and entry-read summaries are unchanged.
+Promoted stack-argument loads can cross this walk only with exact coordinates
+from the shared original-entry frame analysis, before any call or transfer.
+The complete access must fit a current positional parameter outside private
+spills and incoming home storage. Removed read-modify-write loads separately
+use the shared scalar byte facts to check a register-carried absorbing mask;
+address constants, overwritten mask bytes and intervening calls supply none.
+The instruction-local load proof follows overlapping temporary byte ranges;
+resetting a middle slice cannot erase either surviving side.
+A complete scalar register-read summary can precede a separately recovered stack
+parameter. Win64 call assembly preserves the unused register positions as padding
+and keeps that later stack operand. Scratch register values cannot replace the
+padding; missing required operands retain their explicit unknown value.
 Straight-line Win64 wrappers can also prove a positional stack parameter
 unobserved. The complete original body supplies every load interval, including
 loads removed by source conversion. Only exact SP-relative accesses and

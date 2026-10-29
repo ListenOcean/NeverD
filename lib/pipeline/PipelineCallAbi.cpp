@@ -340,10 +340,18 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
         (Converted.CalleesRead.size() + Converted.DirectCallTargets.size()) *
         sizeof(va_t);
   }
-  if (Converted.SourceEntryOperations)
+  if (Converted.SourceOriginalBlocks) {
     Converted.Bytes +=
-        sizeof(std::vector<LowOp>) +
-        Converted.SourceEntryOperations->capacity() * sizeof(LowOp);
+        sizeof(std::vector<LowBlock>) +
+        Converted.SourceOriginalBlocks->capacity() * sizeof(LowBlock);
+    for (const LowBlock &Block : *Converted.SourceOriginalBlocks)
+      Converted.Bytes +=
+          Block.Ops.capacity() * sizeof(LowOp) +
+          (Block.Succs.capacity() + Block.Preds.capacity()) * sizeof(int) +
+          (Block.ExceptionalSuccs.capacity() +
+           Block.ExceptionalPreds.capacity()) *
+              sizeof(ExceptionalEdge);
+  }
   Converted.Bytes += Converted.SourceStackInputs.capacity() *
                      sizeof(std::pair<int64_t, uint16_t>);
   if (Holder.Conversions.size() == MaxConversions) {
@@ -668,14 +676,35 @@ public:
             getTargetRegInfo(Img.Arch).integerArgumentLayout(Img.abiFormat());
         if ((Lifted.Blocks.size() == 1 &&
              Converted.Body->Params.size() > Layout.Registers.size()) ||
+            llvm::any_of(Converted.Body->Params,
+                         [&](const MedVar &Parameter) {
+                           return Parameter.Size <
+                                      getTargetRegInfo(Img.Arch).PointerSize &&
+                                  Layout.registerIndex(Parameter.RegOff) >= 0;
+                         }) ||
             llvm::any_of(Lifted.Blocks.front().Ops, [&](const LowOp &Op) {
               return Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
                      Op.Inputs[1].isReg() &&
                      Layout.registerIndex(Op.Inputs[1].Offset) >= 0;
-            }))
-          Converted.SourceEntryOperations =
-              std::make_shared<const std::vector<LowOp>>(
-                  Lifted.Blocks.front().Ops);
+            })) {
+          // Keep the original operations and edges under this conversion's
+          // existing memory budget. Instruction boundaries are not read by
+          // the source input proof and need not be duplicated in the cache.
+          auto Blocks = std::make_shared<std::vector<LowBlock>>();
+          Blocks->reserve(Lifted.Blocks.size());
+          for (const LowBlock &Original : Lifted.Blocks) {
+            auto &Block = Blocks->emplace_back();
+            Block.Id = Original.Id;
+            Block.StartAddr = Original.StartAddr;
+            Block.EndAddr = Original.EndAddr;
+            Block.Ops = Original.Ops;
+            Block.Succs = Original.Succs;
+            Block.Preds = Original.Preds;
+            Block.ExceptionalSuccs = Original.ExceptionalSuccs;
+            Block.ExceptionalPreds = Original.ExceptionalPreds;
+          }
+          Converted.SourceOriginalBlocks = std::move(Blocks);
+        }
       }
       if (auto Hint = inferIncomingStackLeaf(Img, Lifted, *Converted.Body)) {
         MedFunc Bound = *Converted.Body;
@@ -739,7 +768,8 @@ private:
 std::vector<std::shared_ptr<const MedFunc>> omittedDirectCalleeSignatures(
     const BinaryImage &Img, const PipelineResult &Result,
     bool SourceDeclarations, bool SourceParameterReads,
-    std::map<va_t, std::shared_ptr<const std::vector<LowOp>>> &SourceEntries) {
+    std::map<va_t, std::shared_ptr<const std::vector<LowBlock>>>
+        &SourceBlocks) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return {};
@@ -851,8 +881,8 @@ std::vector<std::shared_ptr<const MedFunc>> omittedDirectCalleeSignatures(
     if (Conversion.Body->takesVectorArgumentRegisters())
       continue;
     Signatures.push_back(Conversion.Body);
-    if (SourceParameterReads && Conversion.SourceEntryOperations)
-      SourceEntries.emplace(Target, Conversion.SourceEntryOperations);
+    if (SourceParameterReads && Conversion.SourceOriginalBlocks)
+      SourceBlocks.emplace(Target, Conversion.SourceOriginalBlocks);
   }
   return Signatures;
 }
@@ -1591,7 +1621,7 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
     Omitted.IncludesSourceParameterReads = SourceParameterReads;
     Omitted.Bodies = omittedDirectCalleeSignatures(
         Img, Result, SourceDeclarations, SourceParameterReads,
-        Omitted.SourceEntryOperations);
+        Omitted.SourceOriginalBlocks);
     Result.OmittedCallees =
         std::make_shared<const OmittedCalleeBodies>(std::move(Omitted));
   }

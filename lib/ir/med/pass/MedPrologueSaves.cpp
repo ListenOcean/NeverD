@@ -10,10 +10,12 @@
 #include "../abi/MedABIPassDetail.h"
 
 #include "neverd/ir/Limits.h"
+#include "neverd/ir/SourceStackFrame.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
@@ -1111,36 +1113,60 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
 /// temporaries may only flow through copies and a shared scalar annihilator;
 /// flags, register writes and memory uses of the old value remain observations.
 bool hasUnobservedInstructionLoad(llvm::ArrayRef<LowOp> Ops, size_t Index,
+                                  const std::set<const LowOp *> &Absorbed,
                                   size_t &Budget) {
   const auto &Load = Ops[Index];
-  if (!Load.Output.isTemp() || !Load.Output.Size)
+  if (!Load.Output.isTemp() || !Load.Output.Size ||
+      Load.Output.Offset > UINT64_MAX - Load.Output.Size)
     return false;
   std::map<uint64_t, uint16_t> Tainted{{Load.Output.Offset, Load.Output.Size}};
   for (size_t I = Index + 1; I < Ops.size() && Ops[I].Addr == Load.Addr; ++I) {
-    if (!Budget)
-      return false;
-    --Budget;
     const auto &Op = Ops[I];
+    const size_t Cost = 1 + Tainted.size() * (Op.NumInputs + 1);
+    if (Cost > Budget)
+      return false;
+    Budget -= Cost;
     if (Op.MemoryOrdering != NdMemoryOrdering::None ||
         Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
         (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
          !isSpillScalarStep(Op.Opcode)))
       return false;
     bool Read = false;
-    for (unsigned K = 0; K < Op.NumInputs; ++K)
-      Read |= Op.Inputs[K].isTemp() && Tainted.count(Op.Inputs[K].Offset);
-    if (Read && (lowAbsorbingConstant(Op) || isLowSelfXor(Op)))
+    for (unsigned K = 0; K < Op.NumInputs; ++K) {
+      const auto &Input = Op.Inputs[K];
+      if (Input.isTemp() && Input.Size)
+        for (const auto &[At, Bytes] : Tainted)
+          Read |= Input.Offset >= At ? Input.Offset - At < Bytes
+                                     : At - Input.Offset < Input.Size;
+    }
+    if (Read &&
+        (lowAbsorbingConstant(Op) || isLowSelfXor(Op) || Absorbed.count(&Op)))
       Read = false;
     if (Read && (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
                  !Op.Output.isTemp() || Op.Output.Size != Op.Inputs[0].Size))
       return false;
-    if (Op.Output.isTemp()) {
+    if (Op.Output.isTemp() && Op.Output.Size) {
+      const uint64_t Begin = Op.Output.Offset;
+      if (Begin > UINT64_MAX - Op.Output.Size)
+        return false;
+      const uint64_t End = Begin + Op.Output.Size;
+      // A partial overwrite removes just those bytes. Reads of a subrange
+      // may start inside an older temporary instead of at its original key.
+      for (auto At = Tainted.begin(); At != Tainted.end();) {
+        const auto [First, Bytes] = *At;
+        const uint64_t Last = First + Bytes;
+        if (First >= End || Last <= Begin) {
+          ++At;
+          continue;
+        }
+        At = Tainted.erase(At);
+        if (First < Begin)
+          Tainted.emplace(First, static_cast<uint16_t>(Begin - First));
+        if (Last > End)
+          Tainted.emplace(End, static_cast<uint16_t>(Last - End));
+      }
       if (Read)
-        Tainted[Op.Output.Offset] =
-            std::max(Tainted[Op.Output.Offset], Op.Output.Size);
-      else if (const auto At = Tainted.find(Op.Output.Offset);
-               At != Tainted.end() && Op.Output.Size >= At->second)
-        Tainted.erase(At);
+        Tainted[Begin] = Op.Output.Size;
     }
     if (Tainted.empty())
       return true;
@@ -1357,15 +1383,29 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
 }
 
 std::set<unsigned> sourceRegisterInputOverwrites(
-    const MedFunc &Func, llvm::ArrayRef<LowOp> OriginalEntry,
+    const MedFunc &Func, llvm::ArrayRef<LowBlock> OriginalBlocks,
     const SourceRegisterParameterReads &Reads,
     const SourceCalleeParameterOverwrites &Callees,
     const std::set<const MedOp *> &Overwritten, size_t &Budget) {
   std::set<unsigned> Result;
-  if (!hasSourceRegisterInputBody(Func) || OriginalEntry.empty() ||
-      OriginalEntry.front().Addr != Func.Entry ||
+  if (!hasSourceRegisterInputBody(Func) || OriginalBlocks.empty() ||
+      OriginalBlocks.front().StartAddr != Func.Entry ||
+      !OriginalBlocks.front().Preds.empty() ||
+      OriginalBlocks.front().Ops.empty() ||
+      OriginalBlocks.front().Ops.front().Addr != Func.Entry ||
       llvm::none_of(Reads, [](const auto &Read) { return Read.second == 0; }))
     return Result;
+  std::map<int, size_t> ById;
+  std::map<va_t, size_t> ByAddress;
+  for (size_t I = 0; I < OriginalBlocks.size(); ++I) {
+    if (!Budget)
+      return Result;
+    --Budget;
+    const LowBlock &Block = OriginalBlocks[I];
+    if (!ById.emplace(Block.Id, I).second ||
+        !ByAddress.emplace(Block.StartAddr, I).second)
+      return Result;
+  }
   using Occurrence = std::pair<va_t, int>;
   std::map<Occurrence, const MedOp *> Current;
   for (const auto &Block : Func.Blocks)
@@ -1384,6 +1424,44 @@ std::set<unsigned> sourceRegisterInputOverwrites(
     }
   const auto &TRI = getTargetRegInfo(Arch::X64);
   const auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
+  std::set<const LowOp *> ParameterLoads;
+  // Promoting a stack argument can remove the original LOAD. Its exact entry
+  // coordinate is outside every private spill eligible for Overwritten, so
+  // it cannot resurrect an ignored register save. Only the original prefix
+  // before a call or control transfer supplies this independent address fact.
+  if (Func.Params.size() > Layout.Registers.size()) {
+    std::map<Occurrence, const LowOp *> EntryLoads;
+    for (const auto &Op : OriginalBlocks.front().Ops) {
+      if (!Budget)
+        return Result;
+      --Budget;
+      if (Op.Opcode == NdOp::LOAD) {
+        const auto [At, New] =
+            EntryLoads.emplace(Occurrence{Op.Addr, Op.Seq}, &Op);
+        if (!New)
+          At->second = nullptr;
+      }
+    }
+    for (const auto &Access : sourceEntryStackAccesses(
+             OriginalBlocks.front().Ops, Arch::X64, Budget)) {
+      if (Access.Write || !Access.Bytes ||
+          Access.Offset < Layout.EntryStackBase)
+        continue;
+      const uint64_t Distance = Access.Offset - Layout.EntryStackBase;
+      const uint64_t P = Layout.Registers.size() + Distance / Layout.SlotBytes;
+      const uint64_t Byte = Distance % Layout.SlotBytes;
+      if (P < Func.Params.size() && Func.Params[P].Kind == MedVar::Param &&
+          Func.Params[P].Id == int(P) && Func.Params[P].RegOff == kNoParamReg &&
+          Func.Params[P].Size <= Layout.SlotBytes &&
+          Byte < Func.Params[P].Size &&
+          Access.Bytes <= Func.Params[P].Size - Byte)
+        if (const auto At =
+                EntryLoads.find({Access.Instruction, Access.Sequence});
+            At != EntryLoads.end() && At->second)
+          ParameterLoads.insert(At->second);
+    }
+  }
+  std::optional<std::set<const LowOp *>> Absorbed;
   for (const auto &[P, Bytes] : Reads) {
     if (Bytes || P >= Layout.Registers.size())
       continue;
@@ -1393,72 +1471,158 @@ std::set<unsigned> sourceRegisterInputOverwrites(
              (V.Offset >= Register ? V.Offset - Register < TRI.PointerSize
                                    : Register - V.Offset < V.Size);
     };
-    for (size_t I = 0; I < OriginalEntry.size(); ++I) {
-      const LowOp &Op = OriginalEntry[I];
-      if (!Budget)
-        return Result;
-      --Budget;
-      const auto At = Current.find({Op.Addr, Op.Seq});
-      const MedOp *Bound = At == Current.end() ? nullptr : At->second;
-      if (Op.MemoryOrdering != NdMemoryOrdering::None ||
-          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+    // true closes this path, false continues over its exact outgoing edges,
+    // and no value refuses a read, lost binding, or unsupported operation.
+    const auto DestroysInBlock =
+        [&](const LowBlock &Block) -> std::optional<bool> {
+      if (Block.Ops.empty() || !Block.ExceptionalPreds.empty() ||
+          !Block.ExceptionalSuccs.empty())
+        return std::nullopt;
+      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+        const LowOp &Op = Block.Ops[I];
+        if (!Budget)
+          return std::nullopt;
+        --Budget;
+        const auto At = Current.find({Op.Addr, Op.Seq});
+        const MedOp *Bound = At == Current.end() ? nullptr : At->second;
+        if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+            Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+          return std::nullopt;
+        if (Op.Opcode == NdOp::CALL) {
+          if (!Op.NumInputs || !Op.Inputs[0].isConst() || !Bound ||
+              Bound->Opcode != NdOp::CALL || Bound->SourceCallHint ||
+              !Bound->NumInputs || !Bound->Inputs[0].isConst() ||
+              Bound->Inputs[0].ConstVal != Op.Inputs[0].Offset)
+            return std::nullopt;
+          if (const auto Known = Callees.find(Op.Inputs[0].Offset);
+              Known != Callees.end() && Known->second.count(P))
+            return true;
+          const auto Unread = Func.CallUnreadRegisters.find(Bound->CallSiteId);
+          if (!Bound->CallSiteId || Unread == Func.CallUnreadRegisters.end() ||
+              Unread->second.Instruction != Op.Addr ||
+              Unread->second.OriginSeq != Op.Seq ||
+              Unread->second.Target != Op.Inputs[0].Offset ||
+              !callPreservesRegisterBytes(Arch::X64, Unread->second.Families,
+                                          Register, TRI.PointerSize))
+            return std::nullopt;
+          continue;
+        }
+        if (Op.Opcode == NdOp::LOAD &&
+            (!Bound || Bound->Opcode != NdOp::LOAD) &&
+            !ParameterLoads.count(&Op)) {
+          if (!Absorbed)
+            Absorbed = lowBlockAbsorbingConstants(OriginalBlocks, Budget);
+          if (!hasUnobservedInstructionLoad(Block.Ops, I, *Absorbed, Budget))
+            return std::nullopt;
+        }
+        const bool Branch =
+            Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR;
+        if (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE && !Branch &&
+            !isSpillScalarStep(Op.Opcode))
+          return std::nullopt;
+        bool Read = false;
+        for (unsigned K = 0; K < Op.NumInputs; ++K)
+          Read |= Overlaps(Op.Inputs[K]);
+        if (lowAbsorbingConstant(Op) || isLowSelfXor(Op))
+          Read = false;
+        if (Read) {
+          // A discarded restore is insufficient: its physical destination may
+          // outlive its source statement. Only complete byte overwrites
+          // qualify.
+          if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
+              Overlaps(Op.Inputs[0]) || !Op.Inputs[1].isReg() ||
+              Op.Inputs[1].Offset != Register || !Bound ||
+              Bound->Opcode != NdOp::STORE || Bound->NumInputs != 2 ||
+              Bound->Inputs[1].Kind != MedVar::Reg ||
+              Bound->Inputs[1].RegOff != Register ||
+              Bound->Inputs[1].Size != Op.Inputs[1].Size ||
+              !Overwritten.count(Bound))
+            return std::nullopt;
+          continue;
+        }
+        if (Branch) {
+          if (I + 1 != Block.Ops.size() ||
+              Op.NumInputs != (Op.Opcode == NdOp::COND_BR ? 2 : 1) ||
+              !Op.Inputs[0].isConst())
+            return std::nullopt;
+          return false;
+        }
+        // A complete independent definition ends this input. Earlier reads
+        // could not retain it in temporaries, other registers or live storage.
+        // The x64 32-bit destination also clears its high half.
+        if (Op.Output.isReg() && Op.Output.Offset == Register &&
+            (Op.Output.Size == sizeof(uint32_t) ||
+             Op.Output.Size == TRI.PointerSize))
+          return true;
+      }
+      return false;
+    };
+    // Prove all successors, with an explicit postorder stack. A visited node
+    // is reusable only after its whole suffix was proved; an active node is a
+    // cycle that could retain the input indefinitely.
+    std::vector<uint8_t> State(OriginalBlocks.size());
+    std::vector<std::pair<size_t, bool>> Work{{0, false}};
+    bool Safe = true;
+    while (Safe && !Work.empty()) {
+      const auto [Index, Finished] = Work.back();
+      Work.pop_back();
+      if (Finished) {
+        State[Index] = 2;
+        continue;
+      }
+      if (State[Index] == 2)
+        continue;
+      if (State[Index] == 1) {
+        Safe = false;
         break;
-      if (Op.Opcode == NdOp::CALL) {
-        if (!Op.NumInputs || !Op.Inputs[0].isConst() || !Bound ||
-            Bound->Opcode != NdOp::CALL || Bound->SourceCallHint ||
-            !Bound->NumInputs || !Bound->Inputs[0].isConst() ||
-            Bound->Inputs[0].ConstVal != Op.Inputs[0].Offset)
-          break;
-        if (const auto Known = Callees.find(Op.Inputs[0].Offset);
-            Known != Callees.end() && Known->second.count(P)) {
-          Result.insert(P);
+      }
+      State[Index] = 1;
+      const LowBlock &Block = OriginalBlocks[Index];
+      const auto Destroyed = DestroysInBlock(Block);
+      if (!Destroyed || (Index && Block.Preds.empty())) {
+        Safe = false;
+        break;
+      }
+      if (*Destroyed) {
+        State[Index] = 2;
+        continue;
+      }
+      if (Block.Succs.size() > Budget)
+        return Result;
+      Budget -= Block.Succs.size();
+      std::set<size_t> Expected;
+      const auto Include = [&](va_t Address) {
+        const auto At = ByAddress.find(Address);
+        if (At == ByAddress.end())
+          return false;
+        Expected.insert(At->second);
+        return true;
+      };
+      const LowOp &Last = Block.Ops.back();
+      if (Last.Opcode == NdOp::BRANCH || Last.Opcode == NdOp::COND_BR)
+        Safe = Include(Last.Inputs[0].Offset);
+      if (Last.Opcode != NdOp::BRANCH)
+        Safe &= Include(Block.EndAddr);
+      std::set<size_t> Actual;
+      for (int Id : Block.Succs) {
+        const auto At = ById.find(Id);
+        if (At == ById.end() ||
+            !llvm::is_contained(OriginalBlocks[At->second].Preds, Block.Id) ||
+            !Actual.insert(At->second).second) {
+          Safe = false;
           break;
         }
-        const auto Unread = Func.CallUnreadRegisters.find(Bound->CallSiteId);
-        if (!Bound->CallSiteId || Unread == Func.CallUnreadRegisters.end() ||
-            Unread->second.Instruction != Op.Addr ||
-            Unread->second.OriginSeq != Op.Seq ||
-            Unread->second.Target != Op.Inputs[0].Offset ||
-            !callPreservesRegisterBytes(Arch::X64, Unread->second.Families,
-                                        Register, TRI.PointerSize))
-          break;
-        continue;
       }
-      if (Op.Opcode == NdOp::LOAD && (!Bound || Bound->Opcode != NdOp::LOAD) &&
-          !hasUnobservedInstructionLoad(OriginalEntry, I, Budget))
-        break;
-      if (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
-          !isSpillScalarStep(Op.Opcode))
-        break;
-      bool Read = false;
-      for (unsigned I = 0; I < Op.NumInputs; ++I)
-        Read |= Overlaps(Op.Inputs[I]);
-      if (lowAbsorbingConstant(Op) || isLowSelfXor(Op))
-        Read = false;
-      if (Read) {
-        // A discarded restore is insufficient: its physical destination may
-        // outlive its source statement. Only complete byte overwrites qualify.
-        if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
-            Overlaps(Op.Inputs[0]) || !Op.Inputs[1].isReg() ||
-            Op.Inputs[1].Offset != Register || !Bound ||
-            Bound->Opcode != NdOp::STORE || Bound->NumInputs != 2 ||
-            Bound->Inputs[1].Kind != MedVar::Reg ||
-            Bound->Inputs[1].RegOff != Register ||
-            Bound->Inputs[1].Size != Op.Inputs[1].Size ||
-            !Overwritten.count(Bound))
-          break;
-        continue;
-      }
-      // A complete independent definition ends this input. Earlier reads
-      // could not retain it in temporaries, other registers or live storage.
-      // The x64 32-bit destination also clears its high half.
-      if (Op.Output.isReg() && Op.Output.Offset == Register &&
-          (Op.Output.Size == sizeof(uint32_t) ||
-           Op.Output.Size == TRI.PointerSize)) {
-        Result.insert(P);
+      if (!Safe || Expected.empty() || Actual != Expected) {
+        Safe = false;
         break;
       }
+      Work.emplace_back(Index, true);
+      for (size_t Next : Actual)
+        Work.emplace_back(Next, false);
     }
+    if (Safe)
+      Result.insert(P);
   }
   return Result;
 }

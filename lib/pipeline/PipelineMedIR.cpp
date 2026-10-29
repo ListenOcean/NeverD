@@ -124,20 +124,20 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
                                          llvm::ArrayRef<LowFunc> Originals) {
   std::map<va_t, const MedFunc *> Callees;
   std::set<va_t> Complete;
-  std::map<va_t, llvm::ArrayRef<LowOp>> OriginalEntries;
+  std::map<va_t, llvm::ArrayRef<LowBlock>> OriginalBlocks;
   for (const LowFunc &Func : Originals)
     if (Func.hasCompleteLiftCoverage() &&
         Func.UnsafeIndirectBranchAddresses.empty()) {
       Complete.insert(Func.Entry);
       if (!Func.Blocks.empty() && Func.Blocks.front().StartAddr == Func.Entry &&
           Func.Blocks.front().Preds.empty())
-        OriginalEntries.emplace(Func.Entry, Func.Blocks.front().Ops);
+        OriginalBlocks.emplace(Func.Entry, Func.Blocks);
     }
   if (Result.OmittedCallees)
-    for (const auto &[Entry, Ops] :
-         Result.OmittedCallees->SourceEntryOperations)
-      if (Ops)
-        OriginalEntries.try_emplace(Entry, *Ops);
+    for (const auto &[Entry, Blocks] :
+         Result.OmittedCallees->SourceOriginalBlocks)
+      if (Blocks)
+        OriginalBlocks.try_emplace(Entry, *Blocks);
   for (const MedFunc &Func : Result.MedFuncs)
     if (Complete.count(Func.Entry))
       Callees.emplace(Func.Entry, &Func);
@@ -270,10 +270,11 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
         const size_t I = Work[W];
         Reads[W] = sourceRegisterParameterReads(*Sources[I], Facts,
                                                 Remaining[I], Overwrites);
-        if (const auto At = OriginalEntries.find(Sources[I]->Entry);
-            At != OriginalEntries.end()) {
+        if (const auto At = OriginalBlocks.find(Sources[I]->Entry);
+            At != OriginalBlocks.end() && !At->second.empty()) {
           for (unsigned P : unobservedSourceStackParameters(
-                   *Sources[I], At->second, DeclaredCallees, Remaining[I]))
+                   *Sources[I], At->second.front().Ops, DeclaredCallees,
+                   Remaining[I]))
             Reads[W].emplace(P, 0);
           Destroyed[W] = sourceRegisterInputOverwrites(
               *Sources[I], At->second, Reads[W], Overwrites,

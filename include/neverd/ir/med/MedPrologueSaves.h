@@ -67,17 +67,18 @@ std::set<unsigned> unobservedSourceSpillParameters(const MedFunc &Func);
 using SourceRegisterParameterReads = std::map<unsigned, uint16_t>;
 using SourceCalleeParameterReads = std::map<va_t, SourceRegisterParameterReads>;
 
-/// Original entry prefixes that destroy an input without leaving a copy in
-/// another register or live memory. This is stronger than a may-write mask or
-/// an unused source parameter, and is private to the current source proof.
+/// Original control-flow prefixes that destroy an input without leaving a copy
+/// in another register or live memory. This is stronger than a may-write mask
+/// or an unused source parameter, and is private to the current source proof.
 using SourceCalleeParameterOverwrites = std::map<va_t, std::set<unsigned>>;
 
-/// Prove destruction from original entry operations, never from dead-code
+/// Prove destruction on every original control-flow path, never from dead-code
 /// elimination of physical register writes. Each ignored store must occur in
 /// freshly prepared Overwritten: no old byte is read before its full reset.
-/// The caller supplies the complete original entry block of this body.
+/// The caller supplies the complete original CFG of this body. Cycles before
+/// destruction and unresolved or exceptional edges do not prove destruction.
 std::set<unsigned> sourceRegisterInputOverwrites(
-    const MedFunc &Func, llvm::ArrayRef<LowOp> OriginalEntry,
+    const MedFunc &Func, llvm::ArrayRef<LowBlock> OriginalBlocks,
     const SourceRegisterParameterReads &Reads,
     const SourceCalleeParameterOverwrites &Callees,
     const std::set<const MedOp *> &Overwritten, size_t &Remaining);

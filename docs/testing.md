@@ -15947,11 +15947,31 @@ variant forwards a byte or word flag while its incoming register's unused upper
 bytes flow to a discarded spill. Both selected and omitted queries must recover
 the exact constant prefix; selected bodies also execute the original bytes and
 both source routes. Another wrapper calls an opaque observer after the consumer;
-the original entry overwrite must close the old register input first. Its
+the original control flow must close the old register input first. Its
 compiled source and original machine execution retain both external calls.
+The branching consumer variant exercises both overwrite arms with varied image
+data, through selected and omitted bodies, both C routes and SDK replay.
 `InputDestructionNeedsOriginalEntryAndCompleteOverwrites` retains partial writes,
 register/temporary copies, source-dead restores, partial memory resets, stale
 store/call occurrences, independent entries and exhausted budgets.
+`InputDestructionCoversEveryOriginalBranch` checks separate-arm and common-join
+definitions, fallthrough and nested bound calls. Missing targets, mismatched
+edges, pre-definition cycles/returns, exceptional entries, hidden reads and
+stale call bindings keep the original input live.
+`InputDestructionChecksPromotedStackReads` rejects home-slot aliases, truncated
+or lost frame addresses, missing/narrow parameters and loads after calls.
+`EntryPrefixRetainsOnlyExactCoordinates` checks the shared frame observer's
+prefix barriers and budget. `AbsorbersRequireCurrentNumericBytes` checks mask
+provenance, byte overwrites, instruction-local temporaries and call/block
+boundaries. The machine-code comparison also forwards a live fifth argument
+while clearing the discarded home through a separately zeroed register.
+Temporary subrange controls distinguish middle-byte resets from surviving bytes
+on either side and from copied subranges. Duplicate original load occurrences
+cannot authenticate a promoted stack read.
+`LaterStackParametersKeepUnreadRegisterPositions` covers zero, one, three and
+four summarized register arguments before a separately recovered fifth slot,
+with and without a stack store or scratch register setup. Required unknowns
+remain unknown; unused register positions stay padding on repeated recovery.
 `AReintroducedRegisterInputStillReachesImplicitCalls` rejects a restore of the
 original SSA value after an independent register overwrite.
 `UnusedIncomingStackSlotsDoNotRequireValues` executes an original Win64 wrapper
@@ -16888,3 +16908,15 @@ state selection retains its original instructions. The unsupported-body matrix
 in `NeverDPipelineOutcomeTests` checks selection metadata never admits LowIR,
 MedIR or LLVM definitions, across x86/x64 ELF, PE and Mach-O. Export execution
 also checks the emitter's feature macros precede the first system header.
+
+The i386 `PhysicalCallReturnSlotsDoNotKeepOldSourceConstants` fixture executes
+both the original bytes and generated HighC/LLVMC at O0/O2 with UBSan. An
+unmodified CALL slot contains the original-image return PC; an explicit later
+store supplies its replacement value. The relocated native oracle checks its
+corresponding return PC and both executions retain exactly one external call.
+COFF, ELF and Mach-O metadata routes share this source contract.
+
+`CachedImportsInvalidateDenseStackArgumentsAndPadding` now checks all three
+AArch64 object formats, including Darwin's supported HFA stack placement.
+Argument-area overwrites, padding aliases, incomplete stores and altered group
+descriptors invalidate cached import pointers; the private disjoint slot remains.

@@ -3054,10 +3054,16 @@ void recoverCallAbi(
         auto FIt = CalleeFPArity->find(CI.TargetAddr);
         CalleeHasFP = FIt != CalleeFPArity->end() && FIt->second > 0;
       }
-      // A complete pre-SSA read summary already supplies the register
-      // operands, including positional padding. Setup scans may find live
-      // scratch registers, but cannot extend that authoritative prefix.
-      int IntCap = SummarizedIntegerOperands             ? Op.CalleeRegisterArgs
+      // A complete pre-SSA read summary owns the register values. A later
+      // recovered stack parameter can still require the unused positional
+      // slots between that prefix and the stack. Keep those slots as padding;
+      // setup scans cannot turn their scratch registers into arguments.
+      const bool SummarizedRegisterPadding =
+          PositionalSlots && NoVectorArguments && !CalleeHasFP &&
+          !CI.IsIndirect && !CI.ArgumentsInCalleeRegisterOrder &&
+          !HeaderVariadic && !OpenVariadicArity && CalleeArgs > NumIntRegArgs;
+      int IntCap = SummarizedRegisterPadding             ? NumIntRegArgs
+                   : SummarizedIntegerOperands           ? Op.CalleeRegisterArgs
                    : (CalleeHasFP && CalleeRegArgs >= 0) ? CalleeRegArgs
                                                          : NumIntRegArgs;
 
@@ -3113,10 +3119,15 @@ void recoverCallAbi(
                                    : static_cast<int>(IntParamRegs.size());
       std::vector<int64_t> StackPartOffsets;
       for (int K = 0; K < AssembleEnd; ++K) {
-        const bool Gap = !FoundMask[K];
+        const bool SummarizedPadding = SummarizedRegisterPadding &&
+                                       K >= Op.CalleeRegisterArgs &&
+                                       K < StackArgBase;
+        const bool Gap = !FoundMask[K] || SummarizedPadding;
         const bool UnreadRegisterPosition =
-            UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
-            K >= CalleeRegArgs && K < StackArgBase && CalleeArgs > StackArgBase;
+            SummarizedPadding ||
+            (UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
+             K >= CalleeRegArgs && K < StackArgBase &&
+             CalleeArgs > StackArgBase);
         // A known fixed signature can consume a later stack slot even when
         // no store defines an interior slot. Keep that missing machine value
         // explicit; truncating here would also discard every later argument.

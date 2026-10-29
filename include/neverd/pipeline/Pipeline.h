@@ -325,10 +325,10 @@ struct OmittedCalleeBodies {
   /// Include bounded callees needed to distinguish an observed low register
   /// prefix from obsolete full-width spill inputs in source projections.
   bool IncludesSourceParameterReads = false;
-  /// Original entry blocks for source input-use/destruction proofs. Shared with
+  /// Original blocks for source input-use/destruction proofs. Shared with
   /// bounded conversions; optimized MedIR cannot certify physical exit state.
-  std::map<va_t, std::shared_ptr<const std::vector<LowOp>>>
-      SourceEntryOperations;
+  std::map<va_t, std::shared_ptr<const std::vector<LowBlock>>>
+      SourceOriginalBlocks;
 };
 
 struct PipelineResult {
