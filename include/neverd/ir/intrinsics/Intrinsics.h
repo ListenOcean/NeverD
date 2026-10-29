@@ -489,6 +489,12 @@ enum class Intrinsic : uint16_t {
   // Append-only: secure-loader launch abandons the calling machine context.
   X86Skinit,
 
+  // Append-only: operand-size-16 legacy x87 memory images.
+  X87Fldenv16,
+  X87Fnstenv16,
+  X87Frstor16,
+  X87Fnsave16,
+
   _Count = 16000
 };
 
