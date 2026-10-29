@@ -621,3 +621,11 @@ An incomplete address domain or unavailable immutable span retains the whole run
 ## Internal transfers after changing the stack
 
 Explicit raw machine regions can follow internal near CALL and RET instructions when the current stack pointer is no longer an entry-relative value. The architecture adapter retains the physical target capture, push, return-word read and pop. Every internal return still requires an exhaustive finite target proof from the actual stack word. Only proved entry-relative return cells enter the frame projection and preservation inventory; losing an unrelated stack relation at a graph boundary can still cause recovery to refuse. Ordinary function recovery retains its restored-frame requirements. This capability supplies a raw region result; whole-function composition and source or native equivalence remain separate obligations.
+
+<!-- i18n-section: store-separation-proofs -->
+
+## Optional store separation proofs
+
+`--vm-prove-store-return-separation` proves that each complete write misses retained return cells, saved frame pointers and current scalar frame cells before preserving them. `--vm-prove-store-frame-separation` also checks the declared frame and current absolute cells; it requires `--vm-machine-state` and `--vm-entry-frame`. Both require `--devirtualize`, default to disabled, share existing proof/work budgets and add no nonalias premise. Unproved writes keep ordinary invalidation; incomplete recovery publishes no source. Combine them with existing chain controls when a loop should remain a loop.
+
+The v9 APIs `neverd_devirtualize_source_v9` and `neverd_devirtualize_machine_source_v9` accept `neverd_devirtualize_options_v9`. Zero-initialize it and set the v1 prefix’s `struct_size` to the complete size. The flags are `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION` and `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`; `reserved` must be zero. Older entry points ignore this tail. Python exposes `NeverDDevirtualizeOptionsV9` and `DevirtualizeFlagsV9`. Reports include `proveStoreReturnSlotSeparation` and `proveStoreFrameSeparation`. The source regression runs an indexed local-array loop through both C routes at O0/O2 with ASan/UBSan and checks the entire supplied stack storage.

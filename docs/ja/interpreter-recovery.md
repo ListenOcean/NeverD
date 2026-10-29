@@ -310,3 +310,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 ## スタック変更後の内部転送
 
 明示的な raw マシン領域では、現在のスタックポインタを入口からの相対値として表せなくても、内部の near CALL と RET を追跡できます。アーキテクチャアダプタは実際のターゲット取得、push、戻り先の読み取り、pop を保持します。内部の戻り先は、実際のスタック値から網羅的な有限集合として証明する必要があります。フレームへの射影と保持の対象になるのは、入口相対であると証明された戻り先スロットだけです。グラフ境界で別のスタック関係が失われると、復元は引き続き拒否され得ます。通常の関数復元ではフレーム復元要件を維持します。この機能が提供するのは raw 領域の結果であり、関数全体の合成およびソースやネイティブの等価性には別の証明が必要です。
+
+<!-- i18n-section: store-separation-proofs -->
+
+## 任意の書き込み分離証明
+
+`--vm-prove-store-return-separation` は、戻り先セル、保存されたフレームポインター、現在のスカラーフレームセルを保持する前に、書き込み全体との非交差を証明します。`--vm-prove-store-frame-separation` は宣言されたフレームと現在の絶対アドレスセルも検査し、`--vm-machine-state` と `--vm-entry-frame` が必要です。両方とも `--devirtualize` が必要で、既定では無効です。既存の証明・作業予算を共有し、非エイリアスの前提は追加しません。未証明の書き込みは通常どおり無効化し、復元が不完全ならソースを公開しません。既存のチェーン制御と組み合わせてループを保持できます。
+
+v9 API `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` は `neverd_devirtualize_options_v9` を受け取ります。ゼロ初期化し、v1 接頭部の `struct_size` を全体のサイズに設定します。フラグは `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION` で、`reserved` はゼロです。旧 API はこの末尾を無視します。Python は `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9` を公開し、報告には `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation` を含めます。回帰テストは両 C 経路の添字付きローカル配列ループを O0/O2、ASan/UBSan で実行し、渡されたスタック領域全体を検査します。
