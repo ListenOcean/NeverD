@@ -68,7 +68,7 @@
 #include "neverd/backend/llvm/X86/LLVMX86FPStateAsm.h"
 #include "neverd/backend/llvm/X86/LLVMX86SHA.h"
 #include "neverd/backend/llvm/X86/LLVMX86ShadowStackAsm.h"
-#include "neverd/backend/llvm/X86/LLVMX87ControlAccess.h"
+#include "neverd/backend/llvm/X86/LLVMX87NativeState.h"
 #include "neverd/debug/UserPrototype.h"
 #include "neverd/ir/IntegerCallArguments.h"
 #include "neverd/ir/TargetRegInfo.h"
@@ -438,12 +438,14 @@ void LLVMCWriter::prepareFunctionIdentifiers(llvm::Module &Mod) {
                   Call->getCalledOperand()->stripPointerCasts()))
             CallableGlobals.insert(Global);
   for (const auto &Global : Mod.globals())
-    if (Global.isDeclaration() && !Global.getName().empty() &&
-        data_symbol::isMarked(Global) && !CallableGlobals.count(&Global) &&
-        !parseNdDataSymbol(Global.getName()) &&
-        !parseNdCodePtrSymbol(Global.getName()) &&
-        !Global.getName().starts_with("__imp_") &&
-        !Global.getName().starts_with("_imp_"))
+    if (isImageBaseDeclaration(Global))
+      allocateImageBaseIdentifier(Global);
+    else if (Global.isDeclaration() && !Global.getName().empty() &&
+             data_symbol::isMarked(Global) && !CallableGlobals.count(&Global) &&
+             !parseNdDataSymbol(Global.getName()) &&
+             !parseNdCodePtrSymbol(Global.getName()) &&
+             !Global.getName().starts_with("__imp_") &&
+             !Global.getName().starts_with("_imp_"))
       ExternalDataIdentifiers.emplace(
           &Global, GlobalIdentifierAllocator.allocate(
                        "neverd_data_" + Global.getName().str(), "neverd_data"));
@@ -481,6 +483,7 @@ void LLVMCWriter::writeModule(llvm::Module &Mod, const llvm::Function *Only) {
   DeclaredCalleeNames.clear();
   RecordPointerTags.clear();
   HeaderCallRecords.clear();
+  DefinitionPointers.clear();
   CurMod = &Mod;
   prepareFunctionIdentifiers(Mod);
   collectImageDataUses(Mod);
@@ -675,8 +678,16 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
     if (It == ExternalDataIdentifiers.end())
       continue;
     const auto &Identifier = It->second;
+    // The linker's `__ImageBase` is C's own name for the image's headers.
+    if (isImageBaseDeclaration(Global)) {
+      writeImageBaseDeclaration(Identifier);
+      continue;
+    }
+    // The label is the symbol, with the underscore a format gives a C name.
     OS << "extern unsigned char " << Identifier << "[] __asm__(\""
-       << escapeCString(cNameOfGlobal(Global.getName(), true)) << "\")";
+       << escapeCString(symbolOfCName(cNameOfGlobal(Global.getName(), true),
+                                      Opts.Format, Opts.TheArch))
+       << "\")";
     if (Global.hasExternalWeakLinkage())
       OS << " __attribute__((weak))";
     OS << ";\n";
@@ -2124,6 +2135,10 @@ std::string LLVMCWriter::callResult(const llvm::CallBase &Call,
   const std::string Undefined = "(" + Expr + ", (" + typeToCLLVM(Type) + ")0)";
   if (calleeReturnsNothing(Call))
     return Undefined;
+  if (const auto *Callee = Call.getCalledFunction();
+      Callee && Type->isIntegerTy() && !needsCallSiteCType(Call) &&
+      definitionPointerTypes(*Callee).Result.Type)
+    return "((" + typeToCLLVM(Type) + ")(uintptr_t)(" + Expr + "))";
   const LibraryCallee Library = libraryCallee(Call);
   if (!Library)
     return Expr;
@@ -2934,7 +2949,7 @@ bool LLVMCEmitter::emit(llvm::Module &Mod, llvm::raw_ostream &Out,
       for (const auto &Instruction : Block) {
         if (const auto *Call = llvm::dyn_cast<llvm::CallBase>(&Instruction)) {
           (void)llvmAArch64AuthenticatedCall(*Call, Opts.TheArch);
-          (void)classifyX87ControlAccess(*Call, Opts.TheArch);
+          (void)classifyX87NativeState(*Call, Opts.TheArch);
         }
         if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
           (void)validateAArch64AddressMemoryCall(Opts.TheArch, *Call);

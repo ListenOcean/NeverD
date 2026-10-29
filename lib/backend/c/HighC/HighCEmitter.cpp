@@ -44,6 +44,7 @@
 #include "neverd/ir/intrinsics/AArch64/AArch64ExceptionReturn.h"
 #include "neverd/ir/intrinsics/X86/X86CompressExpand.h"
 #include "neverd/ir/intrinsics/X86/X86FourSource.h"
+#include "neverd/ir/intrinsics/X86/X86RepState.h"
 #include "neverd/ir/intrinsics/X86/X86Unsupported.h"
 #include "neverd/loader/AArch64MemoryImage.h"
 
@@ -2609,6 +2610,9 @@ void HighCWriter::writeForwardDecls(const std::vector<HighFunc> &Funcs) {
 void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
+  ReachesImageBase = false;
+  ReachedObjectExterns.clear();
+  ImageBaseIdentifier.clear();
   OriginalMemoryBases.clear();
   OriginalMemoryObjects.clear();
   DataSymbolBindings = Opts.Image ? collectDataSymbolBindings(*Opts.Image)
@@ -3388,6 +3392,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if (const HighExpr *Inner = unwrapIntegerView(Address);
         Inner && Inner->Kind == ExprKind::Const)
       AccessAddresses.insert(Inner);
+    // An access the image's headers hold prints through `__ImageBase`, and
+    // one in another module's storage through its symbol's declaration.
+    if (Address)
+      if (const auto VA = constAddress(*Address)) {
+        noteImageBaseAddress(*VA);
+        noteObjectExternAddress(*VA);
+      }
   };
   // An atomic access needs its address as aligned in C as in the image.
   auto NoteAtomic = [&](const HighExpr &Address, const TypeRef &Access) {
@@ -3462,6 +3473,11 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     }
     if (E.Kind == ExprKind::Const && isAddressProvenance(E.ConstProvenance))
       noteFunctionAddress(functionAddressKey(E), Funcs);
+    if (isImageBaseConstant(E))
+      ReachesImageBase = true;
+    if (E.Kind == ExprKind::Const &&
+        isExactAddressProvenance(E.ConstProvenance))
+      noteObjectExternAddress(E.ConstVal);
     // An address anchored before its owner's section reaches the section's
     // first object, which the code indexes from there; what lies at the
     // address itself is no object the code uses.
@@ -3610,6 +3626,57 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
         else if (const HighExpr *Base = indexedImageBase(*E.Operands[0]))
           NoteWhole(Base->ConstVal, NdType::makeInt(Bytes, false), false);
       }
+    // A bounded repeated copy/fill reaches every element, including bytes
+    // beyond a guessed scalar or an embedded string's first terminator.
+    // Record its memory operands before visiting their address constants so
+    // the ordinary overlapping-object owner supplies one complete backing.
+    if (E.Kind == ExprKind::Call &&
+        (E.IntrinsicId == Intrinsic::X86RepMovsState ||
+         E.IntrinsicId == Intrinsic::X86RepStosState) &&
+        E.Operands.size() == 5 && E.Operands[3] && E.Operands[4] &&
+        E.Operands[3]->Kind == ExprKind::Const &&
+        E.Operands[4]->Kind == ExprKind::Const &&
+        E.Operands[4]->ConstVal <= UINT32_MAX) {
+      const bool Copy = E.IntrinsicId == Intrinsic::X86RepMovsState;
+      const auto &Count = E.Operands[Copy ? 2 : 1];
+      const auto Control =
+          x86RepControl(E.IntrinsicId, Opts.TheArch,
+                        static_cast<uint32_t>(E.Operands[4]->ConstVal));
+      if (Control && !Control->Segment &&
+          Control->AddressBytes == pointerBytes(Opts.TheArch) && Count &&
+          Count->Kind == ExprKind::Const && Count->ConstVal) {
+        const bool Backward =
+            (E.Operands[3]->ConstVal >> X86RepDirectionShift) & 1;
+        for (unsigned I = 0; I < (Copy ? 2u : 1u); ++I) {
+          if (!E.Operands[I])
+            continue;
+          const auto Address = constAddress(*E.Operands[I]);
+          if (!Address || !isImageDataAddress(*Address))
+            continue;
+          const auto *Segment = Opts.Image->getSegmentFor(*Address);
+          const uint64_t Available = Segment->Size;
+          const uint64_t Offset = *Address - Segment->VA;
+          const uint64_t Width = Control->ElementBytes;
+          if (Count->ConstVal > Available / Width)
+            throw std::invalid_argument(
+                "repeated image access exceeds its mapped storage");
+          const uint64_t Bytes = Count->ConstVal * Width;
+          const uint64_t Before = Backward ? Bytes - Width : 0;
+          if (Offset < Before || Offset - Before > Available - Bytes)
+            throw std::invalid_argument(
+                "repeated image access crosses its mapped storage");
+          const va_t Begin = *Address - Before;
+          const bool Written = !Copy || I == 1;
+          const auto ElementType = NdType::makeInt(Width, false);
+          NoteAccessAddress(E.Operands[I].get());
+          noteImageObject(Begin, ElementType, Written, true);
+          noteImageObject(*Address, ElementType, Written, true);
+          ImageObject &Object = ImageObjects[Begin];
+          Object.IndexedBytes = std::max(Object.IndexedBytes, Bytes);
+          Object.AddressTaken = true;
+        }
+      }
+    }
     // A read-modify-write reads and writes the object it addresses.
     if (E.Kind == ExprKind::BinOp &&
         (E.Op == NdOp::ATOMIC_ADD || E.Op == NdOp::ATOMIC_XCHG ||
@@ -3869,9 +3936,14 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           continue;
         const va_t Target = PointerBytes == 8 ? readLE<uint64_t>(Bytes)
                                               : readLE<uint32_t>(Bytes);
+        // A slot holding a header address holds `__ImageBase`'s.
+        const bool HeaderTarget = !Opts.Image->CodePtrRelocSlots.count(*Slot) &&
+                                  Opts.Image->imageBaseOffset(Target);
         if (Opts.Image->CodePtrRelocSlots.count(*Slot)) {
           noteFunctionAddress(Target, Funcs);
           noteFunctionAddress(Target & ~va_t{1}, Funcs);
+        } else if (HeaderTarget) {
+          ReachesImageBase = true;
         } else if (sizedObjectAt(Target)) {
           NoteWhole(Target, nullptr, false);
         }
@@ -3880,7 +3952,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
             Opts.Image->CodePtrRelocSlots.count(*Slot)
                 ? FunctionAddressNames.count(Target) ||
                       FunctionAddressNames.count(Target & ~va_t{1})
-                : sizedObjectAt(Target) || ImageObjects.count(Target) ||
+                : HeaderTarget || sizedObjectAt(Target) ||
+                      ImageObjects.count(Target) ||
                       stringLiteral(Target).has_value();
       }
     }
@@ -4053,6 +4126,8 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       NeedsBacking |= Width && (Width & (Width - 1)) != 0;
   }
   FinishGroup();
+  addImageBaseBacking();
+  addObjectExternBackings();
 }
 
 void HighCWriter::noteFunctionAddress(va_t Addr,
@@ -4099,6 +4174,8 @@ bool HighCWriter::imageFunctionOwnsLinkIdentifier(llvm::StringRef Name) {
 }
 
 void HighCWriter::writeImageObjects() {
+  writeImageBaseDeclaration();
+  writeObjectExternDeclarations();
   for (const auto &[Base, Object] : OriginalMemoryObjects) {
     (void)Base;
     const auto &[Storage, Name] = Object;
@@ -4136,7 +4213,7 @@ void HighCWriter::writeImageObjects() {
   if (ImageObjects.empty())
     return;
   for (const ImageBacking &Backing : ImageBackings) {
-    if (!Backing.Words.empty() || Backing.Header)
+    if (!Backing.Words.empty() || Backing.Header || Backing.External)
       continue;
     if (Opts.EmitComments)
       OS << "/* neverd.image: 0x" << llvm::utohexstr(Backing.Base) << " .. 0x"

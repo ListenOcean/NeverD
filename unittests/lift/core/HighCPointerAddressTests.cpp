@@ -38626,7 +38626,9 @@ TEST(LLVMCPointerAddresses, IndirectCallPrintsLoadedCalleePlusOffset) {
       << Source;
   EXPECT_NE(Source.find("this->m_pBadge.p"), std::string::npos) << Source;
   EXPECT_NE(Source.find(" + 0x58))"), std::string::npos) << Source;
-  EXPECT_NE(Source.find("(this->m_pBadge.p, result)"), std::string::npos)
+  // The callee takes integers, so the record pointer converts explicitly.
+  EXPECT_NE(Source.find("(this->m_pBadge.p, ((uint64_t)(uintptr_t)result))"),
+            std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("((void*)"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("*(uint64_t*)"), std::string::npos) << Source;

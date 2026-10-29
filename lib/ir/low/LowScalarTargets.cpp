@@ -98,7 +98,8 @@ finiteScalarBranchTargets(const LowFunc &F, size_t &Remaining) {
     const auto &Block = F.Blocks[B];
     if (Block.StartAddr == F.Entry || Block.Preds.empty() ||
         !Block.ExceptionalPreds.empty() ||
-        F.ModuleAnalysisRoots.count(Block.StartAddr)) {
+        F.ModuleAnalysisRoots.count(Block.StartAddr) ||
+        F.OrdinaryModuleAnalysisRoots.count(Block.StartAddr)) {
       Entries[B] = State{};
       Queue(B);
     }

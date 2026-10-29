@@ -26,7 +26,7 @@
 #include "../render/X86/X86Sgx.h"
 #include "../render/X86/X86SystemState.h"
 #include "../render/X86/X86Virtualization.h"
-#include "../render/X86/X87ControlAccess.h"
+#include "../render/X86/X87NativeState.h"
 #include "HighCWriter.h"
 
 #include "neverd/ArchSupport.h"
@@ -2865,6 +2865,13 @@ std::string HighCWriter::renderCallExpr(const HighExpr &E) {
         Source < ArityIntegers + ArityFloats)
       FloatParam =
           NdType::makeFloat(Arity->FpIsFloat ? sizeof(float) : sizeof(double));
+    // A floating argument no parameter types, such as a double a formatted
+    // call passes past its format (MedOp::ExactFloatInputs), passes as its
+    // own value: bits it reads from read-only data print as that constant
+    // (`2.5`).  The integer immediate the bits make would travel in an
+    // integer register.
+    if (!FloatParam && Op->Type && Op->Type->Kind == NdTypeKind::Float)
+      FloatParam = Op->Type;
     if (FloatParam && FloatParam->Kind == NdTypeKind::Float) {
       if (PointerArgument)
         PointerArgumentOperands.erase(PointerArgument);
@@ -3678,8 +3685,11 @@ std::string HighCWriter::addrStr(const HighExpr &E, int ParentPrec,
           return "&" + *Slot;
         // The constant is the table and the rest the offset into it.  The
         // offset prints as the operand is, not as what peeling found under
-        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.
-        if (Base->Kind != ExprKind::Const && indexedImageBase(*Inner) == Off)
+        // it: `(u64)(u8)i` indexes by the low byte of `i`, not by `i`.  A
+        // header address is `__ImageBase`'s, which the rest is added to.
+        if (Base->Kind != ExprKind::Const &&
+            (indexedImageBase(*Inner) == Off ||
+             (!Minus && isImageBaseConstant(*Off))))
           if (auto Table = imageBackingAddress(Off->ConstVal)) {
             constexpr int AddPrec = 9;
             const HighExpr &Index =
@@ -7811,7 +7821,11 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
 }
 
 bool isImageDataAt(const BinaryImage &Img, va_t Addr) {
-  if (Addr == 0 || Addr == InvalidVA)
+  // The image's own headers are `__ImageBase`, never a copied object, and
+  // another module's storage an undefined data symbol names is no object of
+  // the image's.
+  if (Addr == 0 || Addr == InvalidVA || Img.imageBaseOffset(Addr) ||
+      declaredObjectExternAt(Img, Addr))
     return false;
   const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
@@ -7939,6 +7953,8 @@ HighCWriter::sizedObjectAt(va_t Addr) const {
 
 std::optional<std::pair<va_t, uint64_t>>
 HighCWriter::indexedObjectAt(va_t Addr) const {
+  if (Opts.Image && Opts.Image->imageBaseOffset(Addr))
+    return std::nullopt;
   if (auto Object = sizedObjectAt(Addr))
     return Object;
   if (!Opts.Image)

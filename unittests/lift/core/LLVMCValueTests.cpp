@@ -268,6 +268,65 @@ int main(void) {
         << Source;
 }
 
+// An atomic store keeps its order in C, as an atomic load does: through a
+// pointer, and into a local whose address the function publishes.
+TEST(LLVMCValues, AtomicStoresKeepTheirOrder) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("atomic_stores", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(Context);
+  auto *F = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt32Ty(),
+                              {B.getPtrTy(), B.getPtrTy(), B.getInt32Ty()},
+                              false),
+      llvm::GlobalValue::ExternalLinkage, "publish", Module);
+  B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
+  auto Store = [&](llvm::Value *Value, llvm::Value *Address,
+                   llvm::AtomicOrdering Ordering) {
+    auto *Instruction = B.CreateStore(Value, Address);
+    Instruction->setAtomic(Ordering);
+    Instruction->setAlignment(llvm::Align(4));
+  };
+  llvm::Value *Words = F->getArg(0);
+  llvm::Value *Value = F->getArg(2);
+  Store(Value, Words, llvm::AtomicOrdering::Release);
+  Store(B.CreateAdd(Value, B.getInt32(1)),
+        B.CreateConstInBoundsGEP1_64(B.getInt32Ty(), Words, 1),
+        llvm::AtomicOrdering::SequentiallyConsistent);
+  Store(B.CreateAdd(Value, B.getInt32(2)),
+        B.CreateConstInBoundsGEP1_64(B.getInt32Ty(), Words, 2),
+        llvm::AtomicOrdering::Monotonic);
+  auto *Local = B.CreateAlloca(B.getInt32Ty(), nullptr, "local");
+  B.CreateStore(Local, F->getArg(1));
+  Store(B.CreateAdd(Value, B.getInt32(3)), Local,
+        llvm::AtomicOrdering::Release);
+  auto *Load = B.CreateLoad(B.getInt32Ty(), Local);
+  Load->setAtomic(llvm::AtomicOrdering::Acquire);
+  Load->setAlignment(llvm::Align(4));
+  B.CreateRet(Load);
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.TheArch = neverd::Arch::X64;
+  std::string Source;
+  llvm::raw_string_ostream Stream(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Stream, Options));
+  EXPECT_EQ(llvm::StringRef(Source).count("__atomic_store("), 4u) << Source;
+  EXPECT_EQ(llvm::StringRef(Source).count("__ATOMIC_RELEASE"), 2u) << Source;
+  EXPECT_EQ(llvm::StringRef(Source).count("__ATOMIC_SEQ_CST"), 1u) << Source;
+  EXPECT_EQ(llvm::StringRef(Source).count("__ATOMIC_RELAXED"), 1u) << Source;
+  Source += R"(
+int main(void) {
+  uint32_t words[3] = {0, 0, 0};
+  void *published = 0;
+  if (publish(words, &published, 40) != 43)
+    return 1;
+  return words[0] != 40 || words[1] != 41 || words[2] != 42;
+}
+)";
+  for (llvm::StringRef Level : {"-O0", "-O2"})
+    compileAndRun(Source, Level, {}, true);
+}
+
 TEST(LLVMCValues, PrefetchRejectsChangedAssemblyContracts) {
   for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
     SCOPED_TRACE(Mutation);
@@ -7075,21 +7134,22 @@ int main(void) { return call_site() != 7 || calls != 1 || errors; }
 }
 
 TEST(LLVMCValues, AUnitLeavesOutOnlyTheDefinitionItCannotWrite) {
-  // LLVM C refuses a compare-exchange wider than any native C object, as
-  // AArch64 CASP's: a unit that lists what it leaves out keeps the others.
+  // LLVM C refuses a compare-exchange whose synchronization scope the C
+  // builtin cannot state: a unit that lists what it leaves out keeps the
+  // others.
   llvm::LLVMContext Context;
   llvm::SMDiagnostic Error;
   auto Module = llvm::parseAssemblyString(R"ir(
-define i64 @before_pair(i64 %x) {
+define i64 @before_exchange(i64 %x) {
   %r = add i64 %x, 1
   ret i64 %r
 }
-define i1 @pair_exchange(ptr %p, i128 %expected, i128 %desired) {
-  %pair = cmpxchg ptr %p, i128 %expected, i128 %desired seq_cst seq_cst
-  %ok = extractvalue { i128, i1 } %pair, 1
+define i1 @scoped_exchange(ptr %p, i64 %expected, i64 %desired) {
+  %exchange = cmpxchg ptr %p, i64 %expected, i64 %desired syncscope("singlethread") seq_cst seq_cst
+  %ok = extractvalue { i64, i1 } %exchange, 1
   ret i1 %ok
 }
-define i64 @after_pair(i64 %x) {
+define i64 @after_exchange(i64 %x) {
   %r = mul i64 %x, 3
   ret i64 %r
 }
@@ -7107,7 +7167,7 @@ define i64 @after_pair(i64 %x) {
   llvm::raw_string_ostream OS(Source);
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, OS, Options));
   ASSERT_EQ(Refused.size(), 1u) << Source;
-  EXPECT_EQ(Refused.front().Name, "pair_exchange");
+  EXPECT_EQ(Refused.front().Name, "scoped_exchange");
   EXPECT_EQ(Refused.front().Reason, "unsupported LLVM C cmpxchg shape");
   // Each kept definition is written; the left-out one is only declared.
   const auto Defines = [&](llvm::StringRef Name) {
@@ -7117,9 +7177,9 @@ define i64 @after_pair(i64 %x) {
       return Line.contains((Name + "(").str()) && Line.ends_with(") {");
     });
   };
-  EXPECT_TRUE(Defines("before_pair")) << Source;
-  EXPECT_TRUE(Defines("after_pair")) << Source;
-  EXPECT_FALSE(Defines("pair_exchange")) << Source;
+  EXPECT_TRUE(Defines("before_exchange")) << Source;
+  EXPECT_TRUE(Defines("after_exchange")) << Source;
+  EXPECT_FALSE(Defines("scoped_exchange")) << Source;
   // Without the list, the definition fails the unit.
   Options.RefusedDefinitions = nullptr;
   std::string Unit;

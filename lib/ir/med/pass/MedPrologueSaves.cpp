@@ -17,6 +17,7 @@
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/med/MedABIPass.h"
+#include "neverd/ir/med/MedCallConvention.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/loader/BinaryImage.h"
@@ -1409,6 +1410,107 @@ void replaceUnwrittenCallFrameReads(MedFunc &Func, Arch Architecture,
   }
 }
 
+/// Whether, on every path from \p Store, which \p Positions places, a call
+/// receives an address within the bytes the store writes before anything
+/// may read them: a local a routine fills through its address.  \p Loads
+/// holds the function's loads at proven entry offsets, \p Offsets the proven
+/// entry offsets of call operands and returned values, and \p Calls each
+/// call's record.  A load whose address is neither proven nor a constant, an
+/// earlier call that receives no such address, an intrinsic, a return that
+/// may pass a frame address on, or a path the walk cannot follow within
+/// \p Budget proves nothing.
+bool slotAddressReachesCallFirst(
+    const MedFunc &Func, Arch Architecture, const FrameAccess &Store,
+    const std::map<const MedOp *, std::pair<size_t, size_t>> &Positions,
+    const std::map<const MedOp *, const FrameAccess *> &Loads,
+    const std::map<ValueKey, int64_t> &Offsets,
+    const std::map<std::pair<int, int>, const MedCallInfo *> &Calls,
+    size_t &Budget) {
+  const auto SlotAddress = [&](const MedVar &V) {
+    const auto It = Offsets.find(keyOf(V));
+    return It != Offsets.end() && It->second >= Store.Offset &&
+           It->second < Store.Offset + Store.Size;
+  };
+  std::map<int, size_t> BlockIndex;
+  for (size_t B = 0; B < Func.Blocks.size(); ++B)
+    BlockIndex.emplace(Func.Blocks[B].Id, B);
+  const auto [StoreBlock, StoreIndex] = Positions.at(Store.Op);
+  std::vector<std::pair<size_t, size_t>> Work{{StoreBlock, StoreIndex + 1}};
+  std::set<std::pair<size_t, size_t>> Seen;
+  while (!Work.empty()) {
+    const auto [B, Begin] = Work.back();
+    Work.pop_back();
+    if (!Seen.insert({B, Begin}).second)
+      continue;
+    const MedBlock &Block = Func.Blocks[B];
+    if (!Block.ExceptionalSuccs.empty())
+      return false;
+    bool Ended = false;
+    for (size_t I = Begin; I < Block.Ops.size() && !Ended; ++I) {
+      if (!Budget)
+        return false;
+      --Budget;
+      const MedOp &Op = Block.Ops[I];
+      if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        return false;
+      switch (Op.Opcode) {
+      case NdOp::LOAD: {
+        // An image address is no frame byte.
+        const auto Load = Loads.find(&Op);
+        if (Load == Loads.end() ? !Op.NumInputs || !Op.Inputs[0].isConst()
+                                : Load->second->overlaps(
+                                      Store.Offset, Store.Offset + Store.Size))
+          return false;
+        break;
+      }
+      case NdOp::STORE:
+      case NdOp::BRANCH:
+      case NdOp::COND_BR:
+        break;
+      case NdOp::CALL:
+      case NdOp::INDIR_CALL: {
+        bool Receives = false;
+        for (unsigned K = 0; K < Op.NumInputs; ++K)
+          Receives |= SlotAddress(Op.Inputs[K]);
+        if (const auto Call = Calls.find({Block.Id, static_cast<int>(I)});
+            Call != Calls.end())
+          Receives |= llvm::any_of(Call->second->Args, SlotAddress);
+        if (!Receives)
+          return false;
+        Ended = true;
+        break;
+      }
+      case NdOp::RETURN:
+        for (unsigned K = 0; K < Op.NumInputs; ++K)
+          if (Offsets.count(keyOf(Op.Inputs[K])))
+            return false;
+        Ended = true;
+        break;
+      case NdOp::INTRINSIC:
+        if (!isExplicitFlagsTransfer(Op, Architecture))
+          return false;
+        break;
+      default:
+        if (!isSpillScalarStep(Op.Opcode))
+          return false;
+        break;
+      }
+    }
+    if (Ended)
+      continue;
+    if (Block.Succs.empty())
+      return false;
+    for (const int Successor : Block.Succs) {
+      const auto Next = BlockIndex.find(Successor);
+      if (Next == BlockIndex.end())
+        return false;
+      Work.emplace_back(Next->second, 0);
+    }
+  }
+  return true;
+}
+
 } // namespace
 
 bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
@@ -2385,6 +2487,117 @@ void markUnobservedBorrowedFrameStores(
         Proof.unreadAfter(Func, *Store.Op, Store.Offset, Store.Size, Writes))
       Store.Op->PrologueSave = true;
   }
+}
+
+void markUndefinedScratchStores(MedFunc &Func, Arch Architecture,
+                                BinaryFormat Format) {
+  // A variadic prologue spills what its callers pass in argument registers,
+  // AL's vector count among them, and an exception dispatcher enters blocks
+  // with registers no predecessor sets.
+  if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame ||
+      Func.FrameSize <= 0 || Func.IsVariadic || Func.ExceptionMetadata ||
+      llvm::any_of(Func.Blocks, [](const MedBlock &Block) {
+        return !Block.ExceptionalPreds.empty() ||
+               !Block.ExceptionalSuccs.empty();
+      }))
+    return;
+  const CallArgumentConvention *Convention =
+      callArgumentConvention(Architecture, Format);
+  if (!Convention || !Convention->UndefinedIncomingScratchRegisters)
+    return;
+  const auto UndefinedStore = [&](const MedOp &Op) {
+    return Op.Opcode == NdOp::STORE && Op.NumInputs >= 2 && !Op.PrologueSave &&
+           holdsUndefinedIncomingScratch(Func, Architecture, Format,
+                                         Op.Inputs[1]);
+  };
+  if (llvm::none_of(Func.Blocks, [&](const MedBlock &Block) {
+        return llvm::any_of(Block.Ops, UndefinedStore);
+      }))
+    return;
+  std::vector<FrameAccess> Loads, Stores;
+  frameAccessesOf(Func, Architecture, Format, Func.EntryKind, Loads, Stores);
+  // The bytes a load or a stack variable of the function reads.
+  std::vector<std::pair<int64_t, int64_t>> Reads;
+  for (const FrameAccess &Load : Loads)
+    Reads.emplace_back(Load.Offset, Load.Offset + Load.Size);
+  const auto StackRead = [&](const MedVar &V) {
+    if (V.Kind == MedVar::Stack && V.Size)
+      Reads.emplace_back(V.StackOff, V.StackOff + V.Size);
+  };
+  for (const MedBlock &Block : Func.Blocks) {
+    for (const PhiNode &Phi : Block.Phis)
+      for (const auto &Incoming : Phi.Args)
+        StackRead(Incoming.second);
+    for (const MedOp &Op : Block.Ops)
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        StackRead(Op.Inputs[I]);
+  }
+  const auto ReadBack = [&](const FrameAccess &Store) {
+    return llvm::any_of(Reads, [&](const std::pair<int64_t, int64_t> &Read) {
+      return Store.overlaps(Read.first, Read.second);
+    });
+  };
+  const auto Private = [&](const FrameAccess &Store) {
+    return Store.Offset >= -Func.FrameSize && Store.Offset < 0 &&
+           int64_t(Store.Size) <= -Store.Offset && UndefinedStore(*Store.Op);
+  };
+  // The variadic count register (System V's RAX) carries nothing into a
+  // function that is not variadic, unlike R10, a nested function's static
+  // chain.  Where a routine receives the slot's address before anything may
+  // read the bytes, a read sees what the routine wrote or bytes the program
+  // never defined, as a local's would.  A slot read back before then holds a
+  // spill, which only a convention recovery does not model (`__regcall`)
+  // gives a value: that store stays.
+  const std::optional<unsigned> CountFamily =
+      Convention->VariadicVectorCountRegister
+          ? gprFamilyOf(Architecture, *Convention->VariadicVectorCountRegister)
+          : std::nullopt;
+  const auto CountStore = [&](const FrameAccess &Store) {
+    return CountFamily &&
+           gprFamilyOf(Architecture, Store.Op->Inputs[1].RegOff) == CountFamily;
+  };
+  std::map<const MedOp *, std::pair<size_t, size_t>> Positions;
+  std::map<const MedOp *, const FrameAccess *> LoadAt;
+  std::map<ValueKey, int64_t> Offsets;
+  std::map<std::pair<int, int>, const MedCallInfo *> Calls;
+  if (llvm::any_of(Stores, [&](const FrameAccess &Store) {
+        return Private(Store) && CountStore(Store) && ReadBack(Store);
+      })) {
+    for (size_t B = 0; B < Func.Blocks.size(); ++B)
+      for (size_t I = 0; I < Func.Blocks[B].Ops.size(); ++I)
+        Positions.emplace(&Func.Blocks[B].Ops[I], std::pair{B, I});
+    for (const FrameAccess &Load : Loads)
+      LoadAt.emplace(Load.Op, &Load);
+    for (const MedCallInfo &Call : Func.CallInfos)
+      Calls.emplace(std::pair{Call.BlockId, Call.OpIdx}, &Call);
+    // The call operands and returned values that may be frame addresses,
+    // all by one proof.
+    std::vector<MedVar> Values;
+    for (const MedBlock &Block : Func.Blocks)
+      for (const MedOp &Op : Block.Ops)
+        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL ||
+            Op.Opcode == NdOp::RETURN)
+          for (unsigned K = 0; K < Op.NumInputs; ++K)
+            if (!Op.Inputs[K].isConst())
+              Values.push_back(Op.Inputs[K]);
+    for (const MedCallInfo &Call : Func.CallInfos)
+      for (const MedVar &Arg : Call.Args)
+        if (!Arg.isConst())
+          Values.push_back(Arg);
+    const std::vector<std::optional<int64_t>> Found =
+        entryStackOffsets(Func, Values, Architecture, Format, Func.EntryKind);
+    for (size_t I = 0; I < Values.size(); ++I)
+      if (Found[I])
+        Offsets.emplace(keyOf(Values[I]), *Found[I]);
+  }
+  size_t Budget = limits::ir::kUndefinedScratchEscapeWork;
+  for (const FrameAccess &Store : Stores)
+    if (Private(Store) &&
+        (!ReadBack(Store) ||
+         (CountStore(Store) &&
+          slotAddressReachesCallFirst(Func, Architecture, Store, Positions,
+                                      LoadAt, Offsets, Calls, Budget))))
+      Store.Op->PrologueSave = true;
 }
 
 } // namespace neverd

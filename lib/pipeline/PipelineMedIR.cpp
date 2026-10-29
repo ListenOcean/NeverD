@@ -71,7 +71,8 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
                              const BinaryImage &Image,
                              MedStackProjection Projection,
                              const MedCallReturnRanges *CallReturns,
-                             bool WaitForCalleeFacts) {
+                             bool WaitForCalleeFacts,
+                             bool CallFreeMachineSource) {
   Func.EntryKind = functionEntryKind(Func, Image.stackEntryKindAt(Func.Entry));
   if (Projection != MedStackProjection::Source)
     return;
@@ -82,7 +83,8 @@ void prepareMedStackAccesses(MedFunc &Func, const LowFunc &Source,
   std::string Diagnostic;
   Func.CallReturnReads.clear();
   bool NeedsCalleeFacts = false;
-  if (!preserveSourceCallReturnWrites(
+  if (!CallFreeMachineSource &&
+      !preserveSourceCallReturnWrites(
           Func, Image, Diagnostic, limits::ir::kSourceCallReturnReadWork,
           &Source, CallReturns, &Func.CallReturnReads,
           WaitForCalleeFacts ? &NeedsCalleeFacts : nullptr))
@@ -144,10 +146,12 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   if (Result.OmittedCallees)
     for (const auto &Func : Result.OmittedCallees->Bodies)
       Callees.try_emplace(Func->Entry, Func.get());
-  for (MedFunc &Func : Result.MedFuncs)
+  for (MedFunc &Func : Result.MedFuncs) {
     if (Complete.count(Func.Entry))
       markUnobservedBorrowedFrameStores(Func, Image.Arch, Image.abiFormat(),
                                         Callees);
+    markUndefinedScratchStores(Func, Image.Arch, Image.abiFormat());
+  }
   if (Image.Arch != Arch::X64 || Image.abiFormat() != BinaryFormat::COFF)
     return;
   std::set<va_t> Referenced;
@@ -657,7 +661,9 @@ void Pipeline::buildMedIR(const BinaryImage &Img, const PipelineOptions &Opts,
       prepareMedStackAccesses(MF, Projected ? *Projected : Result.LowFuncs[I],
                               Img, medStackProjection(Opts),
                               CalleeFactsReady ? &CallReturns : nullptr,
-                              !CalleeFactsReady);
+                              !CalleeFactsReady,
+                              Result.InterpreterMachineSourceABI.has_value() &&
+                                  Result.LowFuncs.size() == 1);
       StackPrepared = true;
       if (medStackProjection(Opts) == MedStackProjection::Source)
         expandSourceRegisterCalls(MF, Img, Result.CallRegisterLeaves);

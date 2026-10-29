@@ -1213,8 +1213,9 @@ private:
     LowInstructionTargetMode TargetMode = LowInstructionTargetMode::Preserve;
     std::vector<va_t> JumpTableTargets;
 
-    /// Original operand of an exact scalar branch. Keep it for revalidation
-    /// when newly decoded paths split the producer's basic block.
+    /// Original operand of a scalar branch. A finite cover retains INDIR_BR
+    /// and JumpTableTargets without granting any table-storage ownership.
+    /// Keep it for revalidation when new paths split the producer's block.
     std::optional<NdVar> ScalarBranchInput;
     bool RejectedScalarBranch = false;
     /// All-path finite scalar target set, independent of memory-table proofs.
@@ -1253,7 +1254,7 @@ private:
                                      InsnRecord &Rec);
   using ScalarImageFacts =
       std::map<std::pair<va_t, uint16_t>, std::optional<uint64_t>>;
-  /// Close exact scalar constant branches on the completed CFG.
+  /// Close constant and finite scalar branches on the completed CFG.
   /// Every new path revalidates earlier proofs before the graph is published.
   bool recoverScalarConstantBranches(const BinaryImage &Img, Decoder &Dec,
                                      LowFunc &Func, size_t &RemainingWork,

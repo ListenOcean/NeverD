@@ -27,6 +27,7 @@
 #include "neverd/loader/BinaryImage.h"
 
 #include "llvm/ADT/APInt.h"
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringRef.h"
 
 #include <algorithm>
@@ -272,9 +273,12 @@ static bool sameAddressValue(const MedVar &A, const MedVar &B) {
 // The already-proven suffix remains usable, including when two accesses share
 // the same conversion result. Invalid widths and conflicting definitions fail.
 static std::optional<ReducedAddress>
-reduceAddr(const MedBlock &Blk, const MedVar &V, size_t *Remaining = nullptr) {
+reduceAddr(const MedBlock &Blk, const MedVar &V, size_t *Remaining = nullptr,
+           std::optional<size_t> Before = std::nullopt) {
   if (V.Size == 0 || V.Size > 8)
     return std::nullopt;
+  const auto Operations =
+      llvm::ArrayRef(Blk.Ops).take_front(Before.value_or(Blk.Ops.size()));
   ReducedAddress Result{V, llvm::APInt(V.Size * 8u, 0)};
   for (unsigned Depth = 0;
        Depth <= ::neverd::limits::ir::kMedABIPassSupportReduceAddrDepthLimit;
@@ -283,7 +287,7 @@ reduceAddr(const MedBlock &Blk, const MedVar &V, size_t *Remaining = nullptr) {
     if (Cur.isConst())
       break;
     const MedOp *Def = nullptr;
-    for (const auto &Op : Blk.Ops) {
+    for (const auto &Op : Operations) {
       if (!consumeCallTargetWork(Remaining))
         return std::nullopt;
       // STOREs and control-flow operations have no defining output. Their
@@ -547,6 +551,22 @@ std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
       Current = Def.Inputs[0];
       continue;
     }
+    // LEA/ADR arithmetic is a callable value, not pointer storage. Prove its
+    // finite-width value before summaries and SSA decide which entry inputs
+    // the call reads. Later propagation cannot restore a discarded argument.
+    if ((Def.Opcode == NdOp::INT_ADD || Def.Opcode == NdOp::INT_SUB) &&
+        Def.MemoryOrdering == NdMemoryOrdering::None &&
+        Def.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+      const auto Address =
+          reduceAddr(Block, Current, WorkRemaining, Before + 1);
+      if (Address && Address->Base.isConst()) {
+        llvm::APInt Bits(Address->Offset.getBitWidth(), Address->Base.ConstVal,
+                         false, true);
+        Bits += Address->Offset;
+        return MedCallTarget{Bits.getZExtValue(), false};
+      }
+      return std::nullopt;
+    }
     if (Def.Opcode != NdOp::LOAD || Def.NumInputs != 1 ||
         Def.MemoryOrdering != NdMemoryOrdering::None ||
         Def.MemoryAddressSpace != NdMemoryAddressSpace::Default)
@@ -557,7 +577,8 @@ std::optional<MedCallTarget> resolveMedCallTarget(const MedBlock &Block,
       Before = *Store;
       continue;
     }
-    const auto Address = reduceAddr(Block, Def.Inputs[0], WorkRemaining);
+    const auto Address =
+        reduceAddr(Block, Def.Inputs[0], WorkRemaining, Before);
     if (Address && Address->Base.isConst()) {
       llvm::APInt Slot(Address->Offset.getBitWidth(), Address->Base.ConstVal,
                        false, true);

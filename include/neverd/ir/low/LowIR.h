@@ -1192,6 +1192,10 @@ struct JumpTable {
   /// selector plan after SSA/copy propagation; absence or ambiguity is a hard
   /// failure for shapes that require exact selector ownership.
   std::vector<JumpTableSelectorUseRef> SelectorUseRefs;
+  /// A table-free finite cover compares the branch value with original image
+  /// addresses. Low-to-Med preserves that numeric coordinate in a separate
+  /// selector slice; observable code-pointer uses retain their address roles.
+  bool OriginalAddressSelector = false;
   /// Exact composite recipe for a runtime-selected table base.  This is kept
   /// separate from SelectorUseRefs because its selector lives in the final
   /// byte-address coordinate and also depends on a certified

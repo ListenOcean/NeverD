@@ -997,12 +997,14 @@ std::optional<MedFunc> scalarCalleeDeclaration(const BinaryImage &Image,
 
 /// The integer register arguments a call to \p Func passes through: its
 /// register parameters through \p MaxRegisterIndex, but only the named ones
-/// of a variadic function whose save area spills the rest.
+/// of a variadic function whose save area spills the rest, as AAPCS's save
+/// area (VariadicFirstRegister) or System V's va_start (VaStartNamedGPRs)
+/// counts them.  Past them a call passes what its caller sets.
 int callRegisterArity(const MedFunc &Func, int MaxRegisterIndex) {
   const int Arity = MaxRegisterIndex + 1;
-  return Func.IsVariadic && Func.VariadicFirstRegister >= 0
-             ? std::min(Arity, Func.VariadicFirstRegister)
-             : Arity;
+  const int Named = Func.VariadicFirstRegister >= 0 ? Func.VariadicFirstRegister
+                                                    : Func.VaStartNamedGPRs;
+  return Func.IsVariadic && Named >= 0 ? std::min(Arity, Named) : Arity;
 }
 
 /// Count FP arguments a callee takes from its entry-block live-in self-copies

@@ -1629,8 +1629,9 @@ MedToHighConverter::collectCallArgs(const MedBlock &CurBlock, size_t CallIdx,
     std::vector<ExprPtr> Stack;
     if (CurMed) {
       indexMedDefinitions();
-      for (const detail::StackSlotValue &Slot : detail::storedStackArguments(
-               *CurMed, CurBlock, CallIdx, TargetArch, *EntryStackOffsets)) {
+      for (const detail::StackSlotValue &Slot :
+           detail::storedStackArguments(*CurMed, CurBlock, CallIdx, TargetArch,
+                                        Format, *EntryStackOffsets)) {
         ExprPtr Value = medvarToExpr(Slot.Value);
         if (Slot.Value.Size > TRI.PointerSize) {
           Value = HighExpr::makeBinop(NdOp::SUBBYTES, Value,

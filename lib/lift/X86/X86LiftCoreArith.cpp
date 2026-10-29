@@ -532,8 +532,8 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
     const bool Subtract = InsnId == X86_INS_SUB || InsnId == X86_INS_DEC;
     if ((!Unary && !Logical && InsnId != X86_INS_ADD &&
          InsnId != X86_INS_SUB) ||
-        (Logical && L.targetArch() != Arch::X64) || ApxBinary.Present ||
-        ApxUnary.Present || ApxImul.Present || X86.op_count != (Unary ? 1 : 2))
+        ApxBinary.Present || ApxUnary.Present || ApxImul.Present ||
+        X86.op_count != (Unary ? 1 : 2))
       return false;
     const auto &Memory = X86.operands[0];
     if (Memory.type != X86_OP_MEM ||
@@ -544,9 +544,28 @@ bool liftCoreArith(X86Lifter &L, X86Lifter::LiftState &S, const cs_insn *Insn,
                      X86.operands[1].type != X86_OP_IMM) ||
                     X86.operands[1].size != Memory.size)))
       return false;
-    const NdVar Address = S.computeEA(Memory);
     const NdVar Source = Unary ? NdVar::scalar(1, Memory.size)
                                : readArithmeticOperand(X86.operands[1]);
+    const uint64_t Mask = UINT64_MAX >> (64 - Memory.size * 8);
+    const bool NeutralLogic =
+        Logical && X86.operands[1].type == X86_OP_IMM && Source.isConst() &&
+        Source.Provenance == ConstantAddressProvenance::Scalar &&
+        (Source.Offset & Mask) == (InsnId == X86_INS_AND ? Mask : 0);
+    if (Logical && !NeutralLogic && L.targetArch() != Arch::X64)
+      return false;
+    if (NeutralLogic) {
+      // Neutral logic still writes memory and orders other accesses. The
+      // shared atomic add of zero keeps that transaction, including faults;
+      // only its value result is used to publish the logical status flags.
+      const NdVar Address = S.computeEA(Memory);
+      const NdVar Old = S.makeTemp(Memory.size);
+      S.emit(NdOp::ATOMIC_ADD, Old, {Address, NdVar::scalar(0, Memory.size)},
+             NdMemoryOrdering::SequentiallyConsistent,
+             X86Lifter::LiftState::memoryAddressSpace(Memory));
+      L.emitFlagsLogic(S, Old);
+      return true;
+    }
+    const NdVar Address = S.computeEA(Memory);
     const NdVar Value = S.makeTemp(Memory.size);
     S.emit(NdOp::COPY, Value, {Source});
     if (Logical) {

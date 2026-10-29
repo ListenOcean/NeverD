@@ -11,6 +11,8 @@
 #include <QLabel>
 #include <QStackedWidget>
 #include <QVBoxLayout>
+#include <algorithm>
+#include <iterator>
 
 namespace neverd::gui {
 namespace {
@@ -187,24 +189,29 @@ void DisassemblyView::navigate(Address address, bool record,
   updateStatus();
 }
 
-void DisassemblyView::goBack() {
-  if (!canGoBack())
-    return;
+void DisassemblyView::goBack(std::size_t steps) {
+  if (steps > 0 && steps <= historyIndex_)
+    goToStop(historyIndex_ - steps);
+}
+
+void DisassemblyView::goForward(std::size_t steps) {
+  if (steps > 0 && steps < history_.size() - historyIndex_)
+    goToStop(historyIndex_ + steps);
+}
+
+std::vector<Address> DisassemblyView::stops(bool forward) const {
+  if (forward)
+    return {history_.begin() + std::min(historyIndex_ + 1, history_.size()),
+            history_.end()};
+  return {std::make_reverse_iterator(history_.begin() + historyIndex_),
+          history_.rend()};
+}
+
+void DisassemblyView::goToStop(std::size_t index) {
   // Back returns to where the jump began, and Forward to where the user left
   // this stop, such as a row clicked in the code the jump opened.
   moveStopToCursor();
-  --historyIndex_;
-  restoring_ = true;
-  navigate(history_[historyIndex_], false);
-  restoring_ = false;
-  emit historyChanged();
-}
-
-void DisassemblyView::goForward() {
-  if (!canGoForward())
-    return;
-  moveStopToCursor();
-  ++historyIndex_;
+  historyIndex_ = index;
   restoring_ = true;
   navigate(history_[historyIndex_], false);
   restoring_ = false;

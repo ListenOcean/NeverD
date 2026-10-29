@@ -36,6 +36,7 @@
 #include "neverd/ir/low/LowIntrinsicEffects.h"
 #include "neverd/ir/low/LowIntrinsicOutputs.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
+#include "neverd/ir/low/LowScalarConstant.h"
 #include "neverd/ir/low/RegistrationABI.h"
 #include "neverd/ir/low/SEHFrameProof.h"
 #include "neverd/ir/low/X86/X86CompactShape.h"
@@ -967,6 +968,8 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   using OccurrenceKey = std::pair<va_t, int>;
   const RelativeLiteralOutputs RelativeLiterals =
       armRelativeLiteralOutputs(Low, TheArch, Fmt);
+  const auto ZeroExtendedAddresses =
+      x86ZeroExtendedAddressOutputs(Low, TheArch);
 
   MedFunc Func;
   Func.Entry = Low.Entry;
@@ -1077,6 +1080,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
   }
   size_t LowBlockIndex = 0;
   size_t CallTargetWork = limits::ir::kSourceFrameAnalysisRemaining;
+  std::optional<std::map<SourceCallOccurrenceKey, va_t>> ScalarCallTargets;
 
   const auto CachedImports =
       Image && Image->Arch == TheArch && Image->abiFormat() == Fmt &&
@@ -1125,6 +1129,13 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         CachedTarget = CallTargets.resolve(MB, ndVarToMedVar(Call.Inputs[0]),
                                            &CallTargetWork);
         const auto OriginalSite = sourceCallOccurrenceKey(Call);
+        if (!CachedTarget && OriginalSite && !Image->IsRelocatable) {
+          if (!ScalarCallTargets)
+            ScalarCallTargets = constantRegisterCallTargets(Low);
+          if (const auto Target = ScalarCallTargets->find(*OriginalSite);
+              Target != ScalarCallTargets->end())
+            CachedTarget = MedCallTarget{Target->second, false};
+        }
         const bool AnalystSite = OriginalSite && SourceCallSiteHints &&
                                  SourceCallSiteHints->count(*OriginalSite);
         if (CachedTarget && !CachedTarget->ThroughSlot && !AnalystSite &&
@@ -1420,6 +1431,20 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
         MOp.addInput(MedVar::makeConst(Proof.TargetVA, 4, Proof.Provenance,
                                        Proof.TargetOwnerVA));
       }
+      // The zero extension that completes an x86-64 relocated 32-bit address
+      // holds that whole address.
+      if (const auto Completed = ZeroExtendedAddresses.find(MaterializationKey);
+          Completed != ZeroExtendedAddresses.end() &&
+          MOp.Opcode == NdOp::INT_ZEXT && MOp.Output.Size == 8 &&
+          MOp.IntrinsicOutputs.empty() &&
+          MOp.MemoryOrdering == NdMemoryOrdering::None &&
+          MOp.MemoryAddressSpace == NdMemoryAddressSpace::Default) {
+        const auto &Field = *Completed->second;
+        MOp.Opcode = NdOp::COPY;
+        MOp.NumInputs = 0;
+        MOp.addInput(MedVar::makeConst(Field.TargetVA, 8, Field.Provenance,
+                                       Field.TargetOwnerVA));
+      }
       const ImportedCallSlotFacts::Operation Position{LB.Id, LowOpIndex};
       if (const auto Reload = CachedImports.Reloads.find(Position);
           Reload != CachedImports.Reloads.end()) {
@@ -1569,10 +1594,14 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     // selectors bind exactly as they would after the full pipeline.
     resolveSwitchSelectorPlans(Func);
     Func.SkippedSSA = true;
+    projectOriginalAddressSelectors(Func);
     return Func;
   }
 
   try {
+    modelSEHLocalUnwindExits(Func, Low);
+    debugVerifyMedFunc(Func, "modelSEHLocalUnwindExits");
+
     x86_registration::RegistrationRoots(Low, TheArch, Fmt)
         .disconnectNoReturnFallthroughs(Func);
     bindSourceCalls(Func, Low, Fmt);
@@ -1796,11 +1825,12 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       debugVerifyMedFunc(Func, "foldImmutableTableScans");
     }
     resolveSwitchSelectorPlans(Func);
-    resolveScalarAddressModels(Func,
-                               Low.RelocatedInstructionScalarModelOccurrences);
     if (Image && !preserveComputedBranchScalars(Func, *Image))
       throw LowToMedConversionError(
           "computed code branch has an escaping or unproved numeric selector");
+    projectOriginalAddressSelectors(Func);
+    resolveScalarAddressModels(Func,
+                               Low.RelocatedInstructionScalarModelOccurrences);
     resolveI386GetPcModels(Func, Low.I386GetPcOccurrences);
     resolveCxxContinuationExits(
         Func, Low,

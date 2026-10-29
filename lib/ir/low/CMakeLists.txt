@@ -103,9 +103,12 @@ add_neverd_component_library(NeverDIRLow
   CFGBuilderInsn.cpp
   CFGBuilderScalarBranch.cpp
   LowScalarTargets.cpp
+  LowScalarFiniteExpression.cpp
   LowScalarExpression.cpp
   LowScalarSymbolic.cpp
   X86/CFGBuilderX86Fpu.cpp
+  SEHLocalUnwindProtocol.cpp
+  X86/SEHLocalUnwindX64.cpp
   X86/CFGBuilderX86GetPc.cpp
   X86/CFGBuilderX86PLT.cpp
   CallRegisterEffects.cpp

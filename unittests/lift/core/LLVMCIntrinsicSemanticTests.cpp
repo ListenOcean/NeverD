@@ -160,7 +160,8 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
                      llvm::ArrayRef<llvm::StringRef> ExpectedIR = {},
                      llvm::StringRef Optimization = "-O1",
                      bool CheckUndefined = false,
-                     llvm::StringRef ExtraInput = {}) {
+                     llvm::StringRef ExtraInput = {},
+                     llvm::ArrayRef<llvm::StringRef> ExtraFlags = {}) {
   auto Compiler = llvm::sys::findProgramByName("clang");
   ASSERT_TRUE(static_cast<bool>(Compiler)) << "clang is required";
   llvm::SmallString<128> Input, Output, Errors;
@@ -190,6 +191,7 @@ void compileAndCheck(const std::string &Source, bool LLVMOnly = false,
       Output};
   if (!ExtraInput.empty())
     Args.push_back(ExtraInput);
+  Args.append(ExtraFlags.begin(), ExtraFlags.end());
   if (LLVMOnly)
     Args.append({"-target", "x86_64-pc-windows-msvc", "-S", "-emit-llvm"});
   // Clang lowers the i128 conversion controls to its compiler runtime. The
@@ -1225,12 +1227,93 @@ int main(void) {
     compileAndCheck(Text, false, {}, Level, true);
 }
 
+TEST(LLVMCIntrinsicSemantics, CompareExchangeCarriesA128BitPair) {
+  // AArch64 CASP and x86-64 LOCK CMPXCHG16B lift to one 128-bit
+  // compare-exchange. Where C has a native 128-bit integer the builtin
+  // carries the whole pair: either half decides the comparison, and the old
+  // value comes back whole.
+  llvm::LLVMContext Context;
+  llvm::Module Module("pair-compare-exchange", Context);
+  Module.setDataLayout("e-p:64:64-i64:64-i128:128");
+  llvm::IRBuilder<llvm::NoFolder> B(Context);
+  using Order = llvm::AtomicOrdering;
+  // CASP, CASPA, CASPAL, CASPL and LOCK CMPXCHG16B.
+  const std::pair<Order, Order> Orders[] = {
+      {Order::Monotonic, Order::Monotonic},
+      {Order::Acquire, Order::Acquire},
+      {Order::AcquireRelease, Order::Acquire},
+      {Order::Release, Order::Monotonic},
+      {Order::SequentiallyConsistent, Order::SequentiallyConsistent}};
+  auto *Pair = B.getInt128Ty();
+  std::string Exchanges;
+  for (unsigned I = 0; I != std::size(Orders); ++I) {
+    const std::string Name = "exchange_pair_" + std::to_string(I);
+    auto *Fn = llvm::Function::Create(
+        llvm::FunctionType::get(
+            B.getVoidTy(), {B.getPtrTy(), B.getPtrTy(), B.getPtrTy()}, false),
+        llvm::GlobalValue::ExternalLinkage, Name, Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Fn));
+    auto *Expected = B.CreateLoad(Pair, Fn->getArg(1));
+    auto *Desired =
+        B.CreateLoad(Pair, B.CreateGEP(Pair, Fn->getArg(1), B.getInt64(1)));
+    auto *Exchange =
+        B.CreateAtomicCmpXchg(Fn->getArg(0), Expected, Desired, llvm::Align(16),
+                              Orders[I].first, Orders[I].second);
+    B.CreateStore(B.CreateExtractValue(Exchange, 0), Fn->getArg(2));
+    B.CreateStore(B.CreateZExt(B.CreateExtractValue(Exchange, 1), Pair),
+                  B.CreateGEP(Pair, Fn->getArg(2), B.getInt64(1)));
+    B.CreateRetVoid();
+    Exchanges += Name + ", ";
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  const auto Text = "#include <stdint.h>\n#include <stdbool.h>\n" +
+                    emit(Module) +
+                    "void (*const exchanges[])(void *, void *, void *) = {" +
+                    Exchanges + "};\n" + R"(
+int main(void) {
+  const __uint128_t high = (__uint128_t)1 << 64;
+  const __uint128_t values[] = {0, 1, high, high | 1, ~(__uint128_t)0};
+  for(unsigned f=0;f<sizeof(exchanges)/sizeof(exchanges[0]);++f)
+    for(unsigned i=0;i<5;++i) for(unsigned j=0;j<5;++j) for(unsigned k=0;k<5;++k) {
+      _Alignas(16) __uint128_t cell = values[i];
+      _Alignas(16) __uint128_t in[2] = {values[j], values[k]};
+      _Alignas(16) __uint128_t out[2] = {7, 7};
+      exchanges[f](&cell, in, out);
+      if(out[0]!=values[i]) return 1;
+      if(out[1]!=(values[i]==values[j])) return 2;
+      if(cell!=(values[i]==values[j]?values[k]:values[i])) return 3;
+    }
+  return 0;
+}
+)";
+  EXPECT_EQ(llvm::StringRef(Text).count(
+                "__atomic_compare_exchange_n((__uint128_t *)"),
+            std::size(Orders))
+      << Text;
+  for (const char *Pair : {"__ATOMIC_RELAXED, __ATOMIC_RELAXED",
+                           "__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE",
+                           "__ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE",
+                           "__ATOMIC_RELEASE, __ATOMIC_RELAXED",
+                           "__ATOMIC_SEQ_CST, __ATOMIC_SEQ_CST"})
+    EXPECT_NE(Text.find(Pair), std::string::npos) << Pair << "\n" << Text;
+  // x86-64 inlines the 16-byte builtin only with CMPXCHG16B, which LOCK
+  // CMPXCHG16B itself requires; AArch64 always inlines it.
+  llvm::SmallVector<llvm::StringRef, 1> Flags;
+  if (llvm::Triple(llvm::sys::getDefaultTargetTriple()).getArch() ==
+      llvm::Triple::x86_64)
+    Flags.push_back("-mcx16");
+  for (const char *Level : {"-O0", "-O2"})
+    compileAndCheck(Text, false, {}, Level, true, {}, Flags);
+}
+
 TEST(LLVMCIntrinsicSemantics, CompareExchangeRejectsUnrepresentableContracts) {
   for (unsigned Variant = 0; Variant != 8; ++Variant) {
     SCOPED_TRACE(Variant);
     llvm::LLVMContext Context;
     llvm::Module Module("unsupported-compare-exchange", Context);
-    Module.setDataLayout("e-p:64:64-p1:64:64-ni:1");
+    // Variant 0 is a 128-bit pair where C has no 128-bit integer.
+    Module.setDataLayout(Variant == 0 ? "e-p:32:32-p1:64:64-ni:1"
+                                      : "e-p:64:64-p1:64:64-ni:1");
     llvm::IRBuilder<> B(Context);
     auto *Value = Variant == 4 ? static_cast<llvm::Type *>(B.getPtrTy(1))
                                : B.getIntNTy(Variant == 0 ? 128 : 64);

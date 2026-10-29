@@ -62,10 +62,11 @@ bool physicalTargetSelector(const JumpTable &JT) {
 } // namespace
 
 bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
-  std::map<va_t, JumpTableSelectorUseRef> Selectors;
+  std::map<va_t, std::pair<JumpTableSelectorUseRef, bool>> Selectors;
   for (const JumpTable &JT : F.JumpTables)
     if (physicalTargetSelector(JT))
-      Selectors.emplace(JT.InsnAddr, JT.SelectorUseRefs.front());
+      Selectors.emplace(JT.InsnAddr, std::pair{JT.SelectorUseRefs.front(),
+                                               JT.OriginalAddressSelector});
   if (Selectors.empty())
     return true;
   if (F.SkippedSSA)
@@ -84,7 +85,7 @@ bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
   std::map<Key, Node> Definitions;
   std::map<Key, std::vector<Node>> Uses;
   std::set<const MedOp *> Dispatches;
-  std::vector<MedVar> Backward;
+  std::vector<std::pair<MedVar, bool>> Backward;
   for (MedBlock &Block : F.Blocks) {
     for (PhiNode &Phi : Block.Phis) {
       if (!Spend() ||
@@ -110,22 +111,24 @@ bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
           Uses[key(Op.Inputs[I])].push_back({&Op, nullptr});
       const auto At = Selectors.find(Op.Addr);
       if (At != Selectors.end() && Op.Opcode == NdOp::INDIR_BR &&
-          Op.NumInputs == 1 && Op.OriginSeq == At->second.Seq &&
-          Op.Inputs[0].Size == At->second.ExpectedSize) {
+          Op.NumInputs == 1 && Op.OriginSeq == At->second.first.Seq &&
+          Op.Inputs[0].Size == At->second.first.ExpectedSize) {
         Dispatches.insert(&Op);
-        Backward.push_back(Op.Inputs[0]);
+        Backward.emplace_back(Op.Inputs[0], At->second.second);
       }
     }
   }
   if (Dispatches.size() != Selectors.size())
     return false;
-  std::set<Key> SeenBackward, SeenForward;
-  std::vector<Key> Forward;
+  std::set<std::pair<Key, bool>> SeenBackward;
+  std::set<std::tuple<Key, bool, bool>> SeenForward;
+  std::vector<std::tuple<Key, bool, bool>> Forward;
   std::set<MedVar *> Constants;
   bool UnprovedFragment = false;
-  const auto Collect = [&](MedVar &V, const MedVar &Output) {
+  const auto Collect = [&](MedVar &V, const MedVar &Output, bool Original,
+                           bool Arithmetic) {
     if (!V.isConst()) {
-      Backward.push_back(V);
+      Backward.emplace_back(V, Original);
       return;
     }
     if (V.Provenance == ConstantAddressProvenance::AddressFragment) {
@@ -136,17 +139,18 @@ bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
         V.Size >= Image.getPointerSize() &&
         (isAddressProvenance(V.Provenance) ||
          Image.getSegmentFor(V.ConstVal))) {
-      Constants.insert(&V);
-      Forward.push_back(key(Output));
+      if (!Original)
+        Constants.insert(&V);
+      Forward.emplace_back(key(Output), Original, Arithmetic);
     }
   };
   while (!Backward.empty() || !Forward.empty()) {
     while (!Backward.empty()) {
       if (!Spend())
         return false;
-      const MedVar V = Backward.back();
+      const auto [V, Original] = Backward.back();
       Backward.pop_back();
-      if (V.isConst() || !SeenBackward.insert(key(V)).second)
+      if (V.isConst() || !SeenBackward.emplace(key(V), Original).second)
         continue;
       const auto At = Definitions.find(key(V));
       if (At == Definitions.end())
@@ -156,19 +160,20 @@ bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
         for (auto &[Pred, Input] : N.Phi->Args) {
           if (!Spend())
             return false;
-          Collect(Input, N.Phi->Output);
+          Collect(Input, N.Phi->Output, Original, false);
         }
       } else if (scalarOperation(*N.Op))
         for (unsigned I = 0; I < N.Op->NumInputs; ++I)
-          Collect(N.Op->Inputs[I], N.Op->Output);
+          Collect(N.Op->Inputs[I], N.Op->Output, Original,
+                  N.Op->Opcode != NdOp::COPY);
     }
     if (Forward.empty())
       break;
-    const Key V = Forward.back();
+    const auto [V, Original, Arithmetic] = Forward.back();
     Forward.pop_back();
     if (!Spend())
       return false;
-    if (!SeenForward.insert(V).second)
+    if (!SeenForward.emplace(V, Original, Arithmetic).second)
       continue;
     for (const Node &N : Uses[V]) {
       if (!Spend())
@@ -176,13 +181,21 @@ bool preserveComputedBranchScalars(MedFunc &F, const BinaryImage &Image) {
       if (N.Op && Dispatches.count(N.Op))
         continue;
       if (N.Phi) {
-        Forward.push_back(key(N.Phi->Output));
-        Backward.push_back(N.Phi->Output);
+        Forward.emplace_back(key(N.Phi->Output), Original, Arithmetic);
+        Backward.emplace_back(N.Phi->Output, Original);
       } else {
-        if (!scalarOperation(*N.Op))
-          return false;
-        Forward.push_back(key(N.Op->Output));
-        Backward.push_back(N.Op->Output);
+        if (!scalarOperation(*N.Op)) {
+          // The original-address projector can duplicate an exact pointer
+          // COPY/PHI for the selector while preserving its observable identity.
+          // Arithmetic in original code coordinates cannot escape that way:
+          // relocated block labels need not retain their byte distances.
+          if (!Original || Arithmetic)
+            return false;
+          continue;
+        }
+        Forward.emplace_back(key(N.Op->Output), Original,
+                             Arithmetic || N.Op->Opcode != NdOp::COPY);
+        Backward.emplace_back(N.Op->Output, Original);
       }
     }
   }

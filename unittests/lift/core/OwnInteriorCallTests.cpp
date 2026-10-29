@@ -803,45 +803,51 @@ LowOp scalarTestOp(va_t Address, NdOp Opcode, NdVar Output,
 
 TEST(ComputedCodeBranch, AllPredecessorsAndLoopIterationsOwnTheDomain) {
   for (bool Reverse : {false, true})
-    for (bool UnknownArm : {false, true}) {
-      LowFunc F;
-      F.Entry = 0x1000;
-      F.Blocks.resize(4);
-      for (int I = 0; I != 4; ++I) {
-        F.Blocks[I].Id = I;
-        F.Blocks[I].StartAddr = F.Entry + I * 16;
+    for (bool UnknownArm : {false, true})
+      for (unsigned Root = 0; Root != 3; ++Root) {
+        LowFunc F;
+        F.Entry = 0x1000;
+        F.Blocks.resize(4);
+        for (int I = 0; I != 4; ++I) {
+          F.Blocks[I].Id = I;
+          F.Blocks[I].StartAddr = F.Entry + I * 16;
+        }
+        const auto Index = NdVar::reg(0, 4), Target = NdVar::reg(8, 4);
+        F.Blocks[0].Succs =
+            Reverse ? std::vector<int>{2, 1} : std::vector<int>{1, 2};
+        for (int I : {1, 2}) {
+          F.Blocks[I].Preds = {0};
+          F.Blocks[I].Succs = {3};
+        }
+        F.Blocks[1].Ops = {scalarTestOp(0x1010, NdOp::INT_AND, Index,
+                                        {NdVar::reg(16, 4), NdVar::cst(3, 4)})};
+        if (!UnknownArm)
+          F.Blocks[2].Ops = {
+              scalarTestOp(0x1020, NdOp::COPY, Index, {NdVar::cst(7, 4)})};
+        F.Blocks[3].Preds =
+            Reverse ? std::vector<int>{3, 2, 1} : std::vector<int>{1, 2, 3};
+        F.Blocks[3].Succs = {3};
+        F.Blocks[3].Ops = {scalarTestOp(0x1030, NdOp::INT_ADD, Target,
+                                        {Index, NdVar::cst(0x1040, 4)}),
+                           scalarTestOp(0x1031, NdOp::INDIR_BR, {}, {Target})};
+        if (Root == 1)
+          F.ModuleAnalysisRoots.insert(F.Blocks[3].StartAddr);
+        if (Root == 2)
+          F.OrdinaryModuleAnalysisRoots.insert(F.Blocks[3].StartAddr);
+        size_t Work = 10000;
+        const auto Result = finiteScalarBranchTargets(F, Work);
+        ASSERT_TRUE(Result);
+        if (UnknownArm || Root)
+          EXPECT_TRUE(Result->empty());
+        else {
+          ASSERT_TRUE(Result->count(0x1031));
+          EXPECT_EQ(
+              Result->at(0x1031),
+              (std::vector<va_t>{0x1040, 0x1041, 0x1042, 0x1043, 0x1047}));
+        }
+        Work = 1;
+        EXPECT_FALSE(finiteScalarBranchTargets(F, Work));
       }
-      const auto Index = NdVar::reg(0, 4), Target = NdVar::reg(8, 4);
-      F.Blocks[0].Succs =
-          Reverse ? std::vector<int>{2, 1} : std::vector<int>{1, 2};
-      for (int I : {1, 2}) {
-        F.Blocks[I].Preds = {0};
-        F.Blocks[I].Succs = {3};
-      }
-      F.Blocks[1].Ops = {scalarTestOp(0x1010, NdOp::INT_AND, Index,
-                                      {NdVar::reg(16, 4), NdVar::cst(3, 4)})};
-      if (!UnknownArm)
-        F.Blocks[2].Ops = {
-            scalarTestOp(0x1020, NdOp::COPY, Index, {NdVar::cst(7, 4)})};
-      F.Blocks[3].Preds =
-          Reverse ? std::vector<int>{3, 2, 1} : std::vector<int>{1, 2, 3};
-      F.Blocks[3].Succs = {3};
-      F.Blocks[3].Ops = {scalarTestOp(0x1030, NdOp::INT_ADD, Target,
-                                      {Index, NdVar::cst(0x1040, 4)}),
-                         scalarTestOp(0x1031, NdOp::INDIR_BR, {}, {Target})};
-      size_t Work = 10000;
-      const auto Result = finiteScalarBranchTargets(F, Work);
-      ASSERT_TRUE(Result);
-      if (UnknownArm)
-        EXPECT_TRUE(Result->empty());
-      else {
-        ASSERT_TRUE(Result->count(0x1031));
-        EXPECT_EQ(Result->at(0x1031),
-                  (std::vector<va_t>{0x1040, 0x1041, 0x1042, 0x1043, 0x1047}));
-      }
-      Work = 1;
-      EXPECT_FALSE(finiteScalarBranchTargets(F, Work));
-    }
 }
 
 TEST(ComputedCodeBranch, PartialWritesCallsAndLargeMasksCannotBorrowFacts) {

@@ -69,11 +69,13 @@ add_neverd_component_library(NeverDIRMed
   flags/ARM/MedFlagsARM.cpp
   flags/X86/MedFlagsX86.cpp
   lower/LowToMed.cpp
+  lower/LowToMedScalarSelectors.cpp
   lower/LowToMedSourceCalls.cpp
   lower/ARM/LowToMedARM.cpp
   lower/LowToMedCallReturnFP.cpp
   lower/LowToMedCallReturnStruct.cpp
   lower/LowToMedCallReturnWideInt.cpp
+  lower/LowToMedSEHLocalUnwind.cpp
   lower/X86/LowToMedCallReturnX87.cpp
   lower/LowToMedStack.cpp
   lower/LowToMedSubReg.cpp

@@ -3,6 +3,13 @@
 Use public fixtures and emitter tests as the durable contract. Private binary
 analysis and comparison output belong outside the repository.
 
+ELF relocation immutability also requires a dynamic-loader contract and full
+protected pages. An interpreterless static entry and a partial final RELRO page
+retain runtime storage; the target's maximum base page governs the proof.
+Independent native Linux x64 write/read fixtures reproduce both former constant
+folds. x86/x64/ARM/ARM64 model checks cover page-crossing reads; native ARM page
+configurations remain separate coverage.
+
 ## Open
 
 The x64 kernel call table now includes the 107 additional bundled DDK native
@@ -51,14 +58,30 @@ system effects. Ordinary source recovery still needs a proof connecting a
 service selector and its physical transfer frame to a source call contract;
 the shared dispatcher's union of machine-register reads cannot provide it.
 
+LLVM function-name disambiguation also reserves generated address suffixes.
+A real symbol using that suffix cannot absorb another function's body or
+redirect its callers. Chained collisions and reversed input order preserve
+each body's return value and call target across all four native architectures,
+all three native formats, and serial or sharded emission.
+
+Neutral immediate locked logic now keeps one ordered read-modify-write and
+its defined logical flags across both C routes. HighC retains explicit atomic
+result types when rendering signed comparisons. Public execution regressions
+cover all scalar widths, formats, offsets and optimization levels; this does
+not supply missing entry-frame state or a general model for MMIO or concurrency. Other x64 locked logical operands
+use the separately audited native intrinsic contract.
+
 LLVM C compare-exchange now retains the old value, success flag and memory
 effect at the original instruction position. Native 8/16/32/64-bit integers
-and ordinary pointers retain weak/strong, volatile and memory-order semantics;
-unrepresentable width, alignment, address-space, synchronization-scope and
-ordering contracts fail explicitly. The intrinsic semantic suite executes
-both outcomes, unused results and observers that overwrite the cell at O0/O2,
-with a separate translation unit for the scalar oracle. Frame-address operands
-and pointer snapshots have dedicated controls.
+and ordinary pointers retain weak/strong, volatile and memory-order semantics,
+as does a 128-bit pair (AArch64 CASP, x86-64 LOCK CMPXCHG16B) where C has a
+native 128-bit integer; other unrepresentable width, alignment, address-space,
+synchronization-scope and ordering contracts fail explicitly. The intrinsic
+semantic suite executes both outcomes, unused results and observers that
+overwrite the cell at O0/O2, with a separate translation unit for the scalar
+oracle, and both outcomes of every CASP ordering with either half deciding the
+comparison. Frame-address operands and pointer snapshots have dedicated
+controls.
 
 x87 context propagation retains a definite nested use across unresolved or
 recursive sibling calls. Complete-function cache admission uses the same
@@ -80,6 +103,34 @@ not resolve genuine hidden machine-state inputs at VM continuation boundaries.
 The same SSA identity rule now serves compound-condition rewriting and direct
 boolean flag propagation. Unknown operands disappear only when the result is
 independent of their bits; unspecified occurrences stay distinct.
+
+MedIR constant and copy propagation retain computed indirect-call targets as
+SSA values: a legacy literal target denotes pointer storage, so substituting
+its bits would invent a load from code. Both propagation sites share the operand
+rule. Cross-format x86/ARM conversion and x64/ARM64 source regressions cover
+value calls, with literal slots and ordinary arguments retained as controls.
+This does not supply missing caller state or prove a dynamic target constant.
+
+Runtime immutability belongs to the shared loader protection query. Section
+names alone cannot fold writable data or grant a function-pointer fact;
+relocation classification and LLVM materialization use the same mapping proof.
+Public read/write functions exercise both C routes across x64/ARM64 and the
+three native containers, while real ELF relro/norelro links retain the contrast.
+This does not infer a runtime initializer or missing VM memory state.
+
+Affine register-call targets share the reaching-value proof before entry-read
+summaries and SSA. This preserves untouched forwarding inputs through selected
+function and whole-module source projection. A bounded, unique direct-
+predecessor chain extends this to cross-block targets; alternate entries,
+merges, cycles, exception paths and malformed boundaries stop inheritance.
+This still cannot manufacture hidden caller state.
+
+LLVM C definitions and calls now share their pointer-type projection, including
+object pointers, callbacks and typedefs. Materialized member loads use the same
+carrier conversion as inlined reads. CRT header reuse keeps layout assertions,
+so different MSVCRT/UCRT definitions cannot silently substitute one another.
+Public source execution and the complete MinGW toy own qualification; native
+Windows kernel and ARM64 execution remain separate evidence requirements.
 
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
@@ -446,8 +497,23 @@ prologues), and arbitrary runtime decoding still need separate proofs.
 LLVM C also places recognized text beside ordinary and volatile image reads
 inside the function body, which remains visible when the GUI folds image
 declarations. Dynamic pointers and disabled comments stay unannotated.
+Checked pointer call arguments now use that same bounded reader even when
+LLVM carries their address as an integer. The original address and mutable
+storage remain intact; scalar collisions and rejected source declarations
+cannot acquire pointer text. Public tests cover x86/x64/ARM64 and all three
+native formats.
+Return contracts now reuse the call ABI owner's bounded import-slot proof.
+Copies of an import address or loaded callable no longer hide a declared void
+result; ARM64 tail wrappers therefore retain the real source declaration in
+both C routes without an invented integer result or unknown-return guard.
+Numeric callable values, dynamic addresses, cycles and segment-relative loads
+remain separate from import slots across all four native architectures.
 Exact scalar branches now reconnect discontiguous and backward code while
-preserving independently known tail calls. Worker navigation uses complete
+preserving independently known tail calls. Their numeric and symbolic proofs
+carry values across unique decoded direct predecessors and share authenticated
+immutable image reads. A joined target also requires unanimous proofs from its
+direct incoming paths. Conflicting joins, independent entries, writable memory
+and missing caller/VM state still need their own proofs. Worker navigation uses complete
 recovered instruction ownership to select the original function when a user
 lands on a fragment; it does not invent a new callable entry or its live-ins.
 Saved code items retain this bounded owner lookup on literal GUI navigation.
@@ -841,3 +907,9 @@ conditional memory, invocation lifetime and both C routes remain open.
    corpus producer verification when corpus code changes.
 4. Keep private binaries, PDBs, decompiler comparisons, addresses, names, and
    timing logs in local scratch storage, outside Git.
+
+- Bounded natural-width REP MOVS/STOS now contribute their complete forward or
+  backward image ranges to HighC's shared object backing. The x64 COFF, ELF and
+  Mach-O execution matrix compares both C routes at O0/O2 and rejects ranges
+  beyond mapped storage, including extra file padding. Dynamic counts,
+  segmented operands and address-size overrides retain their previous limits.

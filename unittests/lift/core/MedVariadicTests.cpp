@@ -9,7 +9,9 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/med/MedIR.h"
 
+#include <cstdint>
 #include <initializer_list>
+#include <vector>
 
 namespace neverd {
 
@@ -226,6 +228,54 @@ TEST(MedVariadic, DefinitionLookupIsFreshForEachFunctionAndEdit) {
     EXPECT_TRUE(F.IsVariadic);
     EXPECT_EQ(F.VariadicOverflowBase, 2 * Size);
   }
+}
+
+// A System V va_start stores gp_offset, eight for each integer register that
+// carries a named parameter, into its va_list's first field: that store
+// alone counts them (MedFunc::VaStartNamedGPRs), the word whole or its two
+// halves side by side.  The word in a register no store puts in the frame,
+// or stored through an address that is no frame slot, counts nothing.
+TEST(MedVariadic, X64NamedRegistersComeOnlyFromAStoredGpOffset) {
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  const uint64_t Word = (uint64_t{48} << 32) | 16;
+  const auto Variadic = [&](auto Edit) {
+    MedFunc F = homeFunction(Arch::X64);
+    auto &Ops = F.Blocks[0].Ops;
+    Ops.push_back(op(NdOp::STORE, {},
+                     {Ops[1].Output, reg(20, 0, 8, TRI.IntParamRegs[2])}));
+    Edit(Ops);
+    classify(F, Arch::X64);
+    EXPECT_TRUE(F.IsVariadic);
+    return F.VaStartNamedGPRs;
+  };
+  EXPECT_EQ(Variadic([&](std::vector<MedOp> &Ops) {
+              Ops.push_back(op(NdOp::STORE, {},
+                               {Ops[1].Output, MedVar::makeConst(Word, 8)}));
+            }),
+            2);
+  EXPECT_EQ(
+      Variadic([&](std::vector<MedOp> &Ops) {
+        const MedVar FpField = temp(4);
+        Ops.push_back(
+            op(NdOp::STORE, {}, {Ops[1].Output, MedVar::makeConst(16, 4)}));
+        Ops.push_back(op(NdOp::INT_ADD, FpField,
+                         {Ops[1].Inputs[0],
+                          MedVar::makeConst(static_cast<uint64_t>(-12), 8)}));
+        Ops.push_back(op(NdOp::STORE, {}, {FpField, MedVar::makeConst(48, 4)}));
+      }),
+      2);
+  EXPECT_EQ(Variadic([&](std::vector<MedOp> &Ops) {
+              Ops.push_back(op(NdOp::COPY,
+                               reg(21, 1, 8, TRI.IntReturnRegs.front()),
+                               {MedVar::makeConst(Word, 8)}));
+            }),
+            -1);
+  EXPECT_EQ(Variadic([&](std::vector<MedOp> &Ops) {
+              Ops.push_back(op(NdOp::STORE, {},
+                               {reg(22, 0, 8, TRI.IntParamRegs[0]),
+                                MedVar::makeConst(Word, 8)}));
+            }),
+            -1);
 }
 
 TEST(MedVariadic, I386RequiresAHomedPointerAndAReloadOrAdvancedRead) {
