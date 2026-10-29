@@ -97,8 +97,12 @@ bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
   return ReachedEntry;
 }
 
-std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
+std::map<int64_t, MedVar>
+callSetupStackStores(const AbiCallContext &C,
+                     std::map<int64_t, PhiNode> *Joins) {
   using Stores = std::map<int64_t, MedVar>;
+  if (Joins)
+    Joins->clear();
   const int64_t Word = C.Layout.SlotBytes;
   const int64_t Base = C.Layout.CallStackBase;
   if (Word <= 0 || C.MaxArgs <= 0 || Base < 0)
@@ -173,6 +177,8 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
       }
     }
     Stores Common;
+    std::map<int64_t, PhiNode> IncomingJoins;
+    const bool JoinAtCall = Joins && Depth == 0 && B.Preds.size() > 1;
     if (Inherit && !Independent && B.ExceptionalPreds.empty() &&
         !B.Preds.empty() && B.StartAddr != C.Func.Entry) {
       bool First = true;
@@ -182,11 +188,19 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
         if (!Remaining || !Preds.insert(Id).second || !P ||
             std::count(P->Succs.begin(), P->Succs.end(), B.Id) != 1) {
           Common.clear();
+          IncomingJoins.clear();
           break;
         }
         --Remaining;
         Stores Incoming = Visit(*P, P->Ops.size(), Depth + 1);
         if (First) {
+          if (JoinAtCall)
+            for (const auto &[Offset, Value] : Incoming) {
+              if (!Remaining)
+                return {};
+              --Remaining;
+              IncomingJoins[Offset].Args.emplace_back(Id, Value);
+            }
           Common = std::move(Incoming);
           First = false;
         } else {
@@ -194,18 +208,41 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
             const auto Other = Incoming.find(Item.first);
             return Other == Incoming.end() || !same(Item.second, Other->second);
           });
+          for (auto It = IncomingJoins.begin(); It != IncomingJoins.end();) {
+            if (!Remaining)
+              return {};
+            --Remaining;
+            const auto Other = Incoming.find(It->first);
+            const auto &FirstValue = It->second.Args.front().second;
+            if (Other == Incoming.end() ||
+                FirstValue.Size != Other->second.Size) {
+              It = IncomingJoins.erase(It);
+            } else {
+              It->second.Args.emplace_back(Id, Other->second);
+              ++It;
+            }
+          }
         }
-        if (Common.empty())
+        if (Common.empty() && IncomingJoins.empty())
           break;
       }
     }
-    for (int64_t Slot : Overwritten)
+    for (int64_t Slot : Overwritten) {
       Common.erase(Slot);
+      IncomingJoins.erase(Slot);
+    }
     Common.insert(Local.begin(), Local.end());
+    if (JoinAtCall) {
+      for (const auto &[Offset, Value] : Common)
+        IncomingJoins.erase(Offset);
+      *Joins = std::move(IncomingJoins);
+    }
     Active.erase(B.Id);
     return Common;
   };
   Stores Result = Visit(C.Blk, C.CallIdx, 0);
+  if (!Remaining && Joins)
+    Joins->clear();
   return Remaining ? Result : Stores{};
 }
 

@@ -1421,6 +1421,13 @@ void recoverCallAbi(
                 : std::min<int>(Op.CalleeVariadicFrom, IntParamRegs.size());
         CalleeArgs = Op.CalleeVariadicFrom;
       }
+      // A variadic body keeps its arity open; its recovered count does not
+      // authorize missing fixed stack arguments or tail forwarding.
+      bool OpenVariadicArity = false;
+      if (!CI.IsIndirect && !UseExternalArity && CalleeIsVariadic)
+        if (const auto VIt = CalleeIsVariadic->find(CI.TargetAddr);
+            VIt != CalleeIsVariadic->end())
+          OpenVariadicArity = VIt->second;
       // An external routine whose floats the base AAPCS passes in the
       // integer registers takes each float in the next one (doubles, which
       // take an even-odd pair, keep the floating-point model below).
@@ -1800,8 +1807,27 @@ void recoverCallAbi(
           }
       }
       // A branch or EH boundary may split the setup from the call on any
-      // architecture. Keep only stores agreed upon by every incoming path.
-      const auto ReachingStackStores = callSetupStackStores(Ctx);
+      // architecture. Keep common stores and, for fixed Win64 scalar calls,
+      // an edge-complete plan for differing values at this call's join.
+      std::map<int64_t, PhiNode> StackJoins;
+      const bool RecoverStackJoins =
+          TheArch == Arch::X64 && Fmt == BinaryFormat::COFF && !CI.IsIndirect &&
+          !CI.ArgumentsInCalleeRegisterOrder && !Op.SourceCallHint &&
+          !Op.IsTailCall && !HeaderVariadic && !OpenVariadicArity &&
+          Op.CalleeVectorArgs <= 0 && !Op.CalleeVectorSlots &&
+          CalleeArgs > int(IntParamRegs.size());
+      const auto ReachingStackStores =
+          callSetupStackStores(Ctx, RecoverStackJoins ? &StackJoins : nullptr);
+      std::erase_if(StackJoins, [&](const auto &Item) {
+        const int64_t Slot =
+            int64_t(IntParamRegs.size()) +
+            (Item.first - CallLayout.CallStackBase) / CallLayout.SlotBytes;
+        return Slot >= CalleeArgs || Slot >= MaxArgs;
+      });
+      if (!StackJoins.empty()) {
+        HasStackArg = true;
+        HasStackArgAtCallSP |= StackJoins.count(CallLayout.CallStackBase) != 0;
+      }
       for (const auto &[Offset, Value] : ReachingStackStores) {
         HasStackArg = true;
         if (Offset == CallLayout.CallStackBase &&
@@ -2425,6 +2451,25 @@ void recoverCallAbi(
         FoundMask[Slot] = true;
         FromStackScan[Slot] = true;
       }
+      for (auto &[Offset, Join] : StackJoins) {
+        const int64_t Slot =
+            ReachingStackBase +
+            (Offset - CallLayout.CallStackBase) / CallLayout.SlotBytes;
+        if (Slot < 0 || Slot >= MaxArgs || Slot >= CalleeArgs ||
+            FoundMask[Slot])
+          continue;
+        // Each edge supplies its actual store width. A byte argument stays a
+        // byte; absent bytes and unequal-width arms never become padding.
+        Join.Output.Kind = MedVar::Temp;
+        Join.Output.Id = FreshId++;
+        Join.Output.Size = Join.Args.front().second.Size;
+        Join.Output.TheArch = TheArch;
+        Found[Slot] = Join.Output;
+        FoundMask[Slot] = true;
+        FromStackScan[Slot] = true;
+        Blk.Phis.push_back(std::move(Join));
+        DefSites.invalidate();
+      }
 
       // A call that takes every argument from the stack is passed nothing by
       // what a scratch register held at entry where this function takes no
@@ -2735,14 +2780,6 @@ void recoverCallAbi(
               }))
             ++CallerStackBase;
       }
-      // A variadic routine of the image keeps its arity open for the
-      // overflow its callers pass (callRecoveryTotalArity), which says
-      // nothing of what a tail jump to it passes on untouched.
-      bool OpenVariadicArity = false;
-      if (!CI.IsIndirect && !UseExternalArity && CalleeIsVariadic)
-        if (const auto VIt = CalleeIsVariadic->find(CI.TargetAddr);
-            VIt != CalleeIsVariadic->end())
-          OpenVariadicArity = VIt->second;
       if (IsTailJump &&
           (!CI.IsIndirect || ImportStackArgs || UseExternalArity ||
            UseVariableArity) &&

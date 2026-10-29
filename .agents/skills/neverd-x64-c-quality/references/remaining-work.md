@@ -816,6 +816,11 @@ conditional memory, invocation lifetime and both C routes remain open.
   statements. LLVMC preserves a goto projection when structure is uncertain.
 - Win64 call arguments use Microsoft register and stack rules. Debug types can
   improve names and display, but cannot authorize an unobserved argument.
+  Fixed direct scalar calls retain differing outgoing values with an SSA PHI
+  at the call block when every predecessor supplies the same byte width.
+  Missing stores, aliases, call barriers, conflicting widths and exhausted work
+  retain unknown arguments; nested joins and loop-carried memory need further
+  evidence. Original-byte/C execution covers pointers and byte/full-word values.
 - Assigned locals have declarations. HighC can print calls with unused results
   as statements; LLVMC retains their result assignments. PHI and register-home
   copies are printed only when their values are used.

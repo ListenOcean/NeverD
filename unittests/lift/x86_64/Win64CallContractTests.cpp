@@ -1952,6 +1952,140 @@ TEST(Win64CallContract, UnreadRegisterHolesBeforeStackArgumentsStayUnread) {
     }
 }
 
+TEST(Win64CallContract, BranchStackArgumentsKeepTheirEdgeValues) {
+  for (bool ByteArgument : {false, true}) {
+    SCOPED_TRACE(ByteArgument);
+    constexpr va_t Consumer = Text + 0x100;
+    std::vector<uint8_t> Code(0x140, 0xCC);
+    std::vector<uint8_t> Caller = {
+        0x48, 0x83, 0xEC, 0x48,       // sub rsp,48h
+        0x48, 0x89, 0x54, 0x24, 0x30, // mov [rsp+30h],rdx
+        0x48, 0x8D, 0x42, 17,         // lea rax,[rdx+17]
+        0x48, 0x89, 0x44, 0x24, 0x38, // mov [rsp+38h],rax
+        0xF6, 0xC1, 1,    0x75, 0};   // test cl,1; jnz other
+    const size_t OtherJump = Caller.size() - 1;
+    Caller.insert(Caller.end(),
+                  {0x48, 0x8D, 0x44, 0x24, 0x30, // lea rax,[rsp+30h]
+                   0x48, 0x89, 0x44, 0x24, 0x20});
+    if (!ByteArgument)
+      Caller.push_back(0x48);
+    Caller.insert(Caller.end(), {uint8_t(ByteArgument ? 0x88 : 0x89), 0x54,
+                                 0x24, 0x28, 0xEB, 0});
+    const size_t JoinJump = Caller.size() - 1;
+    Caller[OtherJump] = Caller.size() - OtherJump - 1;
+    Caller.insert(Caller.end(),
+                  {0x48, 0x8D, 0x44, 0x24, 0x38, // lea rax,[rsp+38h]
+                   0x48, 0x89, 0x44, 0x24, 0x20, 0x48, 0x8D, 0x42,
+                   29}); // lea rax,[rdx+29]
+    if (!ByteArgument)
+      Caller.push_back(0x48);
+    Caller.insert(Caller.end(),
+                  {uint8_t(ByteArgument ? 0x88 : 0x89), 0x44, 0x24, 0x28});
+    Caller[JoinJump] = Caller.size() - JoinJump - 1;
+    Caller.insert(Caller.end(), {0x31, 0xC9, 0x31, 0xD2, 0x45, 0x31, 0xC0, 0x45,
+                                 0x31, 0xC9, 0xE8});
+    const auto Call = rel32(Text + Caller.size() + 4, Consumer);
+    Caller.insert(Caller.end(), Call.begin(), Call.end());
+    Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x48, 0xC3});
+    put(Code, Text, Caller);
+    std::vector<uint8_t> Body = {0x48, 0x8B, 0x44, 0x24,
+                                 0x28, 0x48, 0x8B, 0x00};
+    if (ByteArgument)
+      Body.insert(Body.end(), {0x0F, 0xB6, 0x54, 0x24, 0x30});
+    else
+      Body.insert(Body.end(), {0x48, 0x8B, 0x54, 0x24, 0x30});
+    Body.insert(Body.end(), {0x48, 0x01, 0xD0, 0xC3});
+    put(Code, Consumer, Body);
+    const auto Image = makeImage(
+        Code, {{Text, "branch_stack_values"}, {Consumer, "read_branch_stack"}},
+        {});
+    std::string Oracle;
+    llvm::raw_string_ostream Native(Oracle);
+    Native << R"(
+#include <string.h>
+#if defined(__linux__) && defined(__x86_64__)
+#include <sys/mman.h>
+static int check_native(uint64_t flag, uint64_t value, uint64_t expected) {
+  static const uint8_t original[] = {
+)";
+    for (uint8_t B : Code)
+      Native << unsigned(B) << ',';
+    Native << R"(};
+  uint8_t *mapping = mmap(0, sizeof(original) + 16,
+                          PROT_READ | PROT_WRITE | PROT_EXEC,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (mapping == MAP_FAILED) return 1;
+  // UBSan's indirect-function check may inspect the preceding type tag.
+  uint8_t *code = mapping + 16;
+  memcpy(code, original, sizeof(original));
+  __builtin___clear_cache((char *)code, (char *)code + sizeof(original));
+  uint64_t actual = ((uint64_t (__attribute__((ms_abi)) *)(uint64_t, uint64_t))code)(flag, value);
+  int bad = actual != expected;
+  if (munmap(mapping, sizeof(original) + 16)) return 1;
+  return bad;
+}
+#else
+static int check_native(uint64_t flag, uint64_t value, uint64_t expected) { return 0; }
+#endif
+int main(void) {
+  uint64_t value = UINT64_C(0xfedcba9876543210);
+  for (unsigned i = 0; i < 64; ++i) {
+    for (uint64_t flag = 0; flag != 2; ++flag) {
+      uint64_t extra = value + (flag ? 29 : 0);
+)";
+    if (ByteArgument)
+      Native << "      extra = (uint8_t)extra;\n";
+    Native << R"(
+      uint64_t expected = value + (flag ? 17 : 0) + extra;
+      if (check_native(flag, value, expected)) return 1;
+      if ((uint64_t)branch_stack_values(flag, value) != expected) return 2;
+    }
+    value ^= value << 13; value ^= value >> 7; value ^= value << 17;
+  }
+  return 0;
+}
+)";
+    for (bool OmitCallee : {false, true})
+      for (bool LLVM : {false, true})
+        for (bool NoOpt : {false, true}) {
+          SCOPED_TRACE(testing::Message()
+                       << OmitCallee << ':' << LLVM << ':' << NoOpt);
+          llvm::LLVMContext Context;
+          PipelineOptions Options;
+          Options.EmitDumpOutput = false;
+          Options.OnlyFunctionEntries = {Text};
+          if (!OmitCallee)
+            Options.OnlyFunctionEntries.insert(Consumer);
+          Options.LiftMode = LLVM;
+          Options.SourceProjection = true;
+          Options.NoOpt = NoOpt;
+          auto Result = Pipeline().run(Image, Context, Options);
+          ASSERT_TRUE(Result.Success) << Result.Error;
+          std::string Source;
+          llvm::raw_string_ostream Output(Source);
+          CEmitterOptions COptions;
+          COptions.TheArch = Image.Arch;
+          COptions.Format = Image.Format;
+          COptions.Image = &Image;
+          if (LLVM) {
+            ASSERT_TRUE(Result.LlvmModule);
+            ASSERT_FALSE(llvm::verifyModule(*Result.LlvmModule, &llvm::errs()));
+            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                            COptions, nullptr, &Image));
+          } else
+            ASSERT_TRUE(
+                HighCEmitter().emit(Result.HighFuncs, Output, COptions));
+          EXPECT_EQ(Source.find("unknown value"), std::string::npos) << Source;
+          if (OmitCallee || Source.find("unknown value") != std::string::npos)
+            continue;
+          for (llvm::StringRef Level : {"-O0", "-O2"})
+            source_call_execution_test::compileAndRun(
+                Source + Oracle,
+                {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+        }
+  }
+}
+
 TEST(Win64CallContract, DebugNamedOmittedRuntimeKeepsItsFixedArity) {
   constexpr va_t Runtime = Text + 0x80;
   class PublicNames : public NullDebugContext {

@@ -138,7 +138,12 @@ struct AbiCallContext {
 /// Outgoing scalar stores that agree along every predecessor path
 /// to a call. Unknown writes, calls, independent entries and cycles stop the
 /// proof. Offsets are relative to the call's SP, using its exact SSA basis.
-std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C);
+/// When requested, Joins keeps differing same-width values from every direct
+/// predecessor of the call block. Its PHIs have no output until the caller
+/// selects a required argument and assigns a fresh SSA identity.
+std::map<int64_t, MedVar>
+callSetupStackStores(const AbiCallContext &C,
+                     std::map<int64_t, PhiNode> *Joins = nullptr);
 
 /// Every reaching path leaves this incoming argument register untouched.
 bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex);
