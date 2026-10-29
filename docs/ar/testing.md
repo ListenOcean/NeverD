@@ -2296,3 +2296,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## تغطية البتات بثابت في تعبيرات OR/XOR
 
 يفحص `SymExprMask.ConstantCover*` جميع الأقنعة والمدخلات ذات أربعة بتات، والكلمات بعرض 8–257 بتًا، والبتات العليا الفعالة، والمصادر العميقة المشتركة، والرفض عند نفاد ميزانية الكلمات أو الحدود. يتحقق `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` من إزاحة ثابتة دون استعلامات للمحلل ومن مثال مضاد يعتمد على المدخل. شغّل `NeverDSymbolicTests` و`NeverDInterpreterSpecializationTests`.
+
+## ذاكرة الصورة التي تصل إليها المؤشرات المتحركة
+
+ينفذ `CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` حلقات أمامية وخلفية ونسخاً وسيطة وتحويلات بنفس العرض ومسارات قراءة/كتابة أو كتابة فقط لـ COFF/ELF/Mach-O عند O0/O2 مع ASan/UBSan. يرفض `CursorStorageNeedsAnAddressPreservingMemoryPath` الثوابت العددية والمؤشرات المحمّلة وتقليل العرض والحساب دون استخدام للذاكرة؛ ويحافظ `DirectBoundedTablesKeepTheirExtent` على نطاق الفهرسة المباشرة المحدود. ابنِ `NeverDLiftTests` ثم نفّذ `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.

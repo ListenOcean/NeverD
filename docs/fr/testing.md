@@ -2385,3 +2385,7 @@ La régression couvre aussi les relocations de pointeurs de fonction sans rappor
 ## Couverture constante des expressions OR/XOR
 
 `SymExprMask.ConstantCover*` vérifie exhaustivement les masques et entrées sur quatre bits, les mots de 8–257 bits, les bits hauts utiles, les sources profondes partagées et les refus liés aux budgets de mots et de termes. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` vérifie un déplacement constant sans requête au solveur et un contre-exemple dépendant de l’entrée. Exécuter `NeverDSymbolicTests` et `NeverDInterpreterSpecializationTests`.
+
+## Stockage image parcouru par un curseur
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` exécute les parcours dans les deux sens, copies intermédiaires, conversions de même largeur et chemins de lecture/écriture ou écriture seule pour COFF/ELF/Mach-O à O0/O2 avec ASan/UBSan. `CursorStorageNeedsAnAddressPreservingMemoryPath` refuse les constantes scalaires, pointeurs chargés, réductions de largeur et calculs sans accès mémoire ; `DirectBoundedTablesKeepTheirExtent` conserve les indices directs bornés. Compiler `NeverDLiftTests`, puis lancer `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.

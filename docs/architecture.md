@@ -14952,3 +14952,7 @@ Canonical `RDMSR` recovery requires the lifter’s `Complete` undefined-output a
 ## Constant covers in OR/XOR expressions
 
 The shared OR builder can discard an XOR operand when the accumulated constant covers every bit that any XOR arm could set. This bounded proof inspects constants, explicit AND masks, and complements of OR expressions with a constant arm; it leaves deeper sources untouched. Full-width mask words and inspected terms share the existing subset budget. Unknown or uncovered bits and exhausted work retain the exact expression.
+
+## Image storage reached through advancing cursors
+
+HighC follows pointer-width assignments, copies and addition/subtraction from ordinary memory operands to image-address constants. Loop backedges retain the complete object supplied by the existing symbol/section owner and its alignment residue. This function-local storage dependency walk does not substitute pointer values, prove dereference validity or follow loaded pointers and narrowing conversions. Direct bounded indexed accesses keep their existing extent proof.

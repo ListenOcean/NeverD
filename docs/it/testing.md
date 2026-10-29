@@ -2366,3 +2366,7 @@ La regressione copre anche rilocazioni non correlate di puntatori a funzione nel
 ## Copertura costante nelle espressioni OR/XOR
 
 `SymExprMask.ConstantCover*` verifica tutte le maschere e gli ingressi a quattro bit, parole da 8–257 bit, bit alti significativi, sorgenti profonde condivise e rifiuti per budget di parole o termini. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` verifica uno spostamento costante senza interrogare il risolutore e un controesempio dipendente dall’ingresso. Eseguire `NeverDSymbolicTests` e `NeverDInterpreterSpecializationTests`.
+
+## Memoria dell’immagine raggiunta da cursori avanzanti
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` esegue cicli avanti/indietro, copie intermedie, conversioni di pari larghezza e percorsi di lettura/scrittura o sola scrittura per COFF/ELF/Mach-O a O0/O2 con ASan/UBSan. `CursorStorageNeedsAnAddressPreservingMemoryPath` rifiuta costanti scalari, puntatori caricati, restringimenti e aritmetica senza accesso alla memoria; `DirectBoundedTablesKeepTheirExtent` conserva gli indici diretti limitati. Compilare `NeverDLiftTests`, quindi eseguire `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.
