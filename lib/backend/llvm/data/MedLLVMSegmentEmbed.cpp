@@ -106,6 +106,30 @@ static bool segmentHoldsSlot(const Segment &S, const Slots &Ordered) {
     return S.contains(It->first);
 }
 
+/// Whether read-only \p Next follows \p Prev across only alignment padding
+/// (kMaxRodataRunPaddingBytes) that no other segment of \p Img maps, so one
+/// embedded run may hold both.  Overflowing ranges never join.
+static bool separatedOnlyByPadding(const BinaryImage &Img, const Segment *Prev,
+                                   const Segment *Next) {
+  constexpr uint64_t Max = std::numeric_limits<uint64_t>::max();
+  if (Prev->Data.size() > Max - Prev->VA)
+    return false;
+  const uint64_t PrevEnd = Prev->VA + static_cast<uint64_t>(Prev->Data.size());
+  if (Next->VA < PrevEnd ||
+      Next->VA - PrevEnd > limits::kMaxRodataRunPaddingBytes)
+    return false;
+  for (const Segment &Other : Img.Segments) {
+    const uint64_t Extent = std::max<uint64_t>(
+        Other.Size, static_cast<uint64_t>(Other.Data.size()));
+    if (&Other == Prev || &Other == Next || Extent == 0)
+      continue;
+    const uint64_t OtherEnd = Extent > Max - Other.VA ? Max : Other.VA + Extent;
+    if (Other.VA < Next->VA && OtherEnd > PrevEnd)
+      return false;
+  }
+  return true;
+}
+
 static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
                              std::vector<const Segment *> &Run,
                              uint64_t &RunStart, uint64_t &RunEnd) {
@@ -134,9 +158,10 @@ static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
   if (Idx == Ro.size())
     return false;
 
-  // Extend over neighbours separated only by a small alignment gap; a larger
-  // gap means a distinct region that must not be merged. Reject overflowing
-  // segment ranges rather than letting their wrapped end look adjacent.
+  // Extend over neighbours separated only by alignment padding; a larger gap,
+  // or another segment in it, means a distinct region that must not be merged.
+  // Reject overflowing segment ranges rather than letting their wrapped end
+  // look adjacent.
   auto endOf = [](const Segment *S, uint64_t &End) {
     if (S->Data.size() > std::numeric_limits<uint64_t>::max() - S->VA)
       return false;
@@ -144,9 +169,7 @@ static bool collectRodataRun(const BinaryImage *Img, uint64_t SegVA,
     return true;
   };
   auto adjacent = [&](const Segment *Prev, const Segment *Next) {
-    uint64_t PrevEnd = 0;
-    return endOf(Prev, PrevEnd) && Next->VA >= PrevEnd &&
-           Next->VA - PrevEnd <= 16;
+    return separatedOnlyByPadding(*Img, Prev, Next);
   };
   size_t Lo = Idx, Hi = Idx;
   while (Lo > 0 && adjacent(Ro[Lo - 1], Ro[Lo]))
@@ -584,9 +607,8 @@ void MedLLVMEmitter::readOnlyAfterRelocRun(const Segment *Seg,
     }
   if (Idx == RO.size())
     return;
-  auto adjacent = [](const Segment *P, const Segment *N) {
-    uint64_t PEnd = P->VA + P->Data.size();
-    return N->VA >= PEnd && N->VA - PEnd <= 16;
+  auto adjacent = [&](const Segment *P, const Segment *N) {
+    return separatedOnlyByPadding(*Img, P, N);
   };
   size_t Lo = Idx, Hi = Idx;
   while (Lo > 0 && adjacent(RO[Lo - 1], RO[Lo]))

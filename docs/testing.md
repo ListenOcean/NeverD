@@ -241,6 +241,11 @@ the count the kernel's does, and a hash of the text `snprintf` formats matches.
 out as a `uint64_t` member: that C passes its address through `void *` to the
 `char *` <stdio.h> declares, and a hash of the text matches the kernel's.
 
+`X86_64_ImageTable.AnObjectBetweenConstantSectionsIsItsOwn` runs the C of both
+routes for an object whose constant pool, writable `volatile double` and
+strings lie a few bytes apart. The double is its own object, not bytes of the
+constants around it, so the LLVM route's C reads it rather than zeros.
+
 `NeverDMedStackAlignmentTests` checks bounded dynamic allocations on x64 and
 AArch64 across COFF/ELF/Mach-O, including unsigned wrapping, PHI alternatives
 and separate unseeded cycles. Scaled allocation bounds also cover x86 and ARM,

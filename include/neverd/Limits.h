@@ -599,6 +599,12 @@ constexpr size_t kMaxEmbeddedDataLen = 4096;
 /// therefore generous and only guards against an abnormally huge segment.
 constexpr size_t kMaxSingleGlobalEmbedLen = 1u << 20; // 1 MiB
 
+/// Bytes of alignment padding one embedded run of read-only segments may
+/// cross between two of them.  No other segment may map the padding: one
+/// there (a `.data` between two constant pools) is another object, whose
+/// addresses the run would otherwise claim.
+constexpr uint64_t kMaxRodataRunPaddingBytes = 16;
+
 /// Maximum text bytes of one page of a paged code view (source or IR): a
 /// page that would pass it ends early and the next page starts at the line
 /// after it, so only a single longer line fails.
