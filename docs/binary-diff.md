@@ -72,6 +72,8 @@ comparison direction. Unknown address identities can support this ambiguity;
 they do not establish identity or equivalence. This check reuses reference-aware
 instruction alignment and respects stated names and analyst decisions. It
 recognizes this boundary pattern, not arbitrary compiler inlining or outlining.
+Saved comparisons reject this candidate-only step on an accepted match. Failed
+restoration preserves the current comparison and its undo/redo history.
 
 ## Command line
 

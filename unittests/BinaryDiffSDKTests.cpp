@@ -2629,6 +2629,17 @@ TEST_F(BinaryDiffSDK, InlinedTailCallerCandidatesSurviveEditsAndRestore) {
                            {"secondary", Reverse ? "0x1000" : "0x8000"}});
     ASSERT_EQ(neverd_comparison_override_json(C, Override.c_str()), 1);
     const auto Edited = take(neverd_comparison_export_json(C));
+    auto Invalid = llvm::json::parse(Edited);
+    ASSERT_TRUE(bool(Invalid));
+    auto *Accepted = Invalid->getAsObject()->getArray("matches");
+    ASSERT_TRUE(Accepted);
+    ASSERT_EQ(Accepted->size(), 1u);
+    (*(*Accepted)[0].getAsObject())["step"] = "inlined_tail_call";
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Invalid).c_str()), 0);
+    EXPECT_NE(take(neverd_comparison_last_error(C))
+                  .find("can only describe ambiguous candidates"),
+              std::string::npos);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
     ASSERT_EQ(neverd_comparison_undo(C), 1);
     EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
     ASSERT_EQ(neverd_comparison_redo(C), 1);

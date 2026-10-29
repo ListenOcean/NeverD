@@ -1668,6 +1668,38 @@ TEST(BinaryDiff, MalformedSavedComparisonsFailClearly) {
       "a function must be");
 }
 
+TEST(BinaryDiff, CandidateOnlyStepsCannotPublishAcceptedMatches) {
+  const Program P = build({leaf("body", 3, 5)}, 0x400000);
+  const Program S = build({leaf("body", 3, 5)}, 0x800000);
+  const ComparisonResult Original = compare(P, S, {});
+  ASSERT_EQ(Original.Matches.size(), 1u);
+  const std::string Before = saved(Original, P, S);
+  std::string Error;
+  const auto Parsed = readComparison(Before, Error);
+  ASSERT_TRUE(Parsed) << Error;
+  for (bool Confirmed : {false, true}) {
+    SCOPED_TRACE(Confirmed);
+    auto Invalid = Original;
+    Invalid.Matches.front().Step = FunctionStep::InlinedTailCall;
+    Invalid.Matches.front().Confirmed = Confirmed;
+    EXPECT_FALSE(readComparison(saved(Invalid, P, S), Error));
+    EXPECT_NE(Error.find("can only describe ambiguous candidates"),
+              std::string::npos)
+        << Error;
+
+    // Typed saved state uses the same validator and cannot replace a result
+    // already published to its caller when the evidence is invalid.
+    auto Mutated = *Parsed;
+    Mutated.Matches.front().Match.Step = FunctionStep::InlinedTailCall;
+    Mutated.Matches.front().Match.Confirmed = Confirmed;
+    auto Bound = Original;
+    BindFailure Why;
+    EXPECT_TRUE(bindComparison(Mutated, P, S, Bound, &Why));
+    EXPECT_EQ(Why, BindFailure::InvalidEvidence);
+    EXPECT_EQ(saved(Bound, P, S), Before);
+  }
+}
+
 TEST(BinaryDiff, OverridesKeepPairsOneToOneAndRevert) {
   const Program P = build(sample(), 0x400000);
   const Program S = build(sample(), 0x400000);
@@ -2073,7 +2105,7 @@ TEST(BinaryDiff, SavedMeasurementsAreRecomputedBeforePublication) {
 }
 
 TEST(BinaryDiff, VocabularyRoundTrips) {
-  for (unsigned I = 0; I <= unsigned(FunctionStep::Similarity); ++I) {
+  for (unsigned I = 0; I <= unsigned(FunctionStep::InlinedTailCall); ++I) {
     const auto Step = static_cast<FunctionStep>(I);
     EXPECT_EQ(functionStepNamed(stepName(Step)), Step);
     EXPECT_FALSE(stepDescription(Step).empty());

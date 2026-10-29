@@ -3729,6 +3729,10 @@ body. Direction/layout controls retain both identities as candidates; partial,
 changed, already-shared preludes and ordinary or unresolved calls do not trigger
 this deferral. The native SDK fixture uses moved, unresolved global references
 and checks candidate paging, save/reopen, manual pairing and undo/redo.
+`CandidateOnlyStepsCannotPublishAcceptedMatches` rejects candidate-only evidence
+on accepted matches through the shared reader and live binding, with and without
+analyst confirmation. The native SDK also checks that failed restoration leaves
+the current result and undo/redo history intact.
 The core tests also cover
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
