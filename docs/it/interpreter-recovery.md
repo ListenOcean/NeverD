@@ -396,3 +396,9 @@ Con una delle strategie attiva, il recupero conserva tra i nodi anche gli offset
 ## Letture del frame con indice finito
 
 Un normale `LOAD` con un insieme finito di offset dal frame d’ingresso dimostrato esaustivamente legge i byte correnti di ogni candidato e conserva un valore simbolico condizionale. La lettura a runtime rimane nel residuo con larghezza completa e ordine dei byte. L’origine esterna richiede tale provenienza per ogni byte di ogni candidato. Byte sconosciuti e valori invalidati restano sconosciuti; un’enumerazione incompleta mantiene il normale comportamento della memoria simbolica. Si applicano i budget esistenti per tuple di controllo, solver, nodi e operazioni. Non viene creato alcun testimone di lettura immutabile né un nuovo contratto di non alias.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Validità a runtime attraverso i confini del grafo
+
+Con la scoperta dello stato di controllo abilitata, un predicato non costante di validità a runtime può richiedere i bit del produttore persi al confine del grafo. Il recupero riprova entro i budget condivisi esistenti e deve dimostrare la validità di ogni stato in ingresso raggiungibile. Questo conserva l’allineamento stabilito e i valori mascherati dei registri di controllo tra nodi e cicli, senza supporre impossibili gli stati rifiutati né rimuovere l’operazione originale.

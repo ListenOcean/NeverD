@@ -402,3 +402,9 @@ Bei aktivierter Beweisstrategie bleiben auch vollständig bewiesene endliche Reg
 ## Frame-Lesezugriffe mit endlichem Index
 
 Ein gewöhnliches `LOAD` mit vollständig bewiesener endlicher Menge von Offsets zum Eintrittsframe liest die aktuellen Frame-Bytes jedes Kandidaten und behält einen bedingten symbolischen Wert. Der Laufzeit-Lesezugriff bleibt mit voller Breite und Byte-Reihenfolge im Residuum. Externe Herkunft erfordert diese Eigenschaft für jedes Byte jedes Kandidaten. Unbekannte Bytes und invalidierte Werte bleiben unbekannt; unvollständige Aufzählung erhält das gewöhnliche symbolische Speicherverhalten. Es gelten die bestehenden Budgets für Kontrolltupel, Solver, Knoten und Operationen. Es entsteht weder ein Beleg für unveränderliche Lesezugriffe noch ein neuer Nicht-Alias-Vertrag.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Laufzeitgültigkeit über Graphgrenzen
+
+Bei aktivierter Kontrollzustandserkennung kann ein nichtkonstantes Gültigkeitsprädikat die an einer Graphgrenze verlorenen Erzeugerbits anfordern. Die Wiederherstellung versucht es innerhalb der bestehenden gemeinsamen Budgets erneut und muss die Gültigkeit für jeden erreichbaren Eingangszustand beweisen. So bleiben festgestellte Ausrichtung und maskierte Kontrollregisterwerte über Knoten und Schleifen erhalten. Abgelehnte Zustände werden weder als unmöglich angenommen noch wird die ursprüngliche Laufzeitoperation entfernt.

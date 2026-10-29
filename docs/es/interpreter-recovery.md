@@ -399,3 +399,9 @@ Al activar cualquiera de las estrategias, la recuperación también conserva ent
 ## Lecturas de marco con índice finito
 
 Un `LOAD` ordinario cuyo conjunto finito de desplazamientos respecto al marco de entrada se demuestra exhaustivamente lee los bytes actuales de cada candidato y conserva un valor simbólico condicional. La lectura en ejecución permanece en el residuo con su anchura completa y orden de bytes. El origen externo exige esa procedencia en cada byte de cada candidato. Los bytes desconocidos y los valores invalidados siguen siendo desconocidos; una enumeración incompleta conserva el comportamiento habitual de la memoria simbólica. Se aplican los presupuestos existentes de tuplas de control, solver, nodos y operaciones. No se crea evidencia de lectura inmutable ni un nuevo contrato de ausencia de alias.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Validez en ejecución entre nodos del grafo
+
+Con el descubrimiento del estado de control activado, un predicado no constante de validez en ejecución puede solicitar los bits del productor perdidos en un límite del grafo. La recuperación reintenta con los presupuestos compartidos existentes y debe demostrar la validez de cada estado entrante alcanzable. Esto conserva la alineación establecida y los valores enmascarados de registros de control entre nodos y bucles, sin suponer imposibles los estados rechazados ni eliminar la operación original.
