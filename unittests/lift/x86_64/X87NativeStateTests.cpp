@@ -155,7 +155,7 @@ protected:
     llvm::raw_string_ostream Stream(Source);
     ASSERT_TRUE(LLVMCEmitter().emit(Module, Stream, Options));
     for (const auto &Spec : X87NativeStateSpecs)
-      if (Spec.Kind != X87NativeStateKind::ReadControl &&
+      if (!Spec.ImageBytes && Spec.Kind != X87NativeStateKind::ReadControl &&
           Spec.Kind != X87NativeStateKind::WriteControl)
         EXPECT_NE(Source.find(Spec.Builtin), std::string::npos);
     // HighC shares the zero-operand builtin/fallback path with LLVMC.

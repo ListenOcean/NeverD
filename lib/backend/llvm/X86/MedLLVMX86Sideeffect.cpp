@@ -243,9 +243,13 @@ bool MedLLVMEmitter::emitX86CacheOp(const MedOp &Op, Intrinsic IC,
   case I::Fxsave64Mem:
   case I::Fxrstor64Mem:
   case I::X87Fldenv:
+  case I::X87Fldenv16:
   case I::X87Fnstenv:
+  case I::X87Fnstenv16:
   case I::X87Frstor:
+  case I::X87Frstor16:
   case I::X87Fnsave:
+  case I::X87Fnsave16:
   case I::Xsave:
   case I::Xsavec:
   case I::Xsaves:
@@ -305,7 +309,14 @@ void MedLLVMEmitter::emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
   std::vector<llvm::Type *> ParamTys{Addr->getType()};
   std::vector<llvm::Value *> ParamVals{Addr};
   std::string Constraints = "r";
-  Constraints += ",~{memory}";
+  const auto *State = Op.NumInputs && Op.Inputs[0].isConst()
+                          ? x87NativeStateOfIntrinsic(
+                                static_cast<Intrinsic>(Op.Inputs[0].ConstVal))
+                          : nullptr;
+  Constraints +=
+      State && State->ImageBytes
+          ? "," + x87StateConstraints(x87NativeStateEffect(*State)).str()
+          : ",~{memory}";
   auto *AsmFnTy = llvm::FunctionType::get(VoidTy, ParamTys, false);
   auto *IA = llvm::InlineAsm::get(
       AsmFnTy, std::string(Mn) + " " + Segment + "($0)", Constraints,
@@ -320,6 +331,11 @@ void MedLLVMEmitter::emitX86MemPtrAsm(const char *Mn, const MedOp &Op,
 void MedLLVMEmitter::emitX86StateSnapshot(const MedOp &Op, Intrinsic IC,
                                           llvm::IRBuilder<> &Builder) {
   using I = Intrinsic;
+  if (const auto *Spec = x87NativeStateOfIntrinsic(IC);
+      Spec && Spec->ImageBytes)
+    if (Op.NumInputs != 2 || Op.Output.Size || !Op.IntrinsicOutputs.empty())
+      llvm::report_fatal_error(
+          "x87 image intrinsic requires exactly one address");
   llvm::Intrinsic::ID ID = llvm::Intrinsic::not_intrinsic;
   bool TakesMask = true;
   switch (IC) {
@@ -376,9 +392,15 @@ void MedLLVMEmitter::emitX86StateSnapshot(const MedOp &Op, Intrinsic IC,
     ID = llvm::Intrinsic::x86_xrstors64;
     break;
   default:
-    // x87 environment forms have no LLVM intrinsic.
-    emitX86MemPtrAsm(intrinsicAsmMnemonic(IC), Op, Builder);
-    return;
+    if (const auto *Spec = x87NativeStateOfIntrinsic(IC)) {
+      ID = llvm::Intrinsic::lookupIntrinsicID(Spec->LLVMName);
+      TakesMask = false;
+    }
+    if (ID == llvm::Intrinsic::not_intrinsic) {
+      emitX86MemPtrAsm(intrinsicAsmMnemonic(IC), Op, Builder);
+      return;
+    }
+    break;
   }
   if (Op.NumInputs < (TakesMask ? 4 : 2))
     llvm::report_fatal_error(

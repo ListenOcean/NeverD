@@ -1029,9 +1029,13 @@ bool isStateSnapshotMemoryIntrinsic(Intrinsic Id) {
   case I::Xrstor64:
   case I::Xrstors64:
   case I::X87Fldenv:
+  case I::X87Fldenv16:
   case I::X87Fnstenv:
+  case I::X87Fnstenv16:
   case I::X87Frstor:
+  case I::X87Frstor16:
   case I::X87Fnsave:
+  case I::X87Fnsave16:
     return true;
   default:
     return false;
@@ -1039,7 +1043,8 @@ bool isStateSnapshotMemoryIntrinsic(Intrinsic Id) {
 }
 
 /// The <immintrin.h> spelling of a state save/restore instruction, or null
-/// for the x87 environment forms, which have no compiler intrinsic.
+/// for the x87 environment forms, whose portable builtins are selected
+/// separately.
 const char *stateSnapshotCIntrinsic(Intrinsic Id) {
   using I = Intrinsic;
   switch (Id) {
@@ -1111,6 +1116,11 @@ constexpr const char *kHardwareStateNote =
 std::string
 renderStateSnapshot(const HighExpr &Call,
                     std::function<std::string(const HighExpr &)> ExprFn) {
+  if (const auto *Spec = x87NativeStateOfIntrinsic(Call.IntrinsicId);
+      Spec && Spec->ImageBytes)
+    if (Call.Operands.size() != 1 || !Call.IntrinsicOutputs.empty())
+      llvm::report_fatal_error(
+          "x87 image intrinsic requires exactly one address");
   const bool TakesMask = stateSnapshotTakesMask(Call.IntrinsicId);
   const size_t Required = TakesMask ? 3 : 1;
   if (Call.Operands.size() < Required)
@@ -1129,6 +1139,11 @@ renderStateSnapshot(const HighExpr &Call,
       TakesMask ? "((uint64_t)(uint32_t)(" + ExprFn(*Call.Operands[2]) +
                       ") << 32 | (uint32_t)(" + ExprFn(*Call.Operands[1]) + "))"
                 : std::string();
+
+  if (const auto *Spec = x87NativeStateOfIntrinsic(Call.IntrinsicId))
+    return std::string(kHardwareStateNote) +
+           renderX87NativeState(*Spec, "(uintptr_t)(" + Address + ")", {},
+                                Segment);
 
   const char *CName = stateSnapshotCIntrinsic(Call.IntrinsicId);
   if (CName && *Segment == '\0')
@@ -2207,7 +2222,8 @@ std::string renderX86IntrinsicCall(Intrinsic Id,
   // An x87 state instruction runs where the compiler keeps no value of its
   // own in the register stack it changes: the clobbers say which.
   if (GnuToolchain && Ops.empty())
-    if (const auto *Spec = x87NativeStateOfIntrinsic(Id))
+    if (const auto *Spec = x87NativeStateOfIntrinsic(Id);
+        Spec && !Spec->HasPointer)
       return "({ " + renderX87NativeState(*Spec) + "})";
   if (GnuToolchain && Ops.empty())
     if (const auto Effect = x87StateEffectOfIntrinsic(Id))

@@ -5134,6 +5134,27 @@ bool LLVMCWriter::writeInlineAsmCall(llvm::CallInst &Call,
 
   if (Opts.TheArch == Arch::X86 || Opts.TheArch == Arch::X64) {
     const llvm::StringRef Constraints = IA->getConstraintString();
+    if (Call.getType()->isVoidTy() && Call.arg_size() == 1 &&
+        IA->hasSideEffects() && IA->getDialect() == llvm::InlineAsm::AD_ATT &&
+        Call.getArgOperand(0)->getType()->isIntegerTy(
+            Opts.TheArch == Arch::X86 ? 32 : 64)) {
+      for (const auto &Spec : X87NativeStateSpecs) {
+        if (!Spec.ImageBytes ||
+            Constraints !=
+                "r," + x87StateConstraints(x87NativeStateEffect(Spec)).str())
+          continue;
+        for (const char *Segment : {"", "fs", "gs"}) {
+          const std::string Memory =
+              *Segment ? "%" + std::string(Segment) + ":($0)" : "($0)";
+          if (AsmStr == std::string(Spec.Mnemonic) + " " + Memory) {
+            emitIndent(Indent);
+            OS << renderX87NativeState(Spec, valueStr(Call.getArgOperand(0)),
+                                       {}, Segment);
+            return true;
+          }
+        }
+      }
+    }
     if (AsmStr == "frndint" && Call.getType()->isX86_FP80Ty() &&
         Call.arg_size() == 1 &&
         Call.getArgOperand(0)->getType()->isX86_FP80Ty() &&

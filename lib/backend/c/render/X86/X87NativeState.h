@@ -21,31 +21,36 @@ namespace neverd {
 
 inline std::string renderX87NativeState(const X87NativeStateSpec &Spec,
                                         llvm::StringRef Address = {},
-                                        llvm::StringRef Result = {}) {
+                                        llvm::StringRef Result = {},
+                                        llvm::StringRef Segment = {}) {
   std::string Text = "\n#if __has_builtin(" + std::string(Spec.Builtin) + ")\n";
   if (Spec.ReturnsStatus && !Result.empty())
     Text += Result.str() + " = ";
   Text += std::string(Spec.Builtin) + "(";
-  if (Spec.HasPointer)
-    Text += std::string(Spec.Kind == X87NativeStateKind::WriteControl
-                            ? "(const unsigned short *)("
-                            : "(unsigned short *)(") +
+  if (Spec.HasPointer) {
+    const bool Read =
+        Spec.ReadsImage || Spec.Kind == X87NativeStateKind::WriteControl;
+    Text += std::string(Read ? "(const " : "(") +
+            (Spec.ImageBytes ? "void *)(" : "unsigned short *)(") +
             Address.str() + ")";
+  }
   Text += ");\n#else\n__asm__ volatile(\"" + std::string(Spec.Mnemonic);
+  // The pointer interfaces use the flat process address space. Preserve an
+  // explicit FS/GS override in the instruction fallback.
+  if (!Segment.empty())
+    Text = "\n__asm__ volatile(\"" + std::string(Spec.Mnemonic);
   if (Spec.HasPointer)
-    Text += " (%0)\" :: \"r\"(" + Address.str() + ") : \"memory\");";
+    Text += " " + (Segment.empty() ? "" : "%%" + Segment.str() + ":") +
+            "(%0)\" :: \"r\"(" + Address.str() +
+            ") : " + x87StateCClobbers(x87NativeStateEffect(Spec)).str() + ");";
   else if (Spec.ReturnsStatus)
     Text += Result.empty()
                 ? " %%ax\" ::: \"ax\", \"memory\");"
                 : " %%ax\" : \"=a\"(" + Result.str() + ") :: \"memory\");";
   else
-    Text += "\" ::: " +
-            x87StateCClobbers(Spec.Kind == X87NativeStateKind::Initialize
-                                  ? X87StateEffect::Reset
-                                  : X87StateEffect::Status)
-                .str() +
-            ");";
-  return Text + "\n#endif\n";
+    Text +=
+        "\" ::: " + x87StateCClobbers(x87NativeStateEffect(Spec)).str() + ");";
+  return Text + (Segment.empty() ? "\n#endif\n" : "\n");
 }
 
 inline std::string renderX87ControlAccess(bool Write, llvm::StringRef Address) {

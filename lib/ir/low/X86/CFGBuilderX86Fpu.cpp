@@ -81,8 +81,11 @@ bool replacesX87Tags(Intrinsic Kind) {
   switch (Kind) {
   case Intrinsic::X87Op:
   case Intrinsic::X87Fldenv:
+  case Intrinsic::X87Fldenv16:
   case Intrinsic::X87Frstor:
+  case Intrinsic::X87Frstor16:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X87Fnsave16:
   case Intrinsic::Fxrstor:
   case Intrinsic::Fxrstor64Mem:
   case Intrinsic::Xrstor:

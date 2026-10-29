@@ -23,6 +23,10 @@
 // FWAIT, FNCLEX: exception state only.
 X86_X87_STATE_ASM(Status, "~{memory},~{dirflag},~{fpsr},~{flags}", "\"memory\"")
 
+// Environment saves mask exceptions after writing the original control word.
+X86_X87_STATE_ASM(Control, "~{memory},~{dirflag},~{fpsr},~{fpcr},~{flags}",
+                  "\"memory\"")
+
 // FFREE/FFREEP, FINCSTP/FDECSTP: register tags or TOP.
 X86_X87_STATE_ASM(Stack,
                   "~{memory},~{dirflag},~{fpsr},~{flags},~{st},~{st(1)},"

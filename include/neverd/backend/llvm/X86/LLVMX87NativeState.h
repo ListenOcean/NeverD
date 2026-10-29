@@ -11,6 +11,7 @@
 #define NEVERD_BACKEND_LLVM_X86_LLVMX87NATIVESTATE_H
 
 #include "neverd/ArchSupport.h"
+#include "neverd/backend/llvm/X86/LLVMX86X87StateAsm.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 
 #include "llvm/IR/CallingConv.h"
@@ -28,7 +29,15 @@ enum class X87NativeStateKind {
   StoreStatus,
   ClearExceptions,
   Initialize,
-  Wait
+  Wait,
+  SaveEnvironment16,
+  SaveEnvironment32,
+  LoadEnvironment16,
+  LoadEnvironment32,
+  SaveRegisters16,
+  SaveRegisters32,
+  RestoreRegisters16,
+  RestoreRegisters32
 };
 
 struct X87NativeStateSpec {
@@ -38,6 +47,9 @@ struct X87NativeStateSpec {
   const char *Mnemonic;
   bool ReturnsStatus;
   bool HasPointer;
+  unsigned ImageBytes = 0;
+  bool ReadsImage = false;
+  bool ReplacesBank = false;
 };
 
 inline constexpr X87NativeStateSpec X87NativeStateSpecs[] = {
@@ -54,7 +66,23 @@ inline constexpr X87NativeStateSpec X87NativeStateSpecs[] = {
     {X87NativeStateKind::Initialize, "llvm.x86.fninit", "__builtin_ia32_fninit",
      "fninit", false, false},
     {X87NativeStateKind::Wait, "llvm.x86.fwait", "__builtin_ia32_fwait",
-     "fwait", false, false}};
+     "fwait", false, false},
+    {X87NativeStateKind::SaveEnvironment16, "llvm.x86.fnstenv16",
+     "__builtin_ia32_fnstenv16", "data16 fnstenv", false, true, 14},
+    {X87NativeStateKind::SaveEnvironment32, "llvm.x86.fnstenv32",
+     "__builtin_ia32_fnstenv32", "fnstenv", false, true, 28},
+    {X87NativeStateKind::LoadEnvironment16, "llvm.x86.fldenv16",
+     "__builtin_ia32_fldenv16", "data16 fldenv", false, true, 14, true, true},
+    {X87NativeStateKind::LoadEnvironment32, "llvm.x86.fldenv32",
+     "__builtin_ia32_fldenv32", "fldenv", false, true, 28, true, true},
+    {X87NativeStateKind::SaveRegisters16, "llvm.x86.fnsave16",
+     "__builtin_ia32_fnsave16", "data16 fnsave", false, true, 94, false, true},
+    {X87NativeStateKind::SaveRegisters32, "llvm.x86.fnsave32",
+     "__builtin_ia32_fnsave32", "fnsave", false, true, 108, false, true},
+    {X87NativeStateKind::RestoreRegisters16, "llvm.x86.frstor16",
+     "__builtin_ia32_frstor16", "data16 frstor", false, true, 94, true, true},
+    {X87NativeStateKind::RestoreRegisters32, "llvm.x86.frstor32",
+     "__builtin_ia32_frstor32", "frstor", false, true, 108, true, true}};
 
 inline const X87NativeStateSpec &x87NativeStateSpec(X87NativeStateKind Kind) {
   for (const auto &Spec : X87NativeStateSpecs)
@@ -73,9 +101,32 @@ inline const X87NativeStateSpec *x87NativeStateOfIntrinsic(Intrinsic Id) {
     return &x87NativeStateSpec(X87NativeStateKind::ClearExceptions);
   case Intrinsic::X87Wait:
     return &x87NativeStateSpec(X87NativeStateKind::Wait);
+  case Intrinsic::X87Fnstenv16:
+    return &x87NativeStateSpec(X87NativeStateKind::SaveEnvironment16);
+  case Intrinsic::X87Fnstenv:
+    return &x87NativeStateSpec(X87NativeStateKind::SaveEnvironment32);
+  case Intrinsic::X87Fldenv16:
+    return &x87NativeStateSpec(X87NativeStateKind::LoadEnvironment16);
+  case Intrinsic::X87Fldenv:
+    return &x87NativeStateSpec(X87NativeStateKind::LoadEnvironment32);
+  case Intrinsic::X87Fnsave16:
+    return &x87NativeStateSpec(X87NativeStateKind::SaveRegisters16);
+  case Intrinsic::X87Fnsave:
+    return &x87NativeStateSpec(X87NativeStateKind::SaveRegisters32);
+  case Intrinsic::X87Frstor16:
+    return &x87NativeStateSpec(X87NativeStateKind::RestoreRegisters16);
+  case Intrinsic::X87Frstor:
+    return &x87NativeStateSpec(X87NativeStateKind::RestoreRegisters32);
   default:
     return nullptr;
   }
+}
+
+inline X87StateEffect x87NativeStateEffect(const X87NativeStateSpec &Spec) {
+  return Spec.ReplacesBank || Spec.Kind == X87NativeStateKind::Initialize
+             ? X87StateEffect::Reset
+         : Spec.ImageBytes ? X87StateEffect::Control
+                           : X87StateEffect::Status;
 }
 
 inline const X87NativeStateSpec *

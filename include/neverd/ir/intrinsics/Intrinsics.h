@@ -935,9 +935,13 @@ constexpr bool intrinsicSupportsMemoryAddressSpace(Intrinsic Id) {
   case Intrinsic::Xrstor64:
   case Intrinsic::Xrstors64:
   case Intrinsic::X87Fldenv:
+  case Intrinsic::X87Fldenv16:
   case Intrinsic::X87Fnstenv:
+  case Intrinsic::X87Fnstenv16:
   case Intrinsic::X87Frstor:
+  case Intrinsic::X87Frstor16:
   case Intrinsic::X87Fnsave:
+  case Intrinsic::X87Fnsave16:
   case Intrinsic::X86Lgdt16:
   case Intrinsic::X86Lidt16:
   case Intrinsic::X86Sgdt16:
@@ -1198,6 +1202,16 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
            (MaskSize == 8 || MaskSize == 16 || MaskSize == 32 ||
             MaskSize == 64) &&
            DataSize == MaskSize;
+  case Intrinsic::X87Fldenv:
+  case Intrinsic::X87Fldenv16:
+  case Intrinsic::X87Fnstenv:
+  case Intrinsic::X87Fnstenv16:
+  case Intrinsic::X87Frstor:
+  case Intrinsic::X87Frstor16:
+  case Intrinsic::X87Fnsave:
+  case Intrinsic::X87Fnsave16:
+    return NumInputs == 2 && OutputSize == 0 &&
+           (AddressSize == 4 || AddressSize == 8);
   case Intrinsic::Clflush:
   case Intrinsic::Clflushopt:
   case Intrinsic::Clwb:
@@ -1214,10 +1228,6 @@ constexpr bool intrinsicMemoryAddressSpaceShapeIsValid(
   case Intrinsic::Fxrstor:
   case Intrinsic::Fxsave64Mem:
   case Intrinsic::Fxrstor64Mem:
-  case Intrinsic::X87Fldenv:
-  case Intrinsic::X87Fnstenv:
-  case Intrinsic::X87Frstor:
-  case Intrinsic::X87Fnsave:
   case Intrinsic::X86Lgdt16:
   case Intrinsic::X86Lidt16:
   case Intrinsic::X86Sgdt16:
