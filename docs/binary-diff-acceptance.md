@@ -105,6 +105,19 @@ unlabelled function boundaries remain unqualified. All nine prior report pairs
 retain exactly the same accepted associations and labelled scores; full report
 equality is not claimed across these analysis changes.
 
+The subsequent shared discovery fix recovers all four addressed hand-written
+assembly bodies in the two consumed zstd inputs. Their original instruction
+bytes and complete CFGs are checked independently of the partial source-body
+truth, and both assembly routines pair with their corresponding release
+versions. Reachable code refutes the interior padding/data guesses; independent
+symbols, calls and relocations remain separate entry evidence. A referenced
+ENDBR64 keeps long bodies available for formal analysis without relaxing that
+analysis's unsupported-instruction handling. The SDK retains the complete
+function body, and changed native snapshots refuse stale live restoration
+without replacing the current comparison. This closes the identified zstd
+assembly boundary defect; it does not relabel the original failed release
+qualification or establish coverage of all native discovery cases.
+
 Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
 sketches are too common. Direction/layout controls above the exhaustive-pair
 limit recover distinct bodies while retaining true duplicates as ambiguous.
