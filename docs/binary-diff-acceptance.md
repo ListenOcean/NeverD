@@ -93,6 +93,18 @@ coordinate-level adjudication; it is not relabelled as an identical result.
 The subsequent nine-report delivery replay is identical outside timings.
 The existing source-identity truth, exclusions and numeric gates are unchanged.
 
+The later integration of neutral locked logical operations (`52d4c2a59c`)
+changes 383 distinct SQLite function inventories. Every original native row is
+unchanged; 522 removed block boundaries and six restored fallthrough edges occur
+immediately after `LOCK OR memory,0`. The upstream implementation retains the
+atomic transaction and logical flags. These are coverage changes, separate from
+function-matching quality. In the consumed zstd assembly input, an additional
+unmatched, incomplete candidate lies inside a hand-written `NOTYPE` assembly
+routine, and an existing interior candidate's recovered extent changes. These
+unlabelled function boundaries remain unqualified. All nine prior report pairs
+retain exactly the same accepted associations and labelled scores; full report
+equality is not claimed across these analysis changes.
+
 Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
 sketches are too common. Direction/layout controls above the exhaustive-pair
 limit recover distinct bodies while retaining true duplicates as ambiguous.
@@ -122,6 +134,17 @@ units have explicitly registered zero counts, which do not establish execution
 coverage. The original failed qualification remains retained, and these inputs
 are now development data. These results leave compiler-optimization matching
 quality open.
+
+Matcher version 10 retains a helper and its tail caller as separate identity
+candidates when the changed helper body also contains the caller's complete
+straight-line prelude. Independent instruction contribution and reference-aware
+alignment constrain the deferral; it does not assert source ancestry. Authored
+core/native controls cover direction, layout, multiple inlining destinations,
+negative examples, analyst choices, persistence and thread-count consistency.
+The consumed XZ replay removes the helper-as-caller misassociation in all four
+LTO-containing directions without losing a correct labelled pair. Pure PGO
+results are unchanged. The original numeric gates still fail, and the original
+failed cohort remains retained.
 
 The DWARF adapter now follows an LTO concrete body's abstract-origin chain to
 its original definition unit. A specification declaration supplies its own
