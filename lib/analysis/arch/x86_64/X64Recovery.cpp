@@ -536,9 +536,9 @@ describeCPUQuery(llvm::ArrayRef<LowOp> Operations) {
   return Query;
 }
 
-// A retained trap has exact semantics even though its exception-state outputs
-// have no undefined-effect audit. It may only be collected, never executed in
-// this nonfaulting proof. Do not turn its Missing sidecar into Complete.
+// A retained trap keeps its exact lift and undefined-output audit. Neither
+// supplies an exception continuation: this nonfaulting proof may collect an
+// unreachable trap but cannot execute one or change its coverage grade.
 bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
   if (Insn.Origin.Control != LowInstructionControl::Terminator ||
       Insn.Origin.Immediate || Insn.IsNativeCall ||
@@ -548,7 +548,6 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
       Insn.NativeBytes.size() > x86::kMaxInstructionLen ||
       Insn.NativeBytes.size() != Insn.Origin.Size || Insn.Ops.size() != 1 ||
       !Insn.UndefinedEffects.Effects.empty() ||
-      Insn.UndefinedEffects.Coverage != LowUndefinedCoverage::Missing ||
       Insn.UndefinedEffects.OpCount != Insn.Ops.size() ||
       Insn.PreservedState != LowInstructionPreservedState{} ||
       Insn.UndefinedEffects.OperationDigest !=
@@ -571,7 +570,9 @@ bool isRetainedNativeTrap(const SpecializationInstruction &Insn) {
     return false;
   // Use the decoder's trap classification and exact lift, including INT1 and
   // both INT3 spellings. A self-consistent sidecar cannot authenticate bytes
-  // which describe a different operation or exception.
+  // which describe a different operation or exception. The lift owns whether
+  // undefined-output coverage is Complete or Missing; neither supplies an
+  // exception continuation or permits executing a feasible trap in this proof.
   std::vector<LowOp> Expected;
   LowInstructionUndefinedEffects Effects;
   try {

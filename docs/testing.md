@@ -9258,10 +9258,35 @@ special registers outside the modeled segments must stay unchanged. Unusable
 hidden-cache bytes are ignored by the interface, while FS/GS bases remain live.
 Native tests use 48-bit paging; 57-bit input validation is a source check.
 
+`AllVectors/X64SoftwareInterruptTest` extends the same native comparison to
+every canonical `CD imm8` vector, including 0, 2, 3, 0x29, 0x2c, 0x2d and 255.
+Sixteen disjoint shards each compile 16 instruction steps. Every vector has
+64 flag-input cases spanning both gate types, all IST indices, all gate DPLs,
+null/non-null SS and both NMI-blocking values. HighC/LLVMC at O0/O2 produce
+65,536 full-state/RAM comparisons. All unselected IDT entries are invalid;
+each selected entry ends exactly at the IDT limit. Original hardware bytes
+provide the expected result. Explicit assertions also check the two-byte
+return PC, five-word frame without an error code, and unchanged NMI blocking.
+`InterruptVectorBoundsRejectBeforeAnyEffect` checks short limits, wrapping or
+noncanonical table bases and absent gates under ASan/UBSan. The decoder audit
+checks all 256 unsigned immediates and nine malformed byte/detail variants
+each; it does not grant an opaque-state preservation proof. Earlier layouts,
+prefixed encodings and INT1 retain native requests. The public export test
+checks vectors 255 and 0x2d, budget accounting, unchanged rejected state/RAM,
+and stopping before a selected handler until the caller resumes it.
+
+Native trap-retention regressions require the strict lift's exact undefined-
+output audit instead of assuming every trap is unaudited. Canonical INT3/INT 3
+retains Complete coverage; INT1/UD2 retains Missing coverage. The independent
+proof still rejects every feasible trap path, and a provider cannot forge
+either an audit upgrade or downgrade. This separation is checked through
+synthetic providers and original linked binaries.
+
 Read-only mappings additionally check already-accessed descriptors through
 HighC/LLVMC at O0/O2 under ASan/UBSan. Invalid NT, RIP, selectors, descriptor
 attributes, bounds, IST stacks and entry state reject without changing RAM or
-state. Earlier layout profiles retain native boundaries for IRETQ and INT3.
+state. Earlier layout profiles retain native boundaries for IRETQ and software
+interrupts.
 These tests qualify instruction transitions, not complete Windows kernel
 execution or an ordinary C calling convention for an interrupt entry.
 
@@ -15368,7 +15393,7 @@ The earlier 204-observation translation-profile receipt is historical. Current f
 
 `MachineExitRetReadsAliasedBytesBeforePhysicalPop` · `MachineExitCallCapturesTargetBeforeAliasingPush` · `MachineExitJumpRetainsDynamicAndOriginalDirectTargets` · `MachineExitKeepsInternalCallsAndReturnProofs` · `MachineExitRequiresExactDomainBytesAndTransferKind` · `MachineExitIntegrityBudgetsAndOrdinaryConsumers` · `MachineExitProvesLiveInternalReturnCells`.
 
-`NativeStackControl.TrapExit*` checks exact INT3/INT1 retention, including the two-byte INT 3 encoding, and rejects forged effect, preservation and control metadata without upgrading the missing exception-state audit. `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` rejects traps presented as ordinary provider operations, with same-instruction and following-instruction returns. `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` checks all three native encodings, raw receipts, absent continuation and exact/short operation budgets; `UndeclaredTrapRemainsUnsupported` and `MachineTrapExitRejectsNonTrapInstruction` retain the rejection boundaries. Build and run `NeverDInterpreterSpecializationTests` and `NeverDPEFixedImageTests` for these checks. They qualify declared regions, not exception delivery or source/native equivalence. `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence` also checks UD2 and rejects wrong exception identities, byte/operation mismatches and forged audits even on untaken paths. `NeverDOriginalBinaryUndefinedIndependenceTests` checks that every supported trap form retains its missing audit when proved unreachable and still prevents certification when feasible; `NeverDLowIRRefinementTests` rejects the same feasible native traps against an ordinary-return candidate.
+`NativeStackControl.TrapExit*` checks exact INT3/INT1 retention, including the two-byte INT 3 encoding, and rejects forged effect, preservation and control metadata without granting exception delivery or a continuation. The exact relift owns the audit grade: canonical INT3/INT 3 is Complete and INT1 remains Missing. Both forged upgrades and downgrades are rejected. `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` rejects traps presented as ordinary provider operations, with same-instruction and following-instruction returns. `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` checks all three native encodings, raw receipts, absent continuation and exact/short operation budgets; `UndeclaredTrapRemainsUnsupported` and `MachineTrapExitRejectsNonTrapInstruction` retain the rejection boundaries. Build and run `NeverDInterpreterSpecializationTests` and `NeverDPEFixedImageTests` for these checks. They qualify declared regions, not exception delivery or source/native equivalence. `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence` also checks UD2 and rejects wrong exception identities, byte/operation mismatches and forged audits even on untaken paths. `NeverDOriginalBinaryUndefinedIndependenceTests` checks that every supported trap form retains its missing audit when proved unreachable and still prevents certification when feasible; `NeverDLowIRRefinementTests` rejects the same feasible native traps against an ordinary-return candidate.
 
 `ConstantAddressesReuseOnlyCompletedPredicateProof` · `ConstantPredicateReuseStillRequiresEachReadCertificate` · `ConstantPredicateReusePreservesInfeasibleControlEdges`.
 

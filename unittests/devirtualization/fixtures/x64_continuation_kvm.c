@@ -164,7 +164,7 @@ static void event_record_segment(event_segment_t *s, struct kvm_segment native,
 
 static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
                        const struct kvm_sregs *initial, event_state_t *q,
-                       unsigned kind) {
+                       unsigned kind, unsigned vector) {
   struct kvm_sregs before = *initial;
   event_segment_t fs = {q->fs_base, q->fs.limit, q->fs.selector,
                         q->fs.attributes};
@@ -191,7 +191,7 @@ static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
   struct kvm_regs registers = {.rip = q->pc, .rflags = q->flags};
   for (unsigned i = 0; i != 16; ++i)
     *gpr(&registers, i) = q->gpr[i];
-  REQUIRE(registers.rip == 0x1000 || registers.rip == 0x1001);
+  REQUIRE(registers.rip >= 0x1000 && registers.rip < 0x1800);
   REQUIRE(ioctl(cpu, KVM_SET_REGS, &registers) == 0);
   struct kvm_guest_debug debug = {.control = KVM_GUESTDBG_ENABLE |
                                              KVM_GUESTDBG_USE_HW_BP};
@@ -199,9 +199,13 @@ static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
   debug.arch.debugreg[1] = 0x1801;
   debug.arch.debugreg[7] = 0x405;
   REQUIRE(ioctl(cpu, KVM_SET_GUEST_DEBUG, &debug) == 0);
-  memory[registers.rip] = kind == 2 ? 0x48 : 0xcc;
+  memory[registers.rip] = kind == 2 ? 0x48 : kind == 4 ? 0xcd : 0xcc;
   if (kind == 2)
     memory[registers.rip + 1] = 0xcf;
+  if (kind == 4) {
+    REQUIRE(vector <= UINT8_MAX);
+    memory[registers.rip + 1] = vector;
+  }
   memory[0x1800] = memory[0x1801] = 0x90;
   REQUIRE(ioctl(cpu, KVM_RUN, 0) == 0);
   REQUIRE(run->exit_reason == KVM_EXIT_DEBUG);
@@ -327,7 +331,8 @@ int main(int argc, char **argv) {
     REQUIRE(run->io.direction == KVM_EXIT_IO_OUT && run->io.port == 0xe9 &&
             run->io.size == 1 && run->io.count == 1);
     const unsigned kind = *((uint8_t *)run + run->io.data_offset);
-    REQUIRE(kind >= 1 && kind <= 3);
+    REQUIRE(kind >= 1 && kind <= 4);
+    REQUIRE(kind != 4 || registers.rsi <= UINT8_MAX);
     REQUIRE(registers.rdi <= memory_size - (kind == 1
                                                 ? sizeof(struct return_query)
                                                 : sizeof(event_state_t)));
@@ -347,8 +352,8 @@ int main(int argc, char **argv) {
     } else {
       event_state_t query;
       memcpy(&query, memory + registers.rdi, sizeof(query));
-      REQUIRE(event_query(oracle, oracle_run, memory, &special, &query, kind) ==
-              0);
+      REQUIRE(event_query(oracle, oracle_run, memory, &special, &query, kind,
+                          registers.rsi) == 0);
       memcpy(memory + registers.rdi, &query, sizeof(query));
     }
   }
