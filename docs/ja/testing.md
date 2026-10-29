@@ -2270,3 +2270,7 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 ## OR/XOR 式の定数による包含
 
 `SymExprMask.ConstantCover*` は全四ビットマスクと入力、8–257 ビット値、有効な上位ビット、深い共有式、ワード数と項数の予算拒否を検証します。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` は求解問い合わせなしの固定変位と、入力依存の反例を検証します。`NeverDSymbolicTests` と `NeverDInterpreterSpecializationTests` を実行してください。
+
+## 進むカーソルが参照するイメージ領域
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` は COFF/ELF/Mach-O の前進/後退、途中のコピー、同幅変換、読み書きと書き込みのみの経路を O0/O2 と ASan/UBSan で実行します。`CursorStorageNeedsAnAddressPreservingMemoryPath` はスカラー定数、ロードされたポインタ、幅の縮小、メモリ利用のない算術を拒否し、`DirectBoundedTablesKeepTheirExtent` は有界な直接索引を維持します。`NeverDLiftTests` をビルドして `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4` を実行してください。

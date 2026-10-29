@@ -2386,3 +2386,7 @@ Der Test umfasst auch unabhängige Funktionszeigerrelokationen im selben Speiche
 ## Konstante Bitabdeckung in OR/XOR-Ausdrücken
 
 `SymExprMask.ConstantCover*` prüft alle Vierbitmasken und Eingaben, Wörter mit 8–257 Bits, relevante hohe Bits, tiefe gemeinsame Quellen sowie Wort- und Termbudgetgrenzen. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` prüft einen konstanten Versatz ohne Solverabfragen und ein eingabeabhängiges Gegenbeispiel. `NeverDSymbolicTests` und `NeverDInterpreterSpecializationTests` ausführen.
+
+## Bildspeicher über fortschreitende Zeiger
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` führt Vorwärts-/Rückwärtsschleifen, Zwischenkopien, gleich breite Konvertierungen und Lese-/Schreib- oder reine Schreibpfade für COFF/ELF/Mach-O bei O0/O2 mit ASan/UBSan aus. `CursorStorageNeedsAnAddressPreservingMemoryPath` weist skalare Konstanten, geladene Zeiger, Verengungen und Arithmetik ohne Speicherverbraucher zurück; `DirectBoundedTablesKeepTheirExtent` erhält begrenzte direkte Indizes. `NeverDLiftTests` bauen, danach `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4` ausführen.

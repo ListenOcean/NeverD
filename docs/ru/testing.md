@@ -2338,3 +2338,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## Покрытие битов константой в выражениях OR/XOR
 
 `SymExprMask.ConstantCover*` проверяет все четырёхбитные маски и входы, слова шириной 8–257 бит, значимые старшие биты, глубокие общие выражения и отказ при исчерпании бюджета слов или членов. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` проверяет постоянное смещение без запросов решателю и зависящий от входа контрпример. Запускайте `NeverDSymbolicTests` и `NeverDInterpreterSpecializationTests`.
+
+## Память образа при перемещении указателя
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` выполняет прямые/обратные циклы, промежуточные копии, преобразования той же ширины, чтение/запись и только запись для COFF/ELF/Mach-O при O0/O2 с ASan/UBSan. `CursorStorageNeedsAnAddressPreservingMemoryPath` отклоняет скалярные константы, загруженные указатели, сужения и арифметику без обращения к памяти; `DirectBoundedTablesKeepTheirExtent` сохраняет ограниченную прямую индексацию. Собрать `NeverDLiftTests`, затем выполнить `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.

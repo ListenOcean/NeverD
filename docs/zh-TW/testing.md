@@ -2216,3 +2216,7 @@ MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計
 ## OR/XOR 運算式的常數覆蓋
 
 `SymExprMask.ConstantCover*` 窮舉四位元遮罩與輸入，檢查 8–257 位元字、有效高位、深層共用來源及遮罩字數和項數預算拒絕。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` 驗證零求解查詢下的固定位移，並拒絕依賴輸入的相鄰案例。執行 `NeverDSymbolicTests` 與 `NeverDInterpreterSpecializationTests`。
+
+## 遞增指標存取的映像儲存
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` 以 O0/O2 與 ASan/UBSan 執行 COFF/ELF/Mach-O 的正反向遍歷、中間複製、同寬轉換、讀寫及純寫路徑。`CursorStorageNeedsAnAddressPreservingMemoryPath` 拒絕純量常數、載入的指標、窄化及沒有記憶體消費者的算術；`DirectBoundedTablesKeepTheirExtent` 保留有界直接索引路徑。建置 `NeverDLiftTests` 後執行 `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`。

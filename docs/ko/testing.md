@@ -2260,3 +2260,7 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 ## OR/XOR 식의 상수 비트 포함
 
 `SymExprMask.ConstantCover*`는 모든 4비트 마스크와 입력, 8–257비트 값, 유효한 상위 비트, 깊은 공유 원본, 워드 및 항 예산 거부를 검사합니다. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries`는 솔버 질의 없는 고정 변위와 입력 의존 반례를 검사합니다. `NeverDSymbolicTests`와 `NeverDInterpreterSpecializationTests`를 실행합니다.
+
+## 이동하는 커서가 참조하는 이미지 저장소
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject`는 COFF/ELF/Mach-O의 정방향/역방향 루프, 중간 복사, 동일 너비 변환, 읽기/쓰기 및 쓰기 전용 경로를 O0/O2와 ASan/UBSan으로 실행합니다. `CursorStorageNeedsAnAddressPreservingMemoryPath`는 스칼라 상수, 로드된 포인터, 너비 축소 및 메모리 사용 없는 산술을 거부하며, `DirectBoundedTablesKeepTheirExtent`는 제한된 직접 인덱스 범위를 유지합니다. `NeverDLiftTests`를 빌드한 뒤 `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`를 실행합니다.
