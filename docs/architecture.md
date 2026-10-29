@@ -14173,6 +14173,8 @@ Core retains exact root/offset relations through complete registers and frame sp
 
 Before original calls, `SourceFrameAnalysis` can observe proven private bytes on x64/ARM64 in a bounded, call-free, acyclic prefix. `observeSourceFrameBytes` authenticates immutable image loads without relocations; HighC and LLVM C show terminated text as comments without changing operations. Exact alignment guards remain active. These observations grant no ABI or native-rewrite authority.
 
+LLVM C writes an atomic store with `__atomic_store` of the store's order, as it reads an atomic load with `__atomic_load`. A release or sequentially consistent store never becomes a plain assignment, whether it writes through a pointer or into a local whose address escapes.
+
 Entry-stack offset recovery accepts a narrower scalar displacement only when
 its nonnegative value is independent of sign or zero extension. Pointer
 provenance and negative narrow constants cannot certify a frame offset. The

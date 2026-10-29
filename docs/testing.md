@@ -1604,6 +1604,11 @@ Independent providers execute both C routes on both branch paths at O0/O2
 with UBSan; native Windows and Apple ARM64 execution are separate coverage.
 `Win64CallContract.LocalPointerQualifiersAgreeWithIndependentDefinitions`
 checks the same contract for explicit local declarations.
+`LLVMCValues.AtomicStoresKeepTheirOrder` writes release, sequentially
+consistent and relaxed atomic stores through a pointer, and a release store
+into a local whose address escapes. The LLVM C writes each with
+`__atomic_store` of its order and runs at O0 and O2.
+
 `LLVMCValues.LocalRegister*` checks direct and import-slot scalar declarations
 on x64 and ARM64 across COFF, ELF and Mach-O. Independent C providers observe
 nested qualified pointers, void and pointer results, narrow signed/unsigned

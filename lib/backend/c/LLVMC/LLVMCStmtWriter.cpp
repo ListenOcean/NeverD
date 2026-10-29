@@ -1832,6 +1832,32 @@ void LLVMCWriter::writeInstructionImpl(llvm::Instruction &Inst, int Indent) {
     OS << "}\n";
     return;
   }
+  if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst);
+      SI && SI->isAtomic() && SI->getPointerAddressSpace() == 0) {
+    // An atomic store keeps its order, as an atomic load does: C writes the
+    // value through the same address with the builtin of that order.
+    const llvm::Value *Address = SI->getPointerOperand();
+    std::string AddressText;
+    if (std::string Image = imageDataCName(Address); !Image.empty())
+      AddressText = "&" + Image;
+    else if (const auto *Slot = asAllocaPointer(Address))
+      AddressText = "&" + getName(Slot);
+    else
+      AddressText = valueStr(Address);
+    const char *Ordering = "__ATOMIC_RELAXED";
+    if (SI->getOrdering() == llvm::AtomicOrdering::Release)
+      Ordering = "__ATOMIC_RELEASE";
+    else if (SI->getOrdering() == llvm::AtomicOrdering::SequentiallyConsistent)
+      Ordering = "__ATOMIC_SEQ_CST";
+    const std::string Type = typeToCLLVM(SI->getValueOperand()->getType());
+    const std::string Value = freshVar("atomic_store");
+    emitIndent(Indent);
+    OS << "{ " << Type << " " << Value << " = "
+       << valueStr(SI->getValueOperand()) << "; __atomic_store((" << Type
+       << (SI->isVolatile() ? " volatile" : "") << "*)(" << AddressText
+       << "), &" << Value << ", " << Ordering << "); }\n";
+    return;
+  }
   if (const auto *SI = llvm::dyn_cast<llvm::StoreInst>(&Inst)) {
     if (const llvm::AllocaInst *Slot =
             asAllocaPointer(SI->getPointerOperand())) {
