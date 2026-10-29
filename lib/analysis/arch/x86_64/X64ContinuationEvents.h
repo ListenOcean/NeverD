@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// IRETQ and INT3 state transitions through the continuation LowIR writer.
+/// IRETQ and software-interrupt transitions through the continuation writer.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_ANALYSIS_ARCH_X86_64_X64CONTINUATIONEVENTS_H
@@ -230,12 +230,14 @@ public:
     W.leave(Exit::PrivilegeReturn, PC);
   }
 
-  void int3(uint64_t NextPC) {
+  void softwareInterrupt(uint8_t Vector, uint64_t NextPC) {
+    const uint64_t GateOffset = uint64_t{Vector} * 16;
+    const uint64_t LastByte = GateOffset + 15;
     const auto IDT = load(offsetof(V6, IDTR));
-    W.rejectIf(
-        less(load(offsetof(V6, IDTR) + offsetof(Table, Limit), 2), k(63)));
-    W.rejectIf(less(k(UINT64_MAX - 63), IDT));
-    const auto GateAddress = op(NdOp::INT_ADD, {IDT, k(48)});
+    W.rejectIf(less(load(offsetof(V6, IDTR) + offsetof(Table, Limit), 2),
+                    k(LastByte)));
+    W.rejectIf(less(k(UINT64_MAX - LastByte), IDT));
+    const auto GateAddress = op(NdOp::INT_ADD, {IDT, k(GateOffset)});
     range(GateAddress, 15);
     const auto Low = readMemory(GateAddress);
     const auto High = readMemory(op(NdOp::INT_ADD, {GateAddress, k(8)}));

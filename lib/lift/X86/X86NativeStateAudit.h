@@ -102,14 +102,28 @@ inline bool sysretqForm(const cs_insn *Insn, Arch Target) {
 
 inline bool longModeEventForm(const cs_insn *Insn, Arch Target) {
   if (!Insn || !Insn->detail || Target != Arch::X64 ||
-      (Insn->id != X86_INS_IRETQ && Insn->id != X86_INS_INT3))
+      (Insn->id != X86_INS_IRETQ && Insn->id != X86_INS_INT3 &&
+       Insn->id != X86_INS_INT))
     return false;
   const bool Return = Insn->id == X86_INS_IRETQ;
-  const uint8_t Opcode = Return ? 0xcf : 0xcc;
-  if (Insn->size != (Return ? 2 : 1) || (Return && Insn->bytes[0] != 0x48) ||
+  const bool Immediate = Insn->id == X86_INS_INT;
+  const uint8_t Opcode = Return ? 0xcf : Immediate ? 0xcd : 0xcc;
+  if (Insn->size != (Return || Immediate ? 2 : 1) ||
+      (Return && Insn->bytes[0] != 0x48) ||
       Insn->bytes[Return ? 1 : 0] != Opcode)
     return false;
   const auto &X = Insn->detail->x86;
+  if (X.op_count != (Immediate ? 1 : 0) ||
+      X.encoding.imm_offset != (Immediate ? 1 : 0) ||
+      X.encoding.imm_size != (Immediate ? 1 : 0))
+    return false;
+  if (Immediate) {
+    const auto &Operand = X.operands[0];
+    if (Operand.type != X86_OP_IMM || Operand.size != 1 || Operand.access ||
+        Operand.imm != Insn->bytes[1] || Operand.avx_zero_opmask ||
+        Operand.avx_bcast != X86_AVX_BCAST_INVALID)
+      return false;
+  }
   const uint64_t ReturnFlags =
       X86_EFLAGS_MODIFY_AF | X86_EFLAGS_MODIFY_CF | X86_EFLAGS_MODIFY_SF |
       X86_EFLAGS_MODIFY_ZF | X86_EFLAGS_MODIFY_PF | X86_EFLAGS_MODIFY_OF |
@@ -121,10 +135,8 @@ inline bool longModeEventForm(const cs_insn *Insn, Arch Target) {
          X.opcode[0] == Opcode && !X.opcode[1] && !X.opcode[2] &&
          !X.opcode[3] && X.rex == (Return ? 0x48 : 0) && X.addr_size == 8 &&
          !X.modrm && !X.sib && !X.disp && !X.encoding.modrm_offset &&
-         !X.encoding.disp_offset && !X.encoding.disp_size &&
-         !X.encoding.imm_offset && !X.encoding.imm_size && !X.op_count &&
-         !X.avx_sae && X.avx_rm == X86_AVX_RM_INVALID &&
-         X.avx_cc == X86_AVX_CC_INVALID &&
+         !X.encoding.disp_offset && !X.encoding.disp_size && !X.avx_sae &&
+         X.avx_rm == X86_AVX_RM_INVALID && X.avx_cc == X86_AVX_CC_INVALID &&
          X.eflags == (Return ? ReturnFlags : TrapFlags);
 }
 

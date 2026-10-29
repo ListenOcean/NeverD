@@ -19,6 +19,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/loader/BinaryImage.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/IR/LLVMContext.h"
@@ -289,13 +290,27 @@ static void event_frame(event_state_t *s,unsigned cpl,unsigned nullss,unsigned l
   uint64_t frame[]={0x1800,cs|cpl,flags,0x0800000000000000ULL,nullss?cpl:(ss|cpl)};
   memcpy((void *)(uintptr_t)s->gpr[4],frame,sizeof(frame));
 }
-static void event_gate(event_state_t *s,unsigned type,unsigned ist) {
+static void event_vector_gate(event_state_t *s,unsigned type,unsigned ist,unsigned vector) {
   uint64_t low=0x1800|(24ULL<<16)|((uint64_t)ist<<32)|((uint64_t)(0x80|type)<<40);
-  event_word(s->idt.base+48,low);event_word(s->idt.base+56,0);
+  event_word(s->idt.base+16*vector,low);event_word(s->idt.base+16*vector+8,0);
   s->gpr[4]=s->gdt.base+0xf27;
   if(ist)event_word(s->tr.base+28+8*ist,s->gdt.base+0xe27);
 }
+static void event_gate(event_state_t *s,unsigned type,unsigned ist) {
+  event_vector_gate(s,type,ist,3);
+}
 )C";
+
+void stepDispatcher(llvm::raw_ostream &OS, llvm::ArrayRef<va_t> Entries) {
+  // LLVMC uses void* for an opaque pointer; HighC retains uint8_t*. A direct
+  // C call permits either conversion without an incompatible function pointer.
+  OS << "\nstatic uint64_t step(unsigned index, void *state) {\nswitch(index) "
+        "{\n";
+  for (unsigned I = 0; I != Entries.size(); ++I)
+    OS << "case " << I << ": return neverd_step_v6_"
+       << llvm::utohexstr(Entries[I]) << "(state);\n";
+  OS << "default: abort();\n}}\n";
+}
 } // namespace
 
 TEST_F(X64ContinuationSourceTest, IretMatchesNativeFramesFlagsAndSegments) {
@@ -384,6 +399,95 @@ int main(void) {
       false, eventOptions(), {}, true);
 }
 
+class X64SoftwareInterruptTest
+    : public X64ContinuationSourceTest,
+      public ::testing::WithParamInterface<unsigned> {};
+
+TEST_P(X64SoftwareInterruptTest, EveryVectorMatchesNativeStateAndMemory) {
+  std::vector<uint8_t> Bytes;
+  std::vector<va_t> Entries;
+  std::string Harness = EventHarness;
+  llvm::raw_string_ostream OS(Harness);
+  for (unsigned I = 0; I != 16; ++I) {
+    Entries.push_back(0x1000 + Bytes.size());
+    Bytes.push_back(0xcd);
+    Bytes.push_back(GetParam() * 16 + I);
+  }
+  stepDispatcher(OS, Entries);
+  OS << "\n#define FIRST_VECTOR " << GetParam() * 16 << R"C(
+int main(void) {
+  unsigned char before[8192],after[8192];
+  for(unsigned i=0;i<16;++i)for(unsigned bit=0;bit<64;++bit) {
+    const unsigned vector=FIRST_VECTOR+i,type=14+((bit>>3)&1),ist=bit&7;
+    event_state_t s=event_seed(0x8000);s.pc=0x1000+2*i;
+    s.flags=2|((1ULL<<bit)&0x3d7fd7);s.nmi_blocked=(bit>>5)&1;
+    if(bit&16){s.ss.selector=0;s.unusable|=2;}
+    s.idt.base=0x9000;s.idt.limit=16*vector+15;
+    memset((void *)0x9000,0xa5,4096);
+    event_vector_gate(&s,type,ist,vector);
+    /* CPL0 may enter every gate DPL. Seed every other vector as invalid. */
+    ((unsigned char *)0x9000)[16*vector+5]|=((bit>>4)&3)<<5;
+    event_state_t want=s;
+    memcpy(before,(void *)0x8000,sizeof(before));
+    __asm__ volatile("outb %%al,$0xe9"::"a"(4),"D"(&want),"S"(vector):"memory");
+    memcpy(after,(void *)0x8000,sizeof(after));
+    memcpy((void *)0x8000,before,sizeof(before));
+    CHECK(step(i,ARG(&s))==7);
+    CHECK(!memcmp(&s,&want,sizeof(s)));
+    CHECK(!memcmp((void *)0x8000,after,sizeof(after)));
+    /* Software interrupts never push a CPU exception's error code. */
+    CHECK(s.gpr[4]==(((ist?0x8e27:0x8f27)&~15ULL)-40));
+    CHECK(*(uint64_t *)(uintptr_t)s.gpr[4]==0x1002+2*i);
+    CHECK(s.nmi_blocked==((bit>>5)&1));
+  }
+  return 0;
+}
+)C";
+  OS.flush();
+  run(std::move(Bytes), std::move(Entries), Harness, false, eventOptions(), {},
+      true);
+}
+
+INSTANTIATE_TEST_SUITE_P(AllVectors, X64SoftwareInterruptTest,
+                         ::testing::Range(0u, 16u));
+
+TEST_F(X64ContinuationSourceTest, InterruptVectorBoundsRejectBeforeAnyEffect) {
+  std::vector<uint8_t> Bytes;
+  std::vector<va_t> Entries;
+  std::string Harness = EventHarness;
+  llvm::raw_string_ostream OS(Harness);
+  const unsigned Vectors[] = {0, 1, 2, 3, 0x29, 0x2c, 0x2d, 0x80, 0xff};
+  for (unsigned Vector : Vectors) {
+    Entries.push_back(0x1000 + Bytes.size());
+    Bytes.push_back(0xcd);
+    Bytes.push_back(Vector);
+  }
+  stepDispatcher(OS, Entries);
+  OS << R"C(
+int main(void) {
+  unsigned char memory[8192],before[8192];
+  const unsigned vectors[]={0,1,2,3,0x29,0x2c,0x2d,0x80,0xff};
+  for(unsigned i=0;i<sizeof(vectors)/sizeof(*vectors);++i)
+    for(unsigned bad=0;bad<4;++bad) {
+      const unsigned vector=vectors[i];
+      event_state_t s=event_seed((uintptr_t)memory);s.pc=0x1000+2*i;
+      s.idt.base=(uintptr_t)(memory+4096);s.idt.limit=16*vector+15;
+      memset(memory+4096,0xa5,4096);event_vector_gate(&s,14,0,vector);
+      if(bad==0)--s.idt.limit;
+      if(bad==1)s.idt.base=UINT64_MAX-16*vector;
+      if(bad==2)s.idt.base=0x0100000000000000ULL;
+      if(bad==3)memory[4096+16*vector+5]&=0x7f;
+      event_state_t want=s;memcpy(before,memory,sizeof(memory));
+      CHECK(step(i,ARG(&s))==5);
+      CHECK(!memcmp(&s,&want,sizeof(s)) && !memcmp(before,memory,sizeof(memory)));
+    }
+  return 0;
+}
+)C";
+  OS.flush();
+  run(std::move(Bytes), std::move(Entries), Harness, false, eventOptions());
+}
+
 TEST_F(X64ContinuationSourceTest,
        Int3DescriptorWritesPrecedeIstReadsAndFrameStores) {
   run({0x90, 0xcc}, {0x1001}, std::string(EventHarness) + R"C(
@@ -417,11 +521,24 @@ TEST_F(X64ContinuationSourceTest, EventsLeaveEarlierStateLayoutsUnsupported) {
   V5.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
   V5.PagingAddressBits = 48;
   for (auto O : {options(), controlsOptions(), smapOptions(), V4, V5}) {
-    auto Units = buildX64ContinuationSource(image({0x48, 0xcf, 0xcc}),
-                                            {0x1000, 0x1002}, O);
+    auto Units = buildX64ContinuationSource(
+        image({0x48, 0xcf, 0xcc, 0xcd, 0, 0xcd, 3, 0xcd, 0x2d, 0xcd, 0xff}),
+        {0x1000, 0x1002, 0x1003, 0x1005, 0x1007, 0x1009}, O);
     ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
     for (const auto &U : *Units)
       EXPECT_TRUE(U.RequiresNativeExecution);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, UnqualifiedInterruptEncodingsRemainNative) {
+  for (const auto &Bytes : std::vector<std::vector<uint8_t>>{
+           {0x66, 0xcd, 3}, {0x40, 0xcd, 0}, {0xf3, 0xcd, 0x80}, {0xf1}}) {
+    auto Units =
+        buildX64ContinuationSource(image(Bytes), {0x1000}, eventOptions());
+    ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
+    ASSERT_EQ(Units->size(), 1u);
+    EXPECT_TRUE(Units->front().RequiresNativeExecution);
+    EXPECT_EQ(Units->front().Bytes, Bytes);
   }
 }
 

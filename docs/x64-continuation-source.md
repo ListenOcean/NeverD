@@ -87,8 +87,12 @@ The invocation domain is CPL0, 64-bit entry with valid descriptor caches,
 CET/FRED disabled, successful sequential ordinary RAM accesses and immutable
 original instruction bytes. It excludes MMIO, concurrent writers, asynchronous
 events and faulting execution. IRETQ can produce CPL0–3 long-mode contexts;
-INT3 installs a CPL0 interrupt/trap-gate context with optional IST. Both stop
-before the target executes. Status 5 is not emulated fault delivery.
+INT3 and canonical `INT imm8` (`CD 00` through `CD FF`) install a CPL0
+interrupt/trap-gate context with optional IST. Each vector reads its own live
+IDT entry, including vectors ordinarily used for OS services. Software INT
+does not push a hardware exception's error code or acquire NMI blocking for
+vector 2. These transfers stop before the target executes. Status 5 is not
+emulated fault delivery. Other prefixed encodings remain native requests.
 
 ## Native environment bindings
 
