@@ -60,8 +60,9 @@ frame stores. Both compile and execute HighC and LLVMC at O0/O2 with ASan/UBSan.
 `HeaderLibrary.NativeServiceContractsMatchTheirBundledDeclarations` checks
 every added native-service argument width against the bundled phnt prototypes.
 `EveryUnambiguousDdkNativeServiceHasAnExactCallContract` checks the reverse
-direction for every bundled DDK Zw declaration, including zero-argument
-services, and compares overlapping phnt declarations. The known
+direction for x64 and ARM64 DDK Zw declarations, including zero-argument
+services and the eight additional registry/file/memory services in Microsoft
+WDK 10.0.26100.0. It compares overlapping phnt declarations. The known
 `ZwFlushInstructionCache` disagreement (ULONG versus SIZE_T) deliberately has
 no fixed contract; a separate test retains that conflict and a new conflict
 fails coverage. The
@@ -8358,6 +8359,16 @@ code-pointer, direct-branch and code-generation boundaries.
 `COFFRelocatableAbsoluteRelocation.MachOARM32*` checks ARM32 Mach-O object
 relocations, including Thumb BL, B.W and BLX across sections, halfword-aligned
 call sites, backward calls, malformed encodings and jumps that need a veneer.
+
+`NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` in
+`NeverDSourceEntryBindingTests` checks admitted pointer forwarding on x64 and
+AArch64 across COFF, ELF and Mach-O in both HighC and LLVMC. Explicit integer
+entry declarations remain unchanged. The source-use tests cover x86, x64, ARM
+and AArch64 pointer widths, complete copies and loop PHIs, explicit versus
+recovered arguments, truncated/scalar/unknown uses, mismatched lists, later SSA
+versions and call clobbers. A separate narrow register definition must not erase
+an earlier full-width pointer observation. These are source-role proofs, not
+native Windows execution or general pointee-type recovery.
 
 `HighControlFlowSemantics.Word*` and
 `HighControlFlowSemantics.CastAbsorption*` in `NeverDHighControlFlowTests`

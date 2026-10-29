@@ -281,6 +281,9 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
                        Opts.SourceProjection && !Opts.PatchMode,
                        Opts.SourceProjection && !Opts.PatchMode);
 
+  if (Opts.SourceProjection && !Opts.PatchMode)
+    refineSourcePointerParameters(Img, Result, Dbg);
+
   remodelStructReturnForwarderCalls(Img, Result);
 
   // Variadic callees: size each one's overflow stack-parameter list from its

@@ -1060,6 +1060,11 @@ TEST(HeaderLibrary, NativeServiceContractsMatchTheirBundledDeclarations) {
 #define ND_WINDOWS_PROTO(Name, ...) Name,
 #include "neverd/libc/WindowsNativeRoutines.inc"
 #undef ND_WINDOWS_PROTO
+      // WDK declarations also present in the bundled native-service headers.
+      "ZwAllocateVirtualMemoryEx", "ZwCommitRegistryTransaction",
+      "ZwCopyFileChunk",           "ZwCreateRegistryTransaction",
+      "ZwFlushBuffersFileEx",      "ZwQueryDirectoryFileEx",
+      "ZwQueryInformationByName",  "ZwSaveKeyEx",
   };
   for (const char *Name : Names) {
     SCOPED_TRACE(Name);
@@ -1078,46 +1083,53 @@ TEST(HeaderLibrary, NativeServiceContractsMatchTheirBundledDeclarations) {
 TEST(HeaderLibrary, EveryUnambiguousDdkNativeServiceHasAnExactCallContract) {
   // Check declarations toward contracts as well as contracts toward
   // declarations: checking only existing rows cannot catch a missing API.
-  const TypeLibrary *Kernel = headerLibrary(HeaderLibrary::WindowsKernelX64);
-  const TypeLibrary *Native = headerLibrary(HeaderLibrary::WindowsUserX64);
-  ASSERT_NE(Kernel, nullptr);
-  ASSERT_NE(Native, nullptr);
-  size_t Declared = 0, Conflicting = 0;
-  for (const auto &Entry : Kernel->prototypes()) {
-    if (!Entry.first().starts_with("Zw"))
-      continue;
-    ++Declared;
-    SCOPED_TRACE(Entry.first().str());
-    const FunctionDef *Function = Kernel->findPrototype(Entry.first());
-    ASSERT_NE(Function, nullptr);
-    ASSERT_FALSE(Function->Variadic);
-    const auto *Contract =
-        neverd::libc::windowsKernelPrototype(Entry.first().str());
-    const FunctionDef *Other = Native->findPrototype(Entry.first());
-    bool Agrees = !Other || (Other->Variadic == Function->Variadic &&
-                             Other->Params.size() == Function->Params.size());
-    if (Other && Agrees)
+  for (const auto KernelId :
+       {HeaderLibrary::WindowsKernelX64, HeaderLibrary::WindowsKernelARM64}) {
+    SCOPED_TRACE(headerLibraryName(KernelId).str());
+    const TypeLibrary *Kernel = headerLibrary(KernelId);
+    const TypeLibrary *Native =
+        headerLibrary(KernelId == HeaderLibrary::WindowsKernelX64
+                          ? HeaderLibrary::WindowsUserX64
+                          : HeaderLibrary::WindowsUserARM64);
+    ASSERT_NE(Kernel, nullptr);
+    ASSERT_NE(Native, nullptr);
+    size_t Declared = 0, Conflicting = 0;
+    for (const auto &Entry : Kernel->prototypes()) {
+      if (!Entry.first().starts_with("Zw"))
+        continue;
+      ++Declared;
+      SCOPED_TRACE(Entry.first().str());
+      const FunctionDef *Function = Kernel->findPrototype(Entry.first());
+      ASSERT_NE(Function, nullptr);
+      ASSERT_FALSE(Function->Variadic);
+      const auto *Contract =
+          neverd::libc::windowsKernelPrototype(Entry.first().str());
+      const FunctionDef *Other = Native->findPrototype(Entry.first());
+      bool Agrees = !Other || (Other->Variadic == Function->Variadic &&
+                               Other->Params.size() == Function->Params.size());
+      if (Other && Agrees)
+        for (size_t I = 0; I < Function->Params.size(); ++I)
+          Agrees &= win64Bytes(*Kernel, *Function->Params[I].Type) ==
+                    win64Bytes(*Native, *Other->Params[I].Type);
+      if (!Agrees) {
+        ++Conflicting;
+        EXPECT_EQ(Contract, nullptr);
+        continue;
+      }
+      EXPECT_NE(Contract, nullptr);
+      if (!Contract)
+        continue;
+      ASSERT_EQ(Contract->ArgCount, Function->Params.size());
       for (size_t I = 0; I < Function->Params.size(); ++I)
-        Agrees &= win64Bytes(*Kernel, *Function->Params[I].Type) ==
-                  win64Bytes(*Native, *Other->Params[I].Type);
-    if (!Agrees) {
-      ++Conflicting;
-      EXPECT_EQ(Contract, nullptr);
-      continue;
+        EXPECT_EQ(win64Bytes(*Kernel, *Function->Params[I].Type),
+                  Contract->ArgWidths[I])
+            << "parameter " << I;
     }
-    EXPECT_NE(Contract, nullptr);
-    if (!Contract)
-      continue;
-    ASSERT_EQ(Contract->ArgCount, Function->Params.size());
-    for (size_t I = 0; I < Function->Params.size(); ++I)
-      EXPECT_EQ(win64Bytes(*Kernel, *Function->Params[I].Type),
-                Contract->ArgWidths[I])
-          << "parameter " << I;
+    // Review a new conflict instead of silently increasing the exception set.
+    // The known FlushInstructionCache disagreement has a separate check below.
+    EXPECT_GE(Declared, 141u);
+    EXPECT_EQ(Conflicting, 1u);
   }
-  // Review a new conflict instead of silently increasing the exception set.
-  // The known FlushInstructionCache disagreement has a separate check below.
-  EXPECT_GE(Declared, 141u);
-  EXPECT_EQ(Conflicting, 1u);
 }
 
 TEST(HeaderLibrary, ConflictingNativeWidthsDoNotAuthorizeAContract) {

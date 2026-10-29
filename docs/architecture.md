@@ -3326,8 +3326,9 @@ gate body cannot truncate arguments already established by its entry summary;
 documented WDK entries use the same boundary.
 The fixed Win64 contracts in `WindowsKernelRoutines.inc` additionally bound
 ambient implementation-register observations. Its native-service section covers
-the unambiguous Zw declarations in the bundled DDK library; the separate
-`WindowsNativeRoutines.inc` retains its phnt declaration provenance. The
+the unambiguous Zw declarations in the bundled DDK library and the eight
+additional registry/file/memory declarations in Microsoft WDK 10.0.26100.0.
+The separate `WindowsNativeRoutines.inc` retains its phnt declaration provenance. The
 conflicting DDK/phnt widths of `ZwFlushInstructionCache` do not authorize a
 fixed contract. Exact
 register widths and the complete stack prefix propagate through ordinary
@@ -6948,6 +6949,20 @@ ABI. HighIR separately narrows a source-local CONCAT only when all definitions
 construct the same scalar prefix and all reads explicitly select that prefix.
 Only effect-free upper expressions are discarded; lower expressions and their
 control-flow positions remain unchanged. Unknown lanes are never filled in.
+
+Both source pipelines refine inferred integer parameters to pointer carriers
+through the shared MedIR whole-value use proof. An admitted fixed scalar import
+declaration can supply pointer roles through recovered call arguments or explicit
+source-order call operands. Validated source-call bindings use the same proof.
+Complete COPY/PHI forwarding preserves those roles; narrowed views, scalar uses,
+unknown calls and mismatched argument lists prevent refinement. A call-clobbered
+SSA version zero is not an incoming register, and a separately defined narrow
+register view does not redefine the full-width entry value.
+`PipelineSourcePointerParameters` owns declaration admission and runs candidate
+use graphs on the existing weighted workers. Explicit entry declarations remain
+authoritative. This x64/AArch64 source-only refinement produces `void*` carriers;
+it does not infer pointee records, supply missing machine state, authenticate
+addresses, or change native rewriting contracts.
 
 When an unrelated unresolved value prevents a complete entry-demand graph,
 native helper inference may retain an independent full-word, call-preserved
