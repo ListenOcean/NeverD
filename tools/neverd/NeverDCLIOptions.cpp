@@ -808,6 +808,16 @@ cl::opt<bool>
     LlvmRoute("llvm", cl::desc("Emit LLVM-to-C (goto-style) instead of HighC"),
               cl::sub(DecompileCmd), cl::sub(ExportCmd));
 
+cl::opt<std::string> X64Continuation(
+    "x64-continuation",
+    cl::desc("Export explicit x64 state C using a declared request JSON"),
+    cl::value_desc("path"), cl::sub(DecompileCmd));
+cl::opt<std::string>
+    ContinuationReport("continuation-report",
+                       cl::desc("Write the exact instruction and state "
+                                "manifest for --x64-continuation"),
+                       cl::value_desc("path"), cl::sub(DecompileCmd));
+
 cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),

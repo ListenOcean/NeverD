@@ -752,14 +752,15 @@ void CFGBuilder::extractJumpTables(LowFunc &Func) {
     JT.InsnAddr = Addr;
     JT.Targets = Rec.JumpTableTargets;
 
-    if (Rec.ScalarBranchInput && Rec.IsIndirect) {
-      JT.OriginalAddressSelector = true;
+    if ((Rec.ScalarBranchInput || Rec.ComputedScalarTargets) &&
+        Rec.IsIndirect) {
+      JT.OriginalAddressSelector = Rec.ScalarBranchInput.has_value();
       // A logical dispatch on the original numeric branch value. There is no
       // physical table, LOAD, slot map or relocation-suppression authority.
       // Bind the exact use after SSA; never infer a selector by register name.
       for (const LowOp &Op : Rec.Ops)
         if (Op.Opcode == NdOp::INDIR_BR && Op.NumInputs == 1 &&
-            Op.Inputs[0] == *Rec.ScalarBranchInput)
+            (!Rec.ScalarBranchInput || Op.Inputs[0] == *Rec.ScalarBranchInput))
           JT.SelectorUseRefs.push_back(
               {Op.Addr, Op.Seq, NdOp::INDIR_BR,
                JumpTableSelectorUseRef::ValueRole::Input, 0,

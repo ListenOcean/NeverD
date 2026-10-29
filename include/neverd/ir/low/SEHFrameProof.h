@@ -47,6 +47,18 @@ struct LowSEHEstablisherFrame {
   std::map<int, std::set<va_t>> ProtectedCalls;
 };
 
+/// A certified local unwind (SEHLocalUnwindProtocol.h) that converted MedIR
+/// turned into a jump, and whose target only such exits name: a decoded-frame
+/// proof enters the target from the call with the frame the call passes, as
+/// from LowSEHLocalUnwindEvidence, instead of as an independent root.
+struct LowSEHLocalUnwindExitSource {
+  va_t CallAddr = InvalidVA;
+  int CallSeq = -1;
+  va_t Target = InvalidVA;
+  /// The frame the call passes, relative to the entry stack pointer.
+  int64_t FrameOffset = 0;
+};
+
 /// Shared decoded-frame authority. MedIR must additionally check converted
 /// ABI effects against DecodedAdjustments. A dynamic frame has no fixed-SP
 /// seed. Invocation identity rejects independent entries. Source projection
@@ -56,7 +68,8 @@ llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
     const LowFunc &Function, va_t Handler, const TargetRegInfo &TRI,
     bool OrdinaryEntry, size_t &WorkRemaining,
     llvm::StringRef LocalUnwindDigest = {}, bool CxxContinuation = false,
-    LowSEHFrameUse Use = LowSEHFrameUse::InvocationIdentity);
+    LowSEHFrameUse Use = LowSEHFrameUse::InvocationIdentity,
+    llvm::ArrayRef<LowSEHLocalUnwindExitSource> Exits = {});
 
 /// Windows x64 calls a termination handler (an out-of-line `__finally`
 /// callback) with its parent's EstablisherFrame as the second argument. For a

@@ -4048,7 +4048,20 @@ bool LLVMCWriter::writeRawMemoryCopy(llvm::Instruction &Inst, int Indent) {
                    : valueStr(Store->getValueOperand()))
        << ";\n";
     emitIndent(Indent + 1);
-    OS << c_memory::storeCopy(Pointer, Value,
+    std::string CopyAddress = Pointer;
+    if (const auto *ConstantAddress =
+            llvm::dyn_cast<llvm::ConstantExpr>(Address);
+        ConstantAddress &&
+        ConstantAddress->getOpcode() == llvm::Instruction::IntToPtr) {
+      // An absolute guest address names memory in the invocation environment,
+      // not a host C object. Keep its integer carrier explicit: a literal
+      // high-half pointer inside memcpy triggers a false zero-object bound.
+      CopyAddress = freshVar("memory_address");
+      OS << "uintptr_t " << CopyAddress << " = "
+         << c_memory::integerOperand(Pointer) << ";\n";
+      emitIndent(Indent + 1);
+    }
+    OS << c_memory::storeCopy(CopyAddress, Value,
                               std::to_string(Size.getFixedValue()))
        << ";\n";
     emitIndent(Indent);
@@ -4095,6 +4108,15 @@ bool LLVMCWriter::writeIntrinsicCall(llvm::CallBase &Call, int Indent) {
   }
   if (!Callee->isIntrinsic())
     return false;
+
+  if (Callee->getName() == "llvm.x86.rdtscp") {
+    const bool Live = valueFeedsPrintedUse(&Call);
+    const auto Timestamp = renderX86TimestampCall(
+        Opts.TheArch, Call, Live ? getName(&Call) : "", Live);
+    emitIndent(Indent);
+    OS << Timestamp->Code;
+    return true;
+  }
 
   if (x86FourSourceNativeName(Callee->getName().str())) {
     const auto *I = llvm::dyn_cast<llvm::CallInst>(&Call);
@@ -7986,10 +8008,9 @@ std::string LLVMCWriter::importCalleeCName(const llvm::Value *Callee) const {
         continue;
       }
     }
-    if (const auto *GEP = llvm::dyn_cast<llvm::GEPOperator>(Op)) {
-      Op = GEP->getPointerOperand()->stripPointerCasts();
-      continue;
-    }
+    // Keep a nonzero GEP for imageDataVA below. Its offset selects the import
+    // slot; peeling it would rename every entry in one IAT object as the
+    // first import. An unresolvable offset must keep its indirect target.
     break;
   }
   const llvm::Value *Ptr = Op;

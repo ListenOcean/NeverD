@@ -919,6 +919,8 @@ TEST(PipelineOutcome, UnsupportedBodiesCannotPublishSuccessfulEmptyModules) {
           ASSERT_EQ(Result.FunctionAudits.size(), 1u);
           EXPECT_EQ(Result.FunctionAudits.front().UnsupportedInstructions,
                     std::vector<va_t>{0x1002});
+          EXPECT_TRUE(
+              Result.FunctionAudits.front().NativeInstructionAddresses.empty());
 
           if (!Selected) {
             Options.LiftMode = Options.PatchMode = false;
@@ -931,6 +933,21 @@ TEST(PipelineOutcome, UnsupportedBodiesCannotPublishSuccessfulEmptyModules) {
             EXPECT_EQ(Analysis.FunctionAudits.front().UnsupportedInstructions,
                       std::vector<va_t>{0x1002});
           }
+          Options.LiftMode = Options.PatchMode = Options.MedAnalysisOnly =
+              false;
+          Options.DeferMedIR = true;
+          auto Selection = Pipeline().run(Image, Context, Options);
+          EXPECT_TRUE(Selection.Success) << Selection.Error;
+          EXPECT_TRUE(Selection.LowFuncs.empty());
+          EXPECT_TRUE(Selection.MedFuncs.empty());
+          EXPECT_EQ(Selection.LlvmModule, nullptr);
+          ASSERT_EQ(Selection.FunctionAudits.size(), 1u);
+          const auto &Audit = Selection.FunctionAudits.front();
+          EXPECT_EQ(Audit.UnsupportedInstructions, std::vector<va_t>{0x1002});
+          EXPECT_FALSE(Audit.HasLowIR);
+          EXPECT_NE(std::find(Audit.NativeInstructionAddresses.begin(),
+                              Audit.NativeInstructionAddresses.end(), 0x1002),
+                    Audit.NativeInstructionAddresses.end());
         }
 }
 

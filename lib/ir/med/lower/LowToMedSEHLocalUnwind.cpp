@@ -22,6 +22,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/low/SEHLocalUnwindProtocol.h"
 #include "neverd/ir/med/LowToMed.h"
+#include "neverd/loader/BinaryImage.h"
 #include "neverd/loader/ExceptionFunction.h"
 
 #include "llvm/ADT/STLExtras.h"
@@ -109,7 +110,8 @@ void LowToMedConverter::modelSEHLocalUnwindExits(MedFunc &Func,
   static const std::map<va_t, const LowFunc *> NoBodies;
   size_t Work = limits::kMaxSEHEstablisherFrameWork;
   auto Sites = certifyLowSEHLocalUnwinds(
-      Low, *Image, TRI, SEHFrameCallees ? *SEHFrameCallees : NoBodies, Work);
+      Low, *Image, TRI, SEHFrameCallees ? *SEHFrameCallees : NoBodies, Work,
+      CallUnreadGPRs);
   if (!Sites) {
     // An uncertified call keeps its runtime form.
     llvm::consumeError(Sites.takeError());
@@ -338,7 +340,9 @@ void LowToMedConverter::modelSEHLocalUnwindExits(MedFunc &Func,
 
     MedSEHLocalUnwindExit Exit;
     Exit.CallAddr = Call.CallAddr;
+    Exit.CallSeq = Call.CallSeq;
     Exit.Target = Call.Target;
+    Exit.TargetFrame = Call.TargetFrame;
     Exit.Handlers = P.Handlers;
     Func.SEHLocalUnwindExits.push_back(std::move(Exit));
   }
@@ -368,6 +372,35 @@ void LowToMedConverter::modelSEHLocalUnwindExits(MedFunc &Func,
             [](const MedSEHLocalUnwindExit &A, const MedSEHLocalUnwindExit &B) {
               return A.CallAddr < B.CallAddr;
             });
+
+  // A target only exits enter is no independent root: every certified call
+  // to it is a live exit, only those calls name it, and no relocation does.
+  if (!SharedCodePointerTargets && !CodePointerTargets)
+    CodePointerTargets = codePointerTargetsOf(*Image);
+  const std::vector<va_t> &PointerTargets = SharedCodePointerTargets
+                                                ? *SharedCodePointerTargets
+                                                : *CodePointerTargets;
+  for (MedSEHLocalUnwindExit &Exit : Func.SEHLocalUnwindExits) {
+    const va_t Target = Exit.Target;
+    Exit.OwnsTarget =
+        llvm::all_of(*Sites,
+                     [&](const LowSEHLocalUnwind &Call) {
+                       return Call.Target != Target ||
+                              (Call.OnlyExitsName &&
+                               llvm::any_of(Func.SEHLocalUnwindExits,
+                                            [&](const auto &Live) {
+                                              return Live.CallAddr ==
+                                                     Call.CallAddr;
+                                            }));
+                     }) &&
+        !std::binary_search(PointerTargets.begin(), PointerTargets.end(),
+                            Target) &&
+        llvm::none_of(Image->CodeAddressRelocOperands, [&](const auto &Field) {
+          return Field.second.TargetVA == Target;
+        });
+    if (Exit.OwnsTarget)
+      Func.ModuleAnalysisRoots.erase(Target);
+  }
 }
 
 } // namespace neverd

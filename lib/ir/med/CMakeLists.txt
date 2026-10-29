@@ -1,4 +1,5 @@
 add_neverd_component_library(NeverDIRMed
+  lower/ComputedBranchScalars.cpp
   AArch64/AArch64AuthenticatedCall.cpp
   AArch64/AArch64ReturnProtection.cpp
   AArch64/AArch64SVEState.cpp

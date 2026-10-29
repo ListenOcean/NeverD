@@ -8,6 +8,7 @@
 
 #include "neverd/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
+#include "neverd/ir/SourceCallTypeHint.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/MedToHigh.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -29,6 +30,7 @@
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <memory>
 #include <random>
 #include <tuple>
 
@@ -3587,7 +3589,7 @@ TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
   for (Arch A : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
     for (BinaryFormat Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
-      for (unsigned Mode = 0; Mode != 12; ++Mode) {
+      for (unsigned Mode = 0; Mode != 26; ++Mode) {
         SCOPED_TRACE(static_cast<int>(A));
         SCOPED_TRACE(static_cast<int>(Format));
         SCOPED_TRACE(Mode);
@@ -3599,8 +3601,8 @@ TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
         MedFunc F;
         F.Entry = 0x1000;
         F.Name = "split_outgoing_setup";
-        F.Blocks.resize(4);
-        for (int I = 0; I < 4; ++I) {
+        F.Blocks.resize(Mode >= 18 ? 6 : 4);
+        for (int I = 0; I < int(F.Blocks.size()); ++I) {
           F.Blocks[I].Id = I;
           F.Blocks[I].StartAddr = F.Entry + I * 16;
           F.Blocks[I].EndAddr = F.Entry + (I + 1) * 16;
@@ -3629,12 +3631,45 @@ TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
         };
         const auto Value =
             MedVar::makeConst(91, Word, ConstantAddressProvenance::Scalar);
-        if (Mode == 1 || Mode == 2 || Mode == 3 || Mode == 9) {
+        if (Mode >= 18) {
+          F.Blocks[0].Succs = {2, 4, 5};
+          F.Blocks[1].Preds = {4, 5};
+          for (int B : {4, 5}) {
+            F.Blocks[B].Preds = {0};
+            F.Blocks[B].Succs = {1};
+          }
+          Store(4, Slot, Value);
+          if (Mode != 19 && Mode != 25)
+            Store(5, Slot, MedVar::makeConst(92, Mode == 21 ? 1 : Word));
+          Store(2, Slot, MedVar::makeConst(93, Word));
+          if (Mode == 20) {
+            MedOp Opaque;
+            Opaque.Opcode = NdOp::CALL;
+            Opaque.addInput(MedVar::makeConst(0x3000, Word));
+            F.Blocks[1].Ops.push_back(Opaque);
+          }
+          if (Mode == 22)
+            F.ModuleAnalysisRoots.insert(F.Blocks[1].StartAddr);
+          if (Mode == 23)
+            Store(3, Slot, MedVar::makeConst(94, Word));
+          if (Mode == 24)
+            F.Blocks[5].Ops.insert(F.Blocks[5].Ops.begin(),
+                                   limits::kMaxCallSetupStackProofWork,
+                                   MedOp{});
+          if (Mode == 25) {
+            F.Blocks[5].Preds = {1};
+            F.Blocks[0].Succs.pop_back();
+            F.Blocks[1].Succs.push_back(5);
+          }
+        } else if (Mode == 1 || Mode == 2 || Mode == 3 || Mode == 9 ||
+                   Mode >= 12) {
           Store(1, Slot, Value);
           if (Mode != 3) {
             auto Other = Value;
-            if (Mode == 2)
+            if (Mode == 2 || Mode >= 12)
               ++Other.ConstVal;
+            if (Mode == 12)
+              Other.Size = 1;
             if (Mode == 9)
               Other.Provenance = ConstantAddressProvenance::DataAddress;
             Store(2, Slot, Other);
@@ -3665,8 +3700,21 @@ TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
         }
         if (Mode == 8)
           Store(2, reg(90, 0, Word, TRI.IntReturnReg, A), Value);
+        if (Mode == 13)
+          F.Blocks[3].Preds.push_back(1);
+        if (Mode == 14)
+          F.Blocks[2].Succs.clear();
+        if (Mode == 15)
+          F.Blocks[1].Ops.insert(F.Blocks[1].Ops.begin(),
+                                 limits::kMaxCallSetupStackProofWork, MedOp{});
         MedOp Call;
         Call.Opcode = NdOp::CALL;
+        if (Mode == 16) {
+          auto Hint = std::make_shared<SourceCallTypeHint>();
+          Hint->TargetAddress = Target;
+          Call.SourceCallHint = std::move(Hint);
+        }
+        Call.IsTailCall = Mode == 17;
         Call.addInput(MedVar::makeConst(Target, Word));
         F.Blocks[3].Ops.push_back(Call);
         if (Mode == 11)
@@ -3688,6 +3736,44 @@ TEST(MedABIPass, SplitStackArgumentSetupRequiresEveryIncomingPath) {
                                CI->Args[RegisterCount].ConstVal == 91 &&
                                CI->Args[RegisterCount].Size == Word;
         EXPECT_EQ(Recovered, Mode <= 1 || Mode == 11);
+        if ((Mode >= 12 && Mode != 18) ||
+            (Mode >= 3 && Mode <= 10 && Mode != 9))
+          EXPECT_TRUE(F.Blocks[3].Phis.empty());
+        if (Mode == 23) {
+          ASSERT_GT(CI->Args.size(), size_t(RegisterCount));
+          EXPECT_TRUE(CI->Args[RegisterCount].isConst());
+          EXPECT_EQ(CI->Args[RegisterCount].ConstVal, 94u);
+        }
+        if (Mode == 18 && A == Arch::X64 && Format == BinaryFormat::COFF) {
+          ASSERT_GT(CI->Args.size(), size_t(RegisterCount));
+          ASSERT_EQ(F.Blocks[1].Phis.size(), 1u);
+          ASSERT_EQ(F.Blocks[3].Phis.size(), 1u);
+          const auto &Inner = F.Blocks[1].Phis.front();
+          const auto &Outer = F.Blocks[3].Phis.front();
+          EXPECT_EQ(Inner.Args.size(), 2u);
+          EXPECT_EQ(Outer.Args.size(), 2u);
+          EXPECT_EQ(Outer.Output, CI->Args[RegisterCount]);
+          EXPECT_EQ(Outer.Args.front().second, Inner.Output);
+          EXPECT_EQ(Outer.Args.back().second.ConstVal, 93u);
+        }
+        if (A == Arch::X64 && Format == BinaryFormat::COFF &&
+            (Mode == 2 || Mode == 9)) {
+          ASSERT_GT(CI->Args.size(), size_t(RegisterCount));
+          const auto &Join = F.Blocks[3];
+          const auto Phi = std::find_if(
+              Join.Phis.begin(), Join.Phis.end(), [&](const PhiNode &Node) {
+                return Node.Output == CI->Args[RegisterCount];
+              });
+          ASSERT_NE(Phi, Join.Phis.end());
+          ASSERT_EQ(Phi->Args.size(), 2u);
+          EXPECT_EQ(Phi->Args[0].first, 1);
+          EXPECT_EQ(Phi->Args[0].second, Value);
+          EXPECT_EQ(Phi->Args[1].first, 2);
+          EXPECT_EQ(Phi->Args[1].second.ConstVal, Mode == 2 ? 92u : 91u);
+          EXPECT_EQ(Phi->Args[1].second.Provenance,
+                    Mode == 9 ? ConstantAddressProvenance::DataAddress
+                              : ConstantAddressProvenance::Scalar);
+        }
       }
 }
 

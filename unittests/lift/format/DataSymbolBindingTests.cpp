@@ -1295,4 +1295,45 @@ TEST(DataSymbolBindings, ExternalFunctionPointersNeedAnExactAbsoluteSymbol) {
     EXPECT_TRUE(collectExternalFunctionPointers(Image).empty());
   }
 }
+
+// FILD of an integer lowers to integer operations that build the binary80
+// exponent as 0x403E minus the leading zeros. In a shared library whose first,
+// read-only segment at VA 0 spans 0x403E, that bias is still a number: LLVM C
+// read it as an address into the library's own bytes.
+TEST_F(DataSymbolBindingTest, IntegerX87LoadsKeepTheirExponentBias) {
+  if (!CanRunX64ELF)
+    GTEST_SKIP() << "ELF execution requires a Linux x64 host";
+  if (!hasCrossTargetClang())
+    GTEST_SKIP() << "requires cross-target Clang and ld.lld";
+  const auto Library =
+      sharedLibrary("x86_64-linux-gnu", "widen",
+                    "const unsigned char blob[0x5000] = {1, 2, 3};\n"
+                    "long double widen(long x) { return x; }\n");
+  auto Loaded = loadBinary(Library);
+  ASSERT_TRUE(bool(Loaded)) << llvm::toString(Loaded.takeError());
+  const Segment *Seg = Loaded->getSegmentFor(0x403e);
+  ASSERT_NE(Seg, nullptr);
+  ASSERT_EQ(Seg->VA, 0u);
+  const auto Harness = tmpFile("widen-main.c");
+  std::ofstream(Harness)
+      << "long double widen(long x);\n"
+         "int main(void) {\n"
+         "  return widen(0) != 0.0L || widen(-5) != -5.0L ||\n"
+         "         widen(1L << 40) != 1099511627776.0L;\n"
+         "}\n";
+  for (bool LLVM : {false, true}) {
+    SCOPED_TRACE(LLVM);
+    const auto C = source(*Loaded, LLVM, {"widen"});
+    EXPECT_EQ(C.find("unk_0"), std::string::npos) << C;
+    const auto Output = tmpFile(LLVM ? "widen-llvm.c" : "widen-high.c");
+    std::ofstream(Output) << C;
+    const auto Program = tmpFile(LLVM ? "widen-llvm" : "widen-high");
+    auto Compile =
+        exec(NEVERD_TEST_CLANG, {"-O2", "-fno-strict-aliasing", Output.string(),
+                                 Harness.string(), "-o", Program.string()});
+    ASSERT_TRUE(Compile.ok()) << Compile.err << C;
+    const auto Run = exec(Program.string(), {});
+    EXPECT_TRUE(Run.ok()) << Run.err << C;
+  }
+}
 } // namespace
