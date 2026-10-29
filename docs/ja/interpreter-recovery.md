@@ -318,3 +318,5 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 `--vm-prove-store-return-separation` は、戻り先セル、保存されたフレームポインター、現在のスカラーフレームセルを保持する前に、書き込み全体との非交差を証明します。`--vm-prove-store-frame-separation` は宣言されたフレームと現在の絶対アドレスセルも検査し、`--vm-machine-state` と `--vm-entry-frame` が必要です。両方とも `--devirtualize` が必要で、既定では無効です。既存の証明・作業予算を共有し、非エイリアスの前提は追加しません。未証明の書き込みは通常どおり無効化し、復元が不完全ならソースを公開しません。既存のチェーン制御と組み合わせてループを保持できます。
 
 v9 API `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` は `neverd_devirtualize_options_v9` を受け取ります。ゼロ初期化し、v1 接頭部の `struct_size` を全体のサイズに設定します。フラグは `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION` で、`reserved` はゼロです。旧 API はこの末尾を無視します。Python は `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9` を公開し、報告には `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation` を含めます。回帰テストは両 C 経路の添字付きローカル配列ループを O0/O2、ASan/UBSan で実行し、渡されたスタック領域全体を検査します。
+
+いずれかの証明戦略を有効にすると、入口フレームからのレジスタの有限オフセットも、網羅的に証明したうえで制御フローのノード間に保持します。合流では入力オフセットの和集合を取り、情報が欠ける場合や既存の制御タプル上限を超える場合は不明に戻します。レジスタ間の相関や新たなエイリアス前提は導入しません。
