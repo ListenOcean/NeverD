@@ -2610,6 +2610,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   ImageObjects.clear();
   ImageBackings.clear();
   ReachesImageBase = false;
+  ReachedObjectExterns.clear();
   ImageBaseIdentifier.clear();
   OriginalMemoryBases.clear();
   OriginalMemoryObjects.clear();
@@ -3390,10 +3391,13 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
     if (const HighExpr *Inner = unwrapIntegerView(Address);
         Inner && Inner->Kind == ExprKind::Const)
       AccessAddresses.insert(Inner);
-    // An access the image's headers hold prints through `__ImageBase`.
+    // An access the image's headers hold prints through `__ImageBase`, and
+    // one in another module's storage through its symbol's declaration.
     if (Address)
-      if (const auto VA = constAddress(*Address))
+      if (const auto VA = constAddress(*Address)) {
         noteImageBaseAddress(*VA);
+        noteObjectExternAddress(*VA);
+      }
   };
   // An atomic access needs its address as aligned in C as in the image.
   auto NoteAtomic = [&](const HighExpr &Address, const TypeRef &Access) {
@@ -3470,6 +3474,9 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
       noteFunctionAddress(functionAddressKey(E), Funcs);
     if (isImageBaseConstant(E))
       ReachesImageBase = true;
+    if (E.Kind == ExprKind::Const &&
+        isExactAddressProvenance(E.ConstProvenance))
+      noteObjectExternAddress(E.ConstVal);
     // An address anchored before its owner's section reaches the section's
     // first object, which the code indexes from there; what lies at the
     // address itself is no object the code uses.
@@ -4068,6 +4075,7 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
   }
   FinishGroup();
   addImageBaseBacking();
+  addObjectExternBackings();
 }
 
 void HighCWriter::noteFunctionAddress(va_t Addr,
@@ -4115,6 +4123,7 @@ bool HighCWriter::imageFunctionOwnsLinkIdentifier(llvm::StringRef Name) {
 
 void HighCWriter::writeImageObjects() {
   writeImageBaseDeclaration();
+  writeObjectExternDeclarations();
   for (const auto &[Base, Object] : OriginalMemoryObjects) {
     (void)Base;
     const auto &[Storage, Name] = Object;

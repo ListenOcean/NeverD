@@ -5213,6 +5213,13 @@ invalid veneer ownership, continuation/data boundaries, alignment, tagged
 Thumb addresses, unregistered x86 veneers and section-symbol aliases.
 `ObjectExterns.*` checks direct external tail calls across ELF, Mach-O and COFF
 and rejects treating ordinary data/IAT slots as synthetic object callees.
+Its ELF fixtures on all four architectures also require an undefined data
+symbol to print through the declaration the unit gives it, directly and
+through a GOT entry, never as the address the extern layer gives it.
+`X86_64_ObjectExtern.*` runs both C routes of objects built with and without
+PIC that read `int Ext` another module defines, and `stdout` through its GOT
+entry. Without PIC, LLVM C still leaves out a function that passes a string's
+absolute address, a separate limit.
 `NeverDWorkerCallSiteTypes` compiles and executes both C routes, including all
 five Win64 variadic integer arguments, and retains partial-stack-write refusal.
 The engine's C is Clang's dialect (`__builtin_bit_cast`, calls through casts

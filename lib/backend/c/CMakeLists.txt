@@ -26,6 +26,7 @@ add_neverd_component_library(NeverDBackendC
   HighC/COFF/HighCSEH.cpp
   HighC/COFF/HighCCxxEH.cpp
   HighC/COFF/HighCImageBase.cpp
+  HighC/HighCObjectExterns.cpp
   HighC/X86/HighCCallSetup.cpp
   HighC/X86/HighCRegistration.cpp
   LLVMC/LLVMCEmitter.cpp

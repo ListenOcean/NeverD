@@ -632,6 +632,20 @@ struct BinaryImage {
   /// objects by ObjectExterns. Their extern storage is not executable code or
   /// an IAT pointer slot, but a relocated direct branch may tail-call them.
   std::set<va_t> ObjectExternFunctionEntries;
+  /// An undefined data symbol of a relocatable object, whose storage
+  /// ObjectExterns places in the `extern` segment.  Another module defines
+  /// it, so the object neither owns nor sizes it; Bytes is the room kept past
+  /// its address for the offsets the object's relocations reach.
+  struct ObjectExternData {
+    std::string Name;
+    uint64_t Bytes = 0;
+    bool operator==(const ObjectExternData &) const = default;
+  };
+  /// Each such symbol, by the address ObjectExterns gives it.
+  std::map<va_t, ObjectExternData> ObjectExternDataSymbols;
+  /// The pointer cells (ELF and Mach-O GOT entries) holding such a symbol's
+  /// address, by cell address: the symbol's name.
+  std::map<va_t, std::string> ObjectExternDataCells;
   /// Half-open executable intervals occupied by linker/dynamic-loader import
   /// machinery whose individual entries may not be recoverable (ELF PLT
   /// families, Mach-O symbol stubs and stub helper).
@@ -932,6 +946,22 @@ struct BinaryImage {
     if (!PEHeaderBytes || Addr < Base || Addr - Base >= PEHeaderBytes)
       return std::nullopt;
     return Addr - Base;
+  }
+
+  /// The undefined data symbol of a relocatable object whose extern storage
+  /// holds \p Addr (ObjectExternDataSymbols), and the offset of \p Addr into
+  /// it.  An emitter reaches such an address through the symbol's
+  /// declaration: the storage is another module's, never one to define or
+  /// copy.
+  std::optional<std::pair<const ObjectExternData *, uint64_t>>
+  objectExternDataAt(va_t Addr) const {
+    auto It = ObjectExternDataSymbols.upper_bound(Addr);
+    if (It == ObjectExternDataSymbols.begin())
+      return std::nullopt;
+    --It;
+    if (Addr - It->first >= It->second.Bytes)
+      return std::nullopt;
+    return std::pair(&It->second, Addr - It->first);
   }
 
   /// Loader/layout-only upper bound for constants whose numeric value may

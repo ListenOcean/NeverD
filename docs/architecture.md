@@ -11989,6 +11989,18 @@ pointers). The layer places them past the object's sections in a writable
 there and data a symbol; a weak reference takes no address, since the null test
 its code makes is the program's.
 
+An undefined data symbol is another module's storage. The layer records
+each one's extern address and the bytes it keeps past it in
+`BinaryImage::ObjectExternDataSymbols`, and each ELF or Mach-O GOT entry
+holding that address in `ObjectExternDataCells`. `collectDataSymbolBindings`
+binds those entries as it binds a linked image's `GLOB_DAT` slots. Both C
+routes declare the symbol as bytes the linker binds by name
+(`extern unsigned char neverd_data_X[] __asm__("X")`), and reach every
+address in its storage through that declaration. Neither defines storage
+there. An object a C library header declares stays the header's at its own
+address (`LibCDataObjects.def`), and a common symbol stays the object's
+tentative definition.
+
 `ObjectExterns` also records each undefined callable identity in
 `BinaryImage::ObjectExternFunctionEntries`. CFG recovery uses that provenance
 for direct external tail calls in relocatable objects without admitting the

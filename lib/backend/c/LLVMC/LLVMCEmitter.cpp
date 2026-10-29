@@ -683,8 +683,11 @@ void LLVMCWriter::writeModuleBody(llvm::Module &Mod) {
       writeImageBaseDeclaration(Identifier);
       continue;
     }
+    // The label is the symbol, with the underscore a format gives a C name.
     OS << "extern unsigned char " << Identifier << "[] __asm__(\""
-       << escapeCString(cNameOfGlobal(Global.getName(), true)) << "\")";
+       << escapeCString(symbolOfCName(cNameOfGlobal(Global.getName(), true),
+                                      Opts.Format, Opts.TheArch))
+       << "\")";
     if (Global.hasExternalWeakLinkage())
       OS << " __attribute__((weak))";
     OS << ";\n";

@@ -415,7 +415,9 @@ LLVMCWriter::uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const {
 
 std::optional<std::pair<std::string, std::string>>
 LLVMCWriter::imageDataSymbolName(va_t Addr) const {
-  if (!Img)
+  // An undefined data symbol names another module's storage, never the
+  // image's own at its extern address.
+  if (!Img || Img->ObjectExternDataSymbols.count(Addr))
     return std::nullopt;
   const Symbol *Sym = Img->findSymbolAt(Addr);
   if (!Sym || Sym->IsFunc || Sym->Name.empty() ||

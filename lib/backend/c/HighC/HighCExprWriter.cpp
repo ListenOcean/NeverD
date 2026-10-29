@@ -7821,8 +7821,11 @@ std::optional<va_t> HighCWriter::constAddress(const HighExpr &E) const {
 }
 
 bool isImageDataAt(const BinaryImage &Img, va_t Addr) {
-  // The image's own headers are `__ImageBase`, never a copied object.
-  if (Addr == 0 || Addr == InvalidVA || Img.imageBaseOffset(Addr))
+  // The image's own headers are `__ImageBase`, never a copied object, and
+  // another module's storage an undefined data symbol names is no object of
+  // the image's.
+  if (Addr == 0 || Addr == InvalidVA || Img.imageBaseOffset(Addr) ||
+      declaredObjectExternAt(Img, Addr))
     return false;
   const Segment *Seg = Img.getSegmentFor(Addr);
   if (!Seg || !Seg->isReadable())
