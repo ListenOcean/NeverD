@@ -80,6 +80,10 @@ inline constexpr double kDefaultMinimumContextSimilarity = 0.35;
 /// pairing is accepted; closer candidates without decisive call-position
 /// evidence stay ambiguous.
 inline constexpr double kDefaultAmbiguityMargin = 0.02;
+/// A tail caller must contribute more than a lone shared instruction to a
+/// changed helper body before a possible inlining defers whole-function
+/// identity.
+inline constexpr unsigned kMinTailPreludeContribution = 2;
 /// Rounds of global refinement; call and address chains use a growing worklist.
 inline constexpr unsigned kMaxPropagationRounds = 64;
 /// Dense storage threshold for call-sequence anchor alignment. Larger ranges

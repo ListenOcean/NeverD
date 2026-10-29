@@ -111,6 +111,26 @@ Git's GNU C11 compatibility amendment preceded truth preparation and comparison.
 Unlabelled mappings remain unscored. This does not close the failed original
 cohort or qualify other advanced areas, common-input fairness or superiority.
 
+The subsequent XZ Utils 5.4.6 optimization cohort failed its frozen precision,
+recall and macro-F1 gates. GCC 15.2 O2 was compared with LTO, PGO and combined
+PGO/LTO in both directions using the frozen `ab55f7f3cb57` native runtime.
+All six mapping runs and their independent score replay completed; the six
+cases are correlated builds/directions of one project, not independent cohorts.
+Each built program passed six compression/decompression roundtrips. Profile-use
+builds reject missing profiles and coverage mismatches; unused static-archive
+units have explicitly registered zero counts, which do not establish execution
+coverage. The original failed qualification remains retained, and these inputs
+are now development data. These results leave compiler-optimization matching
+quality open.
+
+The DWARF adapter now follows an LTO concrete body's abstract-origin chain to
+its original definition unit. A specification declaration supplies its own
+file metadata without replacing that definition unit. Multi-unit local names,
+aliases and origin cycles are covered separately. Eligible source-body labels
+for the previous zstd, OpenSSL, Git, libarchive and FFmpeg inputs are unchanged;
+older FFmpeg exclusion records differ only by subsequently added end bounds.
+The original full-inventory equality failure and its adjudication are both kept.
+
 Retained SQLite, curl and FFmpeg reports also exercise a seven-snapshot offline
 collection: all association edges are checked against their source reports,
 three-release SQLite traces are checked against partial source identities,

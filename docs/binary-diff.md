@@ -64,6 +64,15 @@ otherwise identical wrappers after layout changes. Their original bytes remain
 inspectable; separate normalized features, names and call context can still
 establish correspondence, while indistinguishable candidates remain ambiguous.
 
+Matcher version 10 also defers a similar helper body when its changed entry
+contains the complete straight-line prelude of an unmatched direct tail caller,
+with at least two caller instructions beyond the helper's aligned body. Both
+the helper and caller remain candidates under `inlined_tail_call`, in either
+comparison direction. Unknown address identities can support this ambiguity;
+they do not establish identity or equivalence. This check reuses reference-aware
+instruction alignment and respects stated names and analyst decisions. It
+recognizes this boundary pattern, not arbitrary compiler inlining or outlining.
+
 ## Command line
 
 ```sh

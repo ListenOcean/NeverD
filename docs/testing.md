@@ -3724,6 +3724,12 @@ Desktop relocation and dependency-audit checks are described in
 [`tools/neverd-gui/PACKAGING.md`](../tools/neverd-gui/PACKAGING.md).
 
 The core tests check matching, ambiguity, deltas, deterministic correspondence,
+including a helper whose tail caller's complete prelude survives in a combined
+body. Direction/layout controls retain both identities as candidates; partial,
+changed, already-shared preludes and ordinary or unresolved calls do not trigger
+this deferral. The native SDK fixture uses moved, unresolved global references
+and checks candidate paging, save/reopen, manual pairing and undo/redo.
+The core tests also cover
 manual overrides, persistence and cancellation. SDK tests exercise authored
 native machine code through the real raw loader and shared decoder. CLI/worker
 checks compile the owned `unittests/diff/patch_fixture.c` and compare the same
