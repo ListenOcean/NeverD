@@ -100,13 +100,15 @@ sehLocalUnwindConvention(const LowFunc &Function, const TargetRegInfo &TRI,
 /// The frame values the function computes may reach a callee or memory only
 /// as pointers to other frame objects: its TargetFrame, its body stack
 /// pointer and the slot's address reach only the slot itself, the runtime
-/// and the handlers.  The GS cookie is the one other place a frame value may
-/// go: the frame its GS data names, XORed with a value of no frame, stored to
-/// the slot that data places, and read back only to be XORed with the same
-/// frame, which leaves the cookie.  This trusts that only in-bounds accesses
-/// reach a frame object, so a pointer to one never reaches the compiler's
-/// saved-frame slot, which only its own prologue protocol writes.  Any other
-/// shape refuses the function, and its calls keep their runtime form.
+/// (the local unwind, and setjmp, which keeps the frame in its jump buffer
+/// for longjmp's unwind) and the handlers.  The GS cookie is the one other
+/// place a frame value may go: the frame its GS data names, XORed with a value
+/// of no frame, stored to the slot that data places, and read back only to be
+/// XORed with the same frame, which leaves the cookie.  This trusts that only
+/// in-bounds accesses reach a frame object, so a pointer to one never reaches
+/// the compiler's saved-frame slot, which only its own prologue protocol
+/// writes.  Any other shape refuses the function, and its calls keep their
+/// runtime form.
 llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     const LowFunc &Function, const BinaryImage &Image, const TargetRegInfo &TRI,
     const std::map<va_t, const LowFunc *> &Bodies, size_t &WorkRemaining);

@@ -711,6 +711,141 @@ BinaryImage makeCookieImage(CookieShape Kind) {
   return Img;
 }
 
+/// The Guarded shape with MSVC's saved-frame slot, and a setjmp that takes
+/// the frame first: `setjmp(Buffer)` passes the jump buffer and the
+/// EstablisherFrame, as MSVC x64 calls `__intrinsic_setjmpex`.  Unless
+/// \p Authenticated, the call enters a function of the image that reads it.
+BinaryImage makeSetjmpImage(bool Authenticated) {
+  BinaryImage Img;
+  Img.Arch = Arch::X64;
+  Img.Bits = Bitness::Bits64;
+  Img.Format = BinaryFormat::COFF;
+  Img.Base = 0x140000000;
+  Img.Entry = Entry;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Entry;
+  Text.Size = 0x181;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xcc);
+  auto &D = Text.Data;
+  // mov [rsp+0x10],rdx; push rbx; sub rsp,0x40; mov rbx,rdx;
+  // mov [rsp+0x30],rsp; mov [rsp+0x28],ecx; lea rcx,[rsp+0x38];
+  // mov rdx,rsp; call setjmp; mov ecx,[rsp+0x28]
+  place(D, 0x00,
+        {0x48,
+         0x89,
+         0x54,
+         0x24,
+         0x10,
+         0x53,
+         0x48,
+         0x83,
+         0xec,
+         0x40,
+         0x48,
+         0x8b,
+         0xda,
+         0x48,
+         0x89,
+         0x64,
+         0x24,
+         0x30,
+         0x89,
+         0x4c,
+         0x24,
+         0x28,
+         0x48,
+         0x8d,
+         0x4c,
+         0x24,
+         0x38,
+         0x48,
+         0x8b,
+         0xd4,
+         0xe8,
+         Authenticated ? uint8_t(0x55) : uint8_t(0x45),
+         Authenticated ? uint8_t(0x01) : uint8_t(0),
+         0,
+         0,
+         0x8b,
+         0x4c,
+         0x24,
+         0x28});
+  // test ecx,ecx; jz work; mov rcx,[rsp+0x30]; lea rdx,[done];
+  // call _local_unwind; nop | work: call foo; nop | mov dword [rbx],100 |
+  // done: add rsp,0x40; pop rbx; ret
+  place(D, 0x27, {0x85, 0xc9, 0x74, 0x12, 0x48, 0x8b, 0x4c, 0x24, 0x30, 0x48,
+                  0x8d, 0x15, 0x12, 0,    0,    0,    0xe8, 0x44, 0x01, 0,
+                  0,    0x90, 0xe8, 0x1e, 0,    0,    0,    0x90, 0xc7, 0x03,
+                  0x64, 0,    0,    0,    0x48, 0x83, 0xc4, 0x40, 0x5b, 0xc3});
+  // foo: ret | reader: mov rax,rdx; ret
+  place(D, 0x60, {0xc3});
+  place(D, 0x68, {0x48, 0x89, 0xd0, 0xc3});
+  // The Guarded handler, which finds Counter's home 0x58 above its frame.
+  place(D, 0x80,
+        {0x40, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xea, 0x0f, 0xb6,
+         0xc1, 0xf7, 0xd8, 0x1b, 0xc9, 0x83, 0xc1, 0x64, 0x48, 0x8b, 0x45,
+         0x58, 0x89, 0x08, 0x48, 0x83, 0xc4, 0x20, 0x5d, 0xc3});
+  // The setjmp and local unwind imports' stubs.
+  D[0x178] = 0xc3;
+  D[0x180] = 0xc3;
+  Img.Segments.push_back(std::move(Text));
+  Section Code;
+  Code.Name = ".text";
+  Code.VA = Entry;
+  Code.Size = 0x181;
+  Code.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Img.Sections.push_back(std::move(Code));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry, 0x4f));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x60, 1));
+  Img.Symbols.push_back(Symbol::makeFunc(Entry + 0x68, 4));
+  Img.Symbols.push_back(Symbol::makeFunc(Funclet, 0x20));
+  Import LocalUnwind;
+  LocalUnwind.Name = "_local_unwind";
+  LocalUnwind.Module = "VCRUNTIME140.dll";
+  Img.Imports.push_back(LocalUnwind);
+  EXPECT_TRUE(Img.recordImportStub(LocalUnwindStub, 0));
+  Import Setjmp;
+  Setjmp.Name = "__intrinsic_setjmpex";
+  Setjmp.Module = "VCRUNTIME140.dll";
+  Img.Imports.push_back(Setjmp);
+  EXPECT_TRUE(Img.recordImportStub(Entry + 0x178, 1));
+
+  ExceptionFunction Parent;
+  Parent.CodeRange = {Entry, Entry + 0x4f};
+  Parent.Encoding = ExceptionEncoding::X64UnwindV1;
+  Parent.UnwindVersion = 1;
+  Parent.UnwindFlags = 3;
+  Parent.PrologueSize = 0x0a;
+  Parent.Personality = ExceptionPersonality::CSpecificHandler;
+  Parent.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::AllocateSmall, 0x0a, 0x40));
+  Parent.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::PushNonVolatile, 6, 0, 3));
+  Parent.SEH.emplace();
+  SEHScopeRecord Finally;
+  Finally.GuardedRange = {Entry + 0x27, Entry + 0x43};
+  Finally.Kind = SEHScopeKind::Finally;
+  Finally.FilterOrFinallyVA = Funclet;
+  Finally.HandlerVA = Funclet;
+  Parent.SEH->Scopes.push_back(Finally);
+  Img.ExceptionMetadata.Functions.push_back(std::move(Parent));
+
+  ExceptionFunction Handler;
+  Handler.CodeRange = {Funclet, Funclet + 0x20};
+  Handler.Encoding = ExceptionEncoding::X64UnwindV1;
+  Handler.UnwindVersion = 1;
+  Handler.PrologueSize = 6;
+  Handler.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::AllocateSmall, 6, 0x20));
+  Handler.UnwindOperations.push_back(
+      unwindOp(UnwindOperationKind::PushNonVolatile, 2, 0, 5));
+  Img.ExceptionMetadata.Functions.push_back(std::move(Handler));
+  Img.ExceptionMetadata.rebuildIndex();
+  return Img;
+}
+
 size_t occurrences(const std::string &Text, const std::string &Needle) {
   size_t Count = 0;
   for (size_t At = Text.find(Needle); At != std::string::npos;
@@ -828,6 +963,22 @@ TEST(SEHLocalUnwind, AnUnmaskedFrameInTheCookieSlotKeepsTheCall) {
   // it is: the slot is written another way.
   const std::string P =
       parentText(decompileHighC(makeCookieImage(CookieShape::Unmasked)));
+  ASSERT_FALSE(P.empty());
+  EXPECT_NE(P.find("_local_unwind"), std::string::npos) << P;
+}
+
+TEST(SEHLocalUnwind, AnAuthenticatedSetjmpTakesTheFrame) {
+  // The runtime's setjmp keeps the frame in the jump buffer, where only
+  // longjmp reads it to unwind back here: the saved-frame slot certifies.
+  const std::string P = parentText(decompileHighC(makeSetjmpImage(true)));
+  ASSERT_FALSE(P.empty());
+  EXPECT_EQ(P.find("_local_unwind"), std::string::npos) << P;
+}
+
+TEST(SEHLocalUnwind, AFrameAFunctionOfTheImageReadsKeepsTheCall) {
+  // The same frame handed to code of the image that reads it may reach the
+  // saved-frame slot: the call keeps its runtime form.
+  const std::string P = parentText(decompileHighC(makeSetjmpImage(false)));
   ASSERT_FALSE(P.empty());
   EXPECT_NE(P.find("_local_unwind"), std::string::npos) << P;
 }

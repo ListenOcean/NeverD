@@ -13041,7 +13041,9 @@ no callee's home area may reach, and that no out-of-line filter or termination
 handler of the function writes through its EstablisherFrame: each handler's
 body must be in the view, and one that stores through frame arithmetic it
 cannot bound refuses. TargetFrame, the body's stack pointer and the slot's
-address may reach only that slot, the runtime and the handlers; any other
+address may reach only that slot, the runtime (the local unwind, and an
+authenticated setjmp, which keeps the frame in its jump buffer for
+longjmp's unwind) and the handlers; any other
 escape refuses the function, whose calls keep their runtime form. The one
 other place the frame may go is the GS cookie: XORed with a value that holds
 no frame, it may be stored to the slot the function's GS data places

@@ -186,6 +186,10 @@ struct UseEvent {
   bool Call = false;
   /// A call of the authenticated local unwind routine.
   bool Runtime = false;
+  /// A call of an authenticated runtime routine the frame may reach: the
+  /// local unwind, or setjmp, which keeps it in the jump buffer for
+  /// longjmp's unwind.
+  bool TakesFrame = false;
   std::vector<Val> Args;
   Val SP;
   va_t Return = InvalidVA;
@@ -254,6 +258,15 @@ llvm::StringRef runtimeRoutine(const BinaryImage &Img, const LowOp &Op) {
       !coff_loader::isX86ContinuationRuntimeProvider(Imported->Module))
     return {};
   return stripLeadingUnderscores(Imported->Name);
+}
+
+/// Whether a direct call enters an authenticated setjmp, which stores the
+/// frame it receives in the jump buffer, where only longjmp reads it to
+/// unwind back to this frame.
+bool takesFrame(const BinaryImage &Img, const LowOp &Op) {
+  const llvm::StringRef Name = runtimeRoutine(Img, Op);
+  return Name == "intrinsic_setjmp" || Name == "intrinsic_setjmpex" ||
+         Name == "setjmp" || Name == "setjmpex";
 }
 
 bool Interpreter::isRuntime(const LowOp &Op) const {
@@ -453,6 +466,7 @@ bool Interpreter::transfer(const LowBlock &Block, State &S, bool Record,
         Use.Seq = Op.Seq;
         Use.Call = Op.Opcode != NdOp::INTRINSIC;
         Use.Runtime = isRuntime(Op);
+        Use.TakesFrame = Use.Runtime || takesFrame(Img, Op);
         if (Use.Call) {
           for (uint64_t Reg : TRI.integerParamRegs(BinaryFormat::COFF))
             Use.Args.push_back(read(S, NdVar::reg(Reg, Pointer)));
@@ -657,7 +671,7 @@ llvm::Error checkHandler(const LowFunc &Handler, const TargetRegInfo &TRI,
   for (const UseEvent &Use : Interp.Uses) {
     if (!charge(Work, Use.Args.size() + 1))
       return refuse("work budget exhausted in " + Name);
-    if (Use.Runtime)
+    if (Use.TakesFrame)
       continue;
     for (const Val &Arg : Use.Args)
       if (Escapes(Arg))
@@ -810,7 +824,7 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
           return refuse("a callee's home area holds the saved frame at " +
                         hex(Use.At));
       }
-      if (Use.Runtime)
+      if (Use.TakesFrame)
         continue;
       for (const Val &Arg : Use.Args)
         if (Escapes(Arg))
