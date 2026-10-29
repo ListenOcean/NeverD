@@ -34,6 +34,7 @@
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <cstddef>
 #include <cstdint>
 #include <map>
 #include <optional>
@@ -41,6 +42,7 @@
 #include <string>
 #include <tuple>
 #include <utility>
+#include <variant>
 #include <vector>
 
 namespace neverd {
@@ -135,10 +137,28 @@ struct AbiCallContext {
   const MedBlockIdIndex *Blocks = nullptr;
 };
 
+/// An original scalar or an index into CallSetupStackJoins::Nodes. Plans use
+/// no SSA identity until a required argument actually consumes them.
+using CallSetupStackValue = std::variant<MedVar, size_t>;
+struct CallSetupStackJoin {
+  int BlockId;
+  uint16_t Bytes;
+  std::vector<std::pair<int, CallSetupStackValue>> Args;
+};
+struct CallSetupStackJoins {
+  std::vector<CallSetupStackJoin> Nodes;
+  std::map<int64_t, size_t> Slots;
+};
+
 /// Outgoing scalar stores that agree along every predecessor path
 /// to a call. Unknown writes, calls, independent entries and cycles stop the
 /// proof. Offsets are relative to the call's SP, using its exact SSA basis.
-std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C);
+/// When requested, Joins keeps complete same-width definitions through nested
+/// joins. Nodes refer only to earlier nodes, and Slots names the final roots.
+/// The caller materializes only the nodes a required argument reaches.
+std::map<int64_t, MedVar>
+callSetupStackStores(const AbiCallContext &C,
+                     CallSetupStackJoins *Joins = nullptr);
 
 /// Every reaching path leaves this incoming argument register untouched.
 bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex);

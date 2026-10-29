@@ -12,10 +12,13 @@
 #include "neverd/ir/low/LowIR.h"
 #include "neverd/ir/low/SourceCallOccurrence.h"
 
+#include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLFunctionalExtras.h"
 
+#include <cstddef>
 #include <map>
 #include <optional>
+#include <set>
 
 namespace neverd {
 
@@ -57,6 +60,13 @@ constantRegisterCallTargets(const LowFunc &Function);
 /// independent-root facts. A cache hit cannot change the target proof.
 std::map<SourceCallOccurrenceKey, va_t>
 constantRegisterCallTargets(const CallRegisterBodyView &Function);
+
+/// Bitwise operations whose exact scalar operand absorbs the other input.
+/// Reuses the call-value reader's byte facts, without predecessor or address
+/// constants. Calls and opaque effects invalidate facts. Results borrow the
+/// unchanged operations and consume a shared work allowance.
+std::set<const LowOp *>
+lowBlockAbsorbingConstants(llvm::ArrayRef<LowBlock> Blocks, size_t &Remaining);
 
 } // namespace neverd
 

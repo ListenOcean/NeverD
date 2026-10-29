@@ -495,6 +495,16 @@ enum class Intrinsic : uint16_t {
   X87Frstor16,
   X87Fnsave16,
 
+  // Append-only: one locked logical transaction returns its completed flags.
+  X86LockedAnd,
+  X86LockedOr,
+  X86LockedXor,
+
+  // Append-only: one locked bit-string update returns the original bit.
+  X86LockedBts,
+  X86LockedBtr,
+  X86LockedBtc,
+
   _Count = 16000
 };
 
@@ -533,7 +543,9 @@ enum class X86SystemStateKind : uint8_t {
   SegmentedBlock,
   CacheZero,
   TransactionAbort,
-  SecureLaunch
+  SecureLaunch,
+  LockedLogic,
+  LockedBit
 };
 
 struct X86SystemStateContract {

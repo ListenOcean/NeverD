@@ -1678,6 +1678,61 @@ TEST(LLVMCIntrinsicSemantics, RepMovsRejectsUnprovedContracts) {
 }
 
 TEST(LLVMCIntrinsicSemantics,
+     TimestampPairRetainsUnusedReadsAndChecksContracts) {
+  for (bool Live : {false, true})
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      llvm::LLVMContext C;
+      llvm::Module M("rdtscp", C);
+      M.setDataLayout("e-p:64:64-i64:64");
+      llvm::IRBuilder<> B(C);
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), false),
+          llvm::GlobalValue::ExternalLinkage, "sample", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+      auto *Native = llvm::Intrinsic::getOrInsertDeclaration(
+          &M, llvm::Intrinsic::x86_rdtscp);
+      auto *Call = B.CreateCall(Native);
+      B.CreateRetVoid();
+      switch (Mutation) {
+      case 1:
+        Call->setMemoryEffects(llvm::MemoryEffects::none());
+        break;
+      case 2:
+        Call->setCallingConv(llvm::CallingConv::Fast);
+        break;
+      case 3:
+        Call->addFnAttr(llvm::Attribute::Speculatable);
+        break;
+      case 4:
+        Call->addFnAttr(llvm::Attribute::NoReturn);
+        break;
+      }
+      if (Mutation) {
+        EXPECT_THROW(renderX86TimestampCall(Arch::X64, *Call, "answer", Live),
+                     std::invalid_argument);
+        continue;
+      }
+      const auto Rendered =
+          renderX86TimestampCall(Arch::X64, *Call, "answer", Live);
+      ASSERT_TRUE(Rendered);
+      EXPECT_NE(Rendered->Code.find("__rdtscp(&"), std::string::npos);
+      EXPECT_EQ(Rendered->Code.find("llvm_x86_rdtscp"), std::string::npos);
+      EXPECT_THROW(renderX86TimestampCall(Arch::AArch64, *Call, "answer", Live),
+                   std::invalid_argument);
+      if (Live) {
+        EXPECT_NE(Rendered->Code.find("answer.field_0"), std::string::npos);
+        EXPECT_NE(Rendered->Code.find("answer.field_1"), std::string::npos);
+      } else {
+        const auto Source = emit(M);
+        EXPECT_NE(Source.find("__rdtscp(&"), std::string::npos);
+        compileAndCheck("#include <stdint.h>\n#include <x86intrin.h>\n" +
+                            Source + "\nint main(void) { sample(); return 0; }",
+                        false, {}, "-O2");
+      }
+    }
+}
+
+TEST(LLVMCIntrinsicSemantics,
      LocalAddressKeepsTargetIntrinsicAndInitializesResult) {
   llvm::LLVMContext C;
   llvm::Module M("localaddress", C);

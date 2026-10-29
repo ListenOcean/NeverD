@@ -1517,6 +1517,11 @@ struct LowFunc {
   std::vector<va_t> CodeRefTargets;
 
   LowBlock *blockFor(va_t Addr) {
+    // Overlapping x86 instruction streams can share bytes. An exact entry
+    // belongs to its own stream even when an earlier instruction covers it.
+    for (auto &B : Blocks)
+      if (Addr == B.StartAddr)
+        return &B;
     for (auto &B : Blocks)
       if (Addr >= B.StartAddr && Addr < B.EndAddr)
         return &B;

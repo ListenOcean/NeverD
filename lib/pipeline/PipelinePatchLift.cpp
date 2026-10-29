@@ -278,6 +278,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
   settleReturnContracts(Img, Result, Opts.SourceProjection ? Dbg : nullptr);
 
   recoverModuleCallAbi(Img, Result, AllFuncNames,
+                       Opts.SourceProjection && !Opts.PatchMode,
                        Opts.SourceProjection && !Opts.PatchMode);
 
   remodelStructReturnForwarderCalls(Img, Result);
@@ -323,7 +324,7 @@ bool Pipeline::runPatchLiftMode(const BinaryImage &Img, llvm::LLVMContext &Ctx,
     return true;
 
   if (medStackProjection(Opts) == MedStackProjection::Source) {
-    prepareRecoveredSourceStackAccesses(Img, Result);
+    prepareRecoveredSourceStackAccesses(Img, Result, Result.LowFuncs);
     // The proof can refuse a requested function, or every one.
     if (!refuseObservedCallReturnReads(Img, Result, refusalFailsRun(Opts),
                                        Dbg) ||

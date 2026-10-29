@@ -1141,7 +1141,8 @@ TEST(X86LegacyAtomic, NeutralLogicStillRequiresTheCompleteWritableAccess) {
     }
 }
 
-TEST(X86LegacyAtomic, NeutralLogicDoesNotAdmitOtherValuesOrElision) {
+TEST(X86LegacyAtomic,
+     NeutralLogicSeparatesNativeTransactionsAndRejectsElision) {
   for (Arch Target : {Arch::X86, Arch::X64})
     for (unsigned Group : {1u, 4u, 6u}) {
       const auto Base = neutralLogicBytes(Group, 4);
@@ -1164,6 +1165,18 @@ TEST(X86LegacyAtomic, NeutralLogicDoesNotAdmitOtherValuesOrElision) {
                   static_cast<int>(Bytes.size()));
         std::vector<LowOp> Ops(1);
         Ops[0].Opcode = NdOp::COPY;
+        if (Target == Arch::X64 && Bytes == Changed) {
+          ASSERT_NO_THROW(Decode.liftToLow(Instruction, Ops));
+          const auto Id = Group == 1   ? Intrinsic::X86LockedOr
+                          : Group == 4 ? Intrinsic::X86LockedAnd
+                                       : Intrinsic::X86LockedXor;
+          const auto *Transaction = findIntrinsic(Ops, Id);
+          ASSERT_NE(Transaction, nullptr);
+          EXPECT_EQ(Transaction->MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          EXPECT_EQ(findAtomic(Ops, NdOp::ATOMIC_ADD), nullptr);
+          continue;
+        }
         EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
         ASSERT_EQ(Ops.size(), 1u);
         EXPECT_EQ(Ops[0].Opcode, NdOp::COPY);
@@ -1171,7 +1184,7 @@ TEST(X86LegacyAtomic, NeutralLogicDoesNotAdmitOtherValuesOrElision) {
     }
 }
 
-TEST(X86LegacyAtomic, UnsupportedLockedArithmeticCannotBecomePlainStores) {
+TEST(X86LegacyAtomic, LockedArithmeticRequiresAnOwnedTransaction) {
   for (Arch Target : {Arch::X86, Arch::X64})
     for (bool Strict : {false, true}) {
       Decoder Decode;
@@ -1192,6 +1205,27 @@ TEST(X86LegacyAtomic, UnsupportedLockedArithmeticCannotBecomePlainStores) {
                   static_cast<int>(Bytes.size()));
         std::vector<LowOp> Ops(1);
         Ops[0].Opcode = NdOp::COPY;
+        if (Target == Arch::X64 &&
+            (Bytes[1] == 0x21 || Bytes[1] == 0x09 || Bytes[1] == 0x31)) {
+          ASSERT_NO_THROW(Decode.liftToLow(Instruction, Ops));
+          const auto Id = Bytes[1] == 0x21   ? Intrinsic::X86LockedAnd
+                          : Bytes[1] == 0x09 ? Intrinsic::X86LockedOr
+                                             : Intrinsic::X86LockedXor;
+          const auto *Transaction = findIntrinsic(Ops, Id);
+          ASSERT_NE(Transaction, nullptr);
+          EXPECT_EQ(Transaction->MemoryOrdering,
+                    NdMemoryOrdering::SequentiallyConsistent);
+          EXPECT_EQ(Transaction->Output.Size, 4u);
+          EXPECT_EQ(Transaction->NumInputs, 3u);
+          EXPECT_EQ(Transaction->Inputs[2].Size, 4u);
+          EXPECT_EQ(std::count_if(Ops.begin(), Ops.end(),
+                                  [](const LowOp &Op) {
+                                    return Op.Opcode == NdOp::LOAD ||
+                                           Op.Opcode == NdOp::STORE;
+                                  }),
+                    0);
+          continue;
+        }
         EXPECT_THROW(Decode.liftToLow(Instruction, Ops), UnliftedInstruction);
         ASSERT_EQ(Ops.size(), 1u);
         EXPECT_EQ(Ops[0].Opcode, NdOp::COPY);

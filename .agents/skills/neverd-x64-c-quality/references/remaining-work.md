@@ -12,6 +12,52 @@ configurations remain separate coverage.
 
 ## Open
 
+The x64 kernel call table now includes the 107 additional bundled DDK native
+service declarations whose parameter widths agree with the bundled native
+headers. Reverse inventory tests require exact arity and width coverage.
+`ZwFlushInstructionCache` remains excluded because the DDK declares its length
+as `ULONG` while the native headers declare `SIZE_T`. Ordinary wrappers use
+these fixed service contracts to bound incidental dispatcher register reads.
+Caller execution checks cover narrow register inputs, stack arguments and empty
+signatures through both C routes at O0/O2. A generic exported routine's actual
+body reads beyond a user prototype remain observable.
+
+Explicit state C and its exact byte/state manifest are now available through `neverd decompile --x64-continuation` and `neverd_x64_continuation_source_v1`. The bounded driver stops for environment-owned calls and exits; this does not establish an ordinary kernel function ABI. See [the invocation contract](../../../../docs/x64-continuation-source.md).
+
+Manifest schema 2 names entry-region selection facts `lowir_*` and records
+`ordinary_source_validation: "not-run"`. Selection defers MedIR; an accepted
+LowIR region may still fail ordinary call/return or ABI validation. Do not use
+its disposition to claim that ordinary source recovery succeeded.
+
+The explicit state route now admits audited legacy XMM XOR, register MOVD/MOVQ,
+byte-lane shifts, 64-bit products, scalar exchanges and locked updates. Complete
+state/memory execution checks cover both C routes, arbitrary arithmetic flags,
+preserved upper vector lanes and negative bit-string indices. LOCK BTS/BTR/BTC
+retain one ordered transaction and its old-bit result instead of an unlocked
+load/store pair. Unknown encodings and environments retain explicit boundaries.
+LLVM C absolute guest stores use an integer address carrier so host object-size
+inference does not invent a zero-sized object at a high-half machine address.
+
+Explicit x64 kernel continuation source carries GPRs, flags, vector bytes,
+segment bases, the physical stack and native-boundary requests. Its V4 layout
+adds CR2 with all other banks preserved. Explicit opt-ins bind segment-base
+MSRs to the same live FS/GS cells and retain native speculation-control MSR
+writes and descriptor queries; public CPL0 KVM fixtures execute both C routes.
+A native CR3 binding preserves real mapping changes and repeated-write TLB
+invalidation. V5 records SYSRETQ's complete return RIP, flags, STAR-derived
+selectors and hidden CS/SS caches; it exits before user execution. Native
+instruction comparisons cover 585 return inputs through both C routes at O0/O2.
+V6 adds successful 64-bit IRETQ and CPL0 INT3 transitions with live descriptor tables, IST selection, segment invalidation and NMI state. Both C routes match native instructions, including descriptor/frame aliases and read-only accessed descriptors. Fault delivery, compatibility returns and ordinary kernel entry ABI recovery remain open.
+Native x64 LOCK AND/OR/XOR now retain one ordered memory transaction and its defined flags in both C routes. This restores callee summaries previously lost at these instructions; it does not supply an ordinary ABI for physical kernel continuations.
+Native timestamp and PREFETCHW bindings are also explicit opt-ins. Its V3 SMAP profile adds a live AC bit and audited STAC/CLAC transitions under an explicit
+nonfaulting supervisor domain. Earlier profiles retain their AC restriction.
+Source execution checks compare the complete state, including refusal paths;
+refinement checks require final AC equality even without a return-value
+observer. This interface still requires a native environment for unsupported
+system effects. Ordinary source recovery still needs a proof connecting a
+service selector and its physical transfer frame to a source call contract;
+the shared dispatcher's union of machine-register reads cannot provide it.
+
 LLVM function-name disambiguation also reserves generated address suffixes.
 A real symbol using that suffix cannot absorb another function's body or
 redirect its callers. Chained collisions and reversed input order preserve
@@ -22,8 +68,8 @@ Neutral immediate locked logic now keeps one ordered read-modify-write and
 its defined logical flags across both C routes. HighC retains explicit atomic
 result types when rendering signed comparisons. Public execution regressions
 cover all scalar widths, formats, offsets and optimization levels; this does
-not supply missing entry-frame state or a general model for other locked
-logical operands, MMIO or concurrency.
+not supply missing entry-frame state or a general model for MMIO or concurrency. Other x64 locked logical operands
+use the separately audited native intrinsic contract.
 
 LLVM C compare-exchange now retains the old value, success flag and memory
 effect at the original instruction position. Native 8/16/32/64-bit integers
@@ -226,23 +272,27 @@ trap that LLVMC's later cleanup already removed; both routes execute the public
 preserving-callee case. Opaque calls and unmodeled entry observers retain state.
 Pure POPCOUNT steps used to compute x86 parity no longer prevent an otherwise
 complete explicit scratch overwrite proof; trapping operations still do.
-Physical CALL return-slot writes remain barriers: they are absent from the C
-frame projection. Discarding an old save solely because CALL overwrites its
-bytes can turn a later return-slot read into an uninitialized C value. A full
-source projection of the new return-address value is required before admitting
-that optimization; runtime code-address relocation remains a separate proof.
-Shared source preparation now rejects exact x86/x64 loads reached by those
-unrepresented physical CALL writes, including when the old frame content is a
-known constant. Complete later stores permit the read; partial writes, joins,
-loops and unknown call positions retain the diagnostic. Both source routes use
-the same bounded check. This closes stale-value success, not the missing
-machine-state/continuation source ABI, unresolved aliases or native proof.
+Physical CALL return-slot writes are materialized only when their exact
+entry-relative slots lie in the bounded reconstructed frame. The original
+instruction supplies its complete return word; partial later writes retain
+its other bytes. Planning is transactional, and validation rechecks the current
+bytes, stack coordinate and immediately preceding store. This supplies no
+relocated code identity or callee-preservation proof. Unrepresented writes
+retain the shared deferred observation check after call and return recovery;
+unknown stack positions, unresolved aliases and observed stale bytes remain
+refused. Physical stack switches still require the explicit continuation ABI.
 The shared stack-address owner also recognizes canonical zero-extended
 32-bit memory-address containers. This closes the i386 observation gap without
 treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
 Post-recovery Win64 scalar leaf borrows now have a shared complete-use proof.
+The read intervals also retain their operation positions, so a partial overwrite
+before every borrow or local read can remove an older spill without erasing its
+unwritten neighbors. Dead or omitted stores do not kill bytes. Omitted callee
+body requests include positive incoming-home addresses through the same checked
+private extent owner. Nested callees and physical machine-state captures still
+need separate evidence; the public leaf tests do not close those original gaps.
 Only unread private bytes can lose their stores; negative offsets, implicit
 register inputs and source call home areas retain observations. SSA version
 zero alone is not an incoming register. Nested callees, incoming pointer stack
@@ -250,6 +300,68 @@ parameters and opaque external effects remain unsupported by this proof. The
 ntos `StDmpSinglePageAdd` gap therefore still requires broader authenticated
 pointer effects and per-slot incoming argument reads; a leaf fixture is not
 evidence that this original function is fixed.
+Complete mapped data-object reads no longer block a proved full overwrite of
+private spill bytes. The read itself remains; fragments, conflicting owners,
+ordered accesses and arbitrary external pointers retain the barrier. Scalar
+absorbing masks share their Low/Med identity and never freeze relocated address
+constants. Post-recovery source preparation can also replace an unobserved
+Win64 register argument with zero while retaining every parameter position.
+Its full-use and physical-register walks reject partial writes, exceptional
+observers, another register's implicit input and stale unread-call evidence.
+SDK single-function LLVM queries repeat the shared proof after rebuilding
+CallInfos, using borrowed LowIR coverage instead of copying the image's bodies.
+Source observation now composes through current direct calls: a caller may
+retain only the low prefix of an incoming register when every higher-byte use
+is a proved discarded spill, identity transport or another proved unread
+source input. Dependency waves begin without optimistic recursive assumptions,
+share bounded work and leave cached bodies immutable. A source-only request
+mode extends the existing bounded omitted-body reader for partial-register
+candidates; it is part of that reader's cache identity. Both emitters and SDK
+replay consume the same post-recovery CallInfos. Exact scalar prefix slices
+through COPY/CONCAT/SUBBYTES/ZEXT can choose zero for unobserved high bytes;
+unknown retained bytes, address constants and producer effects stay intact.
+Full-register forwarding wrappers now enter that same bounded proof even when
+they have no local spill or narrow register view. One shared admission predicate
+serves omitted-body discovery, original CFG retention and proof scheduling.
+Multi-level forwarding still requires each descendant's actual destruction
+proof before a later opaque call; admission alone supplies no unused-input fact.
+A source-dead input can now end at a separately checked overwrite on every
+original CFG path. The bounded signature memo retains operations and edges for
+spill and partial-register candidates, without duplicating instruction boundaries;
+a full reset with no prior byte read is stronger than a discarded source restore.
+Exact branch/fallthrough targets and reciprocal edges must agree. Copies into
+registers/temporaries, partial writes, stale occurrences, exceptional edges and
+cycles or returns before destruction remain conservative. A callee's may-write
+mask alone proves nothing about
+input destruction. Both C routes and SDK replay share this fact, and restoring
+an older SSA value after an overwrite reopens its implicit observations.
+Promoted stack loads require exact original entry coordinates outside spill/home
+storage and inside a current parameter; calls and branches end that address
+prefix. A separately tracked numeric register can supply an absorbing mask,
+but provenance, overlapping writes and opaque effects invalidate it.
+Win64 call assembly also preserves a later recovered stack parameter when the
+earlier summary lists only its used register prefix. Unused positional gaps
+stay padding; required missing values retain their unknown state.
+Complete straight-line Win64 wrappers now have a separate proof for unused
+positional stack slots. Original byte reads, exact nonescaping SP offsets and
+fixed nested-call home/argument ranges must all exclude the slot. Selected,
+omitted and SDK queries share the result; general CFGs, exceptional observers,
+escaped frame addresses and unbounded calls still require independent proofs.
+These source facts do not rewrite the native ABI or compact its argument slots.
+Late debug symbols now refresh cached unknown Windows personalities. Language
+decode provenance permits replacing stale classification diagnostics while
+retaining unwind/directory faults and malformed payloads. A resolved standalone
+GS handler still observes its cookie; naming it grants no unused-input proof.
+A complete unaligned x64 GS record without a frame register now admits the
+stronger original-code destruction proof when the cookie lies beyond a nested
+call's home/private area. That proof rejects every original copy or spill of
+the input before destruction, even a store already removed from MedIR. It
+preserves the cookie and ordinary call effects. Wrapped handlers, overlapping
+cookie storage, aligned or frame-register cookies, incomplete metadata and
+unproved descendant effects remain barriers. This is source input
+noninterference, not native Windows exception execution qualification.
+LLVMC import naming also retains nonzero GEP offsets within IAT
+objects; stripping those offsets could select a different imported routine.
 HighIR now keeps the shared direct-call argument boundary: its secondary setup
 scan cannot append neighboring stack locals after a complete recovered list or
 replace an unavailable interior operand with a stale local. This removes a
@@ -770,6 +882,13 @@ conditional memory, invocation lifetime and both C routes remain open.
   statements. LLVMC preserves a goto projection when structure is uncertain.
 - Win64 call arguments use Microsoft register and stack rules. Debug types can
   improve names and display, but cannot authorize an unobserved argument.
+  Fixed direct scalar calls retain differing outgoing values with SSA PHIs
+  through nested joins when every predecessor supplies the same byte width.
+  A bounded plan allocates identities only for required arguments and their
+  dependencies. Missing stores, aliases, call barriers, cycles, conflicting
+  widths and exhausted work retain unknown arguments; loop-carried memory
+  needs further evidence. Original-byte/C execution covers nested joins,
+  pointers and byte/full-word values.
 - Assigned locals have declarations. HighC can print calls with unused results
   as statements; LLVMC retains their result assignments. PHI and register-home
   copies are printed only when their values are used.

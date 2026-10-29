@@ -655,4 +655,85 @@ TEST(MedConstantPropagation,
             EXPECT_EQ(RetainsOuter, Mutation != 0);
           }
 }
+TEST(MedConstantPropagation, AnnihilatingMaskKeepsMemoryEffectsAndProvenance) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::ELF, BinaryFormat::MachO, BinaryFormat::COFF})
+      for (bool Reverse : {false, true})
+        for (bool CopyMask : {false, true})
+          for (auto Provenance : {ConstantAddressProvenance::Scalar,
+                                  ConstantAddressProvenance::DataAddress}) {
+            SCOPED_TRACE(testing::Message()
+                         << unsigned(Architecture) << ':' << unsigned(Format)
+                         << ':' << Reverse << ':' << CopyMask << ':'
+                         << unsigned(Provenance));
+            const auto &TRI = getTargetRegInfo(Architecture);
+            const auto Width = TRI.PointerSize;
+            const auto Address = NdVar::reg(TRI.IntParamRegs.front(), Width);
+            const auto Loaded = NdVar::tmp(0, Width);
+            const auto Result = NdVar::reg(TRI.IntReturnReg, Width);
+            auto Mask = NdVar::cst(0, Width);
+            Mask.Provenance = Provenance;
+            LowFunc Low;
+            Low.Entry = 0x1000;
+            Low.Name = "annihilating_mask";
+            Low.Blocks.resize(1);
+            auto &Block = Low.Blocks.front();
+            Block.Id = 0;
+            Block.StartAddr = Low.Entry;
+            Block.EndAddr = Low.Entry + 4;
+            const auto Add = [&](NdOp Opcode, NdVar Output,
+                                 std::initializer_list<NdVar> Inputs) {
+              LowOp Op;
+              Op.Opcode = Opcode;
+              Op.Output = Output;
+              Op.Addr = Low.Entry;
+              for (const auto &Value : Inputs)
+                Op.addInput(Value);
+              Block.Ops.push_back(Op);
+            };
+            Add(NdOp::LOAD, Loaded, {Address});
+            Block.Ops.back().MemoryOrdering = NdMemoryOrdering::Acquire;
+            if (CopyMask) {
+              const auto Temporary = NdVar::tmp(1, Width);
+              Add(NdOp::COPY, Temporary, {Mask});
+              Mask = Temporary;
+            }
+            Add(NdOp::INT_AND, Result,
+                {Reverse ? Mask : Loaded, Reverse ? Loaded : Mask});
+            Add(NdOp::STORE, {}, {Address, Result});
+            Add(NdOp::RETURN, {}, {NdVar::cst(0, Width)});
+            const auto Med =
+                LowToMedConverter().convert(Low, Architecture, Format);
+            ASSERT_TRUE(verifyMedFunc(Med, "annihilating-mask"));
+            const auto &Ops = Med.Blocks.front().Ops;
+            const auto Store =
+                std::find_if(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+                  return Op.Opcode == NdOp::STORE;
+                });
+            ASSERT_NE(Store, Ops.end());
+            const MedVar *Stored = &Store->Inputs[1];
+            // A fold can leave one named COPY until the next substitution
+            // phase. Its scalar result must no longer depend on the load.
+            if (!Stored->isConst())
+              for (const auto &Op : Ops)
+                if (Op.Output == *Stored && Op.Opcode == NdOp::COPY &&
+                    Op.NumInputs == 1 && Op.Output.Size == Op.Inputs[0].Size) {
+                  Stored = &Op.Inputs[0];
+                  break;
+                }
+            EXPECT_EQ(Stored->isConst(),
+                      Provenance == ConstantAddressProvenance::Scalar);
+            if (Stored->isConst()) {
+              EXPECT_EQ(Stored->ConstVal, 0U);
+              EXPECT_EQ(Stored->Size, Width);
+              EXPECT_EQ(Stored->Provenance, ConstantAddressProvenance::Scalar);
+            }
+            EXPECT_TRUE(
+                std::any_of(Ops.begin(), Ops.end(), [](const MedOp &Op) {
+                  return Op.Opcode == NdOp::LOAD &&
+                         Op.MemoryOrdering == NdMemoryOrdering::Acquire;
+                }));
+          }
+}
 } // namespace
