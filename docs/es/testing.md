@@ -2367,3 +2367,7 @@ La regresión incluye reubicaciones ajenas de punteros a función en el mismo al
 ## Auditorías de lecturas canónicas de supervisor
 
 `InterpreterSpecialization.SupervisorRead*` usa la elevación estricta real y rechaza una auditoría degradada a `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` comprueba el límite de recuperación de los bytes originales y el rechazo continuado de pruebas nativas y envolturas de fuente.
+
+## Cobertura constante en expresiones OR/XOR
+
+`SymExprMask.ConstantCover*` comprueba exhaustivamente máscaras y entradas de cuatro bits, palabras de 8–257 bits, bits altos activos, fuentes profundas compartidas y rechazo por presupuesto de palabras o términos. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` comprueba un desplazamiento constante sin consultas al solucionador y un contraejemplo dependiente de la entrada. Ejecutar `NeverDSymbolicTests` y `NeverDInterpreterSpecializationTests`.

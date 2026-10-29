@@ -14948,3 +14948,7 @@ For source projection, `markSourceStackAccesses` can bind an x86 atomic addition
 ## Canonical supervisor-read audits
 
 Canonical `RDMSR` recovery requires the lifter’s `Complete` undefined-output audit, including the exact operation digest. A `Missing` audit is refused. Audit completeness does not grant supervisor execution, MSR accessibility, exception handling or native/source proof authority; the existing explicit nonfaulting kernel profile and complete instruction-bundle checks remain required.
+
+## Constant covers in OR/XOR expressions
+
+The shared OR builder can discard an XOR operand when the accumulated constant covers every bit that any XOR arm could set. This bounded proof inspects constants, explicit AND masks, and complements of OR expressions with a constant arm; it leaves deeper sources untouched. Full-width mask words and inspected terms share the existing subset budget. Unknown or uncovered bits and exhausted work retain the exact expression.

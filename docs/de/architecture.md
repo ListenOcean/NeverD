@@ -2078,3 +2078,7 @@ Bei der Quellprojektion bindet `markSourceStackAccesses` eine atomare Addition v
 ## Audits kanonischer Supervisor-Lesezugriffe
 
 Die Wiederherstellung von kanonischem `RDMSR` verlangt das `Complete`-Audit undefinierter Ausgaben des Lifters mit exaktem Operations-Digest und lehnt `Missing` ab. Ein vollständiges Audit erlaubt weder Supervisor-Ausführung, MSR-Zugriff, Ausnahmebehandlung noch native oder Quellcodebeweise. Das explizite fehlerfreie Kernelprofil und die Prüfung des vollständigen Instruktionsbündels bleiben erforderlich.
+
+## Konstante Bitabdeckung in OR/XOR-Ausdrücken
+
+Der gemeinsame OR-Konstruktor entfernt einen XOR-Operanden, wenn die angesammelte Konstante alle möglicherweise gesetzten Bits seiner Terme abdeckt. Der begrenzte Beweis prüft Konstanten, explizite AND-Masken und Komplemente von OR-Ausdrücken mit konstantem Term; tiefere Quellen bleiben unverändert. Maskenwörter und geprüfte Terme teilen das vorhandene subset-Budget. Unbekannte oder nicht abgedeckte Bits sowie erschöpftes Budget erhalten den exakten Ausdruck.

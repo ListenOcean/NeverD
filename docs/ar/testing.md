@@ -2292,3 +2292,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## تدقيق قراءات المشرف القياسية
 
 تستخدم اختبارات `InterpreterSpecialization.SupervisorRead*` الرفع الصارم الفعلي وترفض تخفيض التدقيق إلى `Missing`. يتحقق `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` من حدود استعادة البايتات الأصلية واستمرار رفض الإثبات الأصلي وتغليف المصدر.
+
+## تغطية البتات بثابت في تعبيرات OR/XOR
+
+يفحص `SymExprMask.ConstantCover*` جميع الأقنعة والمدخلات ذات أربعة بتات، والكلمات بعرض 8–257 بتًا، والبتات العليا الفعالة، والمصادر العميقة المشتركة، والرفض عند نفاد ميزانية الكلمات أو الحدود. يتحقق `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` من إزاحة ثابتة دون استعلامات للمحلل ومن مثال مضاد يعتمد على المدخل. شغّل `NeverDSymbolicTests` و`NeverDInterpreterSpecializationTests`.

@@ -2077,3 +2077,7 @@ En la proyección de código fuente, `markSourceStackAccesses` vincula una suma 
 ## Auditorías de lecturas canónicas de supervisor
 
 La recuperación de `RDMSR` canónico exige la auditoría `Complete` de salidas indefinidas del elevador, con el resumen exacto de operaciones, y rechaza `Missing`. La auditoría completa no autoriza ejecución de supervisor, acceso a MSR, manejo de excepciones ni pruebas nativas o de fuente. Se mantienen el perfil explícito de núcleo sin fallos y las comprobaciones del conjunto completo de operaciones de la instrucción.
+
+## Cobertura constante en expresiones OR/XOR
+
+El constructor OR compartido elimina un operando XOR cuando la constante acumulada cubre todos los bits que sus términos pueden activar. La prueba acotada inspecciona constantes, máscaras AND explícitas y complementos de OR con un término constante, sin expandir las fuentes profundas. Las palabras de la máscara y los términos inspeccionados comparten el presupuesto subset existente. Los bits desconocidos o no cubiertos y el presupuesto agotado conservan la expresión exacta.

@@ -2382,3 +2382,7 @@ Der Test umfasst auch unabhängige Funktionszeigerrelokationen im selben Speiche
 ## Audits kanonischer Supervisor-Lesezugriffe
 
 `InterpreterSpecialization.SupervisorRead*` verwendet das tatsächliche strikte Lifting und lehnt ein auf `Missing` herabgestuftes Audit ab. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` prüft die Wiederherstellungsgrenze anhand der Originalbytes sowie die weiterhin verweigerten nativen Beweise und Quellcode-Wrapper.
+
+## Konstante Bitabdeckung in OR/XOR-Ausdrücken
+
+`SymExprMask.ConstantCover*` prüft alle Vierbitmasken und Eingaben, Wörter mit 8–257 Bits, relevante hohe Bits, tiefe gemeinsame Quellen sowie Wort- und Termbudgetgrenzen. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` prüft einen konstanten Versatz ohne Solverabfragen und ein eingabeabhängiges Gegenbeispiel. `NeverDSymbolicTests` und `NeverDInterpreterSpecializationTests` ausführen.

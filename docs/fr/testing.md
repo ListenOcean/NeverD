@@ -2381,3 +2381,7 @@ La régression couvre aussi les relocations de pointeurs de fonction sans rappor
 ## Audits des lectures superviseur canoniques
 
 `InterpreterSpecialization.SupervisorRead*` utilise le lifting strict réel et refuse un audit dégradé à `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` vérifie la limite de récupération des octets originaux et le refus maintenu des preuves natives et de l’encapsulation source.
+
+## Couverture constante des expressions OR/XOR
+
+`SymExprMask.ConstantCover*` vérifie exhaustivement les masques et entrées sur quatre bits, les mots de 8–257 bits, les bits hauts utiles, les sources profondes partagées et les refus liés aux budgets de mots et de termes. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` vérifie un déplacement constant sans requête au solveur et un contre-exemple dépendant de l’entrée. Exécuter `NeverDSymbolicTests` et `NeverDInterpreterSpecializationTests`.
