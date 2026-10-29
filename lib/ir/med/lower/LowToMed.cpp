@@ -1590,6 +1590,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
     // selectors bind exactly as they would after the full pipeline.
     resolveSwitchSelectorPlans(Func);
     Func.SkippedSSA = true;
+    projectOriginalAddressSelectors(Func);
     return Func;
   }
 
@@ -1820,6 +1821,7 @@ MedFunc LowToMedConverter::convert(const LowFunc &SourceLow, Arch TheArch,
       debugVerifyMedFunc(Func, "foldImmutableTableScans");
     }
     resolveSwitchSelectorPlans(Func);
+    projectOriginalAddressSelectors(Func);
     resolveScalarAddressModels(Func,
                                Low.RelocatedInstructionScalarModelOccurrences);
     resolveI386GetPcModels(Func, Low.I386GetPcOccurrences);

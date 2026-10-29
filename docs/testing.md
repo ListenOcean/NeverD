@@ -2144,9 +2144,9 @@ reads, instruction-local temporary reuse, malformed records and exhausted
 budgets cannot publish an edge. Direct predecessor chains carry exact numeric
 and symbolic facts. Long irrelevant predecessor chains cannot invalidate a
 locally proved target by exhausting the work budget. A joined dispatch requires
-all incoming paths to agree;
-conflicting or undefined alternatives and independent continuation roots retain
-arbitrary incoming state. Repeated image loads participate in identities
+a complete target cover from every incoming path; differing proved constants
+can form one finite dispatch. Undefined alternatives and independent
+continuation roots retain arbitrary incoming state. Repeated image loads participate in identities
 only with the shared immutable-byte proof; writable lookalikes stay dynamic.
 `NeverDConstantBranchSourceTests` executes x64/ARM64 PE, ELF and Mach-O source
 through HighC and LLVM C, with pipeline optimization enabled and disabled,
@@ -2154,6 +2154,20 @@ O0/O2 compilation and UBSan. These host executions do not certify native ARM64
 hardware or Windows drivers. The shared symbolic integer translator also
 serves jump-table proofs; run `NeverDJumpTableTests` and
 `NeverDLowInstructionBoundaryTests` when changing it.
+
+`NeverDFiniteScalarBranchTests` covers table-free arithmetic dispatches on
+x86/x64/AArch64 across COFF, ELF and Mach-O. Sparse masks, modular arithmetic,
+partial writes, clobbers, instruction-local temporaries, exhausted budgets,
+foreign entries, late C++ roots and edges that bypass a mask must retain the
+complete-cover contract. Logical dispatches acquire no storage authority.
+`NeverDFiniteScalarBranchSourceTests` executes every case of independently
+authored x64/ARM64 arithmetic and joined-constant controls through both C
+routes, with pipeline optimization on/off, O0/O2 and UBSan. It also checks
+that a simultaneous pointer store keeps its code-address identity and that
+skipped SSA cannot publish a numeric selector. Broader regressions include
+`NeverDJumpTableTests`, `NeverDLowInstructionBoundaryTests`,
+`NeverDHighControlFlowTests`, `NeverDMachOPointerRelocationBoundaryTests` and
+`NeverDNativePointerRelocationBoundaryTests`.
 
 `NeverDImageAnalysisBoundaryTests` checks that constant and copy propagation
 preserve indirect-call values, literal pointer slots and ordinary arguments,

@@ -72,6 +72,16 @@ add_neverd_unittest(NeverDConstantBranchSourceTests
   LINK_COMPONENTS Pipeline BackendC
 )
 
+add_neverd_unittest(NeverDFiniteScalarBranchTests
+  core/FiniteScalarBranchTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
+add_neverd_unittest(NeverDFiniteScalarBranchSourceTests
+  core/FiniteScalarBranchSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
 add_neverd_unittest(NeverDIndirectCallValueSourceTests
   core/IndirectCallValueSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC

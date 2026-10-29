@@ -1333,7 +1333,8 @@ symbolic optimization or solver synthesis by default.
 A target proved independent of the current block's incoming state is tested
 first, so unrelated predecessors cannot consume its proof budget.
 Register facts may cross a unique decoded direct predecessor edge. At the
-first join, each direct incoming path must independently prove the same target.
+first join, each direct incoming path must independently prove a complete
+target cover; recovery unions those covers within the same finite-value cap.
 Earlier joins remain arbitrary inputs rather than recursively enumerated paths.
 Independent roots and exceptional entries stop the walk, and recovered
 indirect edges cannot supply their own proof. Only the traversed direct-edge
@@ -1345,6 +1346,26 @@ disassembly remains linear. The worker uses recovered bodies for function
 listings and replaces their linear reference-scan results, so skipped bytes do
 not swallow real code targets. Analyst Undefine overrides presentation inside
 a function without deleting the function or changing the original bytes.
+
+When a scalar target is not constant, the same expression builder can prove a
+bounded finite cover using shared operator evaluation and known bits. Every
+unknown-bit assignment is covered; sampling never proves completeness. The
+limits in `neverd/Limits.h` bound values, Cartesian products, depth and total
+work. Independent child covers may retain infeasible targets. Every target
+must belong to executable instruction storage, without entering another
+function or an overlapping decoded instruction. New edges revalidate the
+whole cover; an incomplete proof publishes no subset. Registered x86 C++
+resumptions retain dynamic branches until their later root closure participates
+in this proof.
+
+These table-free dispatches retain `INDIR_BR` and an exact selector occurrence
+with original-address case labels. They grant no physical table, table-load
+or relocation-suppression authority. `OriginalAddressSelector` tells
+Low-to-Med to create a numeric SSA view for that use, sharing the scalar shape
+authority and retaining observable code-address uses. Both C routes consume
+the resulting selector plan. Skipped SSA, cycles or exhausted projection work
+cannot publish that numeric plan; effects and memory observations are never
+replayed to create it.
 
 MedIR invariant and copy propagation share `canPropagateConstantToOperand`.
 A computed indirect-call target stays an SSA value even when its producer is

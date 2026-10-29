@@ -4582,7 +4582,7 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
   auto RememberPublishedJumpTables = [&]() {
     for (const auto &[Addr, Rec] : Insns)
       if (Rec.IsBranch && Rec.IsIndirect && !Rec.IsCall &&
-          !Rec.JumpTableTargets.empty())
+          !Rec.ScalarBranchInput && !Rec.JumpTableTargets.empty())
         EverPublishedJumpTableBranches.insert(Addr);
   };
   RememberPublishedJumpTables();
@@ -5054,7 +5054,8 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
     }
     CandidateAddrs.reserve(Insns.size());
     for (auto &[Addr, Rec] : Insns) {
-      if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall)
+      if (!Rec.IsBranch || !Rec.IsIndirect || Rec.IsCall ||
+          Rec.ScalarBranchInput)
         continue;
       auto Info = ResolvedTableInfo.find(Addr);
       const bool NeedsRevalidation = Info != ResolvedTableInfo.end() &&
@@ -6162,6 +6163,8 @@ void CFGBuilder::multiStageResolve(const BinaryImage &Img, Decoder &Dec,
       bool RemovedTableEdges = false;
       for (auto &[Addr, Rec] : Insns) {
         (void)Addr;
+        if (Rec.ScalarBranchInput)
+          continue;
         RemovedTableEdges |= !Rec.JumpTableTargets.empty();
         Rec.JumpTableTargets.clear();
       }

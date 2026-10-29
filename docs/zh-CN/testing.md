@@ -2203,7 +2203,7 @@ HFA 导入槽测试编译严格的 C 原型，并对头文件声明和本地声�
 
 ## 标量跳转验证
 
-`NeverDConstantBranchTests` 覆盖 x86/x64/ARM64 与 PE、ELF、Mach-O 的直接前驱、所有前驱一致的合流和不可变读取；冲突、未定义输入、调用破坏和独立入口保留动态跳转。`NeverDConstantBranchSourceTests` 在优化开启/关闭时，编译并执行 x64/ARM64 的两条 C 路线，覆盖 O0/O2 与 UBSan。纯整数函数体使用宿主标准头文件；这不等于原生 ARM64 或 Windows 驱动验证。worker 的独立 ELF x64 机器码对拍还检查冷启动导航、引用和被跳过的 E9 字节。
+`NeverDConstantBranchTests` 覆盖 x86/x64/ARM64 与 PE、ELF、Mach-O 的直接前驱、所有前驱一致的合流和不可变读取；未证明的备选、未定义输入、调用破坏和独立入口保留动态跳转。`NeverDConstantBranchSourceTests` 在优化开启/关闭时，编译并执行 x64/ARM64 的两条 C 路线，覆盖 O0/O2 与 UBSan。纯整数函数体使用宿主标准头文件；这不等于原生 ARM64 或 Windows 驱动验证。worker 的独立 ELF x64 机器码对拍还检查冷启动导航、引用和被跳过的 E9 字节。
 
 先验证当前基本块能独立证明的目标，避免无关前驱耗尽其工作预算。长前驱回归也验证这一边界。
 
@@ -2216,3 +2216,5 @@ MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计
 `NeverDLowScalarConstantTests` 和 `NeverDIndirectCallValueSourceTests` 覆盖跨块调用及拒绝边界，并执行两条 C 路线。`NeverDLLVMCSourcePointerTests` 在 O0/O2 加 UBSan 下检查对象指针、回调、别名和选中函数的外部声明。原生指针套件编译公开 MinGW 样例，拒绝 MSVCRT/UCRT 布局不符；这些不等于原生内核或 ARM64 执行验证。
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` 在 x64 COFF、ELF 和 Mach-O 下执行双向镜像复制，以及填充后复制。两条 C 路线均以 O0/O2 加 UBSan 编译运行，独立计算的结果检查每个复制字节；非 x64 主机明确跳过执行检查。
+
+`NeverDFiniteScalarBranchTests` 覆盖 x86/x64/AArch64 与 COFF/ELF/Mach-O 的无表算术分派、稀疏掩码、模运算、部分写入、调用破坏、临时量寿命、预算、外部入口和新增边。`NeverDFiniteScalarBranchSourceTests` 在优化开关、O0/O2、UBSan 下执行两条 C 路线的所有用例，并验证同时保存代码指针时的独立身份及跳过 SSA 的拒绝行为。

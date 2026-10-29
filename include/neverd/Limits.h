@@ -72,6 +72,12 @@ constexpr unsigned kMaxScalarBranchOptimalSynthesisAtoms = 2;
 constexpr size_t kMaxScalarBranchSymbolicRewriteWork = 8192;
 constexpr size_t kMaxScalarBranchSymbolicTableBytes = 65536;
 
+/// Finite scalar dispatch covers, including conservative child products.
+/// Larger domains and exhausted work preserve the original indirect branch.
+inline constexpr size_t kMaxScalarBranchFiniteValues = 64;
+inline constexpr size_t kMaxScalarBranchFiniteProducts = 4096;
+inline constexpr unsigned kMaxScalarBranchFiniteDepth = 64;
+
 /// Total register-byte, operand and graph work for bounded SGX/SMX leaf
 /// proofs, including revalidation after CFG discovery adds incoming edges.
 constexpr size_t kMaxX86BoundedLeafEvidenceWork = 262144;

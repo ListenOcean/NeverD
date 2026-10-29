@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Recovers exact constant branch targets before tail-call conversion.
+/// Recovers constant and finite scalar targets before tail-call conversion.
 /// Unknown live-ins, mutable loads and partial writes never invent facts.
 
 #include "LowScalarExpression.h"
@@ -19,6 +19,7 @@
 #include "llvm/ADT/SmallVector.h"
 
 #include <algorithm>
+#include <iterator>
 #include <map>
 #include <optional>
 #include <utility>
@@ -44,6 +45,12 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
     return false;
 
   bool Changed = false;
+  // Registered C++ runtime resumptions can add roots after this fixed point.
+  // Until that closure participates in finite-cover revalidation, retain its
+  // original dynamic branches instead of certifying the earlier graph.
+  const bool AllowFinite = Img.Arch != Arch::X86 || !Func.ExceptionMetadata ||
+                           !Func.ExceptionMetadata->Registration ||
+                           !Func.ExceptionMetadata->Cxx;
   // All image metadata is fixed throughout discovery. Cache failures as well
   // as successes so repeated instructions/rounds do not rescan the image.
   auto Spend = [&](size_t Work) {
@@ -77,6 +84,12 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
   auto Restore = [&](InsnRecord &Rec) {
     if (!Rec.ScalarBranchInput)
       return false;
+    if (Rec.IsIndirect) {
+      Rec.JumpTableTargets.clear();
+      Rec.ScalarBranchInput.reset();
+      Rec.RejectedScalarBranch = true;
+      return true;
+    }
     for (LowOp &Op : Rec.Ops)
       if (Op.Opcode == NdOp::BRANCH && Op.NumInputs == 1) {
         Op.Opcode = NdOp::INDIR_BR;
@@ -91,8 +104,9 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
     return false;
   };
 
+  using ScalarTargets = std::optional<std::vector<uint64_t>>;
   for (;;) {
-    std::map<va_t, std::optional<uint64_t>> Targets;
+    std::map<va_t, ScalarTargets> Targets;
     bool Complete = true;
     for (const LowBlock &Block : Func.Blocks) {
       if (!Spend(1)) {
@@ -168,8 +182,7 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
             break;
         }
       };
-      const auto EvaluatePath =
-          [&](const ScalarPath &Path) -> std::optional<uint64_t> {
+      const auto EvaluatePath = [&](const ScalarPath &Path) -> ScalarTargets {
         llvm::SmallVector<const InsnRecord *, 16> Instructions;
         for (auto It = Path.Blocks.rbegin(); It != Path.Blocks.rend(); ++It) {
           for (const LowInstructionBoundary &Boundary :
@@ -191,6 +204,7 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         if (!Complete)
           return {};
         std::optional<uint64_t> Target;
+        ScalarTargets FiniteTargets;
         // Byte facts preserve architectural subregister overlap exactly. Temps
         // have identities, not byte offsets, and live for one instruction only.
         std::map<uint64_t, uint8_t> Registers;
@@ -230,7 +244,8 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
               break;
             }
             if (Rec.IsBranch && !Rec.IsCond && !Rec.IsCall && !Rec.IsRet &&
-                !Rec.RejectedScalarBranch && Rec.JumpTableTargets.empty() &&
+                !Rec.RejectedScalarBranch &&
+                (Rec.JumpTableTargets.empty() || Rec.ScalarBranchInput) &&
                 Op.NumInputs == 1 &&
                 (Op.Opcode == NdOp::INDIR_BR ||
                  (Op.Opcode == NdOp::BRANCH && Rec.ScalarBranchInput))) {
@@ -297,6 +312,11 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
                     Operations,
                     Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
                     Terminator.Addr, RemainingWork, ReadImage);
+                if (!Target && AllowFinite)
+                  FiniteTargets = finiteScalarExpression(
+                      Operations,
+                      Terminator.ScalarBranchInput.value_or(Op.Inputs[0]),
+                      Terminator.Addr, RemainingWork, ReadImage);
                 Bounded = false;
                 break;
               }
@@ -316,7 +336,8 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
               break;
           }
         }
-        return Target;
+        return Target ? ScalarTargets{std::vector<uint64_t>{*Target}}
+                      : FiniteTargets;
       };
       ScalarPath Path;
       Path.Blocks.push_back(&Block);
@@ -331,10 +352,10 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
       }
       const LowBlock &Join = *Path.Blocks.back();
       if (Complete && !Target && Join.Preds.size() > 1 && !Independent(Join)) {
-        // A single join can contribute a value only when every direct incoming
-        // path proves the same result. Do not recursively enumerate earlier
-        // joins: their inputs remain arbitrary, avoiding exponential paths.
-        std::optional<uint64_t> Common;
+        // Every incoming path must supply a complete cover. Union these
+        // covers without recursively enumerating earlier joins, whose inputs
+        // remain arbitrary. No uncovered edge may borrow another's mask.
+        ScalarTargets Common{std::vector<uint64_t>{}};
         for (int P : Join.Preds) {
           ScalarPath Incoming = Path;
           if (!AppendPredecessor(Incoming, P)) {
@@ -343,11 +364,26 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
           }
           ExtendPath(Incoming);
           const auto Value = EvaluatePath(Incoming);
-          if (!Complete || !Value || (Common && *Common != *Value)) {
+          if (!Complete || !Value) {
             Common.reset();
             break;
           }
-          Common = Value;
+          // Prepay sorted-vector insertion, including shifting the existing
+          // cover. A failed union cannot publish only its earlier paths.
+          if (!Spend(Value->size() * (1 + Common->size() + Value->size()))) {
+            Complete = false;
+            Common.reset();
+            break;
+          }
+          for (uint64_t Bits : *Value)
+            if (!std::binary_search(Common->begin(), Common->end(), Bits))
+              Common->insert(
+                  std::lower_bound(Common->begin(), Common->end(), Bits), Bits);
+          if (Common->size() > limits::kMaxScalarBranchFiniteValues ||
+              (!AllowFinite && Common->size() > 1)) {
+            Common.reset();
+            break;
+          }
         }
         Target = Common;
       }
@@ -369,20 +405,40 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
 
     bool RoundChanged = false;
     std::vector<va_t> Explore;
-    for (const auto &[Addr, Target] : Targets) {
+    for (const auto &[Addr, Values] : Targets) {
       auto &Rec = Insns.at(Addr);
       // An exact transfer has the same reachability authority as a decoded
       // direct branch. A next-entry bound limits speculative address roots,
       // not discontiguous or backward control flow. explore() still keeps
       // independent function entries as tail calls and checks code ownership
       // for every instruction it reaches.
+      const bool Finite = Values && Values->size() > 1;
       const bool Valid =
-          Target && *Target != InvalidVA &&
-          (*Target % getInsnAlignment()) == 0 &&
-          Img.hasExecutableCodeOwnerRange(*Target, getInsnAlignment()) &&
-          Img.readVA(*Target, getInsnAlignment());
+          Values && !Values->empty() &&
+          std::all_of(Values->begin(), Values->end(), [&](uint64_t Target) {
+            if (Target == InvalidVA || Target % getInsnAlignment() != 0 ||
+                !Img.hasExecutableCodeOwnerRange(Target, getInsnAlignment()) ||
+                !Img.readVA(Target, getInsnAlignment()))
+              return false;
+            if (!Finite)
+              return true;
+            // A finite dispatch is an intra-function CFG, not a set of ABI
+            // calls. Do not grant it independent function entries or
+            // overlapping decodes.
+            if (Target != Func.Entry && isTailCallTarget(Target))
+              return false;
+            const auto Next = Insns.lower_bound(Target);
+            if (Next != Insns.begin()) {
+              const auto &Previous = std::prev(Next)->second;
+              if (Target - Previous.Addr < Previous.Size)
+                return false;
+            }
+            return true;
+          });
       if (Rec.ScalarBranchInput) {
-        if (!Valid || *Target != Rec.BranchTarget)
+        if (!Valid ||
+            (Rec.IsIndirect ? *Values != Rec.JumpTableTargets
+                            : Finite || Values->front() != Rec.BranchTarget))
           RoundChanged |= Restore(Rec);
         continue;
       }
@@ -392,13 +448,19 @@ bool CFGBuilder::recoverScalarConstantBranches(const BinaryImage &Img,
         if (Op.Opcode != NdOp::INDIR_BR || Op.NumInputs != 1)
           continue;
         Rec.ScalarBranchInput = Op.Inputs[0];
-        Op.Opcode = NdOp::BRANCH;
-        Op.Inputs[0] = NdVar::cst(*Target, Img.getPointerSize());
-        Rec.IsIndirect = false;
-        Rec.BranchTarget = *Target;
-        Rec.Immediate = *Target;
-        BlockStarts.insert(*Target);
-        Explore.push_back(*Target);
+        if (Finite)
+          Rec.JumpTableTargets = *Values;
+        else {
+          Op.Opcode = NdOp::BRANCH;
+          Op.Inputs[0] = NdVar::cst(Values->front(), Img.getPointerSize());
+          Rec.IsIndirect = false;
+          Rec.BranchTarget = Values->front();
+          Rec.Immediate = Values->front();
+        }
+        for (uint64_t Target : *Values) {
+          BlockStarts.insert(Target);
+          Explore.push_back(Target);
+        }
         RoundChanged = true;
         break;
       }
