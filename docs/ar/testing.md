@@ -2300,3 +2300,5 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## ذاكرة الصورة التي تصل إليها المؤشرات المتحركة
 
 ينفذ `CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` حلقات أمامية وخلفية ونسخاً وسيطة وتحويلات بنفس العرض ومسارات قراءة/كتابة أو كتابة فقط لـ COFF/ELF/Mach-O عند O0/O2 مع ASan/UBSan. يرفض `CursorStorageNeedsAnAddressPreservingMemoryPath` الثوابت العددية والمؤشرات المحمّلة وتقليل العرض والحساب دون استخدام للذاكرة؛ ويحافظ `DirectBoundedTablesKeepTheirExtent` على نطاق الفهرسة المباشرة المحدود. ابنِ `NeverDLiftTests` ثم نفّذ `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.
+
+تحتفظ خانات المكدس الاصطناعية في LLVM C بكامل كتابة العدد الصحيح ذي 128 بت قبل اختيار أي من نصفيه ذوي 64 بت أثناء التنفيذ. يتحقق `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` من العنونة بالجمع وبعملية OR المعتمدة على المحاذاة عند O0/O2 مع ASan/UBSan وشرط `-fno-strict-aliasing` الموثق. شغّل `NeverDLLVMCValueTests` واختبارات الإطارات والمتجهات وسجلات العرض ذات الصلة.
