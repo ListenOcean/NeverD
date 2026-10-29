@@ -2084,3 +2084,7 @@ Pour la projection source, `markSourceStackAccesses` relie une addition atomique
 ## Audits des lectures superviseur canoniques
 
 La récupération du `RDMSR` canonique exige l’audit `Complete` des sorties indéfinies du lifter, avec l’empreinte exacte des opérations, et refuse `Missing`. Un audit complet n’autorise ni exécution superviseur, ni accès MSR, ni gestion des exceptions, ni preuve native ou source. Le profil explicite de noyau sans faute et la vérification du bloc complet d’opérations restent requis.
+
+## Couverture constante des expressions OR/XOR
+
+Le constructeur OR partagé élimine un opérande XOR si la constante accumulée couvre tous les bits que ses termes peuvent activer. Cette preuve bornée examine les constantes, les masques AND explicites et les compléments de OR comportant une constante, sans développer les sources profondes. Les mots du masque et les termes examinés partagent le budget subset existant. Les bits inconnus ou non couverts et un budget épuisé conservent l’expression exacte.

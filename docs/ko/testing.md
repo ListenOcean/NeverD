@@ -2256,3 +2256,7 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 ## 표준 감독 모드 읽기 감사
 
 `InterpreterSpecialization.SupervisorRead*`는 실제 엄격한 리프트를 사용하고 `Missing`으로 낮춘 감사를 거부합니다. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery`는 원본 바이트 복원 경계 및 네이티브 증명과 소스 래핑의 지속적인 거부를 확인합니다.
+
+## OR/XOR 식의 상수 비트 포함
+
+`SymExprMask.ConstantCover*`는 모든 4비트 마스크와 입력, 8–257비트 값, 유효한 상위 비트, 깊은 공유 원본, 워드 및 항 예산 거부를 검사합니다. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries`는 솔버 질의 없는 고정 변위와 입력 의존 반례를 검사합니다. `NeverDSymbolicTests`와 `NeverDInterpreterSpecializationTests`를 실행합니다.

@@ -2266,3 +2266,7 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 ## 標準のスーパーバイザー読み取り監査
 
 `InterpreterSpecialization.SupervisorRead*` は実際の厳密なリフトを使用し、`Missing` に格下げした監査を拒否します。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` は元のバイト列の復元境界を検査し、ネイティブ証明とソースラップの拒否も確認します。
+
+## OR/XOR 式の定数による包含
+
+`SymExprMask.ConstantCover*` は全四ビットマスクと入力、8–257 ビット値、有効な上位ビット、深い共有式、ワード数と項数の予算拒否を検証します。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` は求解問い合わせなしの固定変位と、入力依存の反例を検証します。`NeverDSymbolicTests` と `NeverDInterpreterSpecializationTests` を実行してください。

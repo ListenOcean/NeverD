@@ -17276,3 +17276,7 @@ The repeated-image regression also covers unrelated function-pointer relocations
 ## Canonical supervisor-read audits
 
 `InterpreterSpecialization.SupervisorRead*` uses the actual strict lift and rejects a downgraded `Missing` audit. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` checks the original-byte recovery boundary and continued refusal of native proofs and source wrapping.
+
+## Constant covers in OR/XOR expressions
+
+`SymExprMask.ConstantCover*` checks exhaustive four-bit masks and inputs, 8–257-bit words, live high bits, shared deep sources, and word/term budget refusal. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` checks a constant displacement with zero solver queries and rejects an input-dependent neighbor. Run `NeverDSymbolicTests` and `NeverDInterpreterSpecializationTests`.

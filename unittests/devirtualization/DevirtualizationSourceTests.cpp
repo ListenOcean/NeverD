@@ -1525,12 +1525,19 @@ TEST_F(DevirtualizationSourceTest, PERecoveryRequiresFullMetadataAndFileHash) {
   EXPECT_EQ(Covering.Status, analysis::SpecializationStatus::Unsupported);
   EXPECT_TRUE(Covering.Residual.Blocks.empty());
   Image->ExceptionMetadata.Functions.back().CodeRange = Unrelated.CodeRange;
-  Image->ExceptionMetadata.Diagnostics.push_back("incomplete PE directory");
+  // Directory completeness belongs to the structural decode. Diagnostics on
+  // the compatibility summary alone cannot invalidate that owned evidence.
+  auto &Structural = Image->ExceptionMetadata.structuralDecodeState();
+  Structural.ParseStatus = ExceptionParseStatus::Partial;
+  Structural.Diagnostics.push_back("incomplete PE directory");
+  Image->ExceptionMetadata.rebuildParseSummary();
   const auto Unattributed =
       analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());
   EXPECT_EQ(Unattributed.Status, analysis::SpecializationStatus::Unsupported);
   EXPECT_TRUE(Unattributed.Residual.Blocks.empty());
-  Image->ExceptionMetadata.Diagnostics.clear();
+  Image->ExceptionMetadata.StructuralDecode =
+      OriginalExceptions.StructuralDecode;
+  Image->ExceptionMetadata.rebuildParseSummary();
   Image->ExceptionMetadata.Functions.back().CodeRange = {};
   const auto Unbounded =
       analysis::specializeBinaryInterpreter(*Image, Entry, recoveryOptions());

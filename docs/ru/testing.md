@@ -2334,3 +2334,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 ## Аудит канонических чтений в режиме супервизора
 
 `InterpreterSpecialization.SupervisorRead*` использует фактический строгий лифтинг и отклоняет аудит, пониженный до `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` проверяет границу восстановления исходных байтов и сохранение отказа от нативных доказательств и обёртки исходного кода.
+
+## Покрытие битов константой в выражениях OR/XOR
+
+`SymExprMask.ConstantCover*` проверяет все четырёхбитные маски и входы, слова шириной 8–257 бит, значимые старшие биты, глубокие общие выражения и отказ при исчерпании бюджета слов или членов. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` проверяет постоянное смещение без запросов решателю и зависящий от входа контрпример. Запускайте `NeverDSymbolicTests` и `NeverDInterpreterSpecializationTests`.

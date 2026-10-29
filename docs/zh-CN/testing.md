@@ -2231,3 +2231,7 @@ MedIR 的常量传播和复制传播共用 `canPropagateConstantToOperand`：计
 ## 规范的监督态读取审计
 
 `InterpreterSpecialization.SupervisorRead*` 使用真实严格提升，并拒绝降级为 `Missing` 的审计。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` 检查原始字节恢复边界，同时继续拒绝原生证明和源码包装。
+
+## OR/XOR 表达式的常量覆盖
+
+`SymExprMask.ConstantCover*` 穷尽四位掩码与输入，检查 8–257 位字、有效高位、深层共享源以及掩码字数和项数预算拒绝。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` 验证零求解查询下的固定偏移，并拒绝依赖输入的相邻用例。运行 `NeverDSymbolicTests` 和 `NeverDInterpreterSpecializationTests`。
