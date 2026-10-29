@@ -6509,7 +6509,12 @@ relocated owns whether a slot load can become a symbolic address, as
 segment, an explicit normalized loader protection guarantee, or complete
 PT_GNU_RELRO coverage in a linked ELF image. Names such as `.data.rel.ro` and
 `__DATA_CONST` never prove protection: `-z norelro` and a missing Mach-O
-SG_READ_ONLY flag retain writable storage. Relocation classification, scalar
+SG_READ_ONLY flag retain writable storage. A relocatable ELF object has no
+mapping yet, and the loader is the one that maps its sections. It gives a
+`.data.rel.ro*` section the protection the compiler asks for there: the
+section holds constant data that needs relocations, and a linker's RELRO
+maps it read-only once relocated (`Segment::ReadOnlyAfterRelocations`).
+Relocation classification, scalar
 folding and LLVM data materialization share this address-specific authority.
 An ELF load segment keeps its `LOAD_n` name because it holds sections of both
 kinds. Writable slots retain

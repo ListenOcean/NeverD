@@ -1239,10 +1239,9 @@ TEST_F(JTE_X86_32, StackMemcpyTableNeedsDedicatedEvidenceCeiling) {
            Low.JumpTables.front().Targets.size() == 8;
   };
 
-  // This relocatable object does not promise runtime RELRO. The budget
-  // proof starts only after a loader explicitly protects its initializer.
-  EXPECT_FALSE(Recovered(
-      BuildWithBudget(neverd::limits::kMaxJumpTableStackEvidenceWork)));
+  // The table's initializer lies in the object's .data.rel.ro, which the
+  // loader maps read-only once relocated, as a linker's RELRO does. The
+  // budget proof starts only with that protection.
   ASSERT_GE(Image.CodePtrRelocSlots.size(), 8u);
   auto Initializer = std::find_if(
       Image.Segments.begin(), Image.Segments.end(), [&](const auto &S) {
@@ -1250,6 +1249,10 @@ TEST_F(JTE_X86_32, StackMemcpyTableNeedsDedicatedEvidenceCeiling) {
       });
   ASSERT_NE(Initializer, Image.Segments.end());
   ASSERT_TRUE(Initializer->isWritable());
+  ASSERT_TRUE(Initializer->ReadOnlyAfterRelocations);
+  Initializer->ReadOnlyAfterRelocations = false;
+  EXPECT_FALSE(Recovered(
+      BuildWithBudget(neverd::limits::kMaxJumpTableStackEvidenceWork)));
   Initializer->ReadOnlyAfterRelocations = true;
 
   const neverd::LowFunc Full =
@@ -11895,10 +11898,10 @@ int scalar_record(int input) {
       });
   ASSERT_NE(Records, Image.Segments.end());
   ASSERT_TRUE(Records->isWritable());
-  EXPECT_FALSE(Image.readOnlyAfterRelocations(Records->VA, Records->Size));
-  // Supply the immutable-source contract separately from pointer evidence.
-  // The unlinked object's section name cannot establish this guarantee.
-  Records->ReadOnlyAfterRelocations = true;
+  // The loader maps the object's .data.rel.ro read-only once relocated, which
+  // supplies the immutable-source contract separately from pointer evidence.
+  EXPECT_TRUE(Records->ReadOnlyAfterRelocations);
+  EXPECT_TRUE(Image.readOnlyAfterRelocations(Records->VA, Records->Size));
   auto Valid = runPipelineWithEvidenceBudget(Image, 256);
   ASSERT_TRUE(Valid.Result.Success) << Valid.Result.Error;
 

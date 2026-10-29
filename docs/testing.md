@@ -241,6 +241,11 @@ the count the kernel's does, and a hash of the text `snprintf` formats matches.
 out as a `uint64_t` member: that C passes its address through `void *` to the
 `char *` <stdio.h> declares, and a hash of the text matches the kernel's.
 
+`X86_64_ImageTable.AnUnnamedInitializerIsDeclared` builds its label-table
+kernel with and without PIC. With PIC the table's initializer lies in
+`.data.rel.ro`, which the loader maps read-only once relocated, so the
+HighC copies the declared object rather than reading an unknown value.
+
 `X86_64_ImageTable.AnObjectBetweenConstantSectionsIsItsOwn` runs the C of both
 routes for an object whose constant pool, writable `volatile double` and
 strings lie a few bytes apart. The double is its own object, not bytes of the
