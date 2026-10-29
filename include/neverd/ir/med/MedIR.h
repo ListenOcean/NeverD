@@ -507,10 +507,19 @@ struct MedSEHLocalUnwindExit {
     uint32_t ScopeIndex = 0;
     bool operator==(const Handler &) const = default;
   };
-  /// The address of the runtime call this exit replaces.
+  /// The address of the runtime call this exit replaces, and its LowIR
+  /// operation sequence.
   va_t CallAddr = InvalidVA;
+  int CallSeq = -1;
   /// Where the unwind resumes, in this function.
   va_t Target = InvalidVA;
+  /// The frame the call passed, relative to the entry stack pointer.
+  int64_t TargetFrame = 0;
+  /// Nothing else enters Target: no other code of the function, no handler
+  /// or funclet nested in it and no relocation names it, and every certified
+  /// call to it is an exit.  It is then no independent root: proofs over the
+  /// decoded CFG enter it from these exits (LowSEHLocalUnwindExitSource).
+  bool OwnsTarget = false;
   /// The handlers the unwind calls, innermost first.
   std::vector<Handler> Handlers;
   bool operator==(const MedSEHLocalUnwindExit &) const = default;

@@ -122,7 +122,8 @@ static llvm::Expected<LowSEHEstablisherFrame>
 proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
                 bool OrdinaryEntry, size_t &WorkRemaining,
                 llvm::StringRef LocalUnwindDigest, bool CxxContinuation,
-                std::optional<FrameCFG> &CachedCFG, LowSEHFrameUse Use) {
+                std::optional<FrameCFG> &CachedCFG, LowSEHFrameUse Use,
+                llvm::ArrayRef<LowSEHLocalUnwindExitSource> Exits = {}) {
   auto Fail = [](const std::string &Why) {
     return llvm::createStringError(llvm::errc::not_supported, Why);
   };
@@ -256,6 +257,29 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
       if (Target <= 0 || Source < 0 || Entry.FrameOffset >= 0)
         return Fail("stale local-unwind continuation certificate");
       LocalUnwindSources[Target].emplace_back(Source, Entry.FrameOffset);
+      LocalUnwindSuccessors[Source].push_back(Target);
+    }
+  // A certified exit enters its target from its call, as the evidence above
+  // does from a call the runtime still makes.
+  if (!CxxContinuation)
+    for (const LowSEHLocalUnwindExitSource &Exit : Exits) {
+      if (!Charge(N + 1))
+        return Fail("frame propagation budget exhausted");
+      int Target = -1, Source = -1;
+      for (size_t B = 0; B < N; ++B) {
+        if (Low.Blocks[B].StartAddr == Exit.Target)
+          Target = static_cast<int>(B);
+        if (!Charge(Low.Blocks[B].Ops.size()))
+          return Fail("frame propagation budget exhausted");
+        if (llvm::any_of(Low.Blocks[B].Ops, [&](const LowOp &Op) {
+              return Op.Addr == Exit.CallAddr && Op.Seq == Exit.CallSeq &&
+                     Op.Opcode == NdOp::CALL;
+            }))
+          Source = static_cast<int>(B);
+      }
+      if (Target <= 0 || Source < 0 || Exit.FrameOffset >= 0)
+        return Fail("stale local-unwind exit");
+      LocalUnwindSources[Target].emplace_back(Source, Exit.FrameOffset);
       LocalUnwindSuccessors[Source].push_back(Target);
     }
   const bool IsLocalUnwindTarget = LocalUnwindSources.count(HandlerId);
@@ -761,15 +785,14 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   return Result;
 }
 
-llvm::Expected<LowSEHEstablisherFrame>
-proveLowSEHEstablisherFrame(const LowFunc &Low, va_t Handler,
-                            const TargetRegInfo &TRI, bool OrdinaryEntry,
-                            size_t &WorkRemaining,
-                            llvm::StringRef LocalUnwindDigest,
-                            bool CxxContinuation, LowSEHFrameUse Use) {
+llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
+    const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
+    bool OrdinaryEntry, size_t &WorkRemaining,
+    llvm::StringRef LocalUnwindDigest, bool CxxContinuation, LowSEHFrameUse Use,
+    llvm::ArrayRef<LowSEHLocalUnwindExitSource> Exits) {
   std::optional<FrameCFG> CFG;
   return proveInFrameCFG(Low, Handler, TRI, OrdinaryEntry, WorkRemaining,
-                         LocalUnwindDigest, CxxContinuation, CFG, Use);
+                         LocalUnwindDigest, CxxContinuation, CFG, Use, Exits);
 }
 
 namespace {

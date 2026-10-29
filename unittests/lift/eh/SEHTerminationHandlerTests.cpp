@@ -448,6 +448,9 @@ enum class LocalUnwindShape {
   /// The handler branches on the flag, a shape the x64 projection keeps out
   /// of line.
   Branchy,
+  /// The Guarded parent whose `__finally` returns as well: the handler
+  /// local-unwinds the parent's frame to the same epilogue.
+  ReturningFinally,
 };
 
 constexpr va_t LocalUnwindStub = Entry + 0x180;
@@ -528,6 +531,14 @@ BinaryImage makeLocalUnwindImage(LocalUnwindShape Kind) {
     place(D, 0x80, {0x40, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xea, 0x84,
                     0xc9, 0x74, 0x0a, 0x48, 0x8b, 0x45, 0x38, 0xc7, 0x00, 0x63,
                     0,    0,    0,    0x48, 0x83, 0xc4, 0x20, 0x5d, 0xc3});
+    break;
+  case LocalUnwindShape::ReturningFinally:
+    // push rbp; sub rsp,0x20; mov rbp,rdx; mov rcx,rdx; lea rdx,[done];
+    // call _local_unwind; nop; add rsp,0x20; pop rbp; ret
+    place(D, 0x80,
+          {0x40, 0x55, 0x48, 0x83, 0xec, 0x20, 0x48, 0x8b, 0xea, 0x48, 0x8b,
+           0xca, 0x48, 0x8d, 0x15, 0x9a, 0xff, 0xff, 0xff, 0xe8, 0xe8, 0,
+           0,    0,    0x90, 0x48, 0x83, 0xc4, 0x20, 0x5d, 0xc3});
     break;
   }
   // The local unwind import's stub.
@@ -981,6 +992,30 @@ TEST(SEHLocalUnwind, AFrameItsCalleeNeverObservesPassesNothing) {
       parentText(decompileHighC(makeSetjmpImage(FrameTaker::Ignorer)));
   ASSERT_FALSE(P.empty());
   EXPECT_EQ(P.find("_local_unwind"), std::string::npos) << P;
+}
+
+TEST(SEHLocalUnwind, AFinallyThatUnwindsToTheTargetKeepsItARoot) {
+  // Only the parent's own exit names its epilogue in the Guarded shape, so
+  // the exit owns it and no proof over the decoded CFG takes it as an
+  // independent entry.  A `__finally` that returns too local-unwinds to the
+  // same epilogue from the handler: the target stays a root.
+  for (const auto &[Kind, Owns] :
+       {std::pair{LocalUnwindShape::Guarded, true},
+        std::pair{LocalUnwindShape::ReturningFinally, false}}) {
+    SCOPED_TRACE(Owns);
+    llvm::LLVMContext Ctx;
+    PipelineOptions Opts;
+    Opts.EmitDumpOutput = false;
+    const BinaryImage Img = makeLocalUnwindImage(Kind);
+    auto Result = Pipeline().run(Img, Ctx, Opts);
+    ASSERT_TRUE(Result.Success) << Result.Error;
+    const auto Parent = llvm::find_if(
+        Result.HighFuncs, [](const HighFunc &F) { return F.Entry == Entry; });
+    ASSERT_NE(Parent, Result.HighFuncs.end());
+    ASSERT_EQ(Parent->SEHLocalUnwindExits.size(), 1u);
+    EXPECT_EQ(Parent->SEHLocalUnwindExits.front().Target, Entry + 0x2d);
+    EXPECT_EQ(Parent->SEHLocalUnwindExits.front().OwnsTarget, Owns);
+  }
 }
 
 } // namespace

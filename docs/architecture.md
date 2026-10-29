@@ -13058,7 +13058,19 @@ Like the SavedESP word, this trusts that the compiler's saved-frame slot is
 written only by its own prologue protocol, and models only in-bounds frame
 accesses.
 A single-function view holds the function's handlers, so it certifies the
-same exits as the whole unit.
+same exits as the whole unit. A target only its exits name is no independent
+root once they are jumps: no other code of the function names it as a value,
+none of its out-of-line filters and termination handlers, or those nested in
+them, does (each must be in the view; a `__finally` that returns
+local-unwinds to it), and no relocation does. The decoded-frame proof enters
+such a target from the exits' calls with the frame they pass
+(`LowSEHLocalUnwindExitSource`, as from module local-unwind evidence), and
+source projection gives it no unknown entry values; this trusts, as the
+pipeline does elsewhere, that no unrelated function takes an interior
+address of this one. Three shapes still keep their runtime calls, all in
+xcpt4's `main`: a termination handler that saves its EstablisherFrame for the
+handlers nested in it, a handler with an `__except` of its own, and a frame
+register (the O2 builds).
 
 An ARM or AArch64 termination handler takes only the abnormal flag. The
 unwinder restores the parent's callee-saved registers to their values where

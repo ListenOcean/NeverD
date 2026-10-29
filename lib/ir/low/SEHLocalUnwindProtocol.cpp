@@ -219,6 +219,8 @@ public:
 
   std::vector<StoreEvent> Stores;
   std::vector<UseEvent> Uses;
+  /// What the integer return register holds at each return.
+  std::vector<Val> Returns;
 
 private:
   const LowFunc &F;
@@ -501,10 +503,13 @@ bool Interpreter::transfer(const LowBlock &Block, State &S, bool Record,
         write(S, Op.Output, {});
       break;
     }
+    case NdOp::RETURN:
+      if (Record)
+        Returns.push_back(read(S, NdVar::reg(TRI.IntReturnReg, Pointer)));
+      break;
     case NdOp::BRANCH:
     case NdOp::COND_BR:
     case NdOp::INDIR_BR:
-    case NdOp::RETURN:
     case NdOp::NOP:
       break;
     default: {
@@ -894,8 +899,89 @@ llvm::Expected<std::vector<LowSEHLocalUnwind>> certifyLowSEHLocalUnwinds(
     Site.Target = Target.C;
     Site.HandlerFrameFromSP = Convention->HandlerFrame - Convention->BodySP;
     Site.ResumeReturnValue = Convention->ResumeReturnValue;
+    Site.TargetFrame = Convention->TargetFrame;
     Sites.push_back(Site);
   }
+
+  // The targets only these calls name.  A branch to one is ordinary flow; a
+  // value is a name, which another call or the runtime may enter it by.
+  std::map<va_t, bool> Alone;
+  for (const LowSEHLocalUnwind &Site : Sites)
+    Alone.emplace(Site.Target, true);
+  auto Name = [&](uint64_t Value) {
+    if (const auto It = Alone.find(static_cast<va_t>(Value)); It != Alone.end())
+      It->second = false;
+  };
+  auto NameAll = [&] {
+    for (auto &Entry : Alone)
+      Entry.second = false;
+  };
+  // Every constant operand of a handler \p F but a branch or call target,
+  // and every code address it takes PC-relatively.
+  auto NameIn = [&](const LowFunc &F) {
+    for (const LowBlock &Block : F.Blocks) {
+      if (!charge(WorkRemaining, Block.Ops.size() + 1))
+        return false;
+      for (const LowOp &Op : Block.Ops) {
+        const bool Transfer = Op.Opcode == NdOp::BRANCH ||
+                              Op.Opcode == NdOp::COND_BR ||
+                              Op.Opcode == NdOp::CALL;
+        for (unsigned I = Transfer ? 1 : 0; I < Op.NumInputs; ++I)
+          if (Op.Inputs[I].isConst())
+            Name(Op.Inputs[I].Offset);
+      }
+    }
+    for (va_t Target : F.CodeRefTargets)
+      Name(Target);
+    return true;
+  };
+  if (!Alone.empty()) {
+    std::set<std::pair<va_t, int>> Certified;
+    for (const LowSEHLocalUnwind &Site : Sites)
+      Certified.insert({Site.CallAddr, Site.CallSeq});
+    // In the function itself, what its values reach: memory, a call or an
+    // intrinsic other than the certified ones, or its caller.
+    for (const StoreEvent &Store : Interp.Stores)
+      if (Store.Value.K == Val::Const)
+        Name(Store.Value.C);
+    for (const UseEvent &Use : Interp.Uses)
+      if (!Certified.count({Use.At, Use.Seq}))
+        for (const Val &Arg : Use.Args)
+          if (Arg.K == Val::Const)
+            Name(Arg.C);
+    for (const Val &Returned : Interp.Returns)
+      if (Returned.K == Val::Const)
+        Name(Returned.C);
+    // Every out-of-line filter and termination handler, and those nested in
+    // them: a finally that local-unwinds to a target names it too.
+    std::set<va_t> Seen;
+    std::vector<va_t> Pending;
+    auto AddHandlers = [&](const ExceptionFunction &E) {
+      if (!E.SEH)
+        return;
+      for (const SEHScopeRecord &Scope : E.SEH->Scopes)
+        if ((Scope.Kind == SEHScopeKind::Filter ||
+             Scope.Kind == SEHScopeKind::Finally) &&
+            Scope.FilterOrFinallyVA && !E.ownsCode(Scope.FilterOrFinallyVA))
+          Pending.push_back(Scope.FilterOrFinallyVA);
+    };
+    AddHandlers(EH);
+    while (!Pending.empty()) {
+      const va_t Handler = Pending.back();
+      Pending.pop_back();
+      if (!Seen.insert(Handler).second)
+        continue;
+      const auto Body = Bodies.find(Handler);
+      if (Body == Bodies.end() || !Body->second || !NameIn(*Body->second)) {
+        NameAll();
+        break;
+      }
+      if (Body->second->ExceptionMetadata)
+        AddHandlers(*Body->second->ExceptionMetadata);
+    }
+  }
+  for (LowSEHLocalUnwind &Site : Sites)
+    Site.OnlyExitsName = Alone[Site.Target];
   return Sites;
 }
 

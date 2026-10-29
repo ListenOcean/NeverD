@@ -75,6 +75,14 @@ struct LowSEHLocalUnwind {
   int64_t HandlerFrameFromSP = 0;
   /// SEHLocalUnwindConvention::ResumeReturnValue.
   std::optional<uint64_t> ResumeReturnValue;
+  /// The frame the call passes, relative to the entry stack pointer.
+  int64_t TargetFrame = 0;
+  /// No code but the certified calls names the target as a value: none of
+  /// the function's other code, and none of its out-of-line filters and
+  /// termination handlers or the ones nested in them, every one of which is
+  /// in the bodies given (a finally that local-unwinds to the target names
+  /// it).  Relocations are the caller's to check.
+  bool OnlyExitsName = false;
 };
 
 /// Whether \p Function calls a runtime local unwind routine at all, by its

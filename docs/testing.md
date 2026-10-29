@@ -14641,6 +14641,8 @@ data places the masked frame or the frame reaches the cookie slot unmasked.
 same frame reaches a function of the image that reads it, and
 `AFrameItsCalleeNeverObservesPassesNothing` certifies the frame left in R8
 for a function whose unread proof covers R8.
+`AFinallyThatUnwindsToTheTargetKeepsItARoot` lets the Guarded exit own its
+epilogue, and keeps it a root when the `__finally` local-unwinds there too.
 Its `ARMSEHFinallyBodyTests.cpp`
 builds AArch64 and
 Thumb parents whose handler reads them through callee-saved registers:
