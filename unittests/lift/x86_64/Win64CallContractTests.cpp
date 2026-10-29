@@ -2070,8 +2070,11 @@ TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
 }
 
 TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
-  for (unsigned PrefixBytes : {0, 1, 2}) {
-    SCOPED_TRACE(PrefixBytes);
+  for (unsigned Variant : {0, 1, 2, 3}) {
+    SCOPED_TRACE(Variant);
+    const bool CallAfterConsumer = Variant == 3;
+    const unsigned PrefixBytes = CallAfterConsumer ? 1 : Variant;
+    const unsigned ExpectedCalls = CallAfterConsumer ? 2 : 1;
     const bool ThroughWrapper = PrefixBytes != 0;
     const unsigned Flag = PrefixBytes == 1   ? 0x5A
                           : PrefixBytes == 2 ? 0xA55A
@@ -2115,8 +2118,17 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
       Forwarder[2] = 0xB7; // movzx ebx,cx
     const auto Forward = rel32(Wrapper + Forwarder.size() + 4, Consumer);
     Forwarder.insert(Forwarder.end(), Forward.begin(), Forward.end());
-    Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xD8,       // add rax,rbx
-                                       0x48, 0x83, 0xC4, 0x20, // add rsp,20h
+    if (CallAfterConsumer) {
+      // The later opaque call can observe stale RCX unless the consumer's
+      // original entry prefix destroys it without leaving a live copy.
+      Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xC3}); // add rbx,rax
+      const auto Observe = throughSlot(Wrapper + Forwarder.size(), Iat);
+      Forwarder.insert(Forwarder.end(), Observe.begin(), Observe.end());
+      Forwarder.insert(Forwarder.end(), {0x48, 0x89, 0xD8}); // mov rax,rbx
+    } else {
+      Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xD8}); // add rax,rbx
+    }
+    Forwarder.insert(Forwarder.end(), {0x48, 0x83, 0xC4, 0x20, // add rsp,20h
                                        0x5B, 0xC3});           // pop rbx; ret
     put(Code, Wrapper, Forwarder);
     auto Image = makeImage(Code,
@@ -2174,7 +2186,7 @@ static int check_native(uint64_t value, uint64_t seed) {
   __builtin___clear_cache((char *)code, (char *)code + size);
   uint64_t actual = ((uint64_t (__attribute__((ms_abi)) *)(void))code)();
   int bad = actual != value + )"
-           << Flag << R"( || calls != 1;
+           << Flag << " || calls != " << ExpectedCalls << R"(;
   if (munmap(mapping, size + 16)) return 1;
   return bad;
 }
@@ -2227,7 +2239,7 @@ int main(void) {
     if (check_native(value, seed)) return 1;
     memcpy(&spill_global, &value, sizeof(value));
     calls = 0;
-    if ((uint64_t)reset_spill() != value + EXPECTED_LOW || calls != 1) return 2;
+    if ((uint64_t)reset_spill() != value + EXPECTED_LOW || calls != EXPECTED_CALLS) return 2;
     seed ^= seed << 13;
     seed ^= seed >> 7;
     seed ^= seed << 17;
@@ -2238,7 +2250,8 @@ int main(void) {
           for (llvm::StringRef Level : {"-O0", "-O2"})
             source_call_execution_test::compileAndRun(
                 Source + Providers + NativeOracle + "\n#define EXPECTED_LOW " +
-                    std::to_string(Flag) + "\n" + Oracle,
+                    std::to_string(Flag) + "\n#define EXPECTED_CALLS " +
+                    std::to_string(ExpectedCalls) + "\n" + Oracle,
                 {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
         }
   }

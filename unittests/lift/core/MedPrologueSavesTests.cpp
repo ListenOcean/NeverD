@@ -453,6 +453,153 @@ TEST(SourceStackSpills, RegisterSuffixesNeedCurrentSourceCalleeProofs) {
   }
 }
 
+TEST(SourceStackSpills,
+     InputDestructionNeedsOriginalEntryAndCompleteOverwrites) {
+  for (unsigned Mode = 0; Mode < 24; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    Func.Params = {rcx(0)};
+    const auto Home = temp(10);
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+                 op(NdOp::COPY, rcx(0), {rcx(0)}),
+                 op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+                 op(NdOp::STORE, none(), {Home, rcx(0)}),
+                 op(NdOp::STORE, none(),
+                    {Home, MedVar::makeConst(0, Mode == 6 ? 4 : 8)}),
+                 op(NdOp::COPY, rcx(1), {MedVar::makeConst(42, 8)}),
+                 op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    Block.Ops[3].Addr = 0x1004;
+    Block.Ops[3].OriginSeq = 0;
+    if (Mode == 20)
+      Block.Ops[4].Dead = true;
+    if (Mode == 21)
+      Block.Ops[3].Dead = true;
+    if (Mode == 3 || Mode == 22 || Mode == 23) {
+      auto Hidden =
+          Mode == 23 ? op(NdOp::CALL, temp(11), {MedVar::makeConst(0x3000, 8)})
+                     : op(NdOp::LOAD, temp(11), {Home});
+      Hidden.Dead = Mode >= 22;
+      Block.Ops.insert(Block.Ops.begin() + 4, Hidden);
+    }
+    Func.Blocks.push_back(std::move(Block));
+    if (Mode == 8)
+      Func.ModuleAnalysisRoots = {Func.Entry, 0x1004};
+    std::set<const MedOp *> Overwritten;
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                            StackEntryKind::Call, nullptr, &Overwritten);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto Address = NdVar::tmp(10, 8);
+    auto Low = [&](va_t PC, NdOp Code, NdVar Out,
+                   std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    std::vector<LowOp> Original = {
+        Low(Func.Entry, NdOp::INT_ADD, Address,
+            {NdVar::reg(x86reg::RSP, 8), NdVar::cst(8, 8)}),
+        Low(0x1004, NdOp::STORE, {}, {Address, RCX}),
+        Low(0x1008, NdOp::STORE, {}, {Address, NdVar::cst(0, 8)}),
+        Low(0x100C, NdOp::COPY,
+            NdVar::reg(x86reg::RCX, Mode == 1    ? 1
+                                    : Mode == 13 ? 4
+                                                 : 8),
+            {NdVar::cst(42, 8)})};
+    SourceCalleeParameterOverwrites Callees;
+    if (Mode == 2 || Mode == 12)
+      Original.insert(
+          Original.begin() + 2,
+          Low(0x1006, NdOp::COPY,
+              Mode == 2 ? NdVar::reg(x86reg::RDX, 8) : NdVar::tmp(11, 8),
+              {RCX}));
+    if (Mode == 4)
+      Original[1].Seq = 1;
+    if (Mode == 7)
+      Original.front().Addr += 1;
+    if (Mode == 5 || Mode == 11) {
+      auto Call = op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8)});
+      Call.Addr = 0x100A;
+      Call.OriginSeq = 0;
+      Func.Blocks.front().Ops.insert(Func.Blocks.front().Ops.end() - 1, Call);
+      Original.back() = Low(0x100A, NdOp::CALL, {},
+                            {NdVar::cst(Mode == 5 ? 0x4000 : 0x3000, 8)});
+      Callees[0x3000].insert(0);
+      // Vector insertion changes operation addresses: obtain current receipts.
+      markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                              StackEntryKind::Call, nullptr, &Overwritten);
+    }
+    if (Mode == 10)
+      Original.insert(Original.begin() + 2,
+                      Low(0x1006, NdOp::BRANCH, {}, {NdVar::cst(0x2000, 8)}));
+    if (Mode >= 14 && Mode < 20) {
+      auto Read = Low(0x1006, NdOp::LOAD, NdVar::tmp(12, 8), {Address});
+      auto Mask = Low(0x1006, NdOp::INT_AND, NdVar::tmp(13, 8),
+                      {Read.Output, NdVar::scalar(Mode == 16 ? 1 : 0, 8)});
+      Mask.Seq = 1;
+      auto Save = Low(0x1006, NdOp::STORE, {}, {Address, Mask.Output});
+      Save.Seq = 2;
+      if (Mode == 15)
+        Mask =
+            Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Read.Output});
+      if (Mode == 17)
+        Read.MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Mode == 18) {
+        Mask = Low(0x1006, NdOp::COPY, NdVar::tmp(13, 8), {Read.Output});
+        Save = Low(0x1006, NdOp::INT_AND, NdVar::tmp(13, 8),
+                   {Mask.Output, NdVar::scalar(0, 8)});
+      }
+      if (Mode == 19) {
+        Mask =
+            Low(0x1006, NdOp::COPY, NdVar::tmp(12, 1), {NdVar::scalar(0, 1)});
+        Save =
+            Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Read.Output});
+      }
+      Original.insert(Original.begin() + 2, {Read, Mask, Save});
+    }
+    size_t Budget = Mode == 9 ? 1 : 4096;
+    const auto Killed = sourceRegisterInputOverwrites(
+        Func, Original, {{0, 0}}, Callees, Overwritten, Budget);
+    EXPECT_EQ(Killed,
+              Mode == 0 || Mode == 11 || Mode == 13 || Mode == 14 || Mode == 18
+                  ? std::set<unsigned>{0}
+                  : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, AReintroducedRegisterInputStillReachesImplicitCalls) {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.CC = CallingConv::Win64;
+  Func.FrameSize = 40;
+  Func.Params = {rcx(0)};
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  const auto Home = temp(10);
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::COPY, rcx(0), {rcx(0)}),
+               op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+               op(NdOp::STORE, none(), {Home, rcx(0)}),
+               op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)}),
+               op(NdOp::COPY, rcx(1), {MedVar::makeConst(42, 8)}),
+               op(NdOp::COPY, rcx(2), {rcx(0)}),
+               op(NdOp::CALL, temp(11), {MedVar::makeConst(0x3000, 8)}),
+               op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+  Func.Blocks.push_back(std::move(Block));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  EXPECT_TRUE(unobservedSourceSpillParameters(Func).empty());
+}
+
 TEST(SourceStackSpills, ADiscardedSpillDoesNotEraseADynamicCallTarget) {
   MedFunc Func;
   Func.Entry = 0x1000;

@@ -11,6 +11,7 @@
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/BlockRegisterConstant.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
 #include "neverd/ir/med/MedABIPass.h"
 #include "neverd/ir/med/MedCallLeftovers.h"
@@ -822,7 +823,8 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
                                llvm::ArrayRef<FrameAccess> Loads,
                                llvm::ArrayRef<FrameAccess> Stores,
                                const ValueReads &Reads,
-                               const BinaryImage *Image) {
+                               const BinaryImage *Image,
+                               std::set<const MedOp *> *Overwritten) {
   if (Func.Blocks.empty() || Func.SkippedSSA || Func.AnalystStackFrame)
     return;
   const auto &TRI = getTargetRegInfo(Architecture);
@@ -978,7 +980,7 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
   };
   for (const FrameAccess &Save : Stores) {
     const MedVar &Value = Save.Op->Inputs[1];
-    if (Save.Op->PrologueSave || Value.isConst() ||
+    if (Save.Op->Dead || Save.Op->PrologueSave || Value.isConst() ||
         Value.Size > sizeof(uint64_t) || !Private(Save.Offset, Value.Size))
       continue;
     const auto [FirstBlock, FirstOp] = Positions.at(Save.Op);
@@ -986,7 +988,7 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
     using State = std::tuple<size_t, size_t, uint64_t>;
     std::vector<State> Work{{FirstBlock, FirstOp + 1, All}};
     std::map<std::pair<size_t, size_t>, uint64_t> Seen;
-    bool Safe = true;
+    bool Safe = true, FullyOverwritten = true;
     while (Safe && !Work.empty()) {
       auto [B, Begin, Pending] = Work.back();
       Work.pop_back();
@@ -1008,6 +1010,12 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
         }
         --Budget;
         const MedOp &Op = Block.Ops[I];
+        if (Op.Dead) {
+          // Source omission does not certify that an original memory access
+          // or opaque effect could not retain these bits in physical state.
+          FullyOverwritten &= isSpillScalarStep(Op.Opcode);
+          continue;
+        }
         if (Op.MemoryOrdering != NdMemoryOrdering::None ||
             Op.MemoryAddressSpace != NdMemoryAddressSpace::Default) {
           Safe = false;
@@ -1031,12 +1039,16 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
             if (At->second->overlaps(Save.Offset + Byte,
                                      Save.Offset + Byte + 1))
               Overlap |= uint64_t{1} << Byte;
-          if (Op.Opcode == NdOp::LOAD && (Pending & Overlap) &&
-              !UnusedRestore(Op)) {
-            Safe = false;
-            break;
+          if (Op.Opcode == NdOp::LOAD && (Pending & Overlap)) {
+            // A source-dead restore may still carry the original value out
+            // in a physical register. It cannot certify input destruction.
+            FullyOverwritten = false;
+            if (!UnusedRestore(Op)) {
+              Safe = false;
+              break;
+            }
           }
-          if (Op.Opcode == NdOp::STORE)
+          if (Op.Opcode == NdOp::STORE && !Op.PrologueSave)
             Pending &= ~Overlap;
         } else if (Op.Opcode == NdOp::INTRINSIC &&
                    isExplicitFlagsTransfer(Op, Architecture)) {
@@ -1055,6 +1067,7 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
           // the remaining bytes cannot escape through the result.
           for (unsigned K = 0; K < Op.NumInputs; ++K)
             Safe &= Op.Inputs[K].isConst();
+          FullyOverwritten = false;
           Returned = true;
           break;
         } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
@@ -1083,11 +1096,71 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
         Work.emplace_back(Next->second, 0, Pending);
       }
     }
-    if (Safe)
+    if (Safe) {
       Save.Op->PrologueSave = true;
+      if (Overwritten && FullyOverwritten)
+        Overwritten->insert(Save.Op);
+    }
     if (!Budget)
       return;
   }
+}
+
+/// An absorbed read-modify-write may leave no MedIR LOAD. Original instruction
+/// temporaries may only flow through copies and a shared scalar annihilator;
+/// flags, register writes and memory uses of the old value remain observations.
+bool hasUnobservedInstructionLoad(llvm::ArrayRef<LowOp> Ops, size_t Index,
+                                  size_t &Budget) {
+  const auto &Load = Ops[Index];
+  if (!Load.Output.isTemp() || !Load.Output.Size)
+    return false;
+  std::map<uint64_t, uint16_t> Tainted{{Load.Output.Offset, Load.Output.Size}};
+  for (size_t I = Index + 1; I < Ops.size() && Ops[I].Addr == Load.Addr; ++I) {
+    if (!Budget)
+      return false;
+    --Budget;
+    const auto &Op = Ops[I];
+    if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default ||
+        (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
+         !isSpillScalarStep(Op.Opcode)))
+      return false;
+    bool Read = false;
+    for (unsigned K = 0; K < Op.NumInputs; ++K)
+      Read |= Op.Inputs[K].isTemp() && Tainted.count(Op.Inputs[K].Offset);
+    if (Read && (lowAbsorbingConstant(Op) || isLowSelfXor(Op)))
+      Read = false;
+    if (Read && (Op.Opcode != NdOp::COPY || Op.NumInputs != 1 ||
+                 !Op.Output.isTemp() || Op.Output.Size != Op.Inputs[0].Size))
+      return false;
+    if (Op.Output.isTemp()) {
+      if (Read)
+        Tainted[Op.Output.Offset] =
+            std::max(Tainted[Op.Output.Offset], Op.Output.Size);
+      else if (const auto At = Tainted.find(Op.Output.Offset);
+               At != Tainted.end() && Op.Output.Size >= At->second)
+        Tainted.erase(At);
+    }
+    if (Tainted.empty())
+      return true;
+  }
+  // Remaining values are instruction-local temporaries, never physical state.
+  return true;
+}
+
+bool hasSourceRegisterInputBody(const MedFunc &Func) {
+  return !(Func.CC != CallingConv::Win64 || Func.SourceTypeHint ||
+           Func.SourceParametersBound || Func.IsVariadic || Func.SkippedSSA ||
+           Func.AnalystStackFrame || Func.Blocks.empty() ||
+           !Func.Blocks.front().Preds.empty() ||
+           Func.EntryKind != StackEntryKind::Call ||
+           !Func.IntegerArgumentRegisters.empty() ||
+           (Func.ExceptionMetadata && (Func.ExceptionMetadata->Personality !=
+                                           ExceptionPersonality::None ||
+                                       Func.ExceptionMetadata->ParseStatus !=
+                                           ExceptionParseStatus::Complete)) ||
+           llvm::any_of(Func.ModuleAnalysisRoots,
+                        [&](va_t Root) { return Root != Func.Entry; }));
 }
 
 /// An exact declared call operand observes every loaded value byte. A source
@@ -1257,7 +1330,10 @@ void markReturnAddressReads(MedFunc &Func, Arch Architecture,
 
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format, StackEntryKind Entry,
-                             const BinaryImage *Image) {
+                             const BinaryImage *Image,
+                             std::set<const MedOp *> *Overwritten) {
+  if (Overwritten)
+    Overwritten->clear();
   // These source-only annotations are derived from the current body. An
   // edited store or load must not retain a proof from an earlier preparation.
   for (MedBlock &Block : Func.Blocks)
@@ -1275,27 +1351,122 @@ void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
     markReturnAddressReads(getTargetRegInfo(Architecture).PointerSize, Loads,
                            Stores);
   markUnobservedStackSpills(Func, Architecture, Format, Loads, Stores, Reads,
-                            Image);
+                            Image, Overwritten);
   replaceUnwrittenCallFrameReads(Func, Architecture, Loads, Stores);
 }
 
-SourceRegisterParameterReads
-sourceRegisterParameterReads(const MedFunc &Func,
-                             const SourceCalleeParameterReads &Callees,
-                             size_t &Budget) {
+std::set<unsigned> sourceRegisterInputOverwrites(
+    const MedFunc &Func, llvm::ArrayRef<LowOp> OriginalEntry,
+    const SourceRegisterParameterReads &Reads,
+    const SourceCalleeParameterOverwrites &Callees,
+    const std::set<const MedOp *> &Overwritten, size_t &Budget) {
+  std::set<unsigned> Result;
+  if (!hasSourceRegisterInputBody(Func) || OriginalEntry.empty() ||
+      OriginalEntry.front().Addr != Func.Entry ||
+      llvm::none_of(Reads, [](const auto &Read) { return Read.second == 0; }))
+    return Result;
+  using Occurrence = std::pair<va_t, int>;
+  std::map<Occurrence, const MedOp *> Current;
+  for (const auto &Block : Func.Blocks)
+    for (const auto &Op : Block.Ops) {
+      if (!Budget)
+        return Result;
+      --Budget;
+      if (Op.OriginSeq < 0 ||
+          (Op.Opcode != NdOp::STORE && Op.Opcode != NdOp::LOAD &&
+           Op.Opcode != NdOp::CALL))
+        continue;
+      const auto [At, New] =
+          Current.emplace(Occurrence{Op.Addr, Op.OriginSeq}, &Op);
+      if (!New)
+        At->second = nullptr;
+    }
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  const auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
+  for (const auto &[P, Bytes] : Reads) {
+    if (Bytes || P >= Layout.Registers.size())
+      continue;
+    const uint64_t Register = Layout.Registers[P];
+    const auto Overlaps = [&](const NdVar &V) {
+      return V.isReg() && V.Size &&
+             (V.Offset >= Register ? V.Offset - Register < TRI.PointerSize
+                                   : Register - V.Offset < V.Size);
+    };
+    for (size_t I = 0; I < OriginalEntry.size(); ++I) {
+      const LowOp &Op = OriginalEntry[I];
+      if (!Budget)
+        return Result;
+      --Budget;
+      const auto At = Current.find({Op.Addr, Op.Seq});
+      const MedOp *Bound = At == Current.end() ? nullptr : At->second;
+      if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+          Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+        break;
+      if (Op.Opcode == NdOp::CALL) {
+        if (!Op.NumInputs || !Op.Inputs[0].isConst() || !Bound ||
+            Bound->Opcode != NdOp::CALL || Bound->SourceCallHint ||
+            !Bound->NumInputs || !Bound->Inputs[0].isConst() ||
+            Bound->Inputs[0].ConstVal != Op.Inputs[0].Offset)
+          break;
+        if (const auto Known = Callees.find(Op.Inputs[0].Offset);
+            Known != Callees.end() && Known->second.count(P)) {
+          Result.insert(P);
+          break;
+        }
+        const auto Unread = Func.CallUnreadRegisters.find(Bound->CallSiteId);
+        if (!Bound->CallSiteId || Unread == Func.CallUnreadRegisters.end() ||
+            Unread->second.Instruction != Op.Addr ||
+            Unread->second.OriginSeq != Op.Seq ||
+            Unread->second.Target != Op.Inputs[0].Offset ||
+            !callPreservesRegisterBytes(Arch::X64, Unread->second.Families,
+                                        Register, TRI.PointerSize))
+          break;
+        continue;
+      }
+      if (Op.Opcode == NdOp::LOAD && (!Bound || Bound->Opcode != NdOp::LOAD) &&
+          !hasUnobservedInstructionLoad(OriginalEntry, I, Budget))
+        break;
+      if (Op.Opcode != NdOp::LOAD && Op.Opcode != NdOp::STORE &&
+          !isSpillScalarStep(Op.Opcode))
+        break;
+      bool Read = false;
+      for (unsigned I = 0; I < Op.NumInputs; ++I)
+        Read |= Overlaps(Op.Inputs[I]);
+      if (lowAbsorbingConstant(Op) || isLowSelfXor(Op))
+        Read = false;
+      if (Read) {
+        // A discarded restore is insufficient: its physical destination may
+        // outlive its source statement. Only complete byte overwrites qualify.
+        if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
+            Overlaps(Op.Inputs[0]) || !Op.Inputs[1].isReg() ||
+            Op.Inputs[1].Offset != Register || !Bound ||
+            Bound->Opcode != NdOp::STORE || Bound->NumInputs != 2 ||
+            Bound->Inputs[1].Kind != MedVar::Reg ||
+            Bound->Inputs[1].RegOff != Register ||
+            Bound->Inputs[1].Size != Op.Inputs[1].Size ||
+            !Overwritten.count(Bound))
+          break;
+        continue;
+      }
+      // A complete independent definition ends this input. Earlier reads
+      // could not retain it in temporaries, other registers or live storage.
+      // The x64 32-bit destination also clears its high half.
+      if (Op.Output.isReg() && Op.Output.Offset == Register &&
+          (Op.Output.Size == sizeof(uint32_t) ||
+           Op.Output.Size == TRI.PointerSize)) {
+        Result.insert(P);
+        break;
+      }
+    }
+  }
+  return Result;
+}
+
+SourceRegisterParameterReads sourceRegisterParameterReads(
+    const MedFunc &Func, const SourceCalleeParameterReads &Callees,
+    size_t &Budget, const SourceCalleeParameterOverwrites &Overwrites) {
   SourceRegisterParameterReads Result;
-  if (!Budget || Func.CC != CallingConv::Win64 || Func.SourceTypeHint ||
-      Func.SourceParametersBound || Func.IsVariadic || Func.SkippedSSA ||
-      Func.AnalystStackFrame || Func.Blocks.empty() ||
-      !Func.Blocks.front().Preds.empty() ||
-      Func.EntryKind != StackEntryKind::Call ||
-      !Func.IntegerArgumentRegisters.empty() ||
-      (Func.ExceptionMetadata &&
-       (Func.ExceptionMetadata->Personality != ExceptionPersonality::None ||
-        Func.ExceptionMetadata->ParseStatus !=
-            ExceptionParseStatus::Complete)) ||
-      llvm::any_of(Func.ModuleAnalysisRoots,
-                   [&](va_t Root) { return Root != Func.Entry; }))
+  if (!Budget || !hasSourceRegisterInputBody(Func))
     return Result;
   const auto &TRI = getTargetRegInfo(Arch::X64);
   const auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
@@ -1498,14 +1669,14 @@ sourceRegisterParameterReads(const MedFunc &Func,
       if (!Safe || (!Saved && !NarrowSeed))
         continue;
       // Source operands do not describe an opaque call's implicit registers.
-      // Check every path until this family has been fully overwritten. A
-      // may-write call summary or a partial write is not an overwrite proof.
-      std::vector<int> Work{Func.Blocks.front().Id};
-      std::set<int> Seen;
+      // Follow physical liveness on every path, including later setups that
+      // restore the entry value. A may-write or partial write cannot kill it.
+      std::vector<std::pair<int, bool>> Work{{Func.Blocks.front().Id, true}};
+      std::set<std::pair<int, bool>> Seen;
       while (Safe && !Work.empty()) {
-        const int Id = Work.back();
+        auto [Id, Live] = Work.back();
         Work.pop_back();
-        if (!Seen.insert(Id).second)
+        if (!Seen.emplace(Id, Live).second)
           continue;
         const auto At = Blocks.find(Id);
         if (At == Blocks.end()) {
@@ -1513,14 +1684,34 @@ sourceRegisterParameterReads(const MedFunc &Func,
           break;
         }
         const MedBlock &Block = *At->second;
+        for (const auto &Phi : Block.Phis)
+          if (Phi.Output.Kind == MedVar::Reg && Phi.Output.RegOff == Register &&
+              Aliases.count(keyOf(Phi.Output)))
+            Live = true;
         bool Closed = false;
         for (const auto &Op : Block.Ops) {
           if (!Budget)
             return Result;
           --Budget;
           if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-            if (const auto Read = SourceRead(Op, P); Read && *Read <= Prefix)
+            // Recovered calls can substitute away a setup COPY. An explicit
+            // old operand still reintroduces that input into its physical slot.
+            if (P + 1 < Op.NumInputs && Aliases.count(keyOf(Op.Inputs[P + 1])))
+              Live = true;
+            if (const auto Call = Calls.find(&Op);
+                Call != Calls.end() && Call->second &&
+                P < Call->second->Args.size() &&
+                Aliases.count(keyOf(Call->second->Args[P])))
+              Live = true;
+            if (!Live)
               continue;
+            if (const auto Read = SourceRead(Op, P); Read && *Read <= Prefix) {
+              if (const auto At = Overwrites.find(Op.Inputs[0].ConstVal);
+                  At != Overwrites.end() && At->second.count(P)) {
+                Live = false;
+              }
+              continue;
+            }
             const auto Proof = Func.CallUnreadRegisters.find(Op.CallSiteId);
             if (Proof == Func.CallUnreadRegisters.end() || !Op.CallSiteId ||
                 !Op.NumInputs || !Op.Inputs[0].isConst() || Op.SourceCallHint ||
@@ -1535,17 +1726,17 @@ sourceRegisterParameterReads(const MedFunc &Func,
           } else if (Op.Opcode == NdOp::RETURN) {
             Closed = true;
             break;
-          } else if (Op.Opcode == NdOp::INDIR_BR ||
-                     (Op.Opcode == NdOp::INTRINSIC &&
-                      !isExplicitFlagsTransfer(Op, Arch::X64))) {
+          } else if (Live && (Op.Opcode == NdOp::INDIR_BR ||
+                              (Op.Opcode == NdOp::INTRINSIC &&
+                               !isExplicitFlagsTransfer(Op, Arch::X64)))) {
             Safe = false;
             break;
           } else if (Op.Output.Kind == MedVar::Reg &&
-                     Op.Output.RegOff == Register &&
-                     Op.Output.Size >= TRI.PointerSize &&
-                     !Aliases.count(keyOf(Op.Output))) {
-            Closed = true;
-            break;
+                     Op.Output.RegOff == Register) {
+            if (Aliases.count(keyOf(Op.Output)))
+              Live = true;
+            else if (Op.Output.Size >= TRI.PointerSize)
+              Live = false;
           } else if (Op.Opcode == NdOp::BRANCH || Op.Opcode == NdOp::COND_BR) {
             if (!Op.NumInputs || !Op.Inputs[0].isConst() ||
                 !Entries.count(Op.Inputs[0].ConstVal)) {
@@ -1555,12 +1746,13 @@ sourceRegisterParameterReads(const MedFunc &Func,
           }
         }
         if (!Closed) {
-          if (Block.Succs.empty())
+          if (Block.Succs.empty() && Live)
             Safe = false;
           if (Block.Succs.size() > Budget)
             return Result;
           Budget -= Block.Succs.size();
-          Work.insert(Work.end(), Block.Succs.begin(), Block.Succs.end());
+          for (int Successor : Block.Succs)
+            Work.emplace_back(Successor, Live);
         }
       }
       if (Safe) {

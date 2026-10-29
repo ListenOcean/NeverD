@@ -340,6 +340,10 @@ OmittedCalleeMemo::keep(Callee &Holder, Conversion Converted) {
         (Converted.CalleesRead.size() + Converted.DirectCallTargets.size()) *
         sizeof(va_t);
   }
+  if (Converted.SourceEntryOperations)
+    Converted.Bytes +=
+        sizeof(std::vector<LowOp>) +
+        Converted.SourceEntryOperations->capacity() * sizeof(LowOp);
   Converted.Bytes += Converted.SourceStackInputs.capacity() *
                      sizeof(std::pair<int64_t, uint16_t>);
   if (Holder.Conversions.size() == MaxConversions) {
@@ -473,6 +477,10 @@ std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
   std::vector<const MedOp *> Calls;
   for (const auto &Block : Func.Blocks)
     for (const auto &Op : Block.Ops) {
+      if (Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+          Op.Inputs[1].Kind == MedVar::Reg && Op.Inputs[1].SSAVer == 0 &&
+          Layout.registerIndex(Op.Inputs[1].RegOff) >= 0)
+        Narrow.try_emplace(Op.Inputs[1].RegOff, 0);
       if (Op.Opcode == NdOp::CONCAT && Op.NumInputs == 2 &&
           Op.Output.Size == TRI.PointerSize &&
           Op.Inputs[1].Size < TRI.PointerSize)
@@ -648,6 +656,22 @@ public:
     }
     OmittedCalleeMemo::Conversion Converted{std::move(Body), {}};
     if (Converted.Body) {
+      if (Img.Arch == Arch::X64 && Img.abiFormat() == BinaryFormat::COFF &&
+          Lifted.hasCompleteLiftCoverage() &&
+          Lifted.UnsafeIndirectBranchAddresses.empty() &&
+          !Lifted.Blocks.empty() && Lifted.Blocks.front().StartAddr == Target &&
+          Lifted.Blocks.front().Preds.empty()) {
+        const auto Layout =
+            getTargetRegInfo(Img.Arch).integerArgumentLayout(Img.abiFormat());
+        if (llvm::any_of(Lifted.Blocks.front().Ops, [&](const LowOp &Op) {
+              return Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
+                     Op.Inputs[1].isReg() &&
+                     Layout.registerIndex(Op.Inputs[1].Offset) >= 0;
+            }))
+          Converted.SourceEntryOperations =
+              std::make_shared<const std::vector<LowOp>>(
+                  Lifted.Blocks.front().Ops);
+      }
       if (auto Hint = inferIncomingStackLeaf(Img, Lifted, *Converted.Body)) {
         MedFunc Bound = *Converted.Body;
         Bound.SourceTypeHint = *Hint;
@@ -709,7 +733,8 @@ private:
 
 std::vector<std::shared_ptr<const MedFunc>> omittedDirectCalleeSignatures(
     const BinaryImage &Img, const PipelineResult &Result,
-    bool SourceDeclarations, bool SourceParameterReads) {
+    bool SourceDeclarations, bool SourceParameterReads,
+    std::map<va_t, std::shared_ptr<const std::vector<LowOp>>> &SourceEntries) {
   const auto *Convention = callArgumentConvention(Img.Arch, Img.abiFormat());
   if (!needsCallSignatureRecovery(Convention) || Img.IsRelocatable)
     return {};
@@ -821,6 +846,8 @@ std::vector<std::shared_ptr<const MedFunc>> omittedDirectCalleeSignatures(
     if (Conversion.Body->takesVectorArgumentRegisters())
       continue;
     Signatures.push_back(Conversion.Body);
+    if (SourceParameterReads && Conversion.SourceEntryOperations)
+      SourceEntries.emplace(Target, Conversion.SourceEntryOperations);
   }
   return Signatures;
 }
@@ -1552,13 +1579,17 @@ void recoverModuleCallAbi(const BinaryImage &Img, PipelineResult &Result,
   if (!Result.OmittedCallees || Result.OmittedCallees->Functions != Functions ||
       Result.OmittedCallees->IncludesSourceDeclarations != SourceDeclarations ||
       Result.OmittedCallees->IncludesSourceParameterReads !=
-          SourceParameterReads)
+          SourceParameterReads) {
+    OmittedCalleeBodies Omitted;
+    Omitted.Functions = Functions;
+    Omitted.IncludesSourceDeclarations = SourceDeclarations;
+    Omitted.IncludesSourceParameterReads = SourceParameterReads;
+    Omitted.Bodies = omittedDirectCalleeSignatures(
+        Img, Result, SourceDeclarations, SourceParameterReads,
+        Omitted.SourceEntryOperations);
     Result.OmittedCallees =
-        std::make_shared<const OmittedCalleeBodies>(OmittedCalleeBodies{
-            Functions,
-            omittedDirectCalleeSignatures(Img, Result, SourceDeclarations,
-                                          SourceParameterReads),
-            SourceDeclarations, SourceParameterReads});
+        std::make_shared<const OmittedCalleeBodies>(std::move(Omitted));
+  }
   // The passes before recovery read the kept bodies in place.
   const std::vector<std::shared_ptr<const MedFunc>> &OmittedCallees =
       Result.OmittedCallees->Bodies;

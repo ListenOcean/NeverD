@@ -183,15 +183,20 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   Segment Slots;
   Slots.Name = ".idata";
   Slots.VA = 0x3000;
-  Slots.Size = Slots.FileSz = 8;
+  Slots.Size = Slots.FileSz = 16;
   Slots.Flags = SegmentFlags::Readable;
-  Slots.Data.assign(8, 0);
+  Slots.Data.assign(16, 0);
   State.Img.Segments.push_back(std::move(Slots));
   Import Reader;
   Reader.Name = "strlen";
   Reader.Module = "msvcrt.dll";
   Reader.IATAddr = 0x3000;
   State.Img.Imports.push_back(std::move(Reader));
+  Import Observer;
+  Observer.Name = "rand";
+  Observer.Module = "msvcrt.dll";
+  Observer.IATAddr = 0x3008;
+  State.Img.Imports.push_back(std::move(Observer));
   for (const auto &[Entry, Name] : {std::pair{Caller, "spill_caller"},
                                     std::pair{Consumer, "spill_consumer"}}) {
     auto Symbol = Symbol::makeFunc(Entry);
@@ -204,8 +209,9 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   Object.Size = 8;
   State.Img.Symbols.push_back(std::move(Object));
   const auto OriginalImage = State.Img;
-  for (bool ThroughWrapper : {false, true}) {
-    SCOPED_TRACE(ThroughWrapper);
+  for (unsigned Variant : {0, 1, 2}) {
+    SCOPED_TRACE(Variant);
+    const bool ThroughWrapper = Variant != 0;
     State.Img = OriginalImage;
     if (ThroughWrapper) {
       auto &Code = State.Img.Segments.front().Data;
@@ -214,13 +220,21 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
           0xB1, 0x5A,                // mov cl,5Ah
           0xE8, 0x15, 0,    0,    0, // call wrapper
           0x48, 0x83, 0xC4, 0x28, 0xC3};
-      const std::vector<uint8_t> Wrapper = {
+      std::vector<uint8_t> Wrapper = {
           0x53,                      // push rbx
           0x0F, 0xB6, 0xD9,          // movzx ebx,cl
           0x48, 0x83, 0xEC, 0x20,    // sub rsp,20h
           0xE8, 0x13, 0,    0,    0, // call consumer
           0x48, 0x01, 0xD8,          // add rax,rbx
           0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};
+      if (Variant == 2) {
+        Wrapper.resize(13);
+        Wrapper.insert(Wrapper.end(),
+                       {0x48, 0x01, 0xC3,             // add rbx,rax
+                        0xFF, 0x15, 0xD2, 0x1F, 0, 0, // call [rand]
+                        0x48, 0x89, 0xD8,             // mov rax,rbx
+                        0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
+      }
       std::copy(CallerCode.begin(), CallerCode.end(), Code.begin());
       std::copy(Wrapper.begin(), Wrapper.end(), Code.begin() + 0x20);
       auto Symbol = Symbol::makeFunc(Caller + 0x20);

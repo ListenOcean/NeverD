@@ -269,6 +269,13 @@ candidates; it is part of that reader's cache identity. Both emitters and SDK
 replay consume the same post-recovery CallInfos. Exact scalar prefix slices
 through COPY/CONCAT/SUBBYTES/ZEXT can choose zero for unobserved high bytes;
 unknown retained bytes, address constants and producer effects stay intact.
+A source-dead input can now end at a separately checked original entry overwrite.
+The bounded signature memo retains original entry operations for spill candidates;
+a full reset with no prior byte read is stronger than a discarded source restore.
+Register/temporary copies, partial writes, stale occurrences and entry branches
+remain conservative. A callee's may-write mask alone still proves nothing about
+input destruction. Both C routes and SDK replay share this fact, and restoring
+an older SSA value after an overwrite reopens its implicit observations.
 This is not a native ABI rewrite or proof that missing interior stack arguments
 are unused. LLVMC import naming also retains nonzero GEP offsets within IAT
 objects; stripping those offsets could select a different imported routine.

@@ -15932,7 +15932,15 @@ object must keep their slot offsets and actual call identities. A three-function
 variant forwards a byte or word flag while its incoming register's unused upper
 bytes flow to a discarded spill. Both selected and omitted queries must recover
 the exact constant prefix; selected bodies also execute the original bytes and
-both source routes. `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
+both source routes. Another wrapper calls an opaque observer after the consumer;
+the original entry overwrite must close the old register input first. Its
+compiled source and original machine execution retain both external calls.
+`InputDestructionNeedsOriginalEntryAndCompleteOverwrites` retains partial writes,
+register/temporary copies, source-dead restores, partial memory resets, stale
+store/call occurrences, independent entries and exhausted budgets.
+`AReintroducedRegisterInputStillReachesImplicitCalls` rejects a restore of the
+original SSA value after an independent register overwrite.
+`RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
 observed high bytes, changed call bindings, other physical registers, exceptional
 observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`
 keeps unknown retained bytes, relocation-dependent constants and ordered
@@ -15946,7 +15954,8 @@ copied masks across x86/Arm widths and ELF/COFF/Mach-O while retaining ordered
 loads and relocation-dependent values.
 `SessionLLVMTest.CallRecoveryKeepsUnobservedSourceSpillArguments` repeats the
 source proof after SDK call recovery and checks selected/omitted bodies,
-three-function low-prefix forwarding and optimized/unoptimized cache hits.
+three-function low-prefix forwarding, post-consumer opaque calls and
+optimized/unoptimized cache hits.
 `OverwrittenCallClobberSpills.*` checks post-call scratch stores,
 with and without flags transfers and unused restores. Both source routes keep
 the call and flags effects while discarding overwritten values. COFF, ELF and

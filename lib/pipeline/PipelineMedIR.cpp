@@ -124,10 +124,20 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
                                          llvm::ArrayRef<LowFunc> Originals) {
   std::map<va_t, const MedFunc *> Callees;
   std::set<va_t> Complete;
+  std::map<va_t, llvm::ArrayRef<LowOp>> OriginalEntries;
   for (const LowFunc &Func : Originals)
     if (Func.hasCompleteLiftCoverage() &&
-        Func.UnsafeIndirectBranchAddresses.empty())
+        Func.UnsafeIndirectBranchAddresses.empty()) {
       Complete.insert(Func.Entry);
+      if (!Func.Blocks.empty() && Func.Blocks.front().StartAddr == Func.Entry &&
+          Func.Blocks.front().Preds.empty())
+        OriginalEntries.emplace(Func.Entry, Func.Blocks.front().Ops);
+    }
+  if (Result.OmittedCallees)
+    for (const auto &[Entry, Ops] :
+         Result.OmittedCallees->SourceEntryOperations)
+      if (Ops)
+        OriginalEntries.try_emplace(Entry, *Ops);
   for (const MedFunc &Func : Result.MedFuncs)
     if (Complete.count(Func.Entry))
       Callees.emplace(Func.Entry, &Func);
@@ -193,14 +203,22 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   // Cached bodies are immutable. Prepare each candidate once; independent
   // functions and each dependency wave run in weighted parallel batches.
   std::vector<std::optional<MedFunc>> Prepared(Sources.size());
+  std::vector<std::set<const MedOp *>> OverwrittenSpills(Sources.size());
   parallelForEachWeighted(Weights, [&](auto Claim, size_t N) {
-    for (size_t I; (I = Claim()) < N;)
-      if (!Complete.count(Sources[I]->Entry)) {
-        auto &Func = Prepared[I].emplace(*Sources[I]);
-        markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(),
-                                Func.EntryKind, &Image);
-        Sources[I] = &Func;
-      }
+    for (size_t I; (I = Claim()) < N;) {
+      const auto &Source = *Sources[I];
+      auto &Func = Prepared[I].emplace(Source);
+      markSourceStackAccesses(Func, Image.Arch, Image.abiFormat(),
+                              Func.EntryKind, &Image, &OverwrittenSpills[I]);
+      // Selected bodies also carry this phase's complete borrowed-frame proof.
+      // Keep that source fact, but never promote it into an overwrite receipt.
+      if (Complete.count(Source.Entry))
+        for (size_t B = 0; B < Source.Blocks.size(); ++B)
+          for (size_t O = 0; O < Source.Blocks[B].Ops.size(); ++O)
+            Func.Blocks[B].Ops[O].PrologueSave |=
+                Source.Blocks[B].Ops[O].PrologueSave;
+      Sources[I] = &Func;
+    }
   });
   std::map<va_t, std::set<size_t>> Callers;
   for (size_t I = 0; I < Sources.size(); ++I)
@@ -214,16 +232,23 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   std::vector<size_t> Remaining(Sources.size(),
                                 limits::ir::kSourceEntrySpillWork);
   SourceCalleeParameterReads Facts;
+  SourceCalleeParameterOverwrites Overwrites;
   while (!Work.empty()) {
     std::vector<uint64_t> WaveWeights;
     for (size_t I : Work)
       WaveWeights.push_back(Weights[I]);
     std::vector<SourceRegisterParameterReads> Reads(Work.size());
+    std::vector<std::set<unsigned>> Destroyed(Work.size());
     parallelForEachWeighted(WaveWeights, [&](auto Claim, size_t N) {
       for (size_t W; (W = Claim()) < N;) {
         const size_t I = Work[W];
-        Reads[W] =
-            sourceRegisterParameterReads(*Sources[I], Facts, Remaining[I]);
+        Reads[W] = sourceRegisterParameterReads(*Sources[I], Facts,
+                                                Remaining[I], Overwrites);
+        if (const auto At = OriginalEntries.find(Sources[I]->Entry);
+            At != OriginalEntries.end())
+          Destroyed[W] = sourceRegisterInputOverwrites(
+              *Sources[I], At->second, Reads[W], Overwrites,
+              OverwrittenSpills[I], Remaining[I]);
       }
     });
     std::set<size_t> Next;
@@ -238,6 +263,8 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
           Changed = true;
         }
       }
+      for (unsigned P : Destroyed[W])
+        Changed |= Overwrites[Entry].insert(P).second;
       if (Changed)
         if (const auto At = Callers.find(Entry); At != Callers.end())
           for (size_t I : At->second)

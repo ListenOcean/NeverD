@@ -17,6 +17,8 @@
 
 #include "neverd/ir/med/MedIR.h"
 
+#include "llvm/ADT/ArrayRef.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <map>
@@ -43,10 +45,13 @@ bool isSourcePrivateFrameAccess(const MedFunc &Func, Arch Architecture,
 /// returning; operation positions stay stable. An optional current image
 /// identifies complete data-object reads disjoint from the private source
 /// frame; unknown addresses and external stores still stop the spill proof.
+/// Optional Overwritten receives only stores whose old bytes are reset before
+/// any read, including source-dead restores; its pointers expire on mutation.
 void markSourceStackAccesses(MedFunc &Func, Arch Architecture,
                              BinaryFormat Format,
                              StackEntryKind Entry = StackEntryKind::Call,
-                             const BinaryImage *Image = nullptr);
+                             const BinaryImage *Image = nullptr,
+                             std::set<const MedOp *> *Overwritten = nullptr);
 
 /// Positional Win64 register inputs whose only uses are source-proved dead
 /// spills and dead identity transports. Every implicit call observation must
@@ -62,14 +67,28 @@ std::set<unsigned> unobservedSourceSpillParameters(const MedFunc &Func);
 using SourceRegisterParameterReads = std::map<unsigned, uint16_t>;
 using SourceCalleeParameterReads = std::map<va_t, SourceRegisterParameterReads>;
 
+/// Original entry prefixes that destroy an input without leaving a copy in
+/// another register or live memory. This is stronger than a may-write mask or
+/// an unused source parameter, and is private to the current source proof.
+using SourceCalleeParameterOverwrites = std::map<va_t, std::set<unsigned>>;
+
+/// Prove destruction from original entry operations, never from dead-code
+/// elimination of physical register writes. Each ignored store must occur in
+/// freshly prepared Overwritten: no old byte is read before its full reset.
+/// The caller supplies the complete original entry block of this body.
+std::set<unsigned> sourceRegisterInputOverwrites(
+    const MedFunc &Func, llvm::ArrayRef<LowOp> OriginalEntry,
+    const SourceRegisterParameterReads &Reads,
+    const SourceCalleeParameterOverwrites &Callees,
+    const std::set<const MedOp *> &Overwritten, size_t &Remaining);
+
 /// Extend source spill evidence through current direct calls. Identity copies
 /// and PHIs retain byte positions; narrow views may read the retained prefix.
 /// Opaque implicit readers, changed call bindings and other transports reject
 /// a suffix proof. The shared per-function budget also bounds repeated queries.
-SourceRegisterParameterReads
-sourceRegisterParameterReads(const MedFunc &Func,
-                             const SourceCalleeParameterReads &Callees,
-                             size_t &Remaining);
+SourceRegisterParameterReads sourceRegisterParameterReads(
+    const MedFunc &Func, const SourceCalleeParameterReads &Callees,
+    size_t &Remaining, const SourceCalleeParameterOverwrites &Overwrites = {});
 
 /// Choose zero for unobserved argument bytes only when the complete retained
 /// prefix is an exact scalar constant. Follow COPY/CONCAT/SUBBYTES/ZEXT views

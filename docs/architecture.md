@@ -358,6 +358,17 @@ change the native entry-read summary. Exact scalar COPY/CONCAT/SUBBYTES/ZEXT
 slices can replace a source call argument when every retained byte is known;
 unavailable neighbors are never evaluated. Original operations, effects,
 parameter positions and widths remain. SDK replay repeats the same owner.
+A separate input-destruction fact requires the original entry operations: every
+read before an independent full-register definition must be a private spill
+proved completely overwritten without an intervening read, or a bound unread
+call. Copies into another register or temporary, partial writes, lost original
+occurrences and control transfers keep the input live. Source-dead restores
+cannot supply this stronger fact. The bounded callee memo retains the original
+entry operations of spill candidates and charges their storage to its existing
+limit. These facts propagate in the same dependency waves and terminate stale
+physical input flow across a proved destructive callee. A later SSA copy or
+call setup that reintroduces the entry value makes it live again. This remains
+a source proof; native may-write and entry-read summaries are unchanged.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
