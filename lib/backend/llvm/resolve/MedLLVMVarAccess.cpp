@@ -23,6 +23,7 @@
 #include "neverd/backend/Limits.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/med/X86/X86RepAddresses.h"
 #include "neverd/ir/med/X86/X87ControlWord.h"
 #include "neverd/support/Diagnostic.h"
 
@@ -90,9 +91,15 @@ void MedLLVMEmitter::ensureDefPhiIndex() const {
   // linear scans' "return the first match" behavior.
   for (const MedBlock &Blk : CurMedFunc->Blocks) {
     UniqueBlockIds &= UniqueBlockIndex.emplace(Blk.Id, &Blk).second;
-    for (const MedOp &Op : Blk.Ops)
+    for (const MedOp &Op : Blk.Ops) {
       if (!Op.Output.isConst())
         DefIndex.try_emplace(medVarDefKey(Op.Output), &Op);
+      // A bounded REP's second address is an actual SSA definition too. Only
+      // index the address result this owner can prove, not its count/flags.
+      for (const MedVar &Output : Op.IntrinsicOutputs)
+        if (x86RepConstantAddressOutput(Op, Output, TargetArch))
+          DefIndex.try_emplace(medVarDefKey(Output), &Op);
+    }
     for (const PhiNode &P : Blk.Phis) {
       PhiBlocks.try_emplace(&P, &Blk);
       if (!P.Output.isConst())

@@ -3654,25 +3654,20 @@ void HighCWriter::collectImageObjects(const std::vector<HighFunc> &Funcs) {
           if (!Address || !isImageDataAddress(*Address))
             continue;
           const auto *Segment = Opts.Image->getSegmentFor(*Address);
-          const uint64_t Available = Segment->Size;
-          const uint64_t Offset = *Address - Segment->VA;
-          const uint64_t Width = Control->ElementBytes;
-          if (Count->ConstVal > Available / Width)
-            throw std::invalid_argument(
-                "repeated image access exceeds its mapped storage");
-          const uint64_t Bytes = Count->ConstVal * Width;
-          const uint64_t Before = Backward ? Bytes - Width : 0;
-          if (Offset < Before || Offset - Before > Available - Bytes)
+          const auto Span =
+              x86RepAccessSpan(*Address, Count->ConstVal, *Control, Backward,
+                               Segment->VA, Segment->Size);
+          if (!Span)
             throw std::invalid_argument(
                 "repeated image access crosses its mapped storage");
-          const va_t Begin = *Address - Before;
           const bool Written = !Copy || I == 1;
-          const auto ElementType = NdType::makeInt(Width, false);
+          const auto ElementType =
+              NdType::makeInt(Control->ElementBytes, false);
           NoteAccessAddress(E.Operands[I].get());
-          noteImageObject(Begin, ElementType, Written, true);
+          noteImageObject(Span->Begin, ElementType, Written, true);
           noteImageObject(*Address, ElementType, Written, true);
-          ImageObject &Object = ImageObjects[Begin];
-          Object.IndexedBytes = std::max(Object.IndexedBytes, Bytes);
+          ImageObject &Object = ImageObjects[Span->Begin];
+          Object.IndexedBytes = std::max(Object.IndexedBytes, Span->Bytes);
           Object.AddressTaken = true;
         }
       }
