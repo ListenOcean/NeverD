@@ -4654,6 +4654,20 @@ hexadecimal age, NB10 keys and refusal of unusable identities or unsafe path
 components. `NeverDWorkerPDBLoad` opens a PE without the PDB beside it and finds
 that PDB before opening it.
 
+`ApplyDebugSymbolsTest.RefreshesPreviouslyUnnamedWindowsPersonality` checks
+debug names arriving before and after Windows language decode. Standalone GS
+and C-handler records refresh without stale unknown-handler diagnostics;
+malformed cookie payloads, native unwind/directory faults and legacy records
+without provenance stay conservative. Repeated publication is stable.
+`NeverDCOFFExceptionParserTests` runs the PE unwind and language-table readers
+independently, including x64/ARM/ARM64, SEH, FH3/FH4, GS and Delphi fixtures.
+`EmptySEHTableMayEndAtTheMappedBoundary` accepts a complete zero-scope table
+at the end of mapped data while rejecting a nonzero count without its records.
+`LocalUnwindFaultsDoNotPoisonDirectoryCoverage` keeps localized x64/ARM/ARM64
+record failures distinct from truncated or misaligned directory failures.
+`ARMUnwindFaultOwnershipRequiresAKnownRange` retains a malformed body on its
+known function, but treats an undecodable range header as a directory fault.
+
 `DWARFSourceTypes.OriginsAndSpecificationsDeclareTheTypes` builds DWARF in
 which an inlined function's out-of-line copy names its parameter and local
 only by `DW_AT_abstract_origin`, and a variable is defined only by

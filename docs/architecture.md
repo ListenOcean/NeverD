@@ -11209,6 +11209,14 @@ used to encode the cookie. Standalone GS owns only its cookie payload and never
 invents C language scopes. Loader classification requires an exact symbol or
 import identity for that standalone personality; a cookie-shaped payload or
 anonymous instruction sequence cannot establish it.
+Publishing debug function names revisits previously unknown Windows table
+personalities through `coff_loader::refreshExceptionHandlerNames`. The loader
+keeps native unwind/directory diagnostics separate from language-decode results,
+so a newly identified handler replaces only its provisional language failure.
+Malformed payloads and structural faults remain failures; legacy records without
+decode provenance retain their prior diagnostics. Handler resolution is shared
+per address and redecoding visits the affected materialized frames and their
+required handler bodies. Symbol loading order does not select the final schema.
 
 `X64SEH` retains optional kernel SSE context independently of the virtual unwind cursor; `DriverSession` separates fault restoration from handler controls. See [driver emulation](driver-emulation.md).
 

@@ -282,6 +282,10 @@ fixed nested-call home/argument ranges must all exclude the slot. Selected,
 omitted and SDK queries share the result; general CFGs, exceptional observers,
 escaped frame addresses and unbounded calls still require independent proofs.
 These source facts do not rewrite the native ABI or compact its argument slots.
+Late debug symbols now refresh cached unknown Windows personalities. Language
+decode provenance permits replacing stale classification diagnostics while
+retaining unwind/directory faults and malformed payloads. A resolved standalone
+GS handler still observes its cookie; naming it grants no unused-input proof.
 LLVMC import naming also retains nonzero GEP offsets within IAT
 objects; stripping those offsets could select a different imported routine.
 HighIR now keeps the shared direct-call argument boundary: its secondary setup
