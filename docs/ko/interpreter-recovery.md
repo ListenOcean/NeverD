@@ -310,3 +310,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 ## 스택 변경 후의 내부 제어 이전
 
 명시적 원시 머신 영역은 현재 스택 포인터를 진입점 상대 값으로 표현할 수 없어도 내부 near CALL과 RET를 추적할 수 있습니다. 아키텍처 어댑터는 실제 대상 캡처, 푸시, 반환 주소 읽기 및 팝을 유지합니다. 내부 반환마다 실제 스택 값에서 완전한 유한 대상 집합을 증명해야 합니다. 진입점 상대 위치가 증명된 반환 슬롯만 프레임 투영과 보존 목록에 포함됩니다. 그래프 경계에서 다른 스택 관계가 사라지면 복원이 여전히 거부될 수 있습니다. 일반 함수 복원은 프레임 복원 요건을 유지합니다. 이 기능은 원시 영역 결과를 제공하며, 전체 함수 결합과 소스 또는 네이티브 동등성은 별도로 증명해야 합니다.
+
+<!-- i18n-section: store-separation-proofs -->
+
+## 선택적 쓰기 분리 증명
+
+`--vm-prove-store-return-separation`은 반환 셀, 저장된 프레임 포인터, 현재 스칼라 프레임 셀을 보존하기 전에 전체 쓰기와 겹치지 않음을 증명합니다. `--vm-prove-store-frame-separation`은 선언된 프레임과 현재 절대 주소 셀도 검사하며 `--vm-machine-state`와 `--vm-entry-frame`이 필요합니다. 두 옵션 모두 `--devirtualize`가 필요하고 기본적으로 꺼져 있으며 기존 증명 및 작업 예산을 공유하고 비별칭 전제를 추가하지 않습니다. 증명되지 않은 쓰기는 기존 무효화 규칙을 따르고, 불완전한 복구는 소스를 게시하지 않습니다. 기존 체인 제어와 조합하여 루프를 유지할 수 있습니다.
+
+v9 API `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9`는 `neverd_devirtualize_options_v9`을 받습니다. 0으로 초기화하고 v1 접두부의 `struct_size`를 전체 크기로 설정합니다. 플래그는 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`이며 `reserved`는 0이어야 합니다. 이전 API는 이 꼬리를 무시합니다. Python은 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`를 제공하고 보고서에는 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`가 포함됩니다. 회귀는 두 C 경로의 인덱스 지역 배열 루프를 O0/O2 및 ASan/UBSan으로 실행하고 제공된 전체 스택 저장소를 검사합니다.

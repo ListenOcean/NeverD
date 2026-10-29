@@ -83,4 +83,25 @@ generic_recovery_register_cases:
   movb $90, (%r8)
   ret
 .size generic_recovery_register_cases,.-generic_recovery_register_cases
+
+.globl generic_recovery_indexed_store
+.type generic_recovery_indexed_store,@function
+generic_recovery_indexed_store:
+  subq $64, %rsp
+  movq $37, 56(%rsp)
+  movl $4, %edx
+.Lindexed_store_body:
+  decl %edx
+  movl %edi, %eax
+  andl $7, %eax
+  movl %edx, %ecx
+  andl $3, %ecx
+  leaq (%rsp,%rax), %r8
+  movb $90, (%r8,%rcx)
+  testl %edx, %edx
+  jne .Lindexed_store_body
+  movq 56(%rsp), %rax
+  addq $64, %rsp
+  ret
+.size generic_recovery_indexed_store,.-generic_recovery_indexed_store
 .section .note.GNU-stack,"",@progbits

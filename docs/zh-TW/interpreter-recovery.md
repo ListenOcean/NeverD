@@ -310,3 +310,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 ## 換堆疊後的內部轉移
 
 明確宣告的原始機器區域可以繼續處理目前堆疊指標不再相對入口堆疊定位的內部近 CALL 和 RET。架構配接器保留實際的目標擷取、壓入堆疊、返回位址讀取和彈出堆疊。每個內部返回仍須根據實際堆疊字證明完整的有限目標集合。只有已證明相對入口堆疊定位的返回槽才能加入堆疊框架投影與保留清單；圖邊界失去其他堆疊關係時，還原仍可能拒絕。一般函式還原繼續要求堆疊框架還原。此能力提供原始區域結果，完整函式組合及原始碼或原生等價性仍須分別證明。
+
+<!-- i18n-section: store-separation-proofs -->
+
+## 可選的寫入分離證明
+
+`--vm-prove-store-return-separation` 在保留返回位址單元、已儲存的框架指標和目前純量框架單元之前，證明完整寫入與它們不相交。`--vm-prove-store-frame-separation` 亦檢查宣告的框架和目前絕對位址單元，需要 `--vm-machine-state` 與 `--vm-entry-frame`。兩者都需要 `--devirtualize`，預設關閉，共用既有證明與工作預算，不增加無別名前提。未證明的寫入仍依通常規則使資訊失效；恢復不完整時不發布原始碼。可搭配既有鏈控制保留迴圈。
+
+v9 介面 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` 接受 `neverd_devirtualize_options_v9`。將結構清零，並將 v1 前綴的 `struct_size` 設為完整大小。旗標為 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`；`reserved` 必須為零。舊介面忽略此尾部。Python 提供 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`。報告含 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`。回歸透過兩條 C 路徑，在 O0/O2 與 ASan/UBSan 下執行動態索引區域陣列迴圈，並檢查整個提供的堆疊儲存區。

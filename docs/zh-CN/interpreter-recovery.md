@@ -310,3 +310,11 @@ neverd decompile program --func entry --devirtualize --vm-machine-state \
 ## 换栈后的内部转移
 
 显式原始机器区域可以继续处理当前栈指针不再相对入口栈定位的内部近 CALL 和 RET。架构适配器保留实际的目标捕获、压栈、返回地址读取和出栈。每个内部返回仍须根据真实栈字证明完整的有限目标集合。只有已证明相对入口栈定位的返回槽才能进入栈帧投影和保留清单；图边界丢失其他栈关系时，恢复仍可能拒绝。普通函数恢复继续要求栈帧恢复。此能力提供原始区域结果，完整函数组合以及源码或原生等价性仍需单独证明。
+
+<!-- i18n-section: store-separation-proofs -->
+
+## 可选的写入分离证明
+
+`--vm-prove-store-return-separation` 在保留返回地址单元、已保存的帧指针和当前标量帧单元之前，证明完整写入与它们不相交。`--vm-prove-store-frame-separation` 还检查声明的帧和当前绝对地址单元，需要 `--vm-machine-state` 和 `--vm-entry-frame`。两者都需要 `--devirtualize`，默认关闭，共用现有证明和工作预算，不增加不别名前提。未获证明的写入仍按通常规则使信息失效；恢复不完整时不发布源码。可与现有链控制组合以保留循环。
+
+v9 接口 `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` 接受 `neverd_devirtualize_options_v9`。将结构清零，并将 v1 前缀的 `struct_size` 设为完整大小。标志为 `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`；`reserved` 必须为零。旧接口忽略此尾部。Python 提供 `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9`。报告含 `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`。回归通过两条 C 路径，在 O0/O2 和 ASan/UBSan 下执行动态索引局部数组循环，并检查整个提供的栈存储。
