@@ -15940,6 +15940,13 @@ register/temporary copies, source-dead restores, partial memory resets, stale
 store/call occurrences, independent entries and exhausted budgets.
 `AReintroducedRegisterInputStillReachesImplicitCalls` rejects a restore of the
 original SSA value after an independent register overwrite.
+`UnusedIncomingStackSlotsDoNotRequireValues` executes an original Win64 wrapper
+and both C routes at O0/O2 with UBSan: two later stack arguments remain live
+while an earlier unwritten slot is never read. Selected and omitted queries,
+source optimization on/off and SDK replay retain that distinction.
+`StackParameterHolesKeepOriginalReadsAndEscapes` covers byte overlaps, nested
+call stack ranges, unknown/stale call bindings, frame escapes, partial address
+writes, exceptional entries and exhausted work.
 `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
 observed high bytes, changed call bindings, other physical registers, exceptional
 observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`

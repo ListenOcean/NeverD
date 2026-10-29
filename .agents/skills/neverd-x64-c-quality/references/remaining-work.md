@@ -276,8 +276,13 @@ Register/temporary copies, partial writes, stale occurrences and entry branches
 remain conservative. A callee's may-write mask alone still proves nothing about
 input destruction. Both C routes and SDK replay share this fact, and restoring
 an older SSA value after an overwrite reopens its implicit observations.
-This is not a native ABI rewrite or proof that missing interior stack arguments
-are unused. LLVMC import naming also retains nonzero GEP offsets within IAT
+Complete straight-line Win64 wrappers now have a separate proof for unused
+positional stack slots. Original byte reads, exact nonescaping SP offsets and
+fixed nested-call home/argument ranges must all exclude the slot. Selected,
+omitted and SDK queries share the result; general CFGs, exceptional observers,
+escaped frame addresses and unbounded calls still require independent proofs.
+These source facts do not rewrite the native ABI or compact its argument slots.
+LLVMC import naming also retains nonzero GEP offsets within IAT
 objects; stripping those offsets could select a different imported routine.
 HighIR now keeps the shared direct-call argument boundary: its secondary setup
 scan cannot append neighboring stack locals after a complete recovered list or

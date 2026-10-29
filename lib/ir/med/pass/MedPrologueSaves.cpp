@@ -6,6 +6,7 @@
 
 #include "neverd/ir/med/MedPrologueSaves.h"
 
+#include "../../AffineFrameState.h"
 #include "../abi/MedABIPassDetail.h"
 
 #include "neverd/ir/Limits.h"
@@ -1458,6 +1459,202 @@ std::set<unsigned> sourceRegisterInputOverwrites(
         break;
       }
     }
+  }
+  return Result;
+}
+
+std::set<unsigned> unobservedSourceStackParameters(
+    const MedFunc &Func, llvm::ArrayRef<LowOp> OriginalEntry,
+    const std::set<va_t> &DeclaredCallees, size_t &Budget) {
+  if (!hasSourceRegisterInputBody(Func) || Func.Blocks.size() != 1 ||
+      !Func.Blocks.front().Succs.empty() ||
+      !Func.Blocks.front().ExceptionalPreds.empty() ||
+      !Func.Blocks.front().ExceptionalSuccs.empty() ||
+      !Func.Blocks.front().Phis.empty() || OriginalEntry.empty() ||
+      OriginalEntry.front().Addr != Func.Entry ||
+      OriginalEntry.back().Opcode != NdOp::RETURN ||
+      !Func.FPParamScalarBytes.empty() || Func.DoesNotReturn ||
+      Func.Params.size() > limits::ir::kMaxSourceABIParameters)
+    return {};
+  const auto &TRI = getTargetRegInfo(Arch::X64);
+  const auto Layout = TRI.integerArgumentLayout(BinaryFormat::COFF);
+  if (Func.Params.size() <= Layout.Registers.size())
+    return {};
+  using Occurrence = std::pair<va_t, int>;
+  std::map<Occurrence, const MedOp *> Calls;
+  for (const auto &Op : Func.Blocks.front().Ops) {
+    if (!Budget)
+      return {};
+    --Budget;
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+      if (Op.OriginSeq < 0 ||
+          !Calls.emplace(Occurrence{Op.Addr, Op.OriginSeq}, &Op).second)
+        return {};
+    }
+  }
+  // A wrapper may retain instruction-local address temporaries, but no frame
+  // address may enter another physical register or stored value. Keep taint
+  // after lossy arithmetic as well as exact affine coordinates.
+  struct FrameValue {
+    std::optional<int64_t> Offset;
+    uint16_t Bytes = 0;
+    bool Derived = false;
+  };
+  std::map<uint64_t, FrameValue> Temps;
+  std::set<uint64_t> FrameFlags;
+  int64_t Stack = 0;
+  va_t Instruction = InvalidVA;
+  std::vector<std::pair<int64_t, int64_t>> Reads;
+  const auto Read = [&](const NdVar &V) -> FrameValue {
+    if (V.isReg() && V.Offset == TRI.StackPointer)
+      return {V.Size == TRI.PointerSize ? std::optional(Stack) : std::nullopt,
+              V.Size, true};
+    if (V.isReg() && FrameFlags.count(V.Offset))
+      return {std::nullopt, V.Size, true};
+    if (V.isTemp())
+      if (const auto At = Temps.find(V.Offset); At != Temps.end()) {
+        auto Value = At->second;
+        if (V.Size != Value.Bytes)
+          Value.Offset.reset();
+        return Value;
+      }
+    return {};
+  };
+  for (const auto &Op : OriginalEntry) {
+    if (!Budget)
+      return {};
+    --Budget;
+    if (Op.Addr != Instruction) {
+      Temps.clear();
+      Instruction = Op.Addr;
+    }
+    if (Op.MemoryOrdering != NdMemoryOrdering::None ||
+        Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
+      return {};
+    if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
+      const auto At = Calls.find({Op.Addr, Op.Seq});
+      if (Op.NumInputs != 1 || !Op.Inputs[0].isConst() || At == Calls.end())
+        return {};
+      const auto &Call = *At->second;
+      if (Call.Opcode != Op.Opcode || !Call.NumInputs ||
+          !Call.Inputs[0].isConst() ||
+          Call.Inputs[0].ConstVal != Op.Inputs[0].Offset ||
+          !DeclaredCallees.count(Op.Inputs[0].Offset) || Call.SourceCallHint ||
+          Call.IsTailCall || Call.DoesNotReturn || Call.CalleeStackArgs < 0 ||
+          Call.CalleeVectorArgs != 0 || Call.CalleeVectorSlots || Stack > 0)
+        return {};
+      const int64_t Arguments = std::max<int64_t>(
+          int64_t(Call.CalleeStackArgs) - int64_t(Layout.Registers.size()), 0);
+      const auto End = detail::checkedAffineOffset(
+          Stack, Layout.CallStackBase + Arguments * Layout.SlotBytes);
+      if (!End)
+        return {};
+      // Declared callees own their outgoing argument/home area and storage
+      // below call SP. A shallow frame can expose incoming slots to that area.
+      Reads.emplace_back(std::min<int64_t>(Stack, 0), *End);
+      Calls.erase(At);
+      // A call may overwrite flags, but does not prove destruction of an old
+      // frame-derived value. Retain that taint until an original definition.
+      continue;
+    }
+    if (Op.Opcode == NdOp::RETURN) {
+      if (&Op != &OriginalEntry.back() || Stack || Op.NumInputs != 1 ||
+          Op.Inputs[0] != NdVar::reg(TRI.IntReturnReg, TRI.PointerSize))
+        return {};
+      continue;
+    }
+    FrameValue Value;
+    for (unsigned K = 0; K < Op.NumInputs; ++K)
+      Value.Derived |= Read(Op.Inputs[K]).Derived;
+    if (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) {
+      if (Op.NumInputs != (Op.Opcode == NdOp::LOAD ? 1 : 2))
+        return {};
+      const auto Address = Read(Op.Inputs[0]).Offset;
+      const auto Bytes =
+          Op.Opcode == NdOp::LOAD ? Op.Output.Size : Op.Inputs[1].Size;
+      const auto End =
+          Address ? detail::checkedAffineOffset(*Address, Bytes) : std::nullopt;
+      if (!Address || !Bytes || !End ||
+          (Op.Opcode == NdOp::STORE && Read(Op.Inputs[1]).Derived))
+        return {};
+      if (Op.Opcode == NdOp::STORE)
+        continue;
+      Reads.emplace_back(*Address, *End);
+      Value.Derived = false;
+    } else if (!isSpillScalarStep(Op.Opcode)) {
+      return {};
+    } else if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+               Op.Output.Size == Op.Inputs[0].Size) {
+      Value.Offset = Read(Op.Inputs[0]).Offset;
+    } else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
+               Op.NumInputs == 2 && Op.Output.Size == TRI.PointerSize &&
+               Op.Inputs[1].isConst()) {
+      if (const auto Base = Read(Op.Inputs[0]).Offset)
+        Value.Offset = detail::checkedAffineOffset(
+            *Base, static_cast<int64_t>(Op.Inputs[1].Offset),
+            Op.Opcode == NdOp::INT_SUB);
+    }
+    Value.Bytes = Op.Output.Size;
+    if (Op.Output.isReg()) {
+      if (Op.Output.Offset == TRI.StackPointer) {
+        if (Op.Output.Size != TRI.PointerSize || !Value.Offset)
+          return {};
+        Stack = *Value.Offset;
+      } else if (TRI.isFlag(Op.Output.Offset, Op.Output.Size)) {
+        if (Value.Derived)
+          FrameFlags.insert(Op.Output.Offset);
+        else
+          FrameFlags.erase(Op.Output.Offset);
+      } else if (Value.Derived) {
+        return {};
+      }
+    } else if (Op.Output.isTemp()) {
+      auto &Previous = Temps[Op.Output.Offset];
+      if (Previous.Derived && Op.Output.Size < Previous.Bytes) {
+        Previous.Offset.reset();
+      } else {
+        Previous = Value;
+      }
+    } else if (Value.Derived) {
+      return {};
+    }
+  }
+  if (!Calls.empty())
+    return {};
+  std::set<unsigned> Observed;
+  const auto Observe = [&](const MedVar &Value) {
+    if (!Budget)
+      return false;
+    --Budget;
+    if (Value.Kind == MedVar::Param && Value.Id >= 0)
+      Observed.insert(unsigned(Value.Id));
+    return true;
+  };
+  for (const auto &Op : Func.Blocks.front().Ops)
+    for (unsigned K = 0; K < Op.NumInputs; ++K)
+      if (!Observe(Op.Inputs[K]))
+        return {};
+  for (const auto &Call : Func.CallInfos)
+    for (const auto &Arg : Call.Args)
+      if (!Observe(Arg))
+        return {};
+  for (const auto &Clobber : Func.CallClobbers)
+    if (!Observe(Clobber.Value) || !Observe(Clobber.PreservedInput))
+      return {};
+  std::set<unsigned> Result;
+  for (unsigned P = Layout.Registers.size(); P < Func.Params.size(); ++P) {
+    if (Func.Params[P].Kind != MedVar::Param || Func.Params[P].Id != int(P) ||
+        Func.Params[P].RegOff != kNoParamReg || Observed.count(P))
+      continue;
+    const int64_t Begin = Layout.EntryStackBase +
+                          (P - Layout.Registers.size()) * Layout.SlotBytes;
+    if (Reads.size() > Budget)
+      return {};
+    Budget -= Reads.size();
+    if (llvm::none_of(Reads, [&](const auto &Range) {
+          return Range.first < Begin + Layout.SlotBytes && Begin < Range.second;
+        }))
+      Result.insert(P);
   }
   return Result;
 }

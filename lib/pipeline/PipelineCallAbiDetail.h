@@ -202,8 +202,9 @@ struct OmittedCalleeMemo {
     /// LowIR, as entry-SP offset and observed byte width. These inputs do not
     /// alter Body's machine calling convention.
     std::vector<std::pair<int64_t, uint16_t>> SourceStackInputs;
-    /// Original entry operations of a complete Win64 spill candidate, retained
-    /// under the same image and conversion identity as Body.
+    /// Original entry operations of a complete Win64 spill or stack-parameter
+    /// candidate, retained under the same image and conversion identity as
+    /// Body.
     std::shared_ptr<const std::vector<LowOp>> SourceEntryOperations;
     /// Whether \p Result's summaries read as they did for the conversion.
     bool readsHold(const PipelineResult &Result) const;

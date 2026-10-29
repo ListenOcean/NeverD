@@ -272,6 +272,70 @@ TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedSourceSpillArguments) {
   }
 }
 
+TEST_F(SessionLLVMTest, CallRecoveryKeepsUnobservedStackArgumentHoles) {
+  constexpr va_t Caller = 0x1000, Wrapper = 0x1080;
+  State.Img.Format = BinaryFormat::COFF;
+  State.Img.Entry = Caller;
+  Segment Text;
+  Text.Name = ".text";
+  Text.VA = Caller;
+  Text.Size = Text.FileSz = 0xC0;
+  Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+  Text.Data.assign(Text.Size, 0xCC);
+  const std::vector<uint8_t> CallBytes = {
+      0x48, 0x83, 0xEC, 0x38, 0x48, 0x89, 0x4C, 0x24, 0x28, 0x48, 0x89, 0x54,
+      0x24, 0x30, 0xE8, 0x6D, 0,    0,    0,    0x48, 0x83, 0xC4, 0x38, 0xC3};
+  const std::vector<uint8_t> Body = {
+      0x53, 0x48, 0x83, 0xEC, 0x20, 0x48, 0x8B, 0x5C, 0x24, 0x58,
+      0x48, 0x03, 0x5C, 0x24, 0x60, 0xFF, 0x15, 0x6B, 0x1F, 0,
+      0,    0x48, 0x01, 0xD8, 0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3};
+  std::copy(CallBytes.begin(), CallBytes.end(), Text.Data.begin());
+  std::copy(Body.begin(), Body.end(), Text.Data.begin() + Wrapper - Caller);
+  State.Img.Segments.push_back(std::move(Text));
+  Segment Slots;
+  Slots.Name = ".idata";
+  Slots.VA = 0x3000;
+  Slots.Size = Slots.FileSz = 8;
+  Slots.Flags = SegmentFlags::Readable;
+  Slots.Data.assign(8, 0);
+  State.Img.Segments.push_back(std::move(Slots));
+  Import Observer;
+  Observer.Name = "rand";
+  Observer.Module = "msvcrt.dll";
+  Observer.IATAddr = 0x3000;
+  State.Img.Imports.push_back(std::move(Observer));
+  for (const auto &[Entry, Name] :
+       {std::pair{Caller, "stack_hole"}, std::pair{Wrapper, "stack_wrapper"}}) {
+    auto Symbol = Symbol::makeFunc(Entry);
+    Symbol.Name = Name;
+    State.Img.Symbols.push_back(std::move(Symbol));
+  }
+  for (bool Omitted : {false, true}) {
+    SCOPED_TRACE(Omitted);
+    State.NativeMedFuncs.reset();
+    State.FunctionLlvmModules.clear();
+    PipelineOptions Options;
+    Options.EmitDumpOutput = false;
+    Options.OnlyFunctionEntries = {Caller};
+    if (!Omitted)
+      Options.OnlyFunctionEntries.insert(Wrapper);
+    State.PipeResult = Pipeline().run(State.Img, *State.LLVMCtx, Options);
+    ASSERT_TRUE(State.PipeResult.Success) << State.PipeResult.Error;
+    for (bool NoOpt : {false, true}) {
+      SCOPED_TRACE(NoOpt);
+      const auto *Shown = State.ensureFunctionLlvmModule(Caller, NoOpt, true);
+      ASSERT_TRUE(Shown) << State.LastError;
+      ASSERT_TRUE(State.NativeMedFuncs);
+      const auto &Calls = State.NativeMedFuncs->front().CallInfos;
+      ASSERT_EQ(Calls.size(), 1U);
+      ASSERT_EQ(Calls.front().Args.size(), 7U);
+      EXPECT_TRUE(Calls.front().Args[4].isConst());
+      EXPECT_EQ(Calls.front().Args[4].ConstVal, 0U);
+      EXPECT_EQ(State.ensureFunctionLlvmModule(Caller, NoOpt, true), Shown);
+    }
+  }
+}
+
 TEST_F(SessionLLVMTest, EmissionExceptionsKeepTheSessionAndReason) {
   State.Img.Arch = Arch::AArch64;
   auto Function = sourceFunction();

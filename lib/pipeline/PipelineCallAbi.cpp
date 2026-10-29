@@ -448,8 +448,8 @@ std::vector<va_t> calleesToRead(const MedFunc &F, const BinaryImage &Img,
   return Callees;
 }
 
-/// Cheap source-query candidates, not an observation proof. A narrow entry
-/// view forwarded in its full register, or an assembled partial argument,
+/// Cheap source-query candidates, not an observation proof. Register spills,
+/// narrow entry views, assembled partial arguments and positional stack holes
 /// may need a callee body even when native arity is already known.
 std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
                                       const BinaryImage &Image) {
@@ -486,8 +486,11 @@ std::vector<va_t> sourcePrefixCallees(const MedFunc &Func,
           Op.Inputs[1].Size < TRI.PointerSize)
         Assembled.insert(KeyOf(Op.Output));
       if (Op.Opcode == NdOp::CALL && Op.NumInputs && Op.Inputs[0].isConst() &&
-          !Op.SourceCallHint)
+          !Op.SourceCallHint) {
         Calls.push_back(&Op);
+        if (Op.CalleeStackArgs > int(Layout.Registers.size()))
+          Result.push_back(Op.Inputs[0].ConstVal);
+      }
     }
   if (Narrow.empty() && Assembled.empty())
     return Result;
@@ -663,7 +666,9 @@ public:
           Lifted.Blocks.front().Preds.empty()) {
         const auto Layout =
             getTargetRegInfo(Img.Arch).integerArgumentLayout(Img.abiFormat());
-        if (llvm::any_of(Lifted.Blocks.front().Ops, [&](const LowOp &Op) {
+        if ((Lifted.Blocks.size() == 1 &&
+             Converted.Body->Params.size() > Layout.Registers.size()) ||
+            llvm::any_of(Lifted.Blocks.front().Ops, [&](const LowOp &Op) {
               return Op.Opcode == NdOp::STORE && Op.NumInputs == 2 &&
                      Op.Inputs[1].isReg() &&
                      Layout.registerIndex(Op.Inputs[1].Offset) >= 0;

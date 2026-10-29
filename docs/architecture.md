@@ -369,6 +369,14 @@ limit. These facts propagate in the same dependency waves and terminate stale
 physical input flow across a proved destructive callee. A later SSA copy or
 call setup that reintroduces the entry value makes it live again. This remains
 a source proof; native may-write and entry-read summaries are unchanged.
+Straight-line Win64 wrappers can also prove a positional stack parameter
+unobserved. The complete original body supplies every load interval, including
+loads removed by source conversion. Only exact SP-relative accesses and
+currently bound ordinary calls with fixed native stack bounds are admitted.
+The callee's home and argument area remains an implicit read range; missing
+source operands alone prove nothing. Frame addresses cannot escape through
+other registers, stored values or lossy arithmetic. Source preparation shares
+these facts with both emitters and SDK replay without compacting native slots.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes

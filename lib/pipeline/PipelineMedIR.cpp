@@ -179,7 +179,8 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
   for (const auto &[Entry, Func] : Callees) {
     if (!Referenced.count(Entry))
       continue;
-    bool Candidate = false;
+    bool Candidate = Func->Blocks.size() == 1 &&
+                     Func->Params.size() > Arguments.Registers.size();
     uint64_t Weight = 1;
     for (const auto &Block : Func->Blocks) {
       Weight += Block.Ops.size();
@@ -233,6 +234,31 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
                                 limits::ir::kSourceEntrySpillWork);
   SourceCalleeParameterReads Facts;
   SourceCalleeParameterOverwrites Overwrites;
+  std::set<va_t> DeclaredCallees = Result.CallPrototypeArguments;
+  if (Result.OmittedCalleeIntegerArguments)
+    for (const auto &[Target, Signature] :
+         *Result.OmittedCalleeIntegerArguments)
+      DeclaredCallees.insert(Target);
+  // Fixed import arity tables also own native stack bounds, without needing
+  // a complete typed source prototype. An import rebound to an image routine
+  // must use that routine's independently checked contract instead.
+  const auto ImportDeclarations = [&](const auto &Arguments) {
+    for (const auto &[Target, Count] : Arguments) {
+      const auto Own = Result.CallArgumentSources.find(Target);
+      if (Count >= 0 && Image.findImportAt(Target) &&
+          (Own == Result.CallArgumentSources.end() || Own->second == Target))
+        DeclaredCallees.insert(Target);
+    }
+  };
+  ImportDeclarations(Result.CallEntryStackArgs);
+  if (Result.OmittedCalleeStackArgs)
+    ImportDeclarations(*Result.OmittedCalleeStackArgs);
+  for (const auto &[Target, Signature] : Result.CallEntryVariadicArguments)
+    DeclaredCallees.erase(Target);
+  if (Result.OmittedCalleeVariadicArguments)
+    for (const auto &[Target, Signature] :
+         *Result.OmittedCalleeVariadicArguments)
+      DeclaredCallees.erase(Target);
   while (!Work.empty()) {
     std::vector<uint64_t> WaveWeights;
     for (size_t I : Work)
@@ -245,10 +271,14 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
         Reads[W] = sourceRegisterParameterReads(*Sources[I], Facts,
                                                 Remaining[I], Overwrites);
         if (const auto At = OriginalEntries.find(Sources[I]->Entry);
-            At != OriginalEntries.end())
+            At != OriginalEntries.end()) {
+          for (unsigned P : unobservedSourceStackParameters(
+                   *Sources[I], At->second, DeclaredCallees, Remaining[I]))
+            Reads[W].emplace(P, 0);
           Destroyed[W] = sourceRegisterInputOverwrites(
               *Sources[I], At->second, Reads[W], Overwrites,
               OverwrittenSpills[I], Remaining[I]);
+        }
       }
     });
     std::set<size_t> Next;
