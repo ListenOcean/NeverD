@@ -20,6 +20,7 @@
 #include "neverd/ir/med/MedCallLeftovers.h"
 #include "neverd/ir/med/MedStackAlignment.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/support/BinaryEncoding.h"
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
@@ -1190,19 +1191,85 @@ bool hasUnobservedInstructionLoad(llvm::ArrayRef<LowOp> Ops, size_t Index,
   return true;
 }
 
-bool hasSourceRegisterInputBody(const MedFunc &Func) {
-  return !(Func.CC != CallingConv::Win64 || Func.SourceTypeHint ||
-           Func.SourceParametersBound || Func.IsVariadic || Func.SkippedSSA ||
-           Func.AnalystStackFrame || Func.Blocks.empty() ||
-           !Func.Blocks.front().Preds.empty() ||
-           Func.EntryKind != StackEntryKind::Call ||
-           !Func.IntegerArgumentRegisters.empty() ||
-           (Func.ExceptionMetadata && (Func.ExceptionMetadata->Personality !=
-                                           ExceptionPersonality::None ||
-                                       Func.ExceptionMetadata->ParseStatus !=
-                                           ExceptionParseStatus::Complete)) ||
-           llvm::any_of(Func.ModuleAnalysisRoots,
-                        [&](va_t Root) { return Root != Func.Entry; }));
+/// A standalone, unaligned x64 GS handler reads its cookie above the current
+/// establisher SP; it does not read the interrupted volatile register bank.
+/// With no frame register, a suspended ordinary call supplies that SP. Keep
+/// the cookie beyond the callee's home area and private frame, so a descendant
+/// may discard its own temporary input spill without hiding a parent observer.
+/// This admits only register proofs that never discard a spill in this frame.
+bool hasSeparatedGSInputObserver(const MedFunc &Func, size_t &Budget) {
+  if (!Func.ExceptionMetadata)
+    return false;
+  const auto &EH = *Func.ExceptionMetadata;
+  if (EH.ParseStatus != ExceptionParseStatus::Complete ||
+      EH.Personality != ExceptionPersonality::GSHandlerCheck ||
+      !EH.PersonalityVA || !EH.HandlerDataVA || !EH.GSCookie ||
+      EH.Kind != RuntimeFunctionKind::Primary ||
+      EH.CodeRange.Begin != Func.Entry || !EH.CodeRange.isValid() ||
+      EH.PrimaryFunctionIndex || EH.ChainedPrimaryRange ||
+      EH.ChainedUnwindInfoRVA || EH.FrameRegister || EH.FrameOffset ||
+      EH.UnwindFlags != 3 ||
+      !((EH.Encoding == ExceptionEncoding::X64UnwindV1 &&
+         EH.UnwindVersion == 1) ||
+        (EH.Encoding == ExceptionEncoding::X64UnwindV2 &&
+         EH.UnwindVersion == 2)) ||
+      EH.SEH || EH.Cxx || EH.Dwarf || EH.Itanium || EH.ARMEHABI || EH.Compact ||
+      EH.Registration || EH.Delphi || EH.DelphiScopes || EH.Go || EH.Rust ||
+      EH.ObjC)
+    return false;
+  if (EH.DecodeProvenance && (EH.DecodeProvenance->Structural.ParseStatus !=
+                                  ExceptionParseStatus::Complete ||
+                              EH.DecodeProvenance->Language.ParseStatus !=
+                                  ExceptionParseStatus::Complete))
+    return false;
+  if (EH.UnwindOperations.size() > Budget) {
+    Budget = 0;
+    return false;
+  }
+  Budget -= EH.UnwindOperations.size();
+  for (const auto &Op : EH.UnwindOperations)
+    switch (Op.Kind) {
+    case UnwindOperationKind::PushNonVolatile:
+    case UnwindOperationKind::AllocateLarge:
+    case UnwindOperationKind::AllocateSmall:
+    case UnwindOperationKind::SaveNonVolatile:
+    case UnwindOperationKind::SaveNonVolatileFar:
+    case UnwindOperationKind::SaveXMM128:
+    case UnwindOperationKind::SaveXMM128Far:
+    case UnwindOperationKind::Epilog:
+      break;
+    default:
+      return false;
+    }
+  const auto &Cookie = *EH.GSCookie;
+  const auto Layout =
+      getTargetRegInfo(Arch::X64).integerArgumentLayout(BinaryFormat::COFF);
+  return Cookie.ParseStatus == ExceptionParseStatus::Complete &&
+         !Cookie.HasExceptionHandler && !Cookie.HasUnwindHandler &&
+         !Cookie.HasAlignment && !Cookie.AlignmentBaseOffset &&
+         !Cookie.Alignment && Cookie.CookieOffset >= Layout.CallStackBase &&
+         uint32_t(Cookie.CookieOffset) % Layout.SlotBytes == 0 &&
+         Cookie.Payload.size() == sizeof(uint32_t) &&
+         readLE<uint32_t>(Cookie.Payload.data()) ==
+             uint32_t(Cookie.CookieOffset);
+}
+
+bool hasSourceRegisterInputBody(const MedFunc &Func,
+                                bool HasSeparatedGSObserver = false) {
+  return !(
+      Func.CC != CallingConv::Win64 || Func.SourceTypeHint ||
+      Func.SourceParametersBound || Func.IsVariadic || Func.SkippedSSA ||
+      Func.AnalystStackFrame || Func.Blocks.empty() ||
+      !Func.Blocks.front().Preds.empty() ||
+      Func.EntryKind != StackEntryKind::Call ||
+      !Func.IntegerArgumentRegisters.empty() ||
+      (Func.ExceptionMetadata &&
+       (Func.ExceptionMetadata->Personality != ExceptionPersonality::None ||
+        Func.ExceptionMetadata->ParseStatus !=
+            ExceptionParseStatus::Complete) &&
+       !HasSeparatedGSObserver) ||
+      llvm::any_of(Func.ModuleAnalysisRoots,
+                   [&](va_t Root) { return Root != Func.Entry; }));
 }
 
 /// An exact declared call operand observes every loaded value byte. A source
@@ -1403,12 +1470,14 @@ std::set<unsigned> sourceRegisterInputOverwrites(
     const SourceCalleeParameterOverwrites &Callees,
     const std::set<const MedOp *> &Overwritten, size_t &Budget) {
   std::set<unsigned> Result;
-  if (!hasSourceRegisterInputBody(Func) || OriginalBlocks.empty() ||
+  const bool GSObserver = hasSeparatedGSInputObserver(Func, Budget);
+  if (!hasSourceRegisterInputBody(Func, GSObserver) || OriginalBlocks.empty() ||
       OriginalBlocks.front().StartAddr != Func.Entry ||
       !OriginalBlocks.front().Preds.empty() ||
       OriginalBlocks.front().Ops.empty() ||
       OriginalBlocks.front().Ops.front().Addr != Func.Entry ||
-      llvm::none_of(Reads, [](const auto &Read) { return Read.second == 0; }))
+      (!GSObserver &&
+       llvm::none_of(Reads, [](const auto &Read) { return Read.second == 0; })))
     return Result;
   std::map<int, size_t> ById;
   std::map<va_t, size_t> ByAddress;
@@ -1417,6 +1486,8 @@ std::set<unsigned> sourceRegisterInputOverwrites(
       return Result;
     --Budget;
     const LowBlock &Block = OriginalBlocks[I];
+    if (GSObserver && !Func.ExceptionMetadata->ownsCode(Block.StartAddr))
+      return Result;
     if (!ById.emplace(Block.Id, I).second ||
         !ByAddress.emplace(Block.StartAddr, I).second)
       return Result;
@@ -1477,7 +1548,14 @@ std::set<unsigned> sourceRegisterInputOverwrites(
     }
   }
   std::optional<std::set<const LowOp *>> Absorbed;
-  for (const auto &[P, Bytes] : Reads) {
+  auto Candidates = Reads;
+  if (GSObserver)
+    for (unsigned P = 0; P < Func.Params.size() && P < Layout.Registers.size();
+         ++P)
+      if (Func.Params[P].RegOff == Layout.Registers[P] && Func.Params[P].Size &&
+          Func.Params[P].Size <= TRI.PointerSize)
+        Candidates[P] = 0;
+  for (const auto &[P, Bytes] : Candidates) {
     if (Bytes || P >= Layout.Registers.size())
       continue;
     const uint64_t Register = Layout.Registers[P];
@@ -1498,6 +1576,8 @@ std::set<unsigned> sourceRegisterInputOverwrites(
         if (!Budget)
           return std::nullopt;
         --Budget;
+        if (GSObserver && !Func.ExceptionMetadata->ownsCode(Op.Addr))
+          return std::nullopt;
         const auto At = Current.find({Op.Addr, Op.Seq});
         const MedOp *Bound = At == Current.end() ? nullptr : At->second;
         if (Op.MemoryOrdering != NdMemoryOrdering::None ||
@@ -1544,7 +1624,7 @@ std::set<unsigned> sourceRegisterInputOverwrites(
           // A discarded restore is insufficient: its physical destination may
           // outlive its source statement. Only complete byte overwrites
           // qualify.
-          if (Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
+          if (GSObserver || Op.Opcode != NdOp::STORE || Op.NumInputs != 2 ||
               Overlaps(Op.Inputs[0]) || !Op.Inputs[1].isReg() ||
               Op.Inputs[1].Offset != Register || !Bound ||
               Bound->Opcode != NdOp::STORE || Bound->NumInputs != 2 ||

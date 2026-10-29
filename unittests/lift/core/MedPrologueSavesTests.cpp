@@ -453,6 +453,131 @@ TEST(SourceStackSpills, RegisterSuffixesNeedCurrentSourceCalleeProofs) {
   }
 }
 
+TEST(SourceStackSpills, GSInputDestructionKeepsExceptionalFrameObservers) {
+  for (unsigned Case = 0; Case != 25; ++Case) {
+    SCOPED_TRACE(Case);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    auto Call =
+        op(NdOp::CALL, temp(20), {MedVar::makeConst(0x3000, 8), rcx(0)});
+    Call.Addr = 0x1004;
+    Call.OriginSeq = 0;
+    Block.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}), Call,
+                 op(NdOp::RETURN, none(), {temp(20)})};
+    Func.Blocks.push_back(std::move(Block));
+    ExceptionFunction EH;
+    EH.CodeRange = {Func.Entry, 0x1020};
+    EH.Encoding = Case == 1 ? ExceptionEncoding::X64UnwindV2
+                            : ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = Case == 1 ? 2 : 1;
+    EH.UnwindFlags = 3;
+    EH.Personality = ExceptionPersonality::GSHandlerCheck;
+    EH.PersonalityVA = 0x4000;
+    EH.HandlerDataVA = 0x5000;
+    EH.GSCookie.emplace();
+    auto &Cookie = *EH.GSCookie;
+    Cookie.ParseStatus = ExceptionParseStatus::Complete;
+    Cookie.CookieOffset = Case == 2 ? 24 : (Case == 21 ? 32 : 40);
+    Cookie.Payload = {uint8_t(Cookie.CookieOffset), 0, 0, 0};
+    if (Case == 3)
+      Cookie.HasAlignment = true;
+    if (Case == 4)
+      EH.FrameRegister = 5;
+    if (Case == 5)
+      Cookie.Payload.pop_back();
+    if (Case == 6)
+      Cookie.Payload[0] ^= 8;
+    if (Case == 7)
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+    if (Case == 8)
+      Cookie.ParseStatus = ExceptionParseStatus::Malformed;
+    if (Case == 9)
+      EH.Personality = ExceptionPersonality::GSHandlerCheckSEH;
+    if (Case == 14)
+      Cookie.HasUnwindHandler = true;
+    if (Case == 15) {
+      EH.DecodeProvenance.emplace();
+      EH.DecodeProvenance->Structural.ParseStatus =
+          ExceptionParseStatus::Partial;
+    }
+    if (Case == 18)
+      Func.EntryKind = StackEntryKind::ProcessEntry;
+    if (Case == 22) {
+      UnwindOperation Machine;
+      Machine.Kind = UnwindOperationKind::PushMachineFrame;
+      EH.UnwindOperations.push_back(Machine);
+    }
+    if (Case == 23)
+      EH.GSCookie.reset();
+    if (Case == 24) {
+      UnwindOperation Allocation;
+      Allocation.Kind = UnwindOperationKind::AllocateSmall;
+      EH.UnwindOperations.assign(64, Allocation);
+    }
+    Func.ExceptionMetadata = std::move(EH);
+    const auto Low = [](va_t PC, NdOp Code, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Op;
+      Op.Addr = PC;
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    LowBlock Original;
+    Original.Id = 0;
+    Original.StartAddr = Func.Entry;
+    Original.EndAddr = 0x1010;
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto Input = NdVar::reg(x86reg::RCX, 8);
+    Original.Ops = {
+        Low(Func.Entry, NdOp::INT_SUB, SP, {SP, NdVar::cst(56, 8)}),
+        Low(Case == 16 ? 0x2000 : Call.Addr, NdOp::CALL,
+            NdVar::reg(x86reg::RAX, 8),
+            {NdVar::cst(Case == 19 ? 0x3001 : 0x3000, 8)}),
+        Low(0x1009, NdOp::INT_ADD, SP, {SP, NdVar::cst(56, 8)}),
+        Low(0x100D, NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, 8)})};
+    std::set<const MedOp *> Overwritten;
+    if (Case == 11 || Case == 12) {
+      // Even a transient store removed from MedIR may be the cookie's value
+      // during an exception. A source-dead store cannot authorize this input.
+      Original.Ops.insert(Original.Ops.begin() + 1,
+                          Low(0x1002, NdOp::STORE, {}, {SP, Input}));
+      if (Case == 12) {
+        auto Save = op(NdOp::STORE, none(), {sp(0), rcx(0)});
+        Save.Addr = 0x1002;
+        Save.OriginSeq = 0;
+        Save.PrologueSave = true;
+        auto &Ops = Func.Blocks.front().Ops;
+        Ops.insert(Ops.begin() + 1, Save);
+        Overwritten.insert(&Ops[1]);
+      }
+    }
+    if (Case == 13)
+      Original.Ops.insert(
+          Original.Ops.begin() + 1,
+          Low(0x1002, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Input}));
+    SourceCalleeParameterOverwrites Callees;
+    if (Case != 10 && Case != 20)
+      Callees[0x3000].insert(0);
+    size_t Budget = Case == 17 ? 1 : (Case == 24 ? 32 : 4096);
+    EXPECT_EQ(sourceRegisterInputOverwrites(Func, {Original}, {}, Callees,
+                                            Overwritten, Budget),
+              Case == 0 || Case == 1 || Case == 21 ? std::set<unsigned>{0}
+                                                   : std::set<unsigned>{});
+    // The ordinary MedIR spill proof alone never grants this GS fact.
+    Budget = 4096;
+    EXPECT_TRUE(sourceRegisterParameterReads(Func, {{0x3000, {{0, 0}}}}, Budget)
+                    .empty());
+  }
+}
+
 TEST(SourceStackSpills,
      InputDestructionNeedsOriginalEntryAndCompleteOverwrites) {
   for (unsigned Mode = 0; Mode < 29; ++Mode) {

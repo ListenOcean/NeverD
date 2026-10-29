@@ -85,6 +85,10 @@ using SourceCalleeParameterOverwrites = std::map<va_t, std::set<unsigned>>;
 /// freshly prepared Overwritten: no old byte is read before its full reset.
 /// The caller supplies the complete original CFG of this body. Cycles before
 /// destruction and unresolved or exceptional edges do not prove destruction.
+/// A standalone, unaligned GS observer without a frame register may also prove
+/// an input directly when its cookie excludes the callee home/private area.
+/// That case permits no original spill or other copy of the input at all;
+/// the ordinary source-unused-spill proof never supplies its absence.
 std::set<unsigned> sourceRegisterInputOverwrites(
     const MedFunc &Func, llvm::ArrayRef<LowBlock> OriginalBlocks,
     const SourceRegisterParameterReads &Reads,

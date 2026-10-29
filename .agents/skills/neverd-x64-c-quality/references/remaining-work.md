@@ -301,6 +301,14 @@ Late debug symbols now refresh cached unknown Windows personalities. Language
 decode provenance permits replacing stale classification diagnostics while
 retaining unwind/directory faults and malformed payloads. A resolved standalone
 GS handler still observes its cookie; naming it grants no unused-input proof.
+A complete unaligned x64 GS record without a frame register now admits the
+stronger original-code destruction proof when the cookie lies beyond a nested
+call's home/private area. That proof rejects every original copy or spill of
+the input before destruction, even a store already removed from MedIR. It
+preserves the cookie and ordinary call effects. Wrapped handlers, overlapping
+cookie storage, aligned or frame-register cookies, incomplete metadata and
+unproved descendant effects remain barriers. This is source input
+noninterference, not native Windows exception execution qualification.
 LLVMC import naming also retains nonzero GEP offsets within IAT
 objects; stripping those offsets could select a different imported routine.
 HighIR now keeps the shared direct-call argument boundary: its secondary setup

@@ -280,6 +280,11 @@ void prepareRecoveredSourceStackAccesses(const BinaryImage &Image,
           Destroyed[W] = sourceRegisterInputOverwrites(
               *Sources[I], At->second, Reads[W], Overwrites,
               OverwrittenSpills[I], Remaining[I]);
+          // A proved original destruction also rules out a source input.
+          // This includes the GS case, whose register proof cannot discard
+          // even a transient spill observed by its exceptional cookie check.
+          for (unsigned P : Destroyed[W])
+            Reads[W].emplace(P, 0);
         }
       }
     });

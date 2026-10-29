@@ -15956,6 +15956,15 @@ wrappers. One and two wrapper levels must retain the descendant's original
 destruction proof across later opaque calls. Original Win64 bytes and both C
 routes execute the same varied inputs at O0/O2 with UBSan; selected and omitted
 body queries must agree. SDK cache replay also covers the full-width case.
+The GS wrapper variant initializes an SP-encoded frame cookie, calls the
+branching consumer and an opaque observer, then independently checks the
+decoded cookie. It compares original bytes and both C routes at O0/O2 under
+UBSan; this exercises normal execution, not Windows exception delivery.
+`GSInputDestructionKeepsExceptionalFrameObservers` separately covers V1/V2
+metadata, cookie/home separation, stale or malformed payloads, transient spills
+missing from MedIR, copied inputs, physical frames, outside code, incomplete
+callee proofs and exhausted work. Ordinary MedIR spill evidence alone remains
+insufficient for the GS case.
 `InputDestructionNeedsOriginalEntryAndCompleteOverwrites` retains partial writes,
 register/temporary copies, source-dead restores, partial memory resets, stale
 store/call occurrences, independent entries and exhausted budgets.

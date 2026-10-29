@@ -2155,24 +2155,30 @@ TEST(CallExitRegisters, OverwrittenEntrySpillsAreNotValueReads) {
 }
 
 TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
-  for (unsigned Variant : {0, 1, 2, 3, 4, 5, 6, 7}) {
+  for (unsigned Variant : {0, 1, 2, 3, 4, 5, 6, 7, 8}) {
     SCOPED_TRACE(Variant);
     const bool WholeRegisterForward = Variant >= 6;
     const bool ChainedForward = Variant == 7;
+    const bool GSForward = Variant == 8;
     const bool CallAfterConsumer = Variant >= 3;
     const unsigned PrefixBytes =
         WholeRegisterForward ? 0 : (CallAfterConsumer ? 1 : Variant);
     const unsigned ExpectedCalls =
         ChainedForward ? 3 : (CallAfterConsumer ? 2 : 1);
     const bool ThroughWrapper = PrefixBytes != 0 || WholeRegisterForward;
-    const unsigned Flag = PrefixBytes == 1   ? 0x5A
+    const unsigned Flag = GSForward          ? 1
+                          : PrefixBytes == 1 ? 0x5A
                           : PrefixBytes == 2 ? 0xA55A
                                              : 0;
     constexpr va_t Wrapper = Text + 0x40;
     constexpr va_t Consumer = Text + 0x80;
     constexpr va_t Outer = Text + 0x100;
+    constexpr va_t CookieCheck = Text + 0x180;
     constexpr va_t Global = Iat + 0x100;
-    std::vector<uint8_t> Code(ChainedForward ? 0x140 : 0xC0, 0xCC);
+    std::vector<uint8_t> Code(GSForward        ? 0x1A0
+                              : ChainedForward ? 0x140
+                                               : 0xC0,
+                              0xCC);
     std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x28};
     const auto Random = throughSlot(Text + Caller.size(), Iat);
     Caller.insert(Caller.end(), Random.begin(), Random.end());
@@ -2227,6 +2233,15 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
       // register only flows into the consumer that destroys it on both arms.
       Forwarder.erase(Forwarder.begin() + 1, Forwarder.begin() + 4);
     }
+    if (GSForward) {
+      Forwarder[4] = 0x30;
+      Forwarder.pop_back();
+      Forwarder.insert(Forwarder.end(),
+                       {0xB8, 0x34, 0x12, 0, 0,       // mov eax,1234h
+                        0x48, 0x31, 0xE0,             // xor rax,rsp
+                        0x48, 0x89, 0x44, 0x24, 0x28, // cookie above call home
+                        0xE8});
+    }
     if (Variant == 5) {
       Forwarder[7] = 0x30; // room for the consumer's fifth argument
       Forwarder.pop_back();
@@ -2250,9 +2265,23 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
     } else {
       Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xD8}); // add rax,rbx
     }
+    if (GSForward) {
+      Forwarder.insert(Forwarder.end(),
+                       {0x48, 0x8B, 0x4C, 0x24, 0x28, // mov rcx,[rsp+28h]
+                        0x48, 0x31, 0xE1,             // xor rcx,rsp
+                        0xE8});
+      const auto Check = rel32(Wrapper + Forwarder.size() + 4, CookieCheck);
+      Forwarder.insert(Forwarder.end(), Check.begin(), Check.end());
+      Forwarder.insert(Forwarder.end(), {0x48, 0x01, 0xD8});
+      put(Code, CookieCheck,
+          {0x48, 0x81, 0xF9, 0x34, 0x12, 0, 0, // cmp rcx,1234h
+           0x0F, 0x94, 0xC0,                   // sete al
+           0x0F, 0xB6, 0xC0, 0xC3});           // movzx eax,al; ret
+    }
     Forwarder.insert(Forwarder.end(),
-                     {0x48, 0x83, 0xC4, uint8_t(Variant == 5 ? 0x30 : 0x20),
-                      0x5B, 0xC3}); // restore rsp; pop rbx; ret
+                     {0x48, 0x83, 0xC4,
+                      uint8_t(Variant == 5 || GSForward ? 0x30 : 0x20), 0x5B,
+                      0xC3}); // restore rsp; pop rbx; ret
     put(Code, Wrapper, Forwarder);
     if (ChainedForward) {
       std::vector<uint8_t> OuterBody = {0x53, 0x48, 0x83, 0xEC, 0x20, 0xE8};
@@ -2272,6 +2301,34 @@ TEST(CallExitRegisters, ImageReadBeforeHomeResetDoesNotDemandSpilledInput) {
                            {"rand", "strlen"});
     if (ChainedForward)
       Image.addSymbol("forward_whole_register", Outer, 0, true);
+    if (GSForward) {
+      Image.addSymbol("check_frame_cookie", CookieCheck, 0, true);
+      ExceptionFunction EH;
+      EH.CodeRange = {Wrapper, Wrapper + Forwarder.size()};
+      EH.Encoding = ExceptionEncoding::X64UnwindV1;
+      EH.UnwindVersion = 1;
+      EH.UnwindFlags = 3;
+      EH.PrologueSize = 18;
+      EH.Personality = ExceptionPersonality::GSHandlerCheck;
+      EH.PersonalityVA = Iat + 0x20;
+      EH.PersonalityName = "__GSHandlerCheck";
+      EH.HandlerDataVA = Iat + 0x28;
+      EH.LanguageTablesResolved = true;
+      UnwindOperation Allocation, Save;
+      Allocation.Kind = UnwindOperationKind::AllocateSmall;
+      Allocation.CodeOffset = 5;
+      Allocation.StackOffset = 48;
+      Save.Kind = UnwindOperationKind::PushNonVolatile;
+      Save.CodeOffset = 1;
+      Save.Register = 3;
+      EH.UnwindOperations = {Allocation, Save};
+      EH.GSCookie.emplace();
+      EH.GSCookie->ParseStatus = ExceptionParseStatus::Complete;
+      EH.GSCookie->CookieOffset = 40;
+      EH.GSCookie->Payload = {40, 0, 0, 0};
+      Image.ExceptionMetadata.Functions.push_back(std::move(EH));
+      Image.ExceptionMetadata.rebuildIndex();
+    }
     Segment Storage;
     Storage.Name = ".data";
     Storage.VA = Global;
@@ -2345,6 +2402,8 @@ static int check_native(uint64_t value, uint64_t seed) { return 0; }
               Options.OnlyFunctionEntries.insert(Wrapper);
             if (ChainedForward)
               Options.OnlyFunctionEntries.insert(Outer);
+            if (GSForward)
+              Options.OnlyFunctionEntries.insert(CookieCheck);
           }
           Options.LiftMode = LLVM;
           Options.SourceProjection = true;
