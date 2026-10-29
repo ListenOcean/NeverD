@@ -125,8 +125,9 @@ inline const X87NativeStateSpec *x87NativeStateOfIntrinsic(Intrinsic Id) {
 inline X87StateEffect x87NativeStateEffect(const X87NativeStateSpec &Spec) {
   return Spec.ReplacesBank || Spec.Kind == X87NativeStateKind::Initialize
              ? X87StateEffect::Reset
-         : Spec.ImageBytes ? X87StateEffect::Control
-                           : X87StateEffect::Status;
+         : Spec.ImageBytes || Spec.Kind == X87NativeStateKind::WriteControl
+             ? X87StateEffect::Control
+             : X87StateEffect::Status;
 }
 
 inline const X87NativeStateSpec *

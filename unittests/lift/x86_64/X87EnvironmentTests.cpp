@@ -8,10 +8,12 @@
 /// routes.
 //===----------------------------------------------------------------------===//
 
+#include "LLVMHostFixture.h"
 #include "X86FPStateAccuracyFixture.h"
 
 #include "neverd/backend/llvm/X86/LLVMX87NativeState.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Intrinsics.h"
 
@@ -302,6 +304,68 @@ TEST_F(X87EnvironmentProjection,
             }
           }
     EXPECT_EQ(Found, 1u) << Spec.LLVMName;
+  }
+}
+
+TEST_F(X87EnvironmentProjection, HostFixtureKeepsStateInAnIndependentClone) {
+  for (const char *Triple :
+       {"i386-unknown-linux-gnu", "x86_64-unknown-linux-gnu"}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("host-state-fixture", Context);
+    Module.setTargetTriple(llvm::Triple(Triple));
+    auto *Ptr = llvm::PointerType::get(Context, 0);
+    auto *Type =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(Context), {Ptr}, false);
+    auto *Function = llvm::Function::Create(
+        Type, llvm::GlobalValue::ExternalLinkage, "probe", Module);
+    llvm::IRBuilder<> Builder(
+        llvm::BasicBlock::Create(Context, "entry", Function));
+    for (const auto &Spec : X87NativeStateSpecs) {
+      auto *Return =
+          Spec.ReturnsStatus ? Builder.getInt16Ty() : Builder.getVoidTy();
+      auto *CallType = llvm::FunctionType::get(
+          Return,
+          Spec.HasPointer ? llvm::ArrayRef<llvm::Type *>(Ptr)
+                          : llvm::ArrayRef<llvm::Type *>(),
+          false);
+      auto Callee = Module.getOrInsertFunction(Spec.LLVMName, CallType);
+      if (Spec.HasPointer)
+        Builder.CreateCall(Callee, {Function->getArg(0)});
+      else
+        Builder.CreateCall(Callee);
+    }
+    Builder.CreateRetVoid();
+    std::string Original;
+    llvm::raw_string_ostream OriginalOut(Original);
+    Module.print(OriginalOut, nullptr);
+    const auto Fixture = neverd::test::printHostCompilerFixture(Module);
+    std::string Unchanged;
+    llvm::raw_string_ostream UnchangedOut(Unchanged);
+    Module.print(UnchangedOut, nullptr);
+    EXPECT_EQ(Original, Unchanged);
+    llvm::SMDiagnostic Diagnostic;
+    auto Parsed = llvm::parseAssemblyString(Fixture, Diagnostic, Context);
+    ASSERT_TRUE(Parsed) << Fixture;
+    ASSERT_FALSE(llvm::verifyModule(*Parsed, &llvm::errs()));
+    unsigned Count = 0;
+    for (const auto &Block : *Parsed->getFunction("probe"))
+      for (const auto &Instruction : Block)
+        if (const auto *Call = llvm::dyn_cast<llvm::CallInst>(&Instruction)) {
+          const auto *Assembly =
+              llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand());
+          ASSERT_TRUE(Assembly);
+          EXPECT_TRUE(Assembly->hasSideEffects());
+          ++Count;
+        }
+    EXPECT_EQ(Count, std::size(X87NativeStateSpecs));
+    const auto Input = file("host-state.ll");
+    write(Input, Fixture);
+    for (const char *Opt : {"-O0", "-O2"}) {
+      const auto Output = file("host-state.o");
+      const auto Result = command(Compiler, {std::string("--target=") + Triple,
+                                             Opt, "-c", Input, "-o", Output});
+      EXPECT_EQ(Result.Status, 0) << Result.Error << Fixture;
+    }
   }
 }
 } // namespace

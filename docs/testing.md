@@ -15935,6 +15935,14 @@ O0/O2. Original byte oracles check image bounds, full tags and raw payloads,
 pending/deferred exceptions and live compiler values. i386 runtime and
 privileged fault environments are outside that Linux x64 harness.
 
+Host-Clang source-oracle fixtures use `unittests/X86/LLVMHostX87Fixture.h`
+to retain these instructions as assembly in a cloned module. This is the
+same compatibility boundary as the existing lifetime and binary80 spelling
+adapters: stock Clang does not register the fork's native state APIs. The
+original module remains unchanged, and native-intrinsic qualification uses
+the fork directly. `HostFixtureKeepsStateInAnIndependentClone` checks that
+separation and compiles all 15 state interfaces for i386/x64 at O0/O2.
+
 ### Bounded ENCLU/GETSEC state
 
 `NeverDX86BoundedLeafTests` checks both modes, CFG joins/loops/partial writes,
