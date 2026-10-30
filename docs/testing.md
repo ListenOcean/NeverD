@@ -79,7 +79,10 @@ layouts keep their own rules. Return-field fixtures cover shared epilogues,
 loops, call clobbers, partial writes and transitively unspecified inputs.
 
 `NeverDLocalTypesDebugContextTests` also checks recursive callback borrows and
-portable parameter qualifiers. `LLVMCSourcePointers.HeaderCallbackCastsKeepNestedPointeesAndQualifiers`
+portable parameter qualifiers. Its recursive-record case checks that both
+self references and mutual references release their ownership, including
+after lazy member completion. Run it with address/undefined sanitizers and
+leak detection enabled. `LLVMCSourcePointers.HeaderCallbackCastsKeepNestedPointeesAndQualifiers`
 compiles and executes a qualified callback through the imported source
 prototype at O0/O2 with UBSan for x64 and ARM64 projections. Host execution
 does not certify native ARM64 execution. The optional

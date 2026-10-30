@@ -183,6 +183,9 @@ Callback pointees retain borrowed record identities without recursively
 reconstructing their members. Source declarations and call conversions share
 portable parameter spellings from the same type graph, preserving nested
 qualifiers even though the machine carrier does not encode them.
+Recursive record back references also remain separate borrowed identities,
+so releasing an analysis does not retain a shared ownership cycle. Member
+access can still complete those identities from the selected type library.
 
 Legacy Windows/kernel and ISO `swprintf` declarations have different fixed
 prefixes. A PE image alone cannot select between them: name-only variadic and

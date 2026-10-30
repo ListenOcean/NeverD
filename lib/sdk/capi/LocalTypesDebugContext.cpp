@@ -16,7 +16,9 @@
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
 
+#include "llvm/ADT/ScopeExit.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 
 #include <limits>
 #include <set>
@@ -174,7 +176,7 @@ private:
       return Type->Function ? function(*Type->Function, Depth) : nullptr;
     case types::TypeKind::Struct:
     case types::TypeKind::Union:
-      if (BorrowRecords)
+      if (BorrowRecords || ActiveRecords.contains(Name))
         return NdType::makeNamedRecord(Name.str(), 0);
       if (CompleteValues && Type->Kind == types::TypeKind::Union)
         return nullptr;
@@ -263,6 +265,15 @@ private:
     }
     if (!Name.empty())
       Records[Name] = Named;
+    // A recursive member refers to this identity, not ownership of the
+    // record currently being built. A later member access may complete that
+    // borrow from the library without a shared_ptr cycle.
+    if (!Name.empty())
+      ActiveRecords.insert(Name);
+    const llvm::scope_exit Leave([&] {
+      if (!Name.empty())
+        ActiveRecords.erase(Name);
+    });
     if (Record.Defined) {
       members(*Named, Record, 0, Depth);
       unsigned Budget = 256;
@@ -381,6 +392,7 @@ private:
   bool CompleteValues;
   bool BorrowRecords;
   llvm::StringMap<TypeRef> Records;
+  llvm::StringSet<> ActiveRecords;
 };
 
 /// Whether every member \p Record names for display is one \p Def has

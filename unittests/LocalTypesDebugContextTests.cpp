@@ -188,6 +188,46 @@ TEST(LocalTypesDebugContext,
   }
 }
 
+TEST(LocalTypesDebugContext, RecursiveRecordBorrowsReleaseAndComplete) {
+  using namespace neverd;
+  auto Library = std::make_shared<types::TypeLibrary>(types::DataModel::LLP64);
+  ASSERT_TRUE(types::parseCTypes(R"c(
+    struct Left;
+    struct Right { struct Left *Back; unsigned Tag; };
+    struct Left { struct Right *Next; struct Left *Self; unsigned Value; };
+    struct Left Read(void);
+  )c",
+                                 *Library)
+                  .ok());
+  const auto *Prototype = Library->findPrototype("Read");
+  ASSERT_TRUE(Prototype);
+  std::weak_ptr<NdType> RootLifetime, BorrowLifetime;
+  {
+    const auto Root = sdk::decompilerTypeOf(*Library, *Prototype->Return);
+    ASSERT_TRUE(Root);
+    ASSERT_EQ(Root->FieldDisplayTypes.size(), 3u);
+    const auto Right = Root->FieldDisplayTypes[0]->Pointee;
+    ASSERT_TRUE(Right);
+    ASSERT_EQ(Right->FieldDisplayTypes.size(), 2u);
+    const auto Back = Right->FieldDisplayTypes[0]->Pointee;
+    ASSERT_TRUE(Back);
+    EXPECT_EQ(Back->SourceName, "Left");
+    EXPECT_EQ(Back->Size, 0u);
+    EXPECT_TRUE(Back->FieldDisplayTypes.empty());
+    EXPECT_NE(Back.get(), Root.get());
+    EXPECT_NE(Root->FieldDisplayTypes[1]->Pointee.get(), Root.get());
+    RootLifetime = Root;
+    BorrowLifetime = Back;
+    NamesOnlyDebugContext Names;
+    sdk::LocalTypesDebugContext Context(Names, Library);
+    Context.completeType(Back);
+    EXPECT_EQ(Back->FieldDisplayNames,
+              (std::vector<std::string>{"Next", "Self", "Value"}));
+  }
+  EXPECT_TRUE(RootLifetime.expired());
+  EXPECT_TRUE(BorrowLifetime.expired());
+}
+
 TEST(LocalTypesDebugContext, PortablePrototypesRetainIntegerKeywordIdentity) {
   using namespace neverd;
   for (auto Model : {types::DataModel::ILP32, types::DataModel::LLP64,
