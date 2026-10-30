@@ -460,6 +460,16 @@ La opción exige salidas explícitas de regiones x64 y evidencia completa de ins
 
 Una proyección RDSSP verificada con exactitud y CET explícitamente desactivado conserva su destino sin producir un valor nuevo; su registro general de efectos indefinidos sigue ausente. Las trampas autenticadas permanecen como límites sin ejecutar.
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## Elecciones arquitectónicas ejecutables
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` consume un resultado `FreshScalarV1` validado mediante el tipo separado `InterpreterMachineRegionChoiceStateX64V1` de 456 bytes. Los primeros 432 bytes conservan el formato anterior; `Choices`, `ChoiceCount` y `ChoiceCursor` están en 432, 440 y 448. `StateABI` indica `x64-machine-region-choice-state-v1` y `StateBytes` vale 456. El adaptador anterior de 432 bytes sigue rechazando este modelo.
+
+Cada registro `InterpreterArchitecturalChoiceX64V1` de 32 bytes contiene cuatro campos de 64 bits: PC original, ordinal de producción dentro de la instrucción, número de bits y valor. El valor debe caber en ese ancho. Se comprueban todos los registros antes de ejecutar cualquier efecto de la instrucción. El estado 5 indica agotamiento y el 6 discrepancia de PC, ordinal, ancho o valor. Ambos conservan los efectos previos, devuelven el PC original sin ejecutar con `ExitKind=None` y mantienen el cursor de entrada. El cursor avanza tras la instrucción completa, incluso con guardas falsas. Las visitas repetidas consumen nuevos registros; las copias y los guardados en memoria no.
+
+El llamador aporta registros accesibles, estables y separados del estado y de la memoria invitada. No se infieren valores específicos del procesador. Las consultas, las paradas explícitas antes de trampas y las comprobaciones de alineación mantienen sus contratos. Ambas rutas C pueden emitir el grafo transformado, pero los emisores normales rechazan producciones sin consumir. Esta interfaz C++ no aporta integración CLI/C SDK/GUI, recuperación de ABI ordinaria ni certificación de equivalencia nativa.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Salidas antes de una trampa

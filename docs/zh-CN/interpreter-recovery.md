@@ -387,6 +387,16 @@ C++ 原始区域接口可选择 `SpecializationUndefinedModel::FreshScalarV1`。
 
 经过精确审核、显式关闭 CET 的 RDSSP 投影会保留目标寄存器，不产生新的取值；其通用未定义效果记录仍保持缺失状态。已认证的陷阱仍是尚未执行的边界。
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## 可执行的架构取值
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` 使用独立的 456 字节 `InterpreterMachineRegionChoiceStateX64V1` 消费经过验证的 `FreshScalarV1` 结果。前 432 字节保持旧区域布局；`Choices`、`ChoiceCount`、`ChoiceCursor` 分别位于偏移 432、440、448。`StateABI` 为 `x64-machine-region-choice-state-v1`，`StateBytes` 为 456。旧的 432 字节封装仍拒绝该模型。
+
+每条 32 字节 `InterpreterArchitecturalChoiceX64V1` 记录包含四个 64 位字段：原始指令 PC、指令内的产生顺序号、位数和值。值必须落在指定位宽内。执行任何指令效果之前，先检查该指令所需的全部记录。状态 5 表示记录耗尽，状态 6 表示 PC、顺序号、位宽或值不匹配；两者都提交此前的效果，返回尚未执行的原始 PC 和 `ExitKind=None`，并保持该指令进入时的游标。整条指令完成后才推进游标，条件为假的产生记录也会消耗。重复执行使用新记录，复制和溢出到内存不消耗新记录。
+
+调用者须提供可访问、稳定且与状态及客户内存分离的记录；接口不会推断某个处理器的具体取值。查询状态、显式陷阱前退出和指令对齐检查保持原有约定。两条 C 路线可输出转换后的图，普通输出器仍拒绝未消费的产生操作。该 C++ 接口不等于 CLI/C SDK/GUI 集成、普通 ABI 恢复或原生等价认证。
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## 待处理陷阱出口

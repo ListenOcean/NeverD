@@ -387,6 +387,16 @@ C++ 原始區域介面可選擇 `SpecializationUndefinedModel::FreshScalarV1`。
 
 經過精確稽核、明確停用 CET 的 RDSSP 投影會保留目標暫存器，不產生新的取值；其通用未定義效果紀錄仍維持缺失狀態。已驗證的陷阱仍是尚未執行的邊界。
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## 可執行的架構取值
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` 以獨立的 456 位元組 `InterpreterMachineRegionChoiceStateX64V1` 消費已驗證的 `FreshScalarV1` 結果。前 432 位元組保留原區域布局；`Choices`、`ChoiceCount`、`ChoiceCursor` 的偏移為 432、440、448。`StateABI` 為 `x64-machine-region-choice-state-v1`，`StateBytes` 為 456。舊的 432 位元組封裝仍拒絕此模型。
+
+每筆 32 位元組 `InterpreterArchitecturalChoiceX64V1` 記錄含四個 64 位元欄位：原始指令 PC、指令內產生順序、位數和值。值須符合位寬。任何指令效果發生前，先檢查全部必要記錄。狀態 5 表示耗盡，6 表示 PC、順序、位寬或值不符；兩者皆提交先前效果，回傳尚未執行的原始 PC 與 `ExitKind=None`，並保留指令進入時的游標。整條指令完成後才推進游標，條件為假的記錄亦會消耗；重複執行使用新記錄，複製與記憶體溢出不消耗新記錄。
+
+呼叫端須提供可存取、穩定且與狀態及客體記憶體分離的記錄；不推定處理器的具體選值。查詢狀態、明確的陷阱前退出及指令對齊檢查維持原約定。兩條 C 路線可輸出轉換後的圖，普通輸出器仍拒絕未消費的產生操作。此 C++ 介面不代表 CLI/C SDK/GUI 整合、普通 ABI 恢復或原生等價認證。
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## 待處理陷阱出口

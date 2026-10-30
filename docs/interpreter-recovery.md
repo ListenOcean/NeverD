@@ -698,6 +698,16 @@ This opt-in currently requires explicit x64 machine-region exits and complete sc
 
 An exactly audited disabled-CET RDSSP projection preserves its destination without a new production; its general missing sidecar remains missing. Authenticated traps remain unexecuted boundaries.
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## Executable architectural choices
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` consumes a validated `FreshScalarV1` result through the separate 456-byte `InterpreterMachineRegionChoiceStateX64V1`. Its first 432 bytes retain the earlier region layout; `Choices`, `ChoiceCount` and `ChoiceCursor` are at offsets 432, 440 and 448. `StateABI` reports `x64-machine-region-choice-state-v1` and `StateBytes` reports 456. The old 432-byte wrapper continues to reject this model.
+
+Each 32-byte `InterpreterArchitecturalChoiceX64V1` record contains the original instruction PC, production ordinal within that instruction, bit count and value, as four 64-bit fields. Values must fit the declared bit count. All records for an instruction are checked before any of its effects. Status 5 means exhaustion; status 6 means a PC, ordinal, width or value mismatch. Both commit preceding effects, report the original unexecuted PC with `ExitKind=None`, and leave that instruction's entry cursor unchanged. Advance the cursor only after the whole instruction, including records with false guards. Repeated visits consume fresh records; copies and spills do not.
+
+The caller supplies accessible, stable records disjoint from state and guest memory. No processor-specific choices are inferred. Query statuses, explicit pre-trap exits and instruction alignment guards retain their existing contracts. Both C routes can emit the lowered graph, but ordinary emitters still reject unconsumed productions. This C++ interface supplies neither CLI/C SDK/GUI integration nor ordinary ABI recovery or native-equivalence certification.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Pending trap exits

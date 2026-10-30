@@ -461,6 +461,16 @@ Cette option exige des sorties de région x64 explicites et des preuves complèt
 
 Une projection RDSSP exactement vérifiée, avec CET explicitement désactivé, préserve sa destination sans nouvelle production ; son relevé général des effets indéfinis reste manquant. Les pièges authentifiés restent des frontières non exécutées.
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## Choix architecturaux exécutables
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` consomme un résultat `FreshScalarV1` validé avec le type distinct `InterpreterMachineRegionChoiceStateX64V1` de 456 octets. Les 432 premiers octets conservent le format précédent ; `Choices`, `ChoiceCount` et `ChoiceCursor` occupent les décalages 432, 440 et 448. `StateABI` indique `x64-machine-region-choice-state-v1` et `StateBytes` vaut 456. L’ancien adaptateur de 432 octets refuse toujours ce modèle.
+
+Chaque enregistrement `InterpreterArchitecturalChoiceX64V1` de 32 octets contient quatre champs de 64 bits : PC original, numéro de production dans l’instruction, largeur et valeur. La valeur doit tenir dans cette largeur. Tous les enregistrements sont vérifiés avant le moindre effet de l’instruction. Le statut 5 signale leur épuisement, 6 une discordance de PC, numéro, largeur ou valeur. Les deux conservent les effets précédents, retournent le PC original non exécuté avec `ExitKind=None` et gardent le curseur d’entrée. Le curseur avance après l’instruction entière, même pour les gardes fausses. Les visites répétées consomment de nouveaux enregistrements ; les copies et sauvegardes mémoire n’en consomment pas.
+
+L’appelant fournit des enregistrements accessibles, stables et séparés de l’état et de la mémoire invitée. Aucun choix propre au processeur n’est déduit. Les statuts de requête, arrêts explicites avant trap et contrôles d’alignement gardent leurs contrats. Les deux voies C peuvent émettre le graphe abaissé, mais les émetteurs ordinaires refusent les productions restantes. Cette interface C++ ne fournit ni intégration CLI/C SDK/GUI, ni ABI ordinaire restaurée, ni certification d’équivalence native.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Sorties avant un trap

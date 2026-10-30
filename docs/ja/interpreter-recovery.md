@@ -387,6 +387,16 @@ C++ の生のマシン領域 API は `SpecializationUndefinedModel::FreshScalarV
 
 CET の無効化を明示し、正確に検証した RDSSP 投影は、新しい値を生成せずに宛先を保持します。一般的な未定義効果の証拠は欠落のままです。認証済みのトラップは未実行の境界として保持されます。
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## アーキテクチャ選択値の実行
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` は、検証済みの `FreshScalarV1` 結果を専用の456バイト `InterpreterMachineRegionChoiceStateX64V1` で処理します。先頭432バイトは従来の領域形式です。`Choices`、`ChoiceCount`、`ChoiceCursor` はオフセット432、440、448にあります。`StateABI` は `x64-machine-region-choice-state-v1`、`StateBytes` は456です。従来の432バイトラッパーは引き続きこのモデルを拒否します。
+
+32バイトの `InterpreterArchitecturalChoiceX64V1` は、元の命令PC、命令内の生成順序、ビット数、値という四つの64ビットフィールドを持ちます。値は指定幅に収まる必要があります。命令の効果を実行する前に全レコードを検査します。状態5は不足、6はPC・順序・幅・値の不一致です。いずれも先行する効果を確定し、未実行の元PCと `ExitKind=None` を返し、その命令開始時のカーソルを維持します。カーソルは命令完了後に進み、偽のガードにもレコードを消費します。再訪問は新しいレコードを使い、コピーやメモリへの退避は消費しません。
+
+呼び出し側は、アクセス可能で安定し、状態およびゲストメモリと重ならないレコードを提供します。特定CPUの値は推定しません。問い合わせ状態、明示的なトラップ直前停止、命令アラインメント検査の契約は従来どおりです。両C経路は変換後のグラフを出力できますが、通常の出力器は未処理の生成操作を拒否します。このC++ APIはCLI/C SDK/GUI統合、通常ABI復元、ネイティブ等価性認証を意味しません。
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## 未実行トラップの出口

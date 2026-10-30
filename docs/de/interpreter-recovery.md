@@ -463,6 +463,16 @@ Die Option erfordert explizite x64-Regionsausgänge und vollständige skalare In
 
 Eine exakt geprüfte RDSSP-Projektion bei ausdrücklich deaktiviertem CET bewahrt ihr Ziel ohne neue Werterzeugung; ihr allgemeiner Nachweis undefinierter Effekte bleibt fehlend. Authentifizierte Traps bleiben unausgeführte Grenzen.
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## Ausführbare architektonische Werte
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1` verarbeitet geprüfte `FreshScalarV1`-Ergebnisse über den separaten, 456 Byte großen `InterpreterMachineRegionChoiceStateX64V1`. Die ersten 432 Byte behalten das bisherige Layout; `Choices`, `ChoiceCount` und `ChoiceCursor` liegen bei 432, 440 und 448. `StateABI` meldet `x64-machine-region-choice-state-v1`, `StateBytes` meldet 456. Der bisherige 432-Byte-Wrapper lehnt dieses Modell weiterhin ab.
+
+Jeder 32-Byte-Datensatz `InterpreterArchitecturalChoiceX64V1` enthält vier 64-Bit-Felder: ursprünglicher Befehls-PC, Produktionsnummer innerhalb des Befehls, Bitanzahl und Wert. Werte müssen in die Bitbreite passen. Sämtliche benötigten Datensätze werden vor jeder Wirkung des Befehls geprüft. Status 5 bedeutet Erschöpfung, 6 einen falschen PC, Index, eine falsche Breite oder einen falschen Wert. Beide übernehmen vorherige Wirkungen, melden den noch nicht ausgeführten Original-PC mit `ExitKind=None` und behalten den Cursor vom Befehlsanfang. Erst nach dem vollständigen Befehl wird der Cursor erhöht; auch falsche Guards verbrauchen Datensätze. Wiederholungen benötigen neue Werte, Kopien und Speicherablagen nicht.
+
+Der Aufrufer stellt zugängliche, stabile Datensätze getrennt von Zustand und Gastspeicher bereit. Prozessorwerte werden nicht geraten. Abfragestatus, explizite Stopps vor Traps und Ausrichtungsprüfungen behalten ihre Verträge. Beide C-Wege können den abgesenkten Graphen ausgeben; gewöhnliche Emitter lehnen unverarbeitete Produktionen weiterhin ab. Diese C++-Schnittstelle liefert keine CLI/C SDK/GUI-Integration, gewöhnliche ABI-Rekonstruktion oder native Äquivalenzzertifizierung.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Ausgänge vor einem Trap

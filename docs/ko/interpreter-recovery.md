@@ -387,6 +387,16 @@ C++ 원시 기계 영역 API에서 `SpecializationUndefinedModel::FreshScalarV1`
 
 CET 비활성화를 명시하고 정확히 검증한 RDSSP 투영은 새 값을 생성하지 않고 대상 레지스터를 보존합니다. 일반적인 미정의 효과 기록은 여전히 누락 상태입니다. 인증된 트랩은 실행 전 경계로 유지됩니다.
 
+<!-- i18n-section: machine-region-choice-source -->
+
+## 아키텍처 선택 값 실행
+
+`wrapInterpreterMachineRegionChoiceSourceX64V1`은 검증된 `FreshScalarV1` 결과를 별도의 456바이트 `InterpreterMachineRegionChoiceStateX64V1`로 처리합니다. 앞 432바이트는 기존 영역 레이아웃이며 `Choices`, `ChoiceCount`, `ChoiceCursor`의 오프셋은 432, 440, 448입니다. `StateABI`는 `x64-machine-region-choice-state-v1`, `StateBytes`는 456입니다. 기존 432바이트 래퍼는 이 모델을 계속 거부합니다.
+
+32바이트 `InterpreterArchitecturalChoiceX64V1` 레코드는 원래 명령 PC, 명령 내 생성 순서, 비트 수, 값의 네 64비트 필드를 가집니다. 값은 해당 비트 폭에 맞아야 합니다. 명령 효과를 실행하기 전에 필요한 모든 레코드를 검사합니다. 상태 5는 부족, 6은 PC·순서·폭·값 불일치입니다. 둘 다 앞선 효과를 반영하고 미실행 원래 PC와 `ExitKind=None`을 반환하며 명령 진입 커서를 유지합니다. 명령 전체가 끝난 뒤 커서를 이동하며 거짓 가드도 레코드를 소비합니다. 반복 방문은 새 레코드를 쓰고 복사와 메모리 저장은 추가 소비하지 않습니다.
+
+호출자는 접근 가능하고 안정적이며 상태 및 게스트 메모리와 겹치지 않는 레코드를 제공해야 합니다. 특정 CPU의 값을 추정하지 않습니다. 쿼리 상태, 명시적 트랩 전 정지, 명령 정렬 검사의 계약은 유지됩니다. 두 C 경로는 변환된 그래프를 출력할 수 있지만 일반 출력기는 미처리 생성 연산을 거부합니다. 이 C++ 인터페이스는 CLI/C SDK/GUI 통합, 일반 ABI 복원 또는 네이티브 동등성 인증을 제공하지 않습니다.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## 실행 전 트랩 출구
