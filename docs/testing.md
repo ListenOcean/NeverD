@@ -16542,9 +16542,18 @@ run at O0/O2 with UBSan, including its indirect-function probe. Variant 8 suppli
 a complete later store and executes both generated C routes with an independent
 provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
-`SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
-a unit of selected functions names the one this proof refuses and defines the
-other, while that function alone still fails with the diagnostic.
+`SessionCAPITest.DecompileFunctionsDistinguishesLocalAndIncomingCallSlots`
+checks explicit continuation materialization for a local CALL slot and refusal
+when the CALL instead overwrites an incoming argument. Selected units name the
+refused function and retain the other; single-function queries retain the same
+diagnostic. The CLI closure test exercises both cases in PE and ELF, including
+preservation of an existing output file after a refused root query.
+`PipelineSourceStackAccesses.IncomingArgumentsRetainPhysicalCallWrites` checks
+72 combinations of x86/x64, COFF/ELF/Mach-O, HighC/source LLVM, integer/scalar FP
+reads and local/overlapping/adjacent incoming slots. Overlapping incoming bytes
+must reach the physical CALL-slot proof before ABI parameter recovery can hide
+them; disjoint incoming arguments and represented local slots remain accepted.
+Successful source LLVM modules pass verification.
 
 `MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
 x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
@@ -17394,8 +17403,24 @@ outer caller to detect transitive contamination. Call clobbers, local and PHI
 definitions at version zero, narrowed values, mismatched parameter identities
 and ambiguous register slots cannot create entry pointer types. Actual entry
 values, self-copies and unrelated narrow definitions remain positive controls.
+Both local and transitive types must retain the target's pointer width.
+`UnmaterializedForwardersKeepDistinctSlots` also covers placeholder ids,
+synthetic parameter indices, clobbers and local definitions sharing a physical
+register with a distinct entry value. Unknown target-only calls block pointee
+proofs; complete zero-argument contracts remain positive controls, and
+nonempty descriptors cannot hide missing operands.
 Run it with `NeverDSourceEntryBindingTests` and the architecture call-contract
 suites; these identity checks do not supply missing runtime state.
+
+`NativeSourceHints.LocalPointerForwardersRetainProvenPointees` checks local
+chains, diamonds, a 256-wrapper chain and reversed function order, through
+both recovered and explicit call operands. Clobbers, narrowing, scalar uses,
+unknown calls, explicit integer declarations, register-order mismatches,
+conflicting record tags and recursive dependencies remain conservative.
+`LocalPointerChainsShareBothCProjections` exercises three selected machine
+functions on x64/ARM64 and COFF/ELF/Mach-O, then compiles and executes both
+generated C projections at O0/O2 with UBSan against an independent object and
+consumer. This is host C execution, not native Windows or ARM64 execution.
 
 `NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
 generic, named-record, scalar and nested pointer parameters across x64/ARM64,
