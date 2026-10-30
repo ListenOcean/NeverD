@@ -81,6 +81,7 @@ llvm::Expected<Request> readRequest(llvm::StringRef Text) {
                                        "paging_address_bits",
                                        "null_segment_base_policy",
                                        "segment_base_msr_address_bits",
+                                       "sysenter_msr_address_bits",
                                        "native_timestamp_reads",
                                        "native_write_prefetch",
                                        "native_speculation_control_msrs",
@@ -92,11 +93,15 @@ llvm::Expected<Request> readRequest(llvm::StringRef Text) {
     if (!Keys.count(Key))
       return invalid("unknown x64 continuation option: " +
                      llvm::StringRef(Key));
-  if (Object->getString("profile") != "kernel-events-v6")
-    return invalid("an explicit kernel-events-v6 profile is required");
+  const auto Profile = Object->getString("profile");
+  if (Profile != "kernel-events-v6" && Profile != "intel-fast-system-v7")
+    return invalid("an explicit kernel-events-v6 or intel-fast-system-v7 "
+                   "profile is required");
   Request Result;
   auto &Options = Result.Options;
-  Options.Profile = X64ContinuationProfile::KernelEventsNoFaultV6;
+  Options.Profile = Profile == "intel-fast-system-v7"
+                        ? X64ContinuationProfile::KernelFastSystemNoFaultV7
+                        : X64ContinuationProfile::KernelEventsNoFaultV6;
   const auto RequiredInteger =
       [&](llvm::StringRef Key) -> llvm::Expected<uint64_t> {
     const auto *Value = Object->get(Key);
@@ -132,6 +137,14 @@ llvm::Expected<Request> readRequest(llvm::StringRef Text) {
     if (*Bits != 48 && *Bits != 57)
       return invalid("segment_base_msr_address_bits must be 48 or 57");
     Options.SegmentBaseMSRAddressBits = unsigned(*Bits);
+  }
+  if (const auto *Value = Object->get("sysenter_msr_address_bits")) {
+    auto Bits = integer(*Value);
+    if (!Bits)
+      return Bits.takeError();
+    if (*Bits != 48 && *Bits != 57)
+      return invalid("sysenter_msr_address_bits must be 48 or 57");
+    Options.SysenterMSRAddressBits = unsigned(*Bits);
   }
   const std::pair<llvm::StringRef, bool *> Bindings[] = {
       {"native_timestamp_reads", &Options.NativeTimestampReads},
@@ -199,7 +212,9 @@ llvm::json::Array effects(const X64ContinuationInstructionSource &Unit) {
 
 // This flattened C view is checked field-by-field against the semantic owner's
 // versioned layouts. It adds no storage or initialization assumptions.
-llvm::json::Array stateDeclaration(llvm::raw_ostream &OS) {
+llvm::json::Array stateDeclaration(llvm::raw_ostream &OS, unsigned Version,
+                                   uint64_t Bytes) {
+  const auto Type = "neverd_x64_state_v" + std::to_string(Version);
   OS << R"C(
 #include <stddef.h>
 #include <stdint.h>
@@ -220,13 +235,15 @@ typedef struct {
     neverd_x64_segment LDTR, TR, DS, ES;
     neverd_x64_segment_metadata FS, GS;
     uint8_t Unusable, NMIBlocked, ReservedV6[14];
-} neverd_x64_state_v6;
 )C";
+  if (Version == 7)
+    OS << "    uint64_t SysenterCS, SysenterESP, SysenterEIP, ReservedV7;\n";
+  OS << "} " << Type << ";\n";
   llvm::json::Array Fields;
   const auto Field = [&](llvm::StringRef Name, size_t Offset, size_t Bytes) {
-    OS << "_Static_assert(offsetof(neverd_x64_state_v6, " << Name
+    OS << "_Static_assert(offsetof(" << Type << ", " << Name
        << ") == " << Offset << ", \"x64 state offset\");\n";
-    OS << "_Static_assert(sizeof(((neverd_x64_state_v6 *)0)->" << Name
+    OS << "_Static_assert(sizeof(((" << Type << " *)0)->" << Name
        << ") == " << Bytes << ", \"x64 state field size\");\n";
     Fields.push_back(llvm::json::Object{{"name", Name},
                                         {"offset", uint64_t(Offset)},
@@ -263,11 +280,18 @@ typedef struct {
   FIELD(X64ContinuationStateV6, Unusable, Unusable);
   FIELD(X64ContinuationStateV6, NMIBlocked, NMIBlocked);
   FIELD(X64ContinuationStateV6, ReservedV6, Reserved);
+  if (Version == 7) {
+    FIELD(X64ContinuationStateV7, SysenterCS, SysenterCS);
+    FIELD(X64ContinuationStateV7, SysenterESP, SysenterESP);
+    FIELD(X64ContinuationStateV7, SysenterEIP, SysenterEIP);
+    FIELD(X64ContinuationStateV7, ReservedV7, Reserved);
+  }
 #undef FIELD
-  OS << "_Static_assert(sizeof(neverd_x64_state_v6) == "
-     << sizeof(X64ContinuationStateV6) << ", \"x64 state size\");\n";
-  OS << "_Static_assert(_Alignof(neverd_x64_state_v6) == "
-     << alignof(X64ContinuationStateV6) << ", \"x64 state alignment\");\n";
+  OS << "_Static_assert(sizeof(" << Type << ") == " << Bytes
+     << ", \"x64 state size\");\n";
+  OS << "_Static_assert(_Alignof(" << Type
+     << ") == " << alignof(X64ContinuationStateV6)
+     << ", \"x64 state alignment\");\n";
   return Fields;
 }
 
@@ -280,8 +304,12 @@ void driver(llvm::raw_ostream &OS,
  * stop, even for listed targets; the environment may change all state before
  * resuming. Arbitrary-value slots are caller-selected per dynamic instruction;
  * leaving them unchanged selects a subset of permitted executions.
- * 0..7: instruction exit statuses; 8: outside selection; 9: budget exhausted. */
-uint64_t neverd_x64_continue_v6(neverd_x64_state_v6 *state, uint64_t *budget) {
+ * 0..7,10: instruction exits; 8: outside selection; 9: budget exhausted. */
+)C";
+  const auto Version = Units.front().StateVersion;
+  OS << "uint64_t neverd_x64_continue_v" << Version << "(neverd_x64_state_v"
+     << Version << " *state, uint64_t *budget) {\n";
+  OS << R"C(
     uint64_t last = 8;
     while (*budget) {
         uint64_t status;
@@ -387,7 +415,11 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
   }
   X64ContinuationExport Result;
   llvm::raw_string_ostream OS(Result.Source);
-  OS << "/* Explicit x64 kernel-events-v6 state source. See the paired "
+  const auto Version = Units->front().StateVersion;
+  const auto Profile =
+      Version == 7 ? "intel-fast-system-v7" : "kernel-events-v6";
+  OS << "/* Explicit x64 " << Profile
+     << " state source. See the paired "
         "manifest\n"
         " * for original bytes, native bindings and invocation domain. This "
         "is\n"
@@ -413,7 +445,7 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
   // The emitter owns feature-test macros and system-header ordering. State
   // declarations need not precede byte-pointer steps; inserting their headers
   // first would freeze libc feature selection before the emitter's macros.
-  auto Fields = stateDeclaration(OS);
+  auto Fields = stateDeclaration(OS, Version, Units->front().StateBytes);
   driver(OS, *Units);
   if (Result.Source.size() > limits::pipeline::kX64ContinuationSourceBytes)
     return invalid("x64 continuation source exceeds the output size limit");
@@ -422,7 +454,7 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
     return Binding.takeError();
   llvm::json::Object Report{
       {"schema_version", 2},
-      {"profile", "kernel-events-v6"},
+      {"profile", Profile},
       {"interface", "explicit-machine-state"},
       {"coverage",
        "selected instruction regions; calls and exits require the environment"},
@@ -431,8 +463,8 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
        llvm::toHex(
            llvm::SHA256::hash(llvm::arrayRefFromStringRef(Result.Source)),
            true)},
-      {"state_version", 6},
-      {"state_bytes", uint64_t(sizeof(X64ContinuationStateV6))},
+      {"state_version", Version},
+      {"state_bytes", Units->front().StateBytes},
       {"state_alignment", uint64_t(alignof(X64ContinuationStateV6))},
       {"state_fields", std::move(Fields)},
       {"request", std::move(*Binding)},
@@ -442,11 +474,18 @@ exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,
       {"regions", std::move(Regions)},
       {"units", std::move(Manifest)},
       {"domain",
-       "CPL0 64-bit entry; valid caches; declared active paging and MXCSR "
-       "mask; CET/FRED disabled; successful sequential RAM; no MMIO, "
-       "concurrent writes, faults or asynchronous events; exact immutable "
-       "instruction bytes; accessible disjoint state and budget; native "
-       "bindings require the declared executing environment"},
+       (Version == 7
+            ? "Intel SEP; SYSENTER accepts CPL0..3, other steps CPL0; "
+              "64-bit entry; live SYSENTER MSRs with declared processor width; "
+            : "CPL0 64-bit entry; ") +
+           std::string(
+               "valid caches; declared active paging and MXCSR "
+               "mask; CET/FRED disabled; successful sequential RAM; no MMIO, "
+               "concurrent writes, faults or asynchronous events; exact "
+               "immutable "
+               "instruction bytes; accessible disjoint state and budget; "
+               "native "
+               "bindings require the declared executing environment")},
       {"ordinary_source_abi", false},
       {"ordinary_source_validation", "not-run"},
       {"whole_function_coverage", false}};

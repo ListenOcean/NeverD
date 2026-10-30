@@ -14988,11 +14988,19 @@ from admitted LowFuncs. Unsupported sites remain in that selection and decode
 failures remain explicit; the state exporter independently relifts every byte
 before emission. This metadata grants no ordinary source or native rewrite
 admission. The driver owns only dispatch and instruction accounting: successful calls,
-returns, exceptions and privilege returns each consume one step and stop.
+returns, exceptions and privilege transitions each consume one step and stop.
 Native requests and invalid invocations execute nothing and consume none.
 Both C routes include a state layout checked against the semantic owner and
 an exact byte manifest bound to the emitted source hash. The ordinary source
 interface remains separate. See [the invocation contract](x64-continuation-source.md).
+
+`X64ContinuationSystemTransfers` owns the complete explicit SYSRET and Intel
+SYSENTER/SYSEXIT target contexts, including their shared flat segment-cache
+construction. The V7 profile adds live SYSENTER MSRs after the unchanged V6
+layout; the state transport's MSR owner handles their reads and writes.
+Profile inheritance is declared once in the continuation source owner so
+controls, flags, fault addresses, returns and event state advance together.
+The exporter selects distinct V6/V7 layouts and drivers from that owner.
 
 `X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the transaction; `INC/DEC` preserve CF and FS/GS address spaces remain attached. Neutral immediate `LOCK OR/XOR 0` and `LOCK AND -1` use that same transaction with a zero addend. Their logical flags use the old value, clear CF/OF and leave AF undefined. On i386, other logical values and register sources remain refused; x64 uses the audited native locked intrinsic for those cases. HLE remains refused. HighC retains the type of an explicit atomic-result declaration so signed comparisons use its actual C carrier. This does not establish missing frame inputs, MMIO behavior or concurrent execution equivalence.
 

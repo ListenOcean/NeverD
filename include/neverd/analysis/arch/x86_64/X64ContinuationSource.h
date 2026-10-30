@@ -124,6 +124,16 @@ struct alignas(16) X64ContinuationStateV6 {
   uint8_t Reserved[14] = {};
 };
 
+/// V7 owns the live Intel fast-system-call MSRs. CS retains all 32 readable
+/// bits; its upper 32 bits are zero. EIP/ESP hold complete canonical addresses.
+struct alignas(16) X64ContinuationStateV7 {
+  X64ContinuationStateV6 Core;
+  uint64_t SysenterCS = 0;
+  uint64_t SysenterESP = 0;
+  uint64_t SysenterEIP = 0;
+  uint64_t Reserved = 0;
+};
+
 enum class X64ContinuationExitV1 : uint64_t {
   Continue = 0,
   Call = 1,
@@ -143,6 +153,9 @@ enum class X64ContinuationExitV1 : uint64_t {
   /// A synchronous exception has installed its handler context. Stop before
   /// executing the handler; this is not a native execution request.
   Exception = 7,
+  /// A fast system call installed its supervisor context. Stop before the
+  /// handler executes. Values 8/9 belong to the public bounded driver.
+  PrivilegeEnter = 10,
 };
 
 enum class X64ContinuationProfile : uint8_t {
@@ -204,6 +217,14 @@ enum class X64ContinuationProfile : uint8_t {
   /// events. Null FS/GS loads require an explicit base policy below.
   /// Compatibility-mode loads remain outside this profile.
   KernelEventsNoFaultV6,
+  /// V6 plus Intel SYSENTER/SYSEXIT with SEP support and live SYSENTER MSRs.
+  /// SYSENTER accepts a valid CPL0..3 64-bit entry and installs CPL0; other
+  /// instructions retain the CPL0 entry domain. SYSEXIT returns to CPL3 in
+  /// compatibility or 64-bit mode. Both exit before executing their target.
+  /// Compatibility returns use the same eight arbitrary GPR high halves as
+  /// SYSRET. CET/FRED, faults, asynchronous events and AMD long-mode execution
+  /// remain outside this domain. Earlier state layouts are unchanged.
+  KernelFastSystemNoFaultV7,
 };
 
 /// Bind the original processor's null FS/GS load behavior. No vendor-wide
@@ -215,13 +236,17 @@ enum class X64NullSegmentBasePolicy : uint8_t { Clear, Preserve };
 struct X64ContinuationSourceOptions {
   X64ContinuationProfile Profile = X64ContinuationProfile::Unspecified;
   std::optional<uint32_t> MXCSRMask;
-  /// V5/V6 require 48 or 57 according to active paging, independently of the
-  /// processor's MSR canonical width. Earlier profiles do not accept it.
+  /// V5 and later require 48 or 57 according to active paging, independently of
+  /// the processor's MSR canonical width. Earlier profiles do not accept it.
   std::optional<unsigned> PagingAddressBits;
-  /// V6 only. Bind the actual original CPU's null LFS/LGS base transition.
+  /// V6 and later. Bind the actual original CPU's null LFS/LGS base transition.
   /// Without this declaration those loads reject before any state/RAM write
   /// or descriptor access. This is not a claim that all AMD CPUs preserve it.
   std::optional<X64NullSegmentBasePolicy> NullSegmentBasePolicy;
+  /// V7 requires the original Intel CPU's 48- or 57-bit MSR canonical width,
+  /// independently of active paging. If segment-base MSRs are also bound,
+  /// their declared width must agree. Earlier profiles do not accept this.
+  std::optional<unsigned> SysenterMSRAddressBits;
   /// Opt in to the executing x64 host's TSC and IA32_TSC_AUX, including its
   /// actual timestamp access/ordering behavior. The caller must bind this
   /// native environment to the source run and ensure RDTSC/RDTSCP support and

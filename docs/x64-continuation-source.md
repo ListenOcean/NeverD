@@ -82,6 +82,7 @@ A native request or invalid-state refusal executes nothing and consumes none.
 | 7 | Exception-handler context installed; handler has not executed |
 | 8 | Current PC is outside the selection |
 | 9 | Instruction budget exhausted |
+| 10 | V7 fast-system-call context installed; handler has not executed |
 
 The invocation domain is CPL0, 64-bit entry with valid descriptor caches,
 CET/FRED disabled, successful sequential ordinary RAM accesses and immutable
@@ -127,6 +128,53 @@ This STAR binding needs no additional request option because V5/V6 already
 declare it as live return state. Earlier profiles retain their previous MSR
 boundaries. Segment-base and native speculation MSRs still require their own
 options below; an unbound runtime selector returns status 5 before effects.
+
+### Intel fast system calls (V7)
+
+Select `"profile": "intel-fast-system-v7"` and supply
+`"sysenter_msr_address_bits": 48` or `57`, in addition to the MXCSR mask and
+active paging width. This declares an Intel processor with SEP support. AMD
+long-mode SYSENTER/SYSEXIT are outside this profile. The processor's MSR address
+width is independent of active paging; if segment-base MSRs are also bound,
+the two processor-width declarations must agree.
+
+V7 exports `neverd_x64_state_v7` and `neverd_x64_continue_v7`. Its 2528-byte
+layout contains the unchanged V6 prefix, followed by 64-bit `SysenterCS`,
+`SysenterESP`, `SysenterEIP` and `ReservedV7` at offsets 2496, 2504, 2512 and
+2520. V6 requests still export their original 2496-byte layout and symbols.
+Initialize the three live MSR cells from the original machine. CS has 32
+readable bits; EIP and ESP must be canonical at the declared processor width.
+An invalid initial cell refuses the step without changing state or RAM.
+
+`RDMSR`/`WRMSR` selectors `0x174`, `0x175` and `0x176` use these exact cells.
+CS bits 16–31 are readable/writable even though only its low selector enters
+the transfer; writes ignore bits 32–63 and reads return zero there. EIP/ESP
+writes require processor-width canonical addresses. These are guest state
+updates and never write the executing host's system-call MSRs. The rules
+follow [Intel SDM Volume 4, Table 2-2](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf).
+
+Canonical `SYSENTER` (`0F 34`) accepts a valid CPL0–3 64-bit source context.
+It installs the live entry PC and SP, CPL0 flat CS/SS caches, clears IF, and
+preserves the other admitted flags and registers. It returns status 10 before
+the handler executes, including when the handler is selected in the manifest.
+The target PC must be canonical for active paging. SYSENTER does not access
+its new stack; its ESP cell retains the processor-width MSR requirement.
+
+Canonical `SYSEXIT` (`0F 35`) and `SYSEXITQ` (`48 0F 35`) require CPL0 and
+install CPL3 CS/SS caches from the live CS MSR. The former takes EIP/ESP from
+EDX/ECX and supplies the same eight arbitrary legacy GPR high halves as SYSRET;
+the latter takes the full RDX/RCX and checks both against active paging.
+Both preserve the admitted flags and stop with status 6 before user code.
+Neither instruction reads descriptors or the old/new stack. Selector TI bits
+and 16-bit wraparound remain significant; null entry selectors refuse before
+any write. These transitions follow the SYSENTER/SYSEXIT instruction entries
+in [Intel SDM Volume 2](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf).
+
+Other instructions retain V6's CPL0 entry requirements. The existing
+non-interrupt flags domain still excludes TF/RF, IOPL and VIF/VIP. Compatibility
+source contexts, legacy modes, faults, CET/FRED, asynchronous events and SMM
+restoration are not added by V7. An opaque SYSENTER lift alone is not a proof of
+an ordinary C ABI or a full native register continuation.
 
 RETFQ reads RIP/CS alone for a same-privilege return and retains SS. For a
 return to an outer privilege level, its unsigned imm16 skips parameter bytes

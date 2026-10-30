@@ -90,8 +90,8 @@ protected:
             Selection + "}")
         .str();
   }
-  std::pair<std::string, std::string> source(llvm::StringRef Request,
-                                             bool LLVM) {
+  std::pair<std::string, std::string> source(llvm::StringRef Request, bool LLVM,
+                                             unsigned Version = 6) {
     const char *Report = nullptr;
     auto Source = take(neverd_x64_continuation_source_v1(
         Session, Request.data(), Request.size(), LLVM, &Report));
@@ -104,7 +104,8 @@ protected:
       llvm::consumeError(Parsed.takeError());
     } else if (const auto *Object = Parsed->getAsObject()) {
       EXPECT_EQ(Object->getInteger("schema_version"), 2);
-      EXPECT_EQ(Object->getInteger("state_bytes"), 2496);
+      EXPECT_EQ(Object->getInteger("state_version"), Version);
+      EXPECT_EQ(Object->getInteger("state_bytes"), Version == 7 ? 2528 : 2496);
       EXPECT_EQ(Object->getInteger("state_alignment"), 16);
       EXPECT_EQ(Object->getBoolean("ordinary_source_abi"), false);
       EXPECT_EQ(Object->getString("ordinary_source_validation"), "not-run");
@@ -202,7 +203,105 @@ int main(void) {
     }
     return 0;
 }
+
 )C");
+  }
+}
+
+TEST_F(X64ContinuationExportTest,
+       FastSystemV7RetainsLiveMsrsAndStopsAtBothBoundaries) {
+  load(
+      {0x0f, 0x30, 0x0f, 0x32, 0x0f, 0x34, 0x0f, 0x35, 0x48, 0x0f, 0x35, 0x90});
+  const std::string Request =
+      R"({"profile":"intel-fast-system-v7","mxcsr_mask":"0xffbf","paging_address_bits":48,"sysenter_msr_address_bits":48,"instructions":[4096,4098,4100,4102,4104,4107]})";
+  for (bool LLVM : {false, true}) {
+    auto [Source, Manifest] = source(Request, LLVM, 7);
+    auto Parsed = llvm::json::parse(Manifest);
+    ASSERT_TRUE(bool(Parsed));
+    const auto *Object = Parsed->getAsObject();
+    EXPECT_EQ(Object->getString("profile"), "intel-fast-system-v7");
+    EXPECT_EQ(Object->getInteger("native_requests"), 0);
+    const auto *Fields = Object->getArray("state_fields");
+    ASSERT_NE(Fields, nullptr);
+    for (const auto &[Name, Offset] :
+         std::vector<std::pair<std::string, unsigned>>{{"SysenterCS", 2496},
+                                                       {"SysenterESP", 2504},
+                                                       {"SysenterEIP", 2512},
+                                                       {"ReservedV7", 2520}}) {
+      const auto It =
+          std::find_if(Fields->begin(), Fields->end(), [&](const auto &F) {
+            return F.getAsObject()->getString("name") == Name;
+          });
+      ASSERT_NE(It, Fields->end());
+      EXPECT_EQ(It->getAsObject()->getInteger("offset"), Offset);
+      EXPECT_EQ(It->getAsObject()->getInteger("bytes"), 8);
+    }
+    execute(Source, R"C(
+#include <stdlib.h>
+#define CHECK(c) do {if(!(c))abort();}while(0)
+int main(void) {
+  neverd_x64_state_v7 s={0},want;
+  s.PC=0x1000;s.RFlags=0x246;s.MXCSR=0x1f80;s.CR8=3;
+  s.CS=(neverd_x64_segment){0,UINT32_MAX,8,0xa09b};
+  s.SS=(neverd_x64_segment){0,UINT32_MAX,16,0xc093};
+  memset(s.ZMM,0xa5,sizeof(s.ZMM));
+  s.SysenterEIP=0x1006;s.SysenterESP=0x123456789abcULL;
+  s.ReservedV7=0xfedcba9876543210ULL;
+  s.GPR[1]=0x174;s.GPR[0]=0xa5a5fffb;s.GPR[2]=0xffffffff;
+  want=s;want.SysenterCS=0xa5a5fffb;want.PC=0x1002;
+  uint64_t budget=1;
+  CHECK(neverd_x64_continue_v7(&s,&budget)==9&&budget==0&&!memcmp(&s,&want,sizeof(s)));
+  want=s;want.GPR[2]=0;want.PC=0x1004;budget=1;
+  CHECK(neverd_x64_continue_v7(&s,&budget)==9&&budget==0&&!memcmp(&s,&want,sizeof(s)));
+  want=s;want.PC=0x1006;want.GPR[4]=s.SysenterESP;want.RFlags&=~0x200ULL;
+  want.CS=(neverd_x64_segment){0,UINT32_MAX,0xfff8,0xa09b};
+  want.SS=(neverd_x64_segment){0,UINT32_MAX,0,0xc093};budget=4;
+  CHECK(neverd_x64_continue_v7(&s,&budget)==10&&budget==3&&!memcmp(&s,&want,sizeof(s)));
+  s.GPR[1]=0xabcdef1200009000ULL;s.GPR[2]=0x123456780000100bULL;
+  for(unsigned i=0;i<8;++i)s.Undefined[i]=0x76543210+i;
+  want=s;want.PC=0x100b;want.GPR[4]=0x9000;
+  for(unsigned i=0;i<8;++i)want.GPR[i]=(uint32_t)want.GPR[i]|(s.Undefined[i]<<32);
+  want.CS=(neverd_x64_segment){0,UINT32_MAX,0xb,0xc0fb};
+  want.SS=(neverd_x64_segment){0,UINT32_MAX,0x13,0xc0f3};
+  CHECK(neverd_x64_continue_v7(&s,&budget)==6&&budget==2&&!memcmp(&s,&want,sizeof(s)));
+  CHECK(neverd_x64_continue_v7(&s,&budget)==5&&budget==2&&!memcmp(&s,&want,sizeof(s)));
+  s.CS=(neverd_x64_segment){0,UINT32_MAX,8,0xa09b};s.PC=0x1008;
+  s.GPR[1]=0xffff800012345678ULL;s.GPR[2]=0x100b;want=s;
+  want.GPR[4]=s.GPR[1];want.PC=0x100b;
+  want.CS=(neverd_x64_segment){0,UINT32_MAX,0x1b,0xa0fb};
+  want.SS=(neverd_x64_segment){0,UINT32_MAX,0x23,0xc0f3};
+  CHECK(neverd_x64_continue_v7(&s,&budget)==6&&budget==1&&!memcmp(&s,&want,sizeof(s)));
+  s.PC=0x7777;want=s;
+  CHECK(neverd_x64_continue_v7(&s,&budget)==8&&budget==1&&!memcmp(&s,&want,sizeof(s)));
+  return 0;
+}
+)C");
+    const auto Input = tmpFile("fast-request.json"), Output = tmpFile("fast.c"),
+               Report = tmpFile("fast.json");
+    std::ofstream(Input) << Request;
+    std::vector<std::string> Args{"decompile",
+                                  tmpFile("input.elf").string(),
+                                  "--x64-continuation=" + Input.string(),
+                                  "--continuation-report=" + Report.string(),
+                                  "-o",
+                                  Output.string()};
+    if (LLVM)
+      Args.push_back("--llvm");
+    auto Ran = exec(ndBin(), Args);
+    ASSERT_TRUE(Ran.ok()) << Ran.err;
+    EXPECT_EQ(readOutput(Output), Source);
+    EXPECT_EQ(readOutput(Report), Manifest);
+  }
+  for (
+      const std::string &Bad :
+      {R"({"profile":"intel-fast-system-v7","mxcsr_mask":65471,"paging_address_bits":48,"instructions":[4100]})",
+       R"({"profile":"kernel-events-v6","mxcsr_mask":65471,"paging_address_bits":48,"sysenter_msr_address_bits":48,"instructions":[4100]})",
+       R"({"profile":"intel-fast-system-v7","mxcsr_mask":65471,"paging_address_bits":48,"sysenter_msr_address_bits":48,"segment_base_msr_address_bits":57,"instructions":[4100]})"}) {
+    const char *Report = "stale";
+    EXPECT_EQ(neverd_x64_continuation_source_v1(Session, Bad.data(), Bad.size(),
+                                                0, &Report),
+              nullptr);
+    EXPECT_EQ(Report, nullptr);
   }
 }
 

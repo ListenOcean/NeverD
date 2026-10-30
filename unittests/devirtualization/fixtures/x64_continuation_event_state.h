@@ -51,4 +51,16 @@ _Static_assert(offsetof(event_state_t, gdt) == 2368, "V6 GDTR");
 _Static_assert(offsetof(event_state_t, fs) == 2464, "V6 FS metadata");
 _Static_assert(offsetof(event_state_t, nmi_blocked) == 2481, "V6 NMI state");
 
+typedef struct __attribute__((aligned(16))) {
+  event_state_t core;
+  uint64_t sysenter_cs, sysenter_esp, sysenter_eip, reserved;
+} fast_system_state_t;
+
+_Static_assert(sizeof(fast_system_state_t) == 2528,
+               "continuation V7 fixture size");
+_Static_assert(offsetof(fast_system_state_t, sysenter_cs) == 2496,
+               "V7 SYSENTER CS");
+_Static_assert(offsetof(fast_system_state_t, sysenter_eip) == 2512,
+               "V7 SYSENTER EIP");
+
 #endif // NEVERD_UNITTESTS_DEVIRTUALIZATION_FIXTURES_X64_CONTINUATION_EVENT_STATE_H
