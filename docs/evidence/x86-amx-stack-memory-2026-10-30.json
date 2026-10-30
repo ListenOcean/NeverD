@@ -553,5 +553,86 @@
   ],
   "release_and_pins_changed": false,
   "regression_test_count": 322,
-  "regression_skipped_count": 2
+  "regression_skipped_count": 2,
+  "integration": {
+    "head": "11ac8b19e2d8ee34745fdc4c80fd2e316b7c6ffe",
+    "preserved_semantic_sources": [
+      "include/neverd/backend/llvm/X86/X86AmxAsm.h",
+      "include/neverd/backend/llvm/X86/X86AmxNative.h",
+      "include/neverd/backend/llvm/X86/X86AmxStackLeaf.h",
+      "include/neverd/ir/intrinsics/X86/X86AmxState.h",
+      "lib/backend/c/render/X86/X86AmxState.cpp",
+      "lib/backend/c/render/X86/X86NativeFeatures.cpp",
+      "lib/backend/llvm/X86/MedLLVMX86AmxState.cpp",
+      "lib/lift/X86/X86LiftAMX.cpp",
+      "scripts/verify_x86_amx_addresses.py",
+      "unittests/lift/x86_64/X86AMXAddressTests.cpp"
+    ],
+    "commands": [
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86AMXAddressTests",
+          "--gtest_output=xml:/mnt/data/neverd-amx-stack-20261030/NeverDX86AMXAddressTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "log": "NeverDX86AMXAddressTests-integrated.log",
+        "sha256": "b438e945af7370ba821a172fc0254075b45c1549cfc679de1563accb140eef50"
+      },
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86AMXStateTests",
+          "--gtest_output=xml:/mnt/data/neverd-amx-stack-20261030/NeverDX86AMXStateTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "log": "NeverDX86AMXStateTests-integrated.log",
+        "sha256": "fbb3f934b4a5ee5e60151ff57b97ed95172d52ce3ea4adfa328ae39d29a3bf49"
+      },
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86AMXLLVMGuardTests",
+          "--gtest_output=xml:/mnt/data/neverd-amx-stack-20261030/NeverDX86AMXLLVMGuardTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "log": "NeverDX86AMXLLVMGuardTests-integrated.log",
+        "sha256": "819dea001b884261790e044c9f1fc02b3efdf35285337f5eb8e70bd96e3ffc1b"
+      },
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86VirtualizationSourceTests",
+          "--gtest_output=xml:/mnt/data/neverd-amx-stack-20261030/NeverDX86VirtualizationSourceTests-integrated.xml",
+          "--gtest_filter=X86AmxSource.*:AmxEncodings/*:X86SgxSource.NeverCCompilesNativeCompletionAndCombinedAmxFeatures"
+        ],
+        "returncode": 0,
+        "log": "NeverDX86VirtualizationSourceTests-integrated.log",
+        "sha256": "5329a0831a67cb8a3308d516499a455337fe8895d8b61e3954f1aef4688bbac7"
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_docs_i18n.py"
+        ],
+        "returncode": 0,
+        "log": "check_docs_i18n.py-integrated.log",
+        "sha256": "891c1f2a9e40d3952b23e9e79b35ac05e77427ad91de98357bc3829b3ed7ab14"
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_capabilities.py"
+        ],
+        "returncode": 0,
+        "log": "check_capabilities.py-integrated.log",
+        "sha256": "6493fc3b0c4ef5fe525cdffaaa35a0f7992a0384e9a759e0269be79943fed414"
+      }
+    ],
+    "build_log": "neverd-build-integrated.log",
+    "build_log_sha256": "464aaf002ddc2162f7ad3995f9a0c3642eb38741c9f92150ace49d3b57e297f6",
+    "build_receipt": "neverd-build-receipt-integrated.json",
+    "build_receipt_sha256": "88738cf94fc2212926c687999032bbbbcf531faad26006f0f8f7b35ba5426545",
+    "capability_manifest_repair": {
+      "head": "9fec1d38a8dfbac748f9168c56bd49ecfb34d4fd",
+      "cause": "Merged dev change added --argument-access-call without the public-surface ledger entry; added it to the existing binary-diff owner.",
+      "initial_log": "check_capabilities.py-integrated-before.log"
+    }
+  }
 }
