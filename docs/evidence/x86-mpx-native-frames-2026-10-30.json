@@ -657,5 +657,67 @@
       "artifact": "capabilities.log",
       "sha256": "6493fc3b0c4ef5fe525cdffaaa35a0f7992a0384e9a759e0269be79943fed414"
     }
-  ]
+  ],
+  "neverd_integration": {
+    "head": "196f58b7cb93b3642c6b5e357c29e18751dd55b8",
+    "commands": [
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86AMXAddressTests",
+          "--gtest_output=xml:/mnt/data/neverd-mpx-frame-20261030/NeverDX86AMXAddressTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "tests": 7,
+        "log": "NeverDX86AMXAddressTests-integrated.log",
+        "report": "NeverDX86AMXAddressTests-integrated.xml",
+        "skipped": [],
+        "log_sha256": "a61285545df5c27aa33a0f74f605dac78e70cf2d6969b3650f0a8928f7372a17"
+      },
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX86AMXLLVMGuardTests",
+          "--gtest_output=xml:/mnt/data/neverd-mpx-frame-20261030/NeverDX86AMXLLVMGuardTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "tests": 3,
+        "log": "NeverDX86AMXLLVMGuardTests-integrated.log",
+        "report": "NeverDX86AMXLLVMGuardTests-integrated.xml",
+        "skipped": [],
+        "log_sha256": "dcef8ca2a30c2166b4a9ca8ea07f22a43ebd23f89ef176a494f591c4efa2197b"
+      },
+      {
+        "command": [
+          "/home/ad/code/NeverD-worktrees/x86-instruction-completion/build-x86/bin/NeverDX64DispatchFrameSourceTests",
+          "--gtest_output=xml:/mnt/data/neverd-mpx-frame-20261030/NeverDX64DispatchFrameSourceTests-integrated.xml"
+        ],
+        "returncode": 0,
+        "tests": 3,
+        "log": "NeverDX64DispatchFrameSourceTests-integrated.log",
+        "report": "NeverDX64DispatchFrameSourceTests-integrated.xml",
+        "skipped": [],
+        "log_sha256": "7c5aa227fde099b2ffcdf47d834f03fb2d1a1c9eb94b9cc1c063a6e75b655ce7"
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_docs_i18n.py"
+        ],
+        "returncode": 0,
+        "log": "check_docs_i18n.py-integrated.log",
+        "log_sha256": "891c1f2a9e40d3952b23e9e79b35ac05e77427ad91de98357bc3829b3ed7ab14"
+      },
+      {
+        "command": [
+          "python3",
+          "scripts/check_capabilities.py"
+        ],
+        "returncode": 0,
+        "log": "check_capabilities.py-integrated.log",
+        "log_sha256": "6493fc3b0c4ef5fe525cdffaaa35a0f7992a0384e9a759e0269be79943fed414"
+      }
+    ],
+    "build_log": "neverd-integrated-build.log",
+    "build_receipt": "neverd-integrated-build-receipt.json",
+    "build_receipt_sha256": "0391e945fc682f48bda5e5fac94163f3858b628688cec980743b57c51e40daf3"
+  }
 }
