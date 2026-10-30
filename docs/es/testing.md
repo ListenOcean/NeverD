@@ -2379,3 +2379,7 @@ La regresión incluye reubicaciones ajenas de punteros a función en el mismo al
 Los espacios de pila sintéticos de LLVM C conservan la escritura entera de 128 bits antes de seleccionar en ejecución cualquiera de sus mitades de 64 bits. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` verifica las direcciones por suma y OR basado en alineación con O0/O2, ASan/UBSan y el contrato documentado `-fno-strict-aliasing`. Ejecutar `NeverDLLVMCValueTests` y las suites relacionadas de marcos, vectores y registros de presentación.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` ejecuta bucles de cursores modificables de x64/AArch64 y COFF/ELF/Mach-O mediante LLVM C con O0/O2 y ASan/UBSan. En el modo explícito de imagen original, las direcciones demostradas usan la imagen activa compartida incluso junto a reubicaciones de punteros ajenas. Las coincidencias numéricas siguen siendo escalares y los espejos independientes conservan su validación. Ejecutar `NeverDMedLLVMDirectDataTests` y las suites de límites de reubicación.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` ejecuta entradas alineadas y condiciones inactivas por ambas rutas C en O0/O2, exige una trampa para entradas desalineadas activas y rechaza anchos, alineaciones, salidas y espacios de direcciones incorrectos.

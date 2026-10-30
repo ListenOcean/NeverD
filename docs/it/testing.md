@@ -2374,3 +2374,7 @@ La regressione copre anche rilocazioni non correlate di puntatori a funzione nel
 Gli slot di stack sintetici di LLVM C conservano l’intera scrittura intera a 128 bit prima della selezione a runtime di una delle metà a 64 bit. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` verifica gli indirizzi tramite somma e OR basato sull’allineamento con O0/O2, ASan/UBSan e il contratto documentato `-fno-strict-aliasing`. Eseguire `NeverDLLVMCValueTests` e le suite correlate per frame, vettori e record di visualizzazione.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` esegue cicli con cursori modificabili per x64/AArch64 e COFF/ELF/Mach-O tramite LLVM C a O0/O2 con ASan/UBSan. Nella modalità sorgente esplicita dell’immagine originale, gli indirizzi accertati usano l’immagine attiva condivisa anche accanto a rilocazioni di puntatori estranee. Le coincidenze numeriche restano scalari e gli specchi autonomi mantengono la propria validazione. Eseguire `NeverDMedLLVMDirectDataTests` e le suite dei limiti di rilocazione.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` esegue input allineati e condizioni inattive tramite entrambi i percorsi C a O0/O2, richiede un trap per input disallineati attivi e rifiuta larghezze, allineamenti, output e spazi di indirizzi errati.

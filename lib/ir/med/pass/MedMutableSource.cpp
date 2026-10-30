@@ -8,6 +8,7 @@
 
 #include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedScalarShapes.h"
 
 #include "llvm/ADT/BitVector.h"
@@ -25,6 +26,18 @@ bool scalarWidth(unsigned Bytes) {
 
 uint64_t byteMask(unsigned Bytes) {
   return Bytes == 64 ? ~uint64_t(0) : (uint64_t(1) << Bytes) - 1;
+}
+
+bool alignmentPrecondition(const MedOp &Op, Arch Architecture) {
+  if (Architecture != Arch::X64 || Op.Opcode != NdOp::INTRINSIC ||
+      (Op.NumInputs != 3 && Op.NumInputs != 4) || Op.Output.Size ||
+      !Op.Inputs[0].isConst() || Op.Inputs[0].Size != 2 ||
+      Op.Inputs[0].ConstVal != uint64_t(Intrinsic::RequireAligned) ||
+      Op.Inputs[1].Size != 8 || !Op.Inputs[2].isConst() ||
+      Op.Inputs[2].Size != 8 || (Op.NumInputs == 4 && Op.Inputs[3].Size != 1))
+    return false;
+  const uint64_t Alignment = Op.Inputs[2].ConstVal;
+  return Alignment && (Alignment & (Alignment - 1)) == 0;
 }
 
 } // namespace
@@ -203,7 +216,12 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
       }
       if (O.Dead || O.Opcode == NdOp::NOP)
         continue;
-      if (!Control) {
+      if (O.Opcode == NdOp::INTRINSIC) {
+        // This check has no implicit result or effect after successful
+        // completion. Both source routes retain its explicit fault predicate.
+        if (!alignmentPrecondition(O, Architecture))
+          return Fail("mutable source has unsupported intrinsic contract");
+      } else if (!Control) {
         const int Count = medScalarInputCount(O.Opcode);
         if (Count < 0 || O.NumInputs != Count ||
             (O.Opcode == NdOp::STORE ? O.Output.Size != 0 : O.Output.Size == 0))

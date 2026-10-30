@@ -2278,3 +2278,7 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 LLVM C の合成スタックスロットは、実行時にどちらかの 64 ビット半分を読み出す前に、128 ビット整数の書き込み全体を保持します。`LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` は、文書化された `-fno-strict-aliasing` 契約と ASan/UBSan を使用し、O0/O2 で加算およびアラインメントに基づく OR アドレス計算を検証します。`NeverDLLVMCValueTests` と関連するフレーム、ベクトル、表示レコードのテストを実行してください。
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` は x64/AArch64 と COFF/ELF/Mach-O の可変カーソルループを LLVM C の O0/O2 と ASan/UBSan で実行します。明示的な元イメージのソースモードでは、無関係なポインタ再配置の隣でも、確定したアドレスは共有の実行時イメージを使用します。同じ数値の整数はスカラーのままで、独立したポインタミラーの検証も維持されます。`NeverDMedLLVMDirectDataTests` とポインタ再配置境界テストを実行してください。
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` は整列済み入力と無効なガードを両 C 経路の O0/O2 で実行し、有効なガードで整列違反があればトラップを要求します。不正な幅、整列値、出力、アドレス空間も拒否します。

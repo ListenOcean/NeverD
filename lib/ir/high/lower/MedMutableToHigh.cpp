@@ -8,6 +8,7 @@
 
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
+#include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/med/MedMutableSource.h"
 
 #include <algorithm>
@@ -17,6 +18,7 @@
 #include <stdexcept>
 #include <string>
 #include <utility>
+#include <vector>
 
 namespace neverd::detail {
 namespace {
@@ -193,6 +195,21 @@ lowerMedMutableToHigh(const MedFunc &Med, Arch Architecture,
         S.StoreAddr = storage(Op.Inputs[0]);
         S.StoreVal = storage(Op.Inputs[1]);
         break;
+      case NdOp::INTRINSIC: {
+        // The shared mutable plan admits only explicit alignment checks.
+        const auto ID = static_cast<Intrinsic>(Op.Inputs[0].ConstVal);
+        std::vector<ExprPtr> Arguments;
+        for (unsigned I = 1; I < Op.NumInputs; ++I)
+          Arguments.push_back(storage(Op.Inputs[I]));
+        S.Kind = StmtKind::Call;
+        S.CallExpr =
+            HighExpr::makeCall(intrinsicName(ID), 0, std::move(Arguments));
+        S.CallExpr->IntrinsicId = ID;
+        S.CallExpr->Type = NdType::makeVoid();
+        S.CallExpr->MemoryOrdering = Op.MemoryOrdering;
+        S.CallExpr->MemoryAddressSpace = Op.MemoryAddressSpace;
+        break;
+      }
       default:
         S.Kind = StmtKind::Assign;
         S.Dst = storage(Op.Output);
@@ -209,7 +226,9 @@ lowerMedMutableToHigh(const MedFunc &Med, Arch Architecture,
       PreviousCopy =
           Op.Opcode == NdOp::COPY ? std::optional(Op.Output) : std::nullopt;
       if (Op.Addr != InvalidVA && Op.OriginSeq >= 0) {
-        const ExprPtr &Expression = S.Val ? S.Val : S.Cond;
+        const ExprPtr &Expression = S.Val    ? S.Val
+                                    : S.Cond ? S.Cond
+                                             : S.CallExpr;
         if (ObserveExpression && Expression)
           ObserveExpression(Op, Expression);
         if (ObserveStatement)

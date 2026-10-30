@@ -2268,3 +2268,7 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 LLVM C의 합성 스택 슬롯은 실행 중 선택한 64비트 절반을 읽기 전에 128비트 정수 저장 전체를 유지합니다. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords`는 문서화된 `-fno-strict-aliasing` 계약과 ASan/UBSan을 사용하여 O0/O2에서 덧셈 및 정렬 기반 OR 주소 계산을 검증합니다. `NeverDLLVMCValueTests`와 관련 프레임, 벡터, 표시 레코드 테스트를 실행하세요.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations`는 x64/AArch64 및 COFF/ELF/Mach-O의 가변 커서 루프를 LLVM C의 O0/O2와 ASan/UBSan으로 실행합니다. 명시적 원본 이미지 소스 모드에서는 관련 없는 포인터 재배치 옆에서도 확인된 주소가 공유 실행 이미지에 연결됩니다. 숫자가 같은 일반 정수는 스칼라로 유지되며 독립 포인터 미러의 기존 검증도 유지됩니다. `NeverDMedLLVMDirectDataTests`와 포인터 재배치 경계 테스트를 실행하세요.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*`는 정렬된 입력과 비활성 가드를 두 C 경로의 O0/O2에서 실행하고, 활성 가드의 비정렬 입력이 트랩을 발생시키는지 확인합니다. 잘못된 너비, 정렬, 출력과 주소 공간도 거부합니다.

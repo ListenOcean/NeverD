@@ -17472,3 +17472,7 @@ a previous call result. The ordinary-call case executes both copies against
 the independent input after the source has been overwritten. The adjacent
 narrow-store/wide-copy case checks the positive control where an actual store
 connects that result to the copied memory.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+The `MedMutableSource.AlignmentChecks*` cases execute aligned and inactive-guard inputs through both C routes at O0/O2, require active misaligned inputs to trap, and reject malformed widths, alignments, outputs and address spaces.

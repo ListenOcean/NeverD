@@ -2393,3 +2393,7 @@ La régression couvre aussi les relocations de pointeurs de fonction sans rappor
 Les emplacements de pile synthétiques LLVM C conservent les 128 bits écrits avant la sélection dynamique de l’une des moitiés de 64 bits. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` vérifie l’adressage par addition et par OR fondé sur l’alignement à O0/O2 avec ASan/UBSan et le contrat documenté `-fno-strict-aliasing`. Exécuter `NeverDLLVMCValueTests` ainsi que les suites connexes sur les cadres, les vecteurs et les enregistrements affichés.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` exécute les boucles de curseurs modifiables x64/AArch64 et COFF/ELF/Mach-O via LLVM C à O0/O2 avec ASan/UBSan. En mode source explicite de l’image originale, les adresses établies utilisent l’image active partagée même près de relocalisations de pointeurs sans rapport. Les collisions numériques restent scalaires et les miroirs autonomes gardent leur validation. Exécuter `NeverDMedLLVMDirectDataTests` et les suites de limites de relocalisation.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` exécute les entrées alignées et les conditions inactives dans les deux chemins C à O0/O2, exige un piège pour les entrées non alignées actives et rejette les largeurs, alignements, sorties et espaces d’adressage incorrects.

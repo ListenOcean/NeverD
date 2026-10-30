@@ -123,7 +123,8 @@ MedFunc loop(bool ReverseBlocks = false) {
   return F;
 }
 
-void compileSourceAndRun(const std::string &Source, size_t MaxSourceBytes) {
+void compileSourceAndRun(const std::string &Source, size_t MaxSourceBytes,
+                         bool ExpectTrap = false) {
   if (MaxSourceBytes)
     ASSERT_LE(Source.size(), MaxSourceBytes);
 #ifdef NEVERD_TEST_CLANG
@@ -167,12 +168,18 @@ void compileSourceAndRun(const std::string &Source, size_t MaxSourceBytes) {
                          << (Errors ? (*Errors)->getBuffer().str() : "");
     Status = llvm::sys::ExecuteAndWait(BinaryPath, {BinaryPath}, std::nullopt,
                                        Redirects, 10, 0, &Error);
-    ASSERT_EQ(Status, 0) << Error << '\n' << Source;
+    if (ExpectTrap) {
+      ASSERT_EQ(Status, -2) << Error << '\n' << Source;
+      ASSERT_EQ(Error.find("timed out"), std::string::npos) << Error;
+    } else {
+      ASSERT_EQ(Status, 0) << Error << '\n' << Source;
+    }
   }
 }
 
 void compileAndRun(const MedFunc &F, const char *Main,
-                   size_t MaxSourceBytes = 0, bool OptimizeLLVM = false) {
+                   size_t MaxSourceBytes = 0, bool OptimizeLLVM = false,
+                   bool ExpectTrap = false) {
   llvm::LLVMContext Context;
   auto Module = MedLLVMEmitter().emit({F}, Context, F.Name, Arch::X64);
   ASSERT_NE(Module, nullptr);
@@ -190,7 +197,7 @@ void compileAndRun(const MedFunc &F, const char *Main,
   Stream.flush();
   {
     SCOPED_TRACE("LLVMC");
-    compileSourceAndRun(Source + Main, MaxSourceBytes);
+    compileSourceAndRun(Source + Main, MaxSourceBytes, ExpectTrap);
   }
   if (!F.SkippedSSA || OptimizeLLVM)
     return;
@@ -201,7 +208,103 @@ void compileAndRun(const MedFunc &F, const char *Main,
   Options.TheArch = Arch::X64;
   ASSERT_TRUE(HighCEmitter().emit({High}, Stream, Options));
   Stream.flush();
-  compileSourceAndRun(Source + Main, MaxSourceBytes);
+  compileSourceAndRun(Source + Main, MaxSourceBytes, ExpectTrap);
+}
+
+MedFunc alignmentCheck(bool Guarded, uint64_t Alignment = 16) {
+  auto F = base();
+  parameter(F, x86reg::RDI);
+  const auto Address = reg(10, x86reg::RDI);
+  const auto Result = reg(11, x86reg::RAX);
+  MedOp Check = op(NdOp::INTRINSIC, {},
+                   {MedVar::makeConst(uint64_t(Intrinsic::RequireAligned), 2),
+                    Address, MedVar::makeConst(Alignment, 8)});
+  if (Guarded) {
+    parameter(F, x86reg::RSI);
+    const auto Active = temp(12, 1);
+    F.Blocks[0].Ops.push_back(op(NdOp::COPY, Active, {reg(13, x86reg::RSI)}));
+    Check.addInput(Active);
+  }
+  F.Blocks[0].Ops.push_back(Check);
+  F.Blocks[0].Ops.push_back(
+      op(NdOp::INT_ADD, Result, {Address, MedVar::makeConst(1, 8)}));
+  F.Blocks[0].Ops.push_back(op(NdOp::RETURN, {}));
+  return F;
+}
+
+TEST(MedMutableSource, AlignmentChecksRetainTheirPredicateAndInputs) {
+  for (bool Guarded : {false, true}) {
+    auto F = alignmentCheck(Guarded);
+    std::string Error;
+    auto Plan = analyzeMedMutableSource(F, Arch::X64, &Error);
+    ASSERT_TRUE(Plan) << Error;
+    EXPECT_EQ(Plan->EntryBytes.at(x86reg::RDI), 255u);
+    compileAndRun(F, Guarded ? R"(
+int main(void) {
+  const uint64_t values[]={0,16,UINT64_C(0x8000000000000000)};
+  for(unsigned i=0;i<sizeof(values)/sizeof(*values);++i)
+    if(mutable_probe(values[i],1)!=values[i]+1 ||
+       mutable_probe(values[i],255)!=values[i]+1) return 1;
+  return mutable_probe(3,0)!=4 || mutable_probe(UINT64_MAX,0)!=0;
+}
+)"
+                             : R"(
+int main(void) {
+  const uint64_t values[]={0,16,UINT64_C(0x8000000000000000)};
+  for(unsigned i=0;i<sizeof(values)/sizeof(*values);++i)
+    if(mutable_probe(values[i])!=values[i]+1) return 1;
+  return 0;
+}
+)");
+    compileAndRun(F,
+                  Guarded ? "int main(void) { mutable_probe(3,1); return 0; }"
+                          : "int main(void) { mutable_probe(3); return 0; }",
+                  0, false, true);
+  }
+}
+
+TEST(MedMutableSource, AlignmentChecksRejectMalformedOrImplicitShapes) {
+  auto Good = alignmentCheck(true);
+  for (unsigned Kind = 0; Kind != 9; ++Kind) {
+    auto F = Good;
+    auto &Check = F.Blocks[0].Ops[1];
+    switch (Kind) {
+    case 0:
+      Check.Inputs[2] = MedVar::makeConst(0, 8);
+      break;
+    case 1:
+      Check.Inputs[2] = MedVar::makeConst(3, 8);
+      break;
+    case 2:
+      Check.Inputs[2] = reg(10, x86reg::RDI);
+      break;
+    case 3:
+      Check.Inputs[1].Size = 4;
+      break;
+    case 4:
+      Check.Inputs[3].Size = 8;
+      break;
+    case 5:
+      Check.Inputs[0].Size = 8;
+      break;
+    case 6:
+      Check.Output = temp(20);
+      break;
+    case 7:
+      Check.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      break;
+    case 8:
+      Check.NumInputs = 2;
+      break;
+    }
+    std::string Error;
+    EXPECT_FALSE(analyzeMedMutableSource(F, Arch::X64, &Error));
+    EXPECT_FALSE(Error.empty());
+    EXPECT_THROW(MedToHighConverter().convert(F, Arch::X64),
+                 std::runtime_error);
+    llvm::LLVMContext Context;
+    EXPECT_THROW(MedLLVMEmitter().emit({F}, Context), std::runtime_error);
+  }
 }
 
 TEST(MedMutableSource, LoopRequiresIncomingParameterRegardlessOfBlockOrder) {

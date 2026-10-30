@@ -2224,3 +2224,7 @@ MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計
 LLVM C 的合成堆疊槽保留完整的 128 位元整數寫入，再由執行期選擇讀取任一 64 位元半部。`LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` 在 O0/O2、ASan/UBSan 及文件規定的 `-fno-strict-aliasing` 契約下涵蓋加法與基於對齊的 OR 定址。執行 `NeverDLLVMCValueTests`；相關框架、向量及顯示記錄測試涵蓋周邊儲存路徑。
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` 對 x64/AArch64 與 COFF/ELF/Mach-O 的可變游標迴圈執行 LLVM C 的 O0/O2 + ASan/UBSan 檢查。在明確的原始映像原始碼模式下，已確認的位址即使鄰近無關指標重定位，也使用共用的執行期映像。數值相同的一般整數保持純量；獨立指標映像保留既有驗證。執行 `NeverDMedLLVMDirectDataTests` 及指標重定位邊界測試。
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` 在兩條 C 路徑的 O0/O2 下執行對齊輸入與未啟用條件，要求啟用條件下的未對齊輸入觸發陷阱，並拒絕錯誤的寬度、對齊值、輸出和位址空間。

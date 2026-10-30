@@ -2346,3 +2346,7 @@ QT_QPA_PLATFORM=offscreen NEVERD_PATCH_NATIVE_WORKER="$PWD/build-gui/bin/neverd-
 Синтетические стековые слоты LLVM C сохраняют всю 128-битную целочисленную запись до выбора одной из 64-битных половин во время выполнения. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` проверяет адресацию сложением и OR с учётом выравнивания при O0/O2, ASan/UBSan и документированном условии `-fno-strict-aliasing`. Запускайте `NeverDLLVMCValueTests` и связанные тесты кадров, векторов и отображаемых записей.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` исполняет изменяющие память циклы с курсором для x64/AArch64 и COFF/ELF/Mach-O через LLVM C при O0/O2 с ASan/UBSan. В явном режиме исходного образа подтверждённые адреса используют общий образ времени выполнения даже рядом с посторонними релокациями указателей. Числовые совпадения остаются скалярами; отдельные зеркала указателей сохраняют прежние проверки. Запускайте `NeverDMedLLVMDirectDataTests` и тесты границ релокаций указателей.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` выполняет выровненные входы и неактивные условия через оба пути C при O0/O2, требует ловушку для активных невыровненных входов и отклоняет некорректные ширины, выравнивания, выходы и адресные пространства.

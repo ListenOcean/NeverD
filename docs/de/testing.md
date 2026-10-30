@@ -2394,3 +2394,7 @@ Der Test umfasst auch unabhängige Funktionszeigerrelokationen im selben Speiche
 Synthetische LLVM-C-Stackslots erhalten den vollständigen 128-Bit-Integer-Schreibzugriff, bevor zur Laufzeit eine der beiden 64-Bit-Hälften gelesen wird. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` prüft Addition und ausrichtungsbasierte OR-Adressierung bei O0/O2 mit ASan/UBSan und dem dokumentierten Vertrag `-fno-strict-aliasing`. `NeverDLLVMCValueTests` sowie die verwandten Frame-, Vektor- und Darstellungsrecord-Tests ausführen.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` führt veränderliche Cursorschleifen für x64/AArch64 und COFF/ELF/Mach-O über LLVM C bei O0/O2 mit ASan/UBSan aus. Im expliziten Quellmodus für das Originalabbild verwenden nachgewiesene Adressen das gemeinsame Laufzeitabbild auch neben unabhängigen Pointer-Relokationen. Numerische Kollisionen bleiben Skalare; eigenständige Pointer-Spiegel behalten ihre Prüfung. `NeverDMedLLVMDirectDataTests` und die Tests der Pointer-Relokationsgrenzen ausführen.
+
+<!-- i18n-section: mutable-alignment-guards -->
+
+`MedMutableSource.AlignmentChecks*` führt ausgerichtete Eingaben und inaktive Bedingungen über beide C-Pfade bei O0/O2 aus, verlangt Traps für aktive nicht ausgerichtete Eingaben und lehnt ungültige Breiten, Ausrichtungen, Ausgaben und Adressräume ab.
