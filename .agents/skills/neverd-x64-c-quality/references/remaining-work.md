@@ -1002,3 +1002,15 @@ conditional memory, invocation lifetime and both C routes remain open.
   Mach-O execution matrix compares both C routes at O0/O2 and rejects ranges
   beyond mapped storage, including extra file padding. Dynamic counts,
   segmented operands and address-size overrides retain their previous limits.
+
+## Physical dispatch wrappers
+
+Canonical PE x64 dispatch wrappers now have an explicit native source bridge
+in both C routes. The wrapper's original register/stack transfer and selector
+stay in a naked Win64 body; a known service keeps its complete documented
+parameter list. These wrappers no longer need guessed dispatcher arguments.
+The independent CPL0 fixture checks original bytes against recompiled C,
+including whole-unit typed callers and stack arguments. Native linkage and
+service dispatch remain environment bindings; this is not portable ordinary
+C or an implementation of the service. General incoming-slot/borrow proofs
+and physical interrupt/system entry return ownership remain separate work.
