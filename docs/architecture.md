@@ -456,6 +456,14 @@ ends, and moves every such interval backward together, one 64-interval word at
 a time, to a fixed point over event prefixes; its work grows with blocks and
 words rather than with each observed byte. A refusal names a load that the
 CALL write reaches. Graph work is charged only when that graph is traversed.
+Incoming-stack parameter recovery consults that same proof before replacing a
+memory read with a parameter. A physical CALL that raises its stack into an
+incoming argument must remain visible to source-frame validation; incomplete
+proofs keep the candidate homes mutable. This applies to both register ABIs and
+i386 stack arguments. The shared instruction-owned memory reader includes
+scalar and packed FP sources, so converting a memory operand cannot erase its
+CALL-slot observation. Ordinary disjoint arguments still recover normally, and
+known local return-PC writes retain their explicit source materialization.
 The reader first lets every CALL without an exact slot write any byte; when
 the loads stay separated even then, it skips the costlier slot bounds
 (registration replay, offset ranges, SEH handler bounds and upper bounds),

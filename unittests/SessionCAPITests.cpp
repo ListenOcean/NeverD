@@ -2370,46 +2370,71 @@ constexpr char StaleSlotBytes[] =
 constexpr std::string_view StaleSlotCode(StaleSlotBytes,
                                          sizeof(StaleSlotBytes) - 1);
 
-TEST_F(SessionCAPITest, DecompileFunctionsNamesARefusedSelectedFunction) {
-  const auto Input = write("stale-slot.elf",
-                           makeNativeELF(false, 0x400000, {}, StaleSlotCode));
-  ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
-      << takeString(neverd_last_error(Session));
-  const uint64_t Main = neverd_session_entry_addr(Session);
-  const uint64_t Stale = Main + 0xb, Keep = Main + 0x1e;
-  for (const uint64_t Entry : {Main, Stale, Keep})
-    if (neverd_func_find_by_addr(Session, Entry) < 0)
-      ASSERT_EQ(neverd_func_create(Session, Entry), 0)
-          << takeString(neverd_last_error(Session));
-  const auto Name = [](uint64_t Address) {
-    return "sub_" + llvm::utohexstr(Address);
-  };
-  // The unit names the refused function at its head and defines the other,
-  // as the whole program does.
-  const neverd_va_t Selected[] = {Stale, Keep};
-  const auto Text = takeString(neverd_decompile_functions(
-      Session, Input.c_str(), NEVERD_OUTPUT_C, Selected, 2));
-  ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
-  EXPECT_EQ(Text.rfind("/* neverd.not-decompiled: " + Name(Stale) + " at 0x" +
-                           llvm::utohexstr(Stale) + ": med-ir-failed",
-                       0),
-            0u)
-      << Text;
-  EXPECT_NE(Text.find("physical CALL return slot"), std::string::npos) << Text;
-  const auto Defines = [&](uint64_t Address) {
-    for (llvm::StringRef Line : llvm::split(Text, '\n'))
-      if (!Line.starts_with(" ") && !Line.starts_with("extern ") &&
-          Line.contains(Name(Address) + "(") && Line.ends_with("{"))
-        return true;
-    return false;
-  };
-  EXPECT_TRUE(Defines(Keep)) << Text;
-  EXPECT_FALSE(Defines(Stale)) << Text;
-  // Asking for that function alone fails with the reason.
-  EXPECT_TRUE(takeString(neverd_decompile(Session, Stale)).empty());
-  EXPECT_NE(
-      takeString(neverd_last_error(Session)).find("physical CALL return slot"),
-      std::string::npos);
+TEST_F(SessionCAPITest,
+       DecompileFunctionsDistinguishesLocalAndIncomingCallSlots) {
+  for (bool LocalFrame : {true, false}) {
+    SCOPED_TRACE(LocalFrame);
+    std::string Code(StaleSlotCode);
+    if (!LocalFrame) {
+      // add rsp,16; ...; sub rsp,16. The CALL now writes above the entry SP,
+      // outside the local frame an ordinary source function can represent.
+      Code[0xd] = char(0xc4);
+      Code[0xe] = 0x10;
+      Code[0x1b] = char(0xec);
+      Code[0x1c] = 0x10;
+    }
+    const auto Input = write(LocalFrame ? "proven-slot.elf" : "stale-slot.elf",
+                             makeNativeELF(false, 0x400000, {}, Code));
+    ASSERT_EQ(neverd_session_load(Session, Input.c_str()), 1)
+        << takeString(neverd_last_error(Session));
+    const uint64_t Main = neverd_session_entry_addr(Session);
+    const uint64_t Stale = Main + 0xb, Keep = Main + 0x1e;
+    for (const uint64_t Entry : {Main, Stale, Keep})
+      if (neverd_func_find_by_addr(Session, Entry) < 0)
+        ASSERT_EQ(neverd_func_create(Session, Entry), 0)
+            << takeString(neverd_last_error(Session));
+    const auto Name = [](uint64_t Address) {
+      return "sub_" + llvm::utohexstr(Address);
+    };
+    const neverd_va_t Selected[] = {Stale, Keep};
+    const auto Text = takeString(neverd_decompile_functions(
+        Session, Input.c_str(), NEVERD_OUTPUT_C, Selected, 2));
+    ASSERT_FALSE(Text.empty()) << takeString(neverd_last_error(Session));
+    const auto Defines = [&](uint64_t Address) {
+      for (llvm::StringRef Line : llvm::split(Text, '\n'))
+        if (!Line.starts_with(" ") && !Line.starts_with("extern ") &&
+            Line.contains(Name(Address) + "(") && Line.ends_with("{"))
+          return true;
+      return false;
+    };
+    EXPECT_TRUE(Defines(Keep)) << Text;
+    const auto Single = takeString(neverd_decompile(Session, Stale));
+    if (LocalFrame) {
+      // A fixed local CALL slot has an explicit source-frame write. Both
+      // selection routes retain its exact original continuation address.
+      EXPECT_TRUE(Defines(Stale)) << Text;
+      EXPECT_EQ(Text.find("neverd.not-decompiled"), std::string::npos) << Text;
+      const auto Continuation = "0x" + llvm::utohexstr(Main + 0x14);
+      EXPECT_NE(Text.find(Continuation), std::string::npos) << Text;
+      EXPECT_NE(Single.find(Continuation), std::string::npos) << Single;
+    } else {
+      // An incoming-frame write is not an ordinary local. The selected unit
+      // names the refusal while keeping the unrelated valid function.
+      EXPECT_EQ(Text.rfind("/* neverd.not-decompiled: " + Name(Stale) +
+                               " at 0x" + llvm::utohexstr(Stale) +
+                               ": med-ir-failed",
+                           0),
+                0u)
+          << Text;
+      EXPECT_NE(Text.find("physical CALL return slot"), std::string::npos)
+          << Text;
+      EXPECT_FALSE(Defines(Stale)) << Text;
+      EXPECT_TRUE(Single.empty()) << Single;
+      EXPECT_NE(takeString(neverd_last_error(Session))
+                    .find("physical CALL return slot"),
+                std::string::npos);
+    }
+  }
 }
 
 // The code a data executable's entry runs, and where it and the data start.
@@ -6623,7 +6648,6 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
   // Owner only jumps to IoThreadToProcess, which takes one parameter, and
   // so passes the one it was given on.
   const std::string Owner = takeString(neverd_decompile(Session, 0x180001000));
-  EXPECT_NE(Owner.find("Owner(int64_t arg0) {"), std::string::npos) << Owner;
   // ntifs.h's official public aliases name _KTHREAD/_KPROCESS; the bundled
   // compatibility headers name _ETHREAD/_EPROCESS. Both are opaque pointers.
   const std::string ThreadType =
@@ -6632,9 +6656,9 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
                                  ? "_KTHREAD"
                                  : "_ETHREAD";
   const std::string Process = Thread == "_KTHREAD" ? "_KPROCESS" : "_EPROCESS";
-  EXPECT_NE(Owner.find("IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0)"),
-            std::string::npos)
+  EXPECT_NE(Owner.find("Owner(" + Thread + "* arg0) {"), std::string::npos)
       << Owner;
+  EXPECT_NE(Owner.find("IoThreadToProcess(arg0)"), std::string::npos) << Owner;
   // The calls take what the prototypes declare and return what they
   // return; the registers the allocation clobbered pass nothing on.
   const int Index = neverd_func_find_by_name(Session, "Probe");
@@ -6649,9 +6673,10 @@ TEST_F(SessionCAPITest, KernelImportsPassWhatTheirPrototypesTake) {
                        WindowsUnsignedLongC + " Tag);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(
-      Probe.find(" = IoThreadToProcess((" + Thread + "*)(uintptr_t)arg0);"),
-      std::string::npos)
+  EXPECT_NE(Probe.find("Probe(" + Thread + "* arg0, int64_t arg1) {"),
+            std::string::npos)
+      << Probe;
+  EXPECT_NE(Probe.find(" = IoThreadToProcess(arg0);"), std::string::npos)
       << Probe;
   EXPECT_EQ(Probe.find("unknown"), std::string::npos) << Probe;
 }
@@ -6727,9 +6752,8 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
   // Open passes the name it was given on as the first of CreateFileW's
   // seven parameters.
   const std::string Open = decompile("Open");
-  EXPECT_NE(Open.find("Open(int64_t arg0) {"), std::string::npos) << Open;
-  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
-                      "1, 0, 3, 0, 0)"),
+  EXPECT_NE(Open.find("Open(uint16_t* arg0) {"), std::string::npos) << Open;
+  EXPECT_NE(Open.find("CreateFileW(arg0, 0x80000000, 1, 0, 3, 0, 0)"),
             std::string::npos)
       << Open;
   // GetLastError takes nothing; CloseHandle and ZwClose, which phnt's
@@ -6740,8 +6764,8 @@ TEST_F(SessionCAPITest, UserImportsPassWhatTheirPrototypesTake) {
                        " ZwClose(void *Handle);"),
             std::string::npos)
       << Probe;
-  EXPECT_NE(Probe.find("ZwClose((void*)(uintptr_t)arg0)"), std::string::npos)
-      << Probe;
+  EXPECT_NE(Probe.find("Probe(void* arg0) {"), std::string::npos) << Probe;
+  EXPECT_NE(Probe.find("ZwClose(arg0)"), std::string::npos) << Probe;
   // LLVM-C declares the imports it calls that no header it includes
   // declares, and passes them what their prototypes take.
   const std::string Lowered = takeString(neverd_decompile_llvm_ex(
@@ -6872,9 +6896,8 @@ TEST_F(SessionCAPITest, ARM64ImportsPassWhatTheirPrototypesCount) {
   // Open jumps to CreateFileW through its slot and passes its own argument
   // on in x0, which it never writes.
   const std::string Open = decompile("Open");
-  EXPECT_NE(Open.find("Open(int64_t arg0)"), std::string::npos) << Open;
-  EXPECT_NE(Open.find("CreateFileW((uint16_t*)(uintptr_t)arg0, 0x80000000, "
-                      "1, 0, 3, 0, 0)"),
+  EXPECT_NE(Open.find("Open(uint16_t* arg0)"), std::string::npos) << Open;
+  EXPECT_NE(Open.find("CreateFileW(arg0, 0x80000000, 1, 0, 3, 0, 0)"),
             std::string::npos)
       << Open;
   // GetLastError takes nothing: the x0 Probe was called with is none.
@@ -6996,7 +7019,11 @@ TEST_F(SessionCAPITest, LinuxProgramsJoinTheirGlibcLibrary) {
     // through void *, which converts to <sys/stat.h>'s struct stat *.  No
     // typedef names the record stat, the function's name.
     const std::string HighC = takeString(neverd_decompile(Linux, Entry));
-    EXPECT_NE(HighC.find("stat((char*)(uintptr_t)arg0, (void*)&"),
+    const bool TypedPath = std::string_view(P.Model) == "LP64";
+    if (TypedPath)
+      EXPECT_NE(HighC.find("Size(char* arg0) {"), std::string::npos) << HighC;
+    EXPECT_NE(HighC.find(TypedPath ? "stat(arg0, (void*)&"
+                                   : "stat((char*)(uintptr_t)arg0, (void*)&"),
               std::string::npos)
         << HighC;
     EXPECT_EQ(HighC.find("typedef struct stat stat;"), std::string::npos)
@@ -7100,7 +7127,7 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
   };
   const Program Programs[] = {
       {"musl_libc_calls_x64", "musl-x64", "LP64", "itanium", 144,
-       "stat((char*)(uintptr_t)arg0, (void*)&", false},
+       "stat(arg0, (void*)&", false},
       {"musl_libc_calls_x86", "musl-x86", "ILP32", "i386-sysv", 144,
        "__stat_time64((char*)(uintptr_t)arg0, (struct stat*)&", false},
   };
@@ -7137,6 +7164,8 @@ TEST_F(SessionCAPITest, MuslProgramsJoinTheirMuslLibrary) {
     ASSERT_GE(Index, 0);
     const std::string HighC =
         takeString(neverd_decompile(Musl, neverd_func_entry(Musl, Index)));
+    if (std::string_view(P.Model) == "LP64")
+      EXPECT_NE(HighC.find("Size(char* arg0) {"), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
     EXPECT_EQ(HighC.find("typedef struct stat stat;") != std::string::npos,
               P.StatTypedef)
@@ -7156,13 +7185,13 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
   };
   const Program Programs[] = {
       {"darwin_libc_calls_x64", "macos-x64", "itanium",
-       "stat_INODE64((char*)(uintptr_t)arg0, (struct stat*)&",
+       "stat_INODE64(arg0, (struct stat*)&",
        "extern int32_t stat_INODE64(char* arg0, struct stat* arg1) "
        "__asm__(\"_stat$INODE64\");"},
       {"darwin_libc_calls_arm64", "macos-arm64", "apple-arm64",
-       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+       "stat(arg0, (void*)&", "#include <sys/stat.h>"},
       {"darwin_libc_calls_ios_arm64", "ios-arm64", "apple-arm64",
-       "stat((char*)(uintptr_t)arg0, (void*)&", "#include <sys/stat.h>"},
+       "stat(arg0, (void*)&", "#include <sys/stat.h>"},
   };
   const auto Fixtures =
       std::filesystem::path(__FILE__).parent_path() / "types" / "fixtures";
@@ -7197,6 +7226,7 @@ TEST_F(SessionCAPITest, DarwinProgramsJoinTheirPlatformsLibrary) {
     ASSERT_GE(Index, 0);
     const std::string HighC =
         takeString(neverd_decompile(Darwin, neverd_func_entry(Darwin, Index)));
+    EXPECT_NE(HighC.find("Size(char* arg0) {"), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Call), std::string::npos) << HighC;
     EXPECT_NE(HighC.find(P.Declaration), std::string::npos) << HighC;
   }
@@ -7484,8 +7514,8 @@ TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
        "0x202, 0x180)"},
       // off_t is libSystem's typedef, which the unit does not name: the
       // address passes through void *, which converts to it.
-      {"_Send", "sendfile(arg0, arg1, 0, (void*)(uintptr_t)arg2, 0, 0)",
-       "sendfile(arg0, arg1, 0, (void *)(uintptr_t)(arg2), 0, 0)"},
+      {"_Send", "sendfile(arg0, arg1, 0, (void*)arg2, 0, 0)",
+       "sendfile(arg0, arg1, 0, (void *)(uintptr_t)((uint64_t)arg2), 0, 0)"},
   };
   const auto Fixture = std::filesystem::path(__FILE__).parent_path() / "types" /
                        "fixtures" / "darwin_variadic_calls_arm64";
@@ -7510,6 +7540,12 @@ TEST_F(SessionCAPITest, DarwinCallsPassWhatLibSystemDeclares) {
     EXPECT_NE(HighC.find(C.HighC), std::string::npos) << HighC;
     const std::string LLVMC = takeString(neverd_decompile_llvm(Darwin, Entry));
     EXPECT_NE(LLVMC.find(C.LLVMC), std::string::npos) << LLVMC;
+    if (std::string_view(C.Function) == "_Send") {
+      EXPECT_NE(HighC.find("* arg2) {"), std::string::npos) << HighC;
+      EXPECT_NE(LLVMC.find("Send(uint32_t arg0, uint32_t arg1, void* arg2) {"),
+                std::string::npos)
+          << LLVMC;
+    }
   }
 }
 

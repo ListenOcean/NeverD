@@ -16529,9 +16529,18 @@ run at O0/O2 with UBSan, including its indirect-function probe. Variant 8 suppli
 a complete later store and executes both generated C routes with an independent
 provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
-`SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
-a unit of selected functions names the one this proof refuses and defines the
-other, while that function alone still fails with the diagnostic.
+`SessionCAPITest.DecompileFunctionsDistinguishesLocalAndIncomingCallSlots`
+checks explicit continuation materialization for a local CALL slot and refusal
+when the CALL instead overwrites an incoming argument. Selected units name the
+refused function and retain the other; single-function queries retain the same
+diagnostic. The CLI closure test exercises both cases in PE and ELF, including
+preservation of an existing output file after a refused root query.
+`PipelineSourceStackAccesses.IncomingArgumentsRetainPhysicalCallWrites` checks
+72 combinations of x86/x64, COFF/ELF/Mach-O, HighC/source LLVM, integer/scalar FP
+reads and local/overlapping/adjacent incoming slots. Overlapping incoming bytes
+must reach the physical CALL-slot proof before ABI parameter recovery can hide
+them; disjoint incoming arguments and represented local slots remain accepted.
+Successful source LLVM modules pass verification.
 
 `MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
 x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,

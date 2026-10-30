@@ -183,6 +183,14 @@ without resolving a VM's incoming register bank. Local and forwarded pointer
 carriers also retain four-byte x86/ARM32 widths instead of the type factory's
 default eight bytes.
 
+Incoming x86/x64 stack-argument recovery now consults the shared physical CALL
+write proof before replacing loads with parameters. Instruction-owned FP memory
+reads participate in that proof too. Known local return-PC stores remain
+materialized, while a CALL that overwrites an incoming argument retains the
+ordinary-source refusal instead of returning its stale entry value. This closes
+an ABI-recovery ordering bug; it does not authorize arbitrary incoming-frame
+writes or supply missing kernel continuation state.
+
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
 the call target, including when the current import slot can no longer name it.
