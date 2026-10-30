@@ -2910,9 +2910,11 @@ int main(void) {
 }
 
 TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
-  for (unsigned Flow : {0u, 1u, 2u, 3u, 4u, 5u}) {
+  for (unsigned Flow = 0; Flow != 9; ++Flow) {
     const unsigned Shape = Flow % 3;
     const bool Alias = Flow >= 3;
+    const bool ImageRead = Flow >= 6;
+    constexpr va_t Global = Iat + 0x100;
     SCOPED_TRACE(Flow);
     constexpr va_t Wrapper = Text + 0x80;
     std::vector<uint8_t> Code(0xC0, 0xCC);
@@ -2963,6 +2965,13 @@ TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
     } else {
       Body.insert(Body.end(), {0x48, 0x03, 0x5C, 0x24, 0x60});
     }
+    if (ImageRead) {
+      // A mutable image read must remain live even though it cannot observe
+      // the missing incoming stack slot.
+      const auto Displacement = rel32(Wrapper + Body.size() + 7, Global);
+      Body.insert(Body.end(), {0x48, 0x33, 0x1D}); // xor rbx,[rip+disp32]
+      Body.insert(Body.end(), Displacement.begin(), Displacement.end());
+    }
     // Kill the complete physical alias before the opaque import. The lifted
     // 32-bit definition includes its explicit zero-extension to all 64 bits.
     if (Alias)
@@ -2972,8 +2981,22 @@ TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
     Body.insert(Body.end(), {0x48, 0x01, 0xD8, // add rax,rbx
                              0x48, 0x83, 0xC4, 0x20, 0x5B, 0xC3});
     put(Code, Wrapper, Body);
-    const auto Image = makeImage(
+    auto Image = makeImage(
         Code, {{Text, "stack_hole"}, {Wrapper, "stack_wrapper"}}, {"rand"});
+    if (ImageRead) {
+      Segment Storage;
+      Storage.Name = ".data";
+      Storage.VA = Global;
+      Storage.Size = Storage.FileSz = 8;
+      Storage.Data.resize(8);
+      Storage.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+      Image.Segments.push_back(std::move(Storage));
+      Symbol Object;
+      Object.Addr = Global;
+      Object.Name = "stack_salt";
+      Object.Size = 8;
+      Image.Symbols.push_back(std::move(Object));
+    }
     std::string NativeOracle;
     llvm::raw_string_ostream Native(NativeOracle);
     Native << R"(
@@ -2985,7 +3008,7 @@ static int check_native(uint64_t a, uint64_t b) {
 )";
     for (uint8_t Byte : Code)
       Native << unsigned(Byte) << ',';
-    Native << "};\n  const size_t size = " << Iat - Text + 8 << R"(;
+    Native << "};\n  const size_t size = " << Global - Text + 8 << R"(;
   uint8_t *mapping = mmap(0, size + 16, PROT_READ | PROT_WRITE | PROT_EXEC,
                        MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (mapping == MAP_FAILED) return 1;
@@ -2994,11 +3017,17 @@ static int check_native(uint64_t a, uint64_t b) {
   uintptr_t random = (uintptr_t)machine_rand;
 )";
     Native << "  memcpy(code + " << Iat - Text << ", &random, 8);\n";
+    if (ImageRead)
+      Native << "  uint64_t salt = a ^ (b << 7);\n  memcpy(code + "
+             << Global - Text << ", &salt, 8);\n";
     Native << R"(
   calls = 0;
   __builtin___clear_cache((char *)code, (char *)code + size);
   uint64_t actual = ((uint64_t (__attribute__((ms_abi)) *)(uint64_t,uint64_t))code)(a,b);
   uint64_t combined = FLOW_KIND == 2 ? a + 3 * b : (FLOW_KIND == 0 || (a & 1) ? a + b : a - b);
+#if HAS_IMAGE_READ
+  combined ^= salt;
+#endif
   int bad = actual != combined + 17 || calls != 1;
   if (munmap(mapping, size + 16)) return 1;
   return bad;
@@ -3036,6 +3065,8 @@ static int check_native(uint64_t a, uint64_t b) { return 0; }
           EXPECT_EQ(Source.find("__builtin_trap"), std::string::npos) << Source;
           if (OmitCallee || Source.find("__builtin_trap") != std::string::npos)
             continue;
+          if (ImageRead && !LLVM)
+            Source += "\n__typeof__(stack_salt) stack_salt;\n";
           const std::string Providers = R"(
 #include <string.h>
 static unsigned calls;
@@ -3049,6 +3080,11 @@ int main(void) {
     if (check_native(a, b)) return 1;
     calls = 0;
     uint64_t combined = FLOW_KIND == 2 ? a + 3 * b : (FLOW_KIND == 0 || (a & 1) ? a + b : a - b);
+#if HAS_IMAGE_READ
+    uint64_t salt = a ^ (b << 7);
+    memcpy(&stack_salt, &salt, sizeof(salt));
+    combined ^= salt;
+#endif
     if ((uint64_t)stack_hole(a, b) != combined + 17 || calls != 1) return 2;
     a ^= a << 13; a ^= a >> 7; a ^= a << 17;
   }
@@ -3058,7 +3094,8 @@ int main(void) {
           for (llvm::StringRef Level : {"-O0", "-O2"})
             source_call_execution_test::compileAndRun(
                 Source + Providers + "\n#define FLOW_KIND " +
-                    std::to_string(Shape) + "\n" + NativeOracle + Oracle,
+                    std::to_string(Shape) + "\n#define HAS_IMAGE_READ " +
+                    std::to_string(ImageRead) + "\n" + NativeOracle + Oracle,
                 {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
         }
   }

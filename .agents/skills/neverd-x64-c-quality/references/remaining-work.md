@@ -290,6 +290,13 @@ lose its coordinate without proving destruction. Stores, arbitrary pointers,
 nested opaque effects and stack-pointer escapes still prevent a complete
 unused-slot proof. The public Win64 fixture executes direct and GPR-addressed
 straight-line, branching and looping bodies against their original machine code.
+Exact image-data reads now cross this proof through instruction-local full-width
+copies and checked scalar offsets. Both spill overwrite and stack-input proofs
+share complete mapped-object ownership checks. Mutable image reads remain live
+in both C routes and match their original instructions; equal scalars, loaded
+pointers, stale/partial addresses, stores and ordered/segment accesses cannot
+supply this evidence. General pointer borrows and opaque nested-call effects
+remain open.
 
 Unknown incoming stack-pointer
 escapes still prevent a complete stack-argument bound: do not cap calls
