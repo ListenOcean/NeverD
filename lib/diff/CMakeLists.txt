@@ -8,7 +8,6 @@ add_neverd_component_library(NeverDDiff
   Control.cpp
   DataFlow.cpp
   DataFlowJSON.cpp
-  DataReferenceContext.cpp
   FlowArgumentAccess.cpp
   FlowBinding.cpp
   FlowEvidence.cpp
@@ -28,6 +27,7 @@ add_neverd_component_library(NeverDDiff
   MedDataFlow.cpp
   LLVMDataFlow.cpp
   Program.cpp
+  ReferenceContext.cpp
   Regions.cpp
   RegionsJSON.cpp
   ReviewJournal.cpp

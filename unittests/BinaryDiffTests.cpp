@@ -1307,6 +1307,77 @@ TEST(BinaryDiff, DataReferenceMatchesRestoreWithoutInventingDataIdentity) {
   EXPECT_EQ(changeState(*M), "uncertain");
 }
 
+TEST(BinaryDiff, AddressOperandRolesDistinguishReorderedDuplicateCallbacks) {
+  Fn A = leaf("callback_a", 41), B = A;
+  B.Name = "callback_b";
+  A.Source = B.Source = NameSource::Generated;
+  Fn Holder = leaf("holder", 53);
+  Holder.AddressTargets = {A.Name, B.Name};
+  const auto P = build({Holder, A, B}, 0x1000);
+  const auto S = build({Holder, A, B}, 0x9000, {0, 2, 1});
+  for (bool Reverse : {false, true}) {
+    const auto &Before = Reverse ? S : P, &After = Reverse ? P : S;
+    const auto R = compare(Before, After, {});
+    ASSERT_EQ(R.Matches.size(), 3u);
+    for (const auto *Name : {"callback_a", "callback_b"}) {
+      const auto &M = matchOf(R, Before, Name);
+      EXPECT_EQ(counterpart(R, Before, After, Name), Name);
+      EXPECT_EQ(M.Step, FunctionStep::AddressSite);
+      EXPECT_TRUE(M.FromContext);
+    }
+    std::string Error;
+    const auto Read = readComparison(saved(R, Before, After), Error);
+    ASSERT_TRUE(Read) << Error;
+    ComparisonResult Restored;
+    ASSERT_FALSE(bindComparison(*Read, Before, After, Restored));
+    EXPECT_EQ(savedWithoutTimings(R, Before, After),
+              savedWithoutTimings(Restored, Before, After));
+  }
+}
+
+TEST(BinaryDiff, ConflictingAddressOperandRolesRemainAmbiguous) {
+  Fn A = leaf("callback_a", 41), B = A;
+  B.Name = "callback_b";
+  A.Source = B.Source = NameSource::Generated;
+  Fn First = leaf("first_holder", 53), Second = leaf("second_holder", 61);
+  First.AddressTargets = Second.AddressTargets = {A.Name, B.Name};
+  const auto P = build({First, Second, A, B}, 0x1000);
+  Second.AddressTargets = {B.Name, A.Name};
+  const auto S = build({First, Second, A, B}, 0x9000);
+  for (bool Reverse : {false, true}) {
+    const auto R = compare(Reverse ? S : P, Reverse ? P : S, {});
+    EXPECT_EQ(R.Matches.size(), 2u);
+    EXPECT_EQ(R.secondaryOf(2), NoIndex);
+    EXPECT_EQ(R.secondaryOf(3), NoIndex);
+  }
+}
+
+TEST(BinaryDiff, AddressRoleWitnessesRetainBodyAndKnownCallConstraints) {
+  for (bool Incomplete : {false, true}) {
+    Fn A = leaf("callback_a", 41), B = A;
+    B.Name = "callback_b";
+    A.Source = B.Source = NameSource::Generated;
+    Fn Holder = leaf("holder", 53);
+    Holder.AddressTargets = {A.Name, B.Name};
+    Holder.Blocks[0].insert(Holder.Blocks[0].begin(),
+                            {"call", "", InstructionFlow::Call, "callee_a"});
+    if (Incomplete)
+      Holder.Traits |= TraitIncomplete;
+    const auto P = build(
+        {Holder, A, B, leaf("callee_a", 61), leaf("callee_b", 71)}, 0x1000);
+    if (!Incomplete)
+      Holder.Blocks[0].front().Callee = "callee_b";
+    const auto S = build(
+        {Holder, A, B, leaf("callee_a", 61), leaf("callee_b", 71)}, 0x9000);
+    for (bool Reverse : {false, true}) {
+      const auto R = compare(Reverse ? S : P, Reverse ? P : S, {});
+      EXPECT_EQ(R.Matches.size(), 3u);
+      EXPECT_EQ(R.secondaryOf(1), NoIndex);
+      EXPECT_EQ(R.secondaryOf(2), NoIndex);
+    }
+  }
+}
+
 TEST(BinaryDiff, UnknownAddressOperandDoesNotHideAKnownRetargeting) {
   const auto Input = [](bool Retarget) {
     ProgramBuilder B({});

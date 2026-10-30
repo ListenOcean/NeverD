@@ -76,6 +76,16 @@ them. A stronger body or another independently supported alternative still
 prevents automatic admission. The witness correspondence is frozen for this
 pass, so proposed functions cannot justify their own data-reference evidence.
 
+The same pass proposes `address_site` callback pairs from complete function
+address operands at aligned positions in independently matched functions.
+Already paired targets and known data must agree. Unnamed data operands require
+the frozen data-reference relation above; callbacks cannot bootstrap that
+relation. All eligible witnesses must agree in both directions. Like call-site
+proposals, these candidates use the existing lower context threshold only when
+every mapped caller, callee and address neighbor agrees, and still compete with
+measured body alternatives. Function addresses retain their explicit role;
+they are not inferred from arbitrary numeric operands.
+
 This rule currently uses the complete address operands of
 `native-x86-operands-v3`; AArch64 page fragments are not object-reference
 witnesses. It does not use companion debug information, neighboring function

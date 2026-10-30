@@ -1,17 +1,17 @@
-//===- DataReferenceContext.cpp - Paired uses of unnamed data -------------===//
+//===- ReferenceContext.cpp - Independently paired address uses -----------===//
 //
 // NeverD Decompiler
 //
 //===----------------------------------------------------------------------===//
 ///
 /// \file
-/// Equal instruction layouts in independently matched functions align data
+/// Equal instruction layouts in independently matched functions align address
 /// operands. Consistent bidirectional reference relations can distinguish
 /// otherwise equal candidate bodies without equating unknown data objects.
 ///
 //===----------------------------------------------------------------------===//
 
-#include "DataReferenceContext.h"
+#include "ReferenceContext.h"
 
 #include "Features.h"
 
@@ -35,14 +35,15 @@ struct Relation {
 };
 using Relations = llvm::DenseMap<uint64_t, Relation>;
 
+enum class ContextMode { DataWitness, DataCandidate, FunctionWitness };
+
 /// A complete occurrence signature. Before relations exist, unknown data keys
 /// are omitted only to align anchors that already correspond independently.
-std::optional<uint64_t> referenceKey(const Program &P,
-                                     const ProgramFeatures &PF, uint32_t FI,
-                                     llvm::ArrayRef<uint32_t> Match,
-                                     bool Secondary, const Relations *Forward,
-                                     const Relations *Reverse,
-                                     const ComparisonControl &Control) {
+std::optional<uint64_t>
+referenceKey(const Program &P, const ProgramFeatures &PF, uint32_t FI,
+             llvm::ArrayRef<uint32_t> Match, bool Secondary, ContextMode Mode,
+             const Relations *Forward, const Relations *Reverse,
+             const ComparisonControl &Control) {
   const auto &F = PF.Functions[FI];
   if (F.Instructions < limits::diff::kMinDataReferenceInstructions ||
       P.Functions[FI].has(TraitIncomplete) || !F.DataSitesComplete ||
@@ -50,10 +51,18 @@ std::optional<uint64_t> referenceKey(const Program &P,
     return {};
   StableHash H(F.ReferenceLayout);
   H.add(F.AddressSites.size()).add(F.DataSites.size());
+  bool FunctionOperand = false;
   for (const auto &Site : F.AddressSites) {
     if (Control.stop() || Site.Target == NoIndex)
       return {};
     H.add(Site.Instruction).add(Site.Operand);
+    if (Mode == ContextMode::FunctionWitness && Site.Operand != NoIndex) {
+      FunctionOperand = true;
+      if (Match[Site.Target] == NoIndex) {
+        H.add("unmapped_function");
+        continue;
+      }
+    }
     if (Site.Target == FI) {
       H.add("self");
       continue;
@@ -72,7 +81,7 @@ std::optional<uint64_t> referenceKey(const Program &P,
       continue;
     }
     Unknown = true;
-    if (!Forward)
+    if (Mode == ContextMode::DataWitness)
       continue;
     const auto It = Forward->find(Site.Key);
     if (It == Forward->end() || It->second.Conflict)
@@ -83,26 +92,28 @@ std::optional<uint64_t> referenceKey(const Program &P,
       return {};
     H.add(Secondary ? Site.Key : It->second.Other);
   }
-  return Unknown ? std::optional<uint64_t>(H.value()) : std::nullopt;
+  const bool Eligible =
+      Mode == ContextMode::FunctionWitness ? FunctionOperand : Unknown;
+  return Eligible ? std::optional<uint64_t>(H.value()) : std::nullopt;
 }
 
 } // namespace
 
-std::vector<std::pair<uint32_t, uint32_t>>
-dataReferenceCandidates(const Program &P, const ProgramFeatures &PF,
-                        llvm::ArrayRef<uint32_t> PMatch, const Program &S,
-                        const ProgramFeatures &SF,
-                        llvm::ArrayRef<uint32_t> SMatch,
-                        const ComparisonControl &Control) {
+ReferenceCandidates
+referenceCandidates(const Program &P, const ProgramFeatures &PF,
+                    llvm::ArrayRef<uint32_t> PMatch, const Program &S,
+                    const ProgramFeatures &SF, llvm::ArrayRef<uint32_t> SMatch,
+                    const ComparisonControl &Control) {
   // This normalization records complete x86 address operands. In particular,
   // AArch64 ADRP page fragments are not object-reference witnesses.
-  if (P.Identity.Normalization != NativeX86Normalization ||
-      S.Identity.Normalization != NativeX86Normalization)
-    return {};
+  const bool DataOperands =
+      P.Identity.Normalization == NativeX86Normalization &&
+      S.Identity.Normalization == NativeX86Normalization;
   const size_t PrimaryCount = P.Functions.size();
   const size_t Total = PrimaryCount + S.Functions.size();
   std::vector<std::optional<uint64_t>> Keys(Total);
-  const auto Compute = [&](const Relations *Forward, const Relations *Reverse) {
+  const auto Compute = [&](ContextMode Mode, const Relations *Forward,
+                           const Relations *Reverse) {
     parallelForEach(Total, [&](auto Claim, size_t Count) {
       for (size_t I = Claim(); I < Count; I = Claim()) {
         if (Control.stop())
@@ -112,15 +123,16 @@ dataReferenceCandidates(const Program &P, const ProgramFeatures &PF,
         const uint32_t F = Secondary ? I - PrimaryCount : I;
         Keys[I].reset();
         // First inspect the settled anchors, then only remaining functions.
-        if ((Map[F] == NoIndex) != (Forward != nullptr))
+        if ((Map[F] == NoIndex) != (Mode == ContextMode::DataCandidate) ||
+            (!DataOperands && Mode != ContextMode::FunctionWitness))
           continue;
         Keys[I] = referenceKey(Secondary ? S : P, Secondary ? SF : PF, F, Map,
-                               Secondary, Secondary ? Reverse : Forward,
+                               Secondary, Mode, Secondary ? Reverse : Forward,
                                Secondary ? Forward : Reverse, Control);
       }
     });
   };
-  Compute(nullptr, nullptr);
+  Compute(ContextMode::DataWitness, nullptr, nullptr);
   if (Control.stop())
     return {};
   Relations Forward, Reverse;
@@ -150,9 +162,51 @@ dataReferenceCandidates(const Program &P, const ProgramFeatures &PF,
       Record(Reverse, BSites[I].Key, ASites[I].Key);
     }
   }
-  if (Forward.empty())
+  ReferenceCandidates Candidates;
+  // Address-taking operands are separate from calls. Their aligned roles can
+  // propose callbacks even when several bodies remain indistinguishable.
+  // Already mapped targets must agree; unknown data needs the frozen relation
+  // above before it can support this second kind of witness.
+  Compute(ContextMode::FunctionWitness, &Forward, &Reverse);
+  if (Control.stop())
     return {};
-  Compute(&Forward, &Reverse);
+  Relations FunctionForward, FunctionReverse;
+  for (uint32_t A = 0; A < PrimaryCount; ++A) {
+    if (Control.stop())
+      return {};
+    const uint32_t B = PMatch[A];
+    if (B == NoIndex || !Keys[A] || Keys[A] != Keys[PrimaryCount + B])
+      continue;
+    const auto &ASites = PF.Functions[A].AddressSites;
+    const auto &BSites = SF.Functions[B].AddressSites;
+    if (ASites.size() != BSites.size())
+      continue;
+    for (size_t I = 0; I < ASites.size(); ++I) {
+      if (Control.stop())
+        return {};
+      if (ASites[I].Operand == NoIndex)
+        continue;
+      Record(FunctionForward, ASites[I].Target, BSites[I].Target);
+      Record(FunctionReverse, BSites[I].Target, ASites[I].Target);
+    }
+  }
+  for (uint32_t A = 0; A < PrimaryCount; ++A) {
+    if (Control.stop())
+      return {};
+    const auto It = FunctionForward.find(A);
+    if (PMatch[A] != NoIndex || It == FunctionForward.end() ||
+        It->second.Conflict)
+      continue;
+    const uint32_t B = It->second.Other;
+    const auto Back = FunctionReverse.find(B);
+    if (SMatch[B] == NoIndex && Back != FunctionReverse.end() &&
+        !Back->second.Conflict && Back->second.Other == A &&
+        P.Functions[A].hasBody() && S.Functions[B].hasBody())
+      Candidates.Functions.emplace_back(A, B);
+  }
+  if (Forward.empty())
+    return Candidates;
+  Compute(ContextMode::DataCandidate, &Forward, &Reverse);
   if (Control.stop())
     return {};
   struct Entry {
@@ -166,7 +220,6 @@ dataReferenceCandidates(const Program &P, const ProgramFeatures &PF,
   llvm::sort(Entries, [](const Entry &A, const Entry &B) {
     return std::tie(A.Key, A.Index) < std::tie(B.Key, B.Index);
   });
-  std::vector<std::pair<uint32_t, uint32_t>> Candidates;
   for (size_t I = 0; I < Entries.size();) {
     if (Control.stop())
       return {};
@@ -175,11 +228,11 @@ dataReferenceCandidates(const Program &P, const ProgramFeatures &PF,
       ++J;
     if (J - I == 2 && Entries[I].Index < PrimaryCount &&
         Entries[I + 1].Index >= PrimaryCount)
-      Candidates.emplace_back(Entries[I].Index,
-                              Entries[I + 1].Index - PrimaryCount);
+      Candidates.Data.emplace_back(Entries[I].Index,
+                                   Entries[I + 1].Index - PrimaryCount);
     I = J;
   }
-  llvm::sort(Candidates);
+  llvm::sort(Candidates.Data);
   return Candidates;
 }
 

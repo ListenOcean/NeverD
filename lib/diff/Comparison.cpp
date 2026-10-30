@@ -15,9 +15,9 @@
 #include "neverd/diff/Comparison.h"
 
 #include "CallAlignment.h"
-#include "DataReferenceContext.h"
 #include "Features.h"
 #include "Matching.h"
+#include "ReferenceContext.h"
 
 #include "neverd/diff/FunctionDelta.h"
 #include "neverd/diff/StableHash.h"
@@ -247,6 +247,7 @@ private:
     bool ContextEligible = false;
     bool CallSite = false;
     bool DataReference = false;
+    bool AddressSite = false;
   };
   llvm::DenseMap<uint64_t, CandidateEvidence> FeatureCandidates;
   Clock::time_point PhaseStart;
@@ -261,9 +262,11 @@ private:
         FeatureCandidates.try_emplace(pairKey(A, B), CandidateEvidence{Step});
     (void)Inserted;
     It->second.FromContext |= FromContext;
-    It->second.ContextEligible |=
-        Step == FunctionStep::CallSite || Step == FunctionStep::Neighborhood;
+    It->second.ContextEligible |= Step == FunctionStep::CallSite ||
+                                  Step == FunctionStep::Neighborhood ||
+                                  Step == FunctionStep::AddressSite;
     It->second.CallSite |= Step == FunctionStep::CallSite;
+    It->second.AddressSite |= Step == FunctionStep::AddressSite;
   }
   bool stopNow() {
     if (Stopped)
@@ -753,7 +756,7 @@ bool Matcher::consistentContext(uint32_t A, uint32_t B) const {
   if (It == FeatureCandidates.end())
     return false;
   const double Agreement = contextAgreement(A, B);
-  return (It->second.CallSite && Agreement == 1) ||
+  return ((It->second.CallSite || It->second.AddressSite) && Agreement == 1) ||
          (It->second.DataReference && (Agreement < 0 || Agreement == 1));
 }
 
@@ -1465,15 +1468,20 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
   // cannot establish the data relation that would justify its own admission.
   beginPhase("data-reference-context");
   progress(0, 1);
-  const auto DataCandidates =
-      dataReferenceCandidates(P, PF, PMatch, S, SF, SMatch, Control);
-  for (const auto &[A, B] : DataCandidates) {
+  const auto Candidates =
+      referenceCandidates(P, PF, PMatch, S, SF, SMatch, Control);
+  for (const auto &[A, B] : Candidates.Data) {
     propose(A, B, FunctionStep::DataReference, true);
     auto &Evidence = FeatureCandidates.find(pairKey(A, B))->second;
     Evidence.Step = FunctionStep::DataReference;
     Evidence.DataReference = true;
   }
-  if (!DataCandidates.empty() && !stopNow())
+  for (const auto &[A, B] : Candidates.Functions) {
+    propose(A, B, FunctionStep::AddressSite, true);
+    FeatureCandidates.find(pairKey(A, B))->second.Step =
+        FunctionStep::AddressSite;
+  }
+  if ((!Candidates.Data.empty() || !Candidates.Functions.empty()) && !stopNow())
     approximate();
   if (!stopNow())
     progress(1, 1);
