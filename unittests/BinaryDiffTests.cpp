@@ -1155,6 +1155,156 @@ TEST(BinaryDiff, UnknownDataDoesNotHideIndependentConstantChanges) {
   }
 }
 
+namespace {
+struct DataContextInput {
+  bool Conflict = false;
+  bool KnownRetarget = false;
+  bool Incomplete = false;
+  bool MissingOccurrence = false;
+  bool Duplicate = false;
+  bool Witnesses = true;
+  bool AArch64 = false;
+};
+
+Program dataContextInput(bool Secondary, DataContextInput Options = {}) {
+  ProgramIdentity Identity;
+  Identity.Normalization = Options.AArch64 ? NativeAArch64Normalization.str()
+                                           : NativeX86Normalization.str();
+  ProgramBuilder Builder(Identity);
+  const uint64_t Base = Secondary ? 0x9000 : 0x1000;
+  const auto Add = [&](unsigned Index, unsigned Object, bool Anchor) {
+    const uint64_t Address = Base + Index * 0x100;
+    const uint64_t Key = (Secondary ? 100 : 10) + Object;
+    Builder.beginFunction(Address, 3, "f" + std::to_string(Index),
+                          Anchor ? NameSource::Symbol : NameSource::Generated,
+                          Anchor && Options.Incomplete ? TraitIncomplete : 0);
+    Builder.addBlock(Address);
+    std::vector<AddressReference> Refs{{Key, 1, ReferenceKind::UnresolvedData}};
+    if (Anchor && Options.KnownRetarget)
+      Refs.push_back({Secondary ? 801U : 800U, 2, ReferenceKind::Data});
+    Builder.addInstruction(Address, {0xa1}, "load", Key, 7,
+                           InstructionFlow::None, {}, {}, {}, Refs, 7, true);
+    if (Anchor && Options.MissingOccurrence)
+      Builder.addReference(ReferenceKind::UnresolvedData, 999, 0);
+    const uint8_t Tag = Anchor ? 30 + Index : 12;
+    Builder.addInstruction(Address + 1, {Tag}, "add", Tag, 8,
+                           InstructionFlow::None);
+    Builder.addInstruction(Address + 2, {0xc3}, "ret", 9, 9,
+                           InstructionFlow::Return);
+  };
+  if (Options.Witnesses) {
+    Add(0, 1, true);
+    Add(1, 2, true);
+    if (Options.Conflict)
+      Add(2, Secondary ? 2 : 1, true);
+  }
+  Add(3, 1, false);
+  Add(4, 2, false);
+  if (Options.Duplicate)
+    Add(5, 1, false);
+  return Builder.finish();
+}
+} // namespace
+
+TEST(BinaryDiff, IndependentDataReferenceRolesDistinguishDuplicateBodies) {
+  const auto ResetThreads =
+      llvm::scope_exit([] { neverd::setWorkerThreadCount(0); });
+  const auto P = dataContextInput(false), S = dataContextInput(true);
+  for (bool Reverse : {false, true})
+    for (unsigned Threads : {1U, 4U}) {
+      neverd::setWorkerThreadCount(Threads);
+      const auto &A = Reverse ? S : P, &B = Reverse ? P : S;
+      const auto R = compare(A, B, {});
+      ASSERT_EQ(R.Matches.size(), 4u);
+      for (uint32_t I : {2U, 3U}) {
+        const auto *M = R.matchOfPrimary(I);
+        ASSERT_NE(M, nullptr);
+        EXPECT_EQ(M->Secondary, I);
+        EXPECT_EQ(M->Step, FunctionStep::DataReference);
+        EXPECT_TRUE(M->FromContext);
+        EXPECT_FALSE(M->ReferenceComparisonComplete);
+        EXPECT_FALSE(M->identical());
+        EXPECT_EQ(changeState(*M), "uncertain");
+      }
+    }
+}
+
+TEST(BinaryDiff, DataReferenceContextRequiresIndependentCompleteWitnesses) {
+  for (const DataContextInput Options :
+       {DataContextInput{.Conflict = true},
+        DataContextInput{.KnownRetarget = true},
+        DataContextInput{.Incomplete = true},
+        DataContextInput{.MissingOccurrence = true},
+        DataContextInput{.Witnesses = false},
+        DataContextInput{.AArch64 = true}}) {
+    const auto P = dataContextInput(false, Options);
+    const auto S = dataContextInput(true, Options);
+    for (bool Reverse : {false, true}) {
+      const auto &A = Reverse ? S : P, &B = Reverse ? P : S;
+      const auto R = compare(A, B, {});
+      const unsigned Anchors = !Options.Witnesses ? 0
+                               : Options.Conflict ? 3
+                                                  : 2;
+      EXPECT_EQ(R.Matches.size(), Anchors);
+      for (const auto &M : R.Matches)
+        EXPECT_NE(M.Step, FunctionStep::DataReference);
+    }
+  }
+}
+
+TEST(BinaryDiff, SharedDataRolesDoNotCollapseDuplicatesOrLowerThresholds) {
+  const auto P = dataContextInput(false, {.Duplicate = true});
+  const auto S = dataContextInput(true, {.Duplicate = true});
+  const auto R = compare(P, S, {});
+  ASSERT_EQ(R.Matches.size(), 3u);
+  EXPECT_EQ(R.secondaryOf(3), 3u);
+  EXPECT_EQ(R.secondaryOf(2), NoIndex);
+  EXPECT_EQ(R.secondaryOf(4), NoIndex);
+
+  ComparisonSettings Strict;
+  Strict.MinimumSimilarity = 1;
+  const auto Limited = compare(P, S, Strict);
+  EXPECT_EQ(Limited.Matches.size(), 2u);
+}
+
+TEST(BinaryDiff, DataReferenceContextRespectsRejectionAndCancellation) {
+  const auto P = dataContextInput(false), S = dataContextInput(true);
+  const std::vector<Override> Overrides{
+      {OverrideKind::Unmatch, 0x1300, 0x9300}};
+  const auto Rejected = compare(P, S, {}, Overrides);
+  EXPECT_EQ(Rejected.secondaryOf(2), NoIndex);
+  EXPECT_EQ(Rejected.secondaryOf(3), 3u);
+
+  std::atomic<bool> Cancel{false};
+  ComparisonControl Control;
+  Control.Cancel = &Cancel;
+  Control.Progress = [&](llvm::StringRef Phase, uint64_t, uint64_t) {
+    if (Phase == "data-reference-context")
+      Cancel = true;
+  };
+  const auto Stopped = compare(P, S, {}, {}, Control);
+  EXPECT_EQ(Stopped.State, ComparisonState::Cancelled);
+  EXPECT_EQ(Stopped.StoppedPhase, "data-reference-context");
+  EXPECT_EQ(Stopped.Matches.size(), 2u);
+}
+
+TEST(BinaryDiff, DataReferenceMatchesRestoreWithoutInventingDataIdentity) {
+  const auto P = dataContextInput(false), S = dataContextInput(true);
+  const auto R = compare(P, S, {});
+  ASSERT_EQ(R.Matches.size(), 4u);
+  std::string Error;
+  const auto Read = readComparison(saved(R, P, S), Error);
+  ASSERT_TRUE(Read) << Error;
+  ComparisonResult Restored;
+  ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
+  EXPECT_EQ(savedWithoutTimings(R, P, S), savedWithoutTimings(Restored, P, S));
+  const auto *M = Restored.matchOfPrimary(2);
+  ASSERT_NE(M, nullptr);
+  EXPECT_EQ(M->Step, FunctionStep::DataReference);
+  EXPECT_FALSE(M->ReferenceComparisonComplete);
+  EXPECT_EQ(changeState(*M), "uncertain");
+}
+
 TEST(BinaryDiff, UnknownAddressOperandDoesNotHideAKnownRetargeting) {
   const auto Input = [](bool Retarget) {
     ProgramBuilder B({});
