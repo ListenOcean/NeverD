@@ -105,9 +105,13 @@ std::set<unsigned> sourceRegisterInputOverwrites(
 /// frame escapes, lost access offsets and unknown effects reject the proof.
 /// All original edges, stack joins and returns must agree. Stable loops keep
 /// the union of reads and frame-derived register/flag bytes on every path.
+/// A current image admits complete data-object loads whose original exact
+/// address survives instruction-local copies and scalar affine offsets. This
+/// does not fold loaded values or admit stores or loaded pointer aliases.
 std::set<unsigned> unobservedSourceStackParameters(
     const MedFunc &Func, llvm::ArrayRef<LowBlock> OriginalBlocks,
-    const std::set<va_t> &DeclaredCallees, size_t &Remaining);
+    const std::set<va_t> &DeclaredCallees, size_t &Remaining,
+    const BinaryImage *Image = nullptr);
 
 /// Extend source spill evidence through current direct calls. Identity copies
 /// and PHIs retain byte positions; narrow views may read the retained prefix.
