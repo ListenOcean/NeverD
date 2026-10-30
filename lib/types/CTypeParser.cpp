@@ -543,6 +543,7 @@ bool ignoredWord(llvm::StringRef Word) {
       std::initializer_list<llvm::StringRef>{"extern",
                                              "static",
                                              "inline",
+                                             "_inline",
                                              "__inline",
                                              "__inline__",
                                              "__forceinline",
@@ -613,6 +614,11 @@ llvm::StringRef attributeName(llvm::StringRef Name) {
   if (Name.size() > 4 && Name.starts_with("__") && Name.ends_with("__"))
     return Name.drop_front(2).drop_back(2);
   return Name;
+}
+
+/// Microsoft's original spelling remains an alias in SDK/WDK headers.
+bool declspecWord(llvm::StringRef Word) {
+  return Word == "__declspec" || Word == "_declspec";
 }
 
 class Parser {
@@ -778,8 +784,8 @@ private:
     return builtinKeyword(Word) || conventionWord(Word) || ignoredWord(Word) ||
            Word == "struct" || Word == "union" || Word == "enum" ||
            Word == "class" || Word == "const" || Word == "volatile" ||
-           Word == "typedef" || Word == "__declspec" ||
-           Word == "__attribute__" || Word == "sizeof" || typeofWord(Word);
+           Word == "typedef" || declspecWord(Word) || Word == "__attribute__" ||
+           Word == "sizeof" || typeofWord(Word);
   }
 
   static bool typeofWord(llvm::StringRef Word) {
@@ -1436,7 +1442,7 @@ private:
       return true;
     return T.Kind == TokenKind::Word &&
            (T.Text == "__attribute__" || T.Text == "__attribute" ||
-            T.Text == "__declspec" || T.Text == "DECLSPEC_ALIGN" ||
+            declspecWord(T.Text) || T.Text == "DECLSPEC_ALIGN" ||
             T.Text == "alignas" || T.Text == "_Alignas" ||
             T.Text == "__asm__" || T.Text == "__asm");
   }
@@ -1500,7 +1506,7 @@ private:
       }
       // __attribute__((a, b(x))) lists its attributes in a second pair of
       // parentheses; __declspec(a b(x)) in its one.
-      const bool Gnu = Word != "__declspec";
+      const bool Gnu = !declspecWord(Word);
       if (Gnu && !expect("(", "after " + Word.str() + "("))
         return false;
       while (!Failed && !isPunct(")")) {

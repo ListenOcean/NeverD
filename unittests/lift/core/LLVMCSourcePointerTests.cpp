@@ -35,8 +35,90 @@ public:
     const auto It = Functions.find(Address);
     return It == Functions.end() ? std::nullopt : std::optional(It->second);
   }
+  std::optional<FunctionSym>
+  resolvePrototype(llvm::StringRef Name) const override {
+    for (const auto &[Address, Function] : Functions)
+      if (Function.Name == Name)
+        return Function;
+    return std::nullopt;
+  }
   bool hasInfo() const override { return true; }
 };
+
+TEST(LLVMCSourcePointers, HeaderCallbackCastsKeepNestedPointeesAndQualifiers) {
+  for (const auto Arch : {Arch::X64, Arch::AArch64}) {
+    SCOPED_TRACE(static_cast<int>(Arch));
+    llvm::LLVMContext Context;
+    llvm::Module Module("header-callback", Context);
+    Module.setDataLayout("e-p:64:64");
+    llvm::IRBuilder<> Builder(Context);
+    auto *Word = Builder.getInt64Ty();
+    auto *Signature = llvm::FunctionType::get(Word, {Word, Word, Word}, false);
+    auto *Callee =
+        llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
+                               "register_callback", Module);
+    auto *Entry =
+        llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
+                               "callback_entry", Module);
+    Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Entry));
+    Builder.CreateRet(Builder.CreateCall(
+        Callee, {Entry->getArg(0), Entry->getArg(1), Entry->getArg(2)}));
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    const auto Record =
+        NdType::makePtr(NdType::makeNamedRecord("CallbackRecord", 4));
+    const auto Output = NdType::makePtr(NdType::makeInt(4, false));
+    const auto Callback = NdType::makePtr(
+        NdType::makeFunc(NdType::makeVoid(), {Record, Output},
+                         types::CallingConvention::Unspecified));
+    PointerContext Debug;
+    FunctionSym Function;
+    Function.Name = "register_callback";
+    Function.ReturnType = NdType::makeInt(4, false);
+    Function.Params = {
+        {"Callback", Callback}, {"Input", Record}, {"Output", Output}};
+    Function.PrototypeLibrary = "fixture-header";
+    Function.PrototypeFromHeader = true;
+    Function.PortablePrototypeDeclaration =
+        "uint32_t register_callback(void (*Callback)(const struct "
+        "CallbackRecord *, "
+        "volatile uint32_t *), const struct CallbackRecord *Input, volatile "
+        "uint32_t *Output)";
+    Function.PortableParameterTypes = {
+        "void (*)(const struct CallbackRecord *, volatile uint32_t *)",
+        "const struct CallbackRecord *", "volatile uint32_t *"};
+    Debug.Functions[0x2000] = Function;
+    CEmitterOptions Options;
+    Options.TheArch = Arch;
+    Options.Format = BinaryFormat::COFF;
+    std::string Text;
+    llvm::raw_string_ostream Out(Text);
+    ASSERT_TRUE(LLVMCEmitter().emit(Module, Out, Options, &Debug));
+    Out.flush();
+    Text = "#include <stdint.h>\nstruct CallbackRecord { uint32_t Value; };\n" +
+           Text;
+    Text += R"c(
+uint32_t register_callback(void (*Callback)(const struct CallbackRecord *, volatile uint32_t *),
+                           const struct CallbackRecord *Input, volatile uint32_t *Output) {
+  Callback(Input, Output);
+  return *Output + 3;
+}
+static void observed(const struct CallbackRecord *Input, volatile uint32_t *Output) {
+  *Output = Input->Value ^ 0xA5;
+}
+int main(void) {
+  struct CallbackRecord Input = {0x1234};
+  volatile uint32_t Output = 0;
+  uint64_t Result = callback_entry((uintptr_t)&observed, (uintptr_t)&Input, (uintptr_t)&Output);
+  return Output != (0x1234 ^ 0xA5) || Result != (0x1234 ^ 0xA5) + 3;
+}
+)c";
+    for (const auto Optimization : {"-O0", "-O2"})
+      source_call_execution_test::compileAndRun(
+          Text, {Optimization, "-Werror=incompatible-pointer-types",
+                 "-Werror=incompatible-function-pointer-types",
+                 "-fsanitize=undefined", "-fsanitize-trap=all"});
+  }
+}
 
 TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
   for (const auto Arch : {Arch::X64, Arch::AArch64})

@@ -78,6 +78,18 @@ X8 without shifting ordinary parameters, while small HFAs and unknown record
 layouts keep their own rules. Return-field fixtures cover shared epilogues,
 loops, call clobbers, partial writes and transitively unspecified inputs.
 
+`NeverDLocalTypesDebugContextTests` also checks recursive callback borrows and
+portable parameter qualifiers. `LLVMCSourcePointers.HeaderCallbackCastsKeepNestedPointeesAndQualifiers`
+compiles and executes a qualified callback through the imported source
+prototype at O0/O2 with UBSan for x64 and ARM64 projections. Host execution
+does not certify native ARM64 execution. The optional
+[`check_windows_provider_calls.py`](../scripts/check_windows_provider_calls.py)
+uses the pinned Microsoft SDK/import libraries to compile both emitted routes
+and compare their API compiler contracts across x86, x64 and ARM64.
+`HighCSourceCalls.CallbackBorrowsDeclareNestedRecordTags` additionally checks
+that records used only inside callbacks receive the correct struct/union
+forward declarations, without reconstructing their layouts.
+
 `NeverDAAPCS64CallContractTests` executes second-word-only integer-pair calls,
 register arguments across indexed stores and multiple predecessor blocks,
 immutable printf formats mixing integer and FP arguments, explicit X8 result

@@ -464,6 +464,62 @@ TEST(TypeParse, KeepsADeclaredAlignmentUnderPack) {
   EXPECT_EQ(recordOf(Library, "P4n").Size, 12u);
 }
 
+TEST(TypeParse, MicrosoftLegacyDeclspecKeepsAlignmentAndFunctionContracts) {
+  for (auto Lang : {Language::C, Language::Cpp}) {
+    ParseOptions Options;
+    Options.Lang = Lang;
+    for (auto Model : {DataModel::ILP32, DataModel::LLP64}) {
+      const TypeLibrary Library = parsed(R"(
+        typedef struct _declspec(align(16)) Block {
+          unsigned long long words[2];
+        } Block;
+        #pragma pack(push, 1)
+        struct Frame { char tag; Block block; char tail; };
+        #pragma pack(pop)
+        long _declspec(dllimport) __stdcall Read(Block *block, unsigned count);
+        _declspec(noreturn) void __cdecl Stop(unsigned code);
+        void _declspec(dllimport) Finish(void);
+        unsigned _inline Count(const Block *block) {
+          return (unsigned)block->words[0];
+        }
+      )",
+                                         Options, Model, RecordABI::Microsoft);
+      EXPECT_EQ(shapeOf(recordOf(Library, "Frame")),
+                "struct{tag@0 block@16 tail@32}");
+      EXPECT_EQ(recordOf(Library, "Frame").Size, 48u);
+      EXPECT_EQ(recordOf(Library, "Block").Alignment, 16u);
+      const auto *Read = Library.findPrototype("Read");
+      ASSERT_NE(Read, nullptr);
+      EXPECT_EQ(Read->Params.size(), 2u);
+      EXPECT_EQ(Read->Convention, Model == DataModel::ILP32
+                                      ? CallingConvention::Stdcall
+                                      : CallingConvention::Unspecified);
+      const auto *Stop = Library.findPrototype("Stop");
+      ASSERT_NE(Stop, nullptr);
+      EXPECT_TRUE(Stop->NoReturn);
+      ASSERT_NE(Library.findPrototype("Finish"), nullptr);
+      EXPECT_TRUE(Library.findPrototype("Finish")->Params.empty());
+      EXPECT_EQ(Library.findPrototype("_declspec"), nullptr);
+      ASSERT_NE(Library.findPrototype("Count"), nullptr);
+      EXPECT_EQ(Library.findPrototype("Count")->Params.size(), 1u);
+      EXPECT_EQ(Library.findPrototype("_inline"), nullptr);
+    }
+  }
+}
+
+TEST(TypeParse, MicrosoftLegacyDeclspecRejectsMalformedAttributes) {
+  for (llvm::StringRef Source :
+       {"struct _declspec(align()) Bad { int x; };",
+        "_declspec(noreturn void Bad(void);",
+        "typedef int Bad _declspec(vector_size(16));"}) {
+    TypeLibrary Library(DataModel::LLP64);
+    const auto Result = parseTypes(Source, Library, {});
+    EXPECT_FALSE(Result.Problems.empty()) << Source.str();
+    EXPECT_EQ(Library.find("Bad"), nullptr);
+    EXPECT_EQ(Library.findPrototype("Bad"), nullptr);
+  }
+}
+
 TEST(TypeParse, RequiredAlignmentSurvivesContainingRecordsAndRoundTrips) {
   // Clang's Microsoft ABI puts nested at 16 and tail at 32, even when an
   // intermediate record has no explicit alignment attribute of its own.

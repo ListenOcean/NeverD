@@ -323,6 +323,17 @@ later arguments are absent.
 Windows provider declarations now include NDIS, filter manager, NETIO,
 storage, USB and HID APIs, with explicit x86/x64 layout and SDK HighC/LLVMC
 coverage. User libraries include more networking, security and device APIs.
+Independent official providers now also cover NMR/WSK, Kernel Streaming,
+storage class, TDI, VideoPort, ATA, battery, HID port, SmartCard, ETW, PathCch,
+WinRT strings, RPC proxy, credentials, device queries, application model,
+property variants, performance data and biometrics. The compiler ABI probe
+checks representative functions across x86/x64/ARM64; the source-call probe
+checks ETW callbacks, paths and strings through both C routes. Callback
+conversion now shares the declaration's portable spelling and preserves
+borrowed record identities without reconstructing recursive layouts.
+Name-only Windows `swprintf`/`vswprintf` forwarding remains unavailable because
+legacy/kernel and ISO declarations differ; selected prototypes retain their
+own signatures.
 An export inventory is only a coverage audit; undocumented and ordinal-only
 exports still require authenticated declarations. The retained Microsoft
 SDK/WDK input supplies x86/x64/ARM64 declarations; the older MinGW DDK input
