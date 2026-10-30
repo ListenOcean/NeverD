@@ -1616,6 +1616,7 @@
         "reason": "Structural comparison, bounded scalar validation and offline snapshot associations are qualified separately in docs/binary-diff.md, docs/binary-diff-lineage.md and docs/testing.md; these declarations do not extend the focused semantic capability claims in this ledger or establish release ancestry or patch presence.",
         "names": [
           "neverd diff --ambiguous-with",
+          "neverd diff --argument-access-call",
           "neverd diff --changes-context",
           "neverd diff --changes-function",
           "neverd diff --changes-max-observations",
