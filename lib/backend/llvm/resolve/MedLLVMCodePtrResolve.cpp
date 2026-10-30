@@ -3687,14 +3687,42 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
       // analysis above would have produced exact seeds then), so the load
       // keeps reading through the runtime pointer — a mirror-backed static
       // object or a heap allocation alike.
+      const bool RuntimeWalkDomain = TargetArch == Arch::X86 &&
+                                      TargetFormat == BinaryFormat::COFF;
       if (SlotRoles.SawCode && SlotRoles.ValueAdjustment == 0 &&
-          SlotRoles.Load && SlotRoles.Load->NumInputs >= 1) {
+          SlotRoles.Load && SlotRoles.Load->NumInputs >= 1 &&
+          (SlotRoles.Load->Inputs[0].Kind == MedVar::Reg ||
+           RuntimeWalkDomain)) {
+        if (SlotRoles.Load->Inputs[0].Kind == MedVar::Reg) {
+          if (llvm::Value *Target = getVar(V, Builder))
+            return Target;
+        }
+        if (!RuntimeWalkDomain) {
+          // Fall through to the strict checks below.
+        } else {
         std::function<bool(const MedVar &, int)> RuntimeBased =
             [&](const MedVar &Address, int Depth) -> bool {
           if (Depth > 32)
             return false;
-          if (Address.Kind == MedVar::Reg || Address.Kind == MedVar::Param)
+          if (Address.Kind == MedVar::Param)
             return true;
+          if (Address.Kind == MedVar::Reg) {
+            // The stack and frame pointers address runtime storage.
+            const auto &TRI = getTargetRegInfo(TargetArch);
+            if (Address.RegOff == TRI.StackPointer ||
+                Address.RegOff == TRI.FramePointer)
+              return true;
+            // A live-in register is an incoming argument; a register with
+            // a definition is a computed value -- a GOT-base computation
+            // makes it a static anchor -- unless a plain copy forwards to
+            // one of the runtime forms above.
+            const MedOp *RegDef = lookupDef(Address);
+            if (!RegDef)
+              return true;
+            if (auto Forwarded = pointerPreservingInput(*RegDef))
+              return RuntimeBased(*Forwarded, Depth + 1);
+            return false;
+          }
           if (Address.isConst())
             return false;
           const MedOp *Def = lookupDef(Address);
@@ -3728,12 +3756,28 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
               }
               return IdxDef->Opcode == NdOp::INT_ZEXT;
             };
-            if (Def->Inputs[1].isConst() && !Def->Inputs[0].isConst())
+            // A static addend (a table address, a GOT-recorded offset)
+            // anchors the address: only a bounded index over it stays
+            // admissible, because the access stays inside the mirrored
+            // table's certified entries.  A scalar addend (a field offset,
+            // a frame adjustment) leaves the base's nature to the other
+            // side.
+            auto StaticAnchor = [&](const MedVar &Addend) {
+              return Addend.isConst() &&
+                     isAddressProvenance(Addend.Provenance);
+            };
+            if (Def->Inputs[1].isConst() && !Def->Inputs[0].isConst()) {
+              if (StaticAnchor(Def->Inputs[1]))
+                return BoundedIndex(Def->Inputs[0]);
               return RuntimeBased(Def->Inputs[0], Depth + 1) ||
                      BoundedIndex(Def->Inputs[0]);
-            if (Def->Inputs[0].isConst() && !Def->Inputs[1].isConst())
+            }
+            if (Def->Inputs[0].isConst() && !Def->Inputs[1].isConst()) {
+              if (StaticAnchor(Def->Inputs[0]))
+                return BoundedIndex(Def->Inputs[1]);
               return RuntimeBased(Def->Inputs[1], Depth + 1) ||
                      BoundedIndex(Def->Inputs[1]);
+            }
             // base + runtime index: either side rooted in a register or
             // parameter keeps the access runtime-determined.
             return RuntimeBased(Def->Inputs[0], Depth + 1) ||
@@ -3761,6 +3805,7 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
         if (RuntimeBased(SlotRoles.Load->Inputs[0], 0))
           if (llvm::Value *Target = getVar(V, Builder))
             return Target;
+        }
       }
       // The LOAD emitter has already routed this address through the mixed
       // relocation mirror. Reuse that relocation-safe runtime value only when
