@@ -3459,6 +3459,18 @@ inventory fixture exercises zero margin through paging, manual pairing,
 undo/redo and restore. These qualify structural matching behavior, not general
 function equivalence or arbitrary call reordering.
 
+`CallAnchorsSurviveRemovedGuardsAndReorderedFailurePaths` reproduces a displaced
+single-call failure block after guard removal and branch inversion. Both
+directions retain the original call and its preceding check, while preserving
+instruction and edge changes, including a modeled fallthrough after the moved
+call. Unknown targets cannot anchor the repair and actual retargeting remains
+a call change. `CallOnlyExitsStillCompeteWithLargerBlocksCallingTheSameTarget`
+keeps competing call sequences in larger blocks from becoming a false unique
+anchor. The native XZ control additionally exercises analyst pairing, original
+instruction rows, one/four-thread parity, exact undo/redo and saved reopening.
+`SingleCallEntrySurvivesAnInsertedGuard` retains the call after entry insertion
+and reports the changed entry in both directions.
+
 Long native instruction-alignment regressions reproduce a 6,001-instruction
 body with 72 inserted instructions beyond the old dense-table threshold, in
 both directions. An independent forward edit-cost oracle checks large repeated

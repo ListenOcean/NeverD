@@ -1827,6 +1827,16 @@ callee occurrences before admitting positional pairs, and retains exact
 similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
 as `NoIndex` positions while excluding them from graph edges and import sets.
 These are shared matching rules, independent of transport and UI.
+`FunctionDelta` also repairs a displaced unique single-call block when it is an
+exit on at least one side. It first runs the ordinary block alignment, then
+rebuilds only an affected alignment with the resolved call as an anchor.
+Uniqueness includes every block's complete resolved call sequence, including
+larger blocks. During that repair, already mapped neighbors must agree before
+remaining edges can supply positional evidence. Neighbor indices are sorted
+once per function for bounded lookups. Original instructions and CFG edges
+remain authoritative: a modeled fallthrough on the relocated call stays a
+reported edge change, not an inferred no-return property. Unknown calls,
+retargeted calls and repeated targets cannot supply this unique anchor.
 The same core owns ambiguity changes during manual correspondence edits. It
 removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their

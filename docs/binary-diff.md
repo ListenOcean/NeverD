@@ -104,6 +104,16 @@ must be enabled; rejected choices stay excluded. Save/reopen and the counterpart
 picker retain the alternatives, and manual choice and undo use the same core
 correspondence editor.
 
+Matcher version 13 repairs block alignment when a removed guard or reordered
+failure path displaces a known single-call block. The call must be unique among
+the function's complete resolved call sequences and lie at an exit on at least
+one side. The affected alignment is rebuilt around that call, preserving
+uncertain or retargeted calls and duplicate-call alternatives. This avoids
+reporting an unchanged call as deleted or replaced by a neighboring check.
+Original branch inversions, inserted/deleted instructions and modeled
+fallthrough differences remain visible. This structural alignment repair does
+not establish function identity or infer that a call cannot return.
+
 ## Command line
 
 ```sh
