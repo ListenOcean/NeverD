@@ -1308,6 +1308,168 @@ TEST(SourceStackSpills, StackParameterHolesRequireEveryOriginalPath) {
   }
 }
 
+TEST(SourceStackSpills, StackParameterHolesKeepExactImageReadProvenance) {
+  for (unsigned Mode = 0; Mode != 32; ++Mode) {
+    SCOPED_TRACE(Mode);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Bitness::Bits64;
+    Segment Storage;
+    Storage.VA = 0x2000;
+    Storage.Size = Storage.FileSz = 16;
+    Storage.Data.resize(16);
+    Storage.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(Storage);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(6);
+    for (unsigned P = 4; P != 6; ++P) {
+      auto &Parameter = Func.Params[P];
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = P;
+      Parameter.RegOff = kNoParamReg;
+      Parameter.Size = 8;
+      Parameter.TheArch = Arch::X64;
+    }
+    Func.Blocks.resize(1);
+    Func.Blocks[0].StartAddr = Func.Entry;
+    Func.Blocks[0].Ops = {op(NdOp::COPY, temp(10), {Func.Params[5]})};
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    const auto Address = NdVar::tmp(0x10000, 8);
+    const auto Low = [](va_t PC, NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Result;
+      Result.Addr = PC;
+      Result.Opcode = Opcode;
+      Result.Output = Output;
+      for (const auto &V : Inputs)
+        Result.addInput(V);
+      return Result;
+    };
+    LowBlock Original;
+    Original.StartAddr = Func.Entry;
+    Original.EndAddr = 0x1010;
+    Original.Ops = {
+        Low(0x1000, NdOp::INT_ADD, Address, {SP, NdVar::scalar(48, 8)}),
+        Low(0x1000, NdOp::LOAD, NdVar::reg(x86reg::R8, 8), {Address}),
+        Low(0x1004, NdOp::COPY, Address, {NdVar::address(0x1FF8, 8)}),
+        Low(0x1004, NdOp::INT_ADD, Address, {Address, NdVar::scalar(8, 8)}),
+        Low(0x1004, NdOp::LOAD, RAX, {Address}),
+        Low(0x100F, NdOp::RETURN, {}, {RAX})};
+    if (Mode == 1)
+      Original.Ops[4].Inputs[0] = NdVar::dataAddress(0x2000, 8, 0x2000);
+    if (Mode == 2) {
+      const auto Copy = NdVar::tmp(0x10008, 8);
+      Original.Ops[4].Inputs[0] = Copy;
+      Original.Ops.insert(Original.Ops.begin() + 4,
+                          Low(0x1004, NdOp::COPY, Copy, {Address}));
+    }
+    if (Mode == 3 || Mode == 4) {
+      Original.Ops[2].Inputs[0].Offset = 0x2008;
+      if (Mode == 3)
+        Original.Ops[3].Opcode = NdOp::INT_SUB;
+      else
+        Original.Ops[3].Inputs[1].Offset = uint64_t(-8);
+    }
+    if (Mode == 5)
+      Original.Ops[2].Inputs[0].Provenance = ConstantAddressProvenance::Scalar;
+    if (Mode == 6)
+      Original.Ops[2].Inputs[0].Provenance = ConstantAddressProvenance::Unknown;
+    if (Mode == 7)
+      Original.Ops[2].Inputs[0].Provenance =
+          ConstantAddressProvenance::AddressFragment;
+    if (Mode == 8)
+      Original.Ops[2].Inputs[0].Provenance =
+          ConstantAddressProvenance::CodeAddress;
+    if (Mode == 10)
+      Original.Ops[2].Inputs[0].AddressOwnerVA = 0x3000;
+    if (Mode == 11)
+      Original.Ops[3].Inputs[1].Offset = 17;
+    if (Mode == 12)
+      Image.Segments[0].Data.resize(7);
+    if (Mode == 13)
+      Original.Ops[4].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 14)
+      Original.Ops[4].MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+    if (Mode == 15 || Mode == 16)
+      Original.Ops[4] = Low(0x1004, NdOp::STORE, {},
+                            {Address, Mode == 15 ? NdVar::scalar(0, 8) : SP});
+    if (Mode == 17)
+      Original.Ops.insert(Original.Ops.begin() + 4,
+                          Low(0x1004, NdOp::COPY,
+                              NdVar::tmp(Address.Offset + 2, 1),
+                              {NdVar::scalar(0, 1)}));
+    if (Mode == 18)
+      Original.Ops[4].Inputs[0] = NdVar::tmp(Address.Offset + 1, 7);
+    if (Mode == 19)
+      Original.Ops[4].Addr = 0x1005;
+    if (Mode == 20)
+      Original.Ops[2].Inputs[0].Size = Original.Ops[2].Output.Size = 4;
+    if (Mode == 21)
+      Original.Ops.insert(Original.Ops.begin() + 5,
+                          Low(0x1006, NdOp::LOAD, RAX, {RAX}));
+    if (Mode == 22) {
+      Original.Ops[3].Output = RAX;
+      Original.Ops[4].Inputs[0] = RAX;
+    }
+    if (Mode == 23)
+      Original.Ops.insert(
+          Original.Ops.begin() + 4,
+          Low(0x1004, NdOp::COPY, Address, {NdVar::scalar(0x2000, 8)}));
+    if (Mode == 24) {
+      Storage.VA = 0x2010;
+      Image.Segments.push_back(Storage);
+      Original.Ops[2].Inputs[0] = NdVar::dataAddress(0x2000, 8, 0x2000);
+      Original.Ops[3].Inputs[1].Offset = 16;
+    }
+    if (Mode == 25) {
+      Image.Segments[0].VA = uint64_t{1} << 63;
+      Original.Ops[2].Inputs[0].Offset = INT64_MAX;
+      Original.Ops[3].Inputs[1].Offset = 1;
+    }
+    if (Mode == 26)
+      Original.Ops[4].Output.Size = 0;
+    if (Mode == 28) {
+      Original.Ops[2].Inputs[0] = NdVar::dataAddress(0x2000, 8, 0x2000);
+    }
+    if (Mode == 29)
+      Original.Ops[3].Inputs[1].Provenance = ConstantAddressProvenance::Unknown;
+    if (Mode == 30)
+      Original.Ops[0].Inputs[1].Offset = 40;
+    if (Mode == 31)
+      Image.Segments[0].Flags =
+          SegmentFlags::Readable | SegmentFlags::Executable;
+    const auto Before = Original.Ops;
+    const auto Expected =
+        Mode <= 4 || Mode == 28 ? std::set<unsigned>{4} : std::set<unsigned>{};
+    size_t Budget = Mode == 27 ? 1 : 4096;
+    const BinaryImage *Current = Mode == 9 ? nullptr : &Image;
+    EXPECT_EQ(
+        unobservedSourceStackParameters(Func, {Original}, {}, Budget, Current),
+        Expected);
+    EXPECT_EQ(Original.Ops.size(), Before.size());
+    for (size_t I = 0; I < Before.size(); ++I) {
+      EXPECT_EQ(Original.Ops[I].Opcode, Before[I].Opcode);
+      EXPECT_EQ(Original.Ops[I].Output, Before[I].Output);
+    }
+    if (Mode == 0) {
+      const auto Used = 4096 - Budget;
+      Budget = Used;
+      EXPECT_EQ(unobservedSourceStackParameters(Func, {Original}, {}, Budget,
+                                                Current),
+                Expected);
+      EXPECT_EQ(Budget, 0u);
+      Budget = Used - 1;
+      EXPECT_TRUE(
+          unobservedSourceStackParameters(Func, {Original}, {}, Budget, Current)
+              .empty());
+    }
+  }
+}
+
 TEST(SourceStackSpills, StackParameterHolesTrackPhysicalFrameAliases) {
   for (unsigned Mode = 0; Mode != 31; ++Mode) {
     SCOPED_TRACE(Mode);

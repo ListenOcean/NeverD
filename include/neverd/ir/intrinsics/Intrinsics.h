@@ -510,6 +510,9 @@ enum class Intrinsic : uint16_t {
   X86LockedBtr,
   X86LockedBtc,
 
+  // Append-only: SYSENTER leaves through the environment's live entry MSRs.
+  X86Sysenter,
+
   _Count = 16000
 };
 

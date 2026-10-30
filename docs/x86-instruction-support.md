@@ -270,7 +270,7 @@ test resumes through a coupled SS/RSP switch and uses the new stack.
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Native compiler interfaces and exact object encodings are available. NeverD return-frame and nonlocal control-transfer ownership remains missing: FRED returns explicitly fail decoding instead of aliasing CLAC, and UIRET is not decoded. Successful CPU transitions remain unqualified. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Ordinary source still lacks complete frame, privilege, segment and flag restoration. The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile owns successful IRETQ and canonical RETFQ (with or without imm16) to long-mode CPL0..3, including hidden caches, descriptor accesses and outer-return segment invalidation. Its live CS.L/CS.D guard owns the absence of arbitrary GPR high halves; these instructions have no unconditional empty undefined-output audit. RETFQ preserves NMI blocking and applies unsigned parameter cleanup to both stacks; IRETQ unblocks NMIs. Faulting execution, compatibility returns, CET/FRED and the other forms remain unqualified. |
-| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Ordinary source still lacks complete register, privilege, segment and SMM continuation state. The separate explicit x64 continuation V5/V6 profiles own canonical SYSRET/SYSRETQ with live STAR and CS/SS caches, flags and compatibility/64-bit target state. SYSRET explicitly consumes eight arbitrary values for the legacy GPR high halves; all defined bits are preserved or assigned as specified. Other forms and faulting transitions remain unqualified; SYSENTER and RSM remain refused. |
+| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Ordinary source still lacks complete register, privilege, segment and SMM continuation state. The separate explicit x64 continuation V5/V6 profiles own canonical SYSRET/SYSRETQ with live STAR and CS/SS caches, flags and compatibility/64-bit target state. SYSRET explicitly consumes eight arbitrary values for the legacy GPR high halves; all defined bits are preserved or assigned as specified. The Intel V7 profile additionally owns canonical SYSENTER from CPL0–3 64-bit entry and SYSEXIT/SYSEXITQ from CPL0, with live CS/ESP/EIP MSRs, complete target caches, state and explicit stops. Compatibility source contexts, legacy modes, additional flags domains and faulting transitions remain unqualified; RSM still requires a full SMM state owner. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
@@ -3114,3 +3114,34 @@ is excluded. CET, faults, asynchronous events/unwinding, other processors and
 successful FRED/UIRET transitions remain unqualified. NeverD decoding and
 lifting admission are unchanged by this compiler-interface work. The global
 goal, SDK release and production pin update remain incomplete.
+
+## Explicit Intel fast-system continuation
+
+The separate [V7 continuation profile](x64-continuation-source.md#intel-fast-system-calls-v7)
+now owns canonical SYSENTER and both SYSEXIT widths through the shared
+`X64ContinuationSystemTransfers` owner. Its state appends live SYSENTER
+CS/ESP/EIP MSRs to the unchanged V6 layout. MSR reads, writes and transfers
+use the same cells; invalid selectors, noncanonical addresses and unsupported
+source contexts refuse before state or RAM changes. SYSENTER admits CPL0–3
+long-mode code, including conforming segments with DPL below CPL. Both exits
+require CPL0; 32-bit SYSEXIT retains the eight architectural arbitrary high
+halves through the existing compatibility-return owner. Every transfer stops
+before the destination executes, including destinations selected for export.
+
+The [qualification record](evidence/x86-fast-system-continuation-2026-10-30.json)
+binds 362 passing regression tests with no skips. The portable matrix compares
+317,784 complete states at O0/O2 through HighC and LLVMC with sanitizers.
+The independent Intel KVM matrix compares 22,400
+native contexts and 72 live MSR readbacks. It observes all mapped RAM and the
+available 4096-byte XSAVE image, with explicitly initialized x87/XMM payloads;
+larger XSAVE2/AMX and arbitrary full-vector hardware state are not qualified.
+The public SDK and CLI export checks cover both C routes, layout, state,
+manifest identity and exact instruction budgets. Their generated C also
+executes through NeverC and NeverC IR lowered by the LLVM fork at O0/O2.
+
+SYSENTER's strict lift now records an opaque terminal instruction; the V7
+owner supplies its explicit semantics. This does not establish an ordinary
+source ABI or a complete native rewritten-register context. Earlier profiles,
+compatibility entry, legacy modes, faults, CET/FRED, asynchronous events and
+SMM restoration retain their existing boundaries. The LLVM release and pins
+remain deferred until the other instruction contracts are complete.

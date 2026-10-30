@@ -406,6 +406,13 @@ these facts with both emitters and SDK replay without compacting native slots.
 Original stack facts are computed once per prepared body, independently of the
 register-summary dependency waves. Temporary address intervals retain subrange
 taint; overlapping partial writes cannot authenticate a stale whole address.
+Exact original image addresses also survive instruction-local full-width copies
+and checked scalar offsets. A complete load within one current mapped data
+object cannot observe a source stack slot. This shares the image ownership and
+extent predicate used by stack-spill overwrite proofs. The memory effect and
+loaded value stay live; neither a scalar with equal bits nor the loaded value
+acquires pointer evidence. Truncated mappings, changed owners, stale temporaries,
+external stores, segment-relative and ordered accesses retain their refusals.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar bodies and bounded direct call chains for borrowed frame-pointer
@@ -456,6 +463,14 @@ ends, and moves every such interval backward together, one 64-interval word at
 a time, to a fixed point over event prefixes; its work grows with blocks and
 words rather than with each observed byte. A refusal names a load that the
 CALL write reaches. Graph work is charged only when that graph is traversed.
+Incoming-stack parameter recovery consults that same proof before replacing a
+memory read with a parameter. A physical CALL that raises its stack into an
+incoming argument must remain visible to source-frame validation; incomplete
+proofs keep the candidate homes mutable. This applies to both register ABIs and
+i386 stack arguments. The shared instruction-owned memory reader includes
+scalar and packed FP sources, so converting a memory operand cannot erase its
+CALL-slot observation. Ordinary disjoint arguments still recover normally, and
+known local return-PC writes retain their explicit source materialization.
 The reader first lets every CALL without an exact slot write any byte; when
 the loads stay separated even then, it skips the costlier slot bounds
 (registration replay, offset ranges, SEH handler bounds and upper bounds),
@@ -7050,6 +7065,24 @@ original prototype, record storage, addresses, missing machine state or native
 rewriting contracts. Portable qualifiers and callback signatures remain owned
 by their existing declarations.
 
+Already selected local bodies can carry these proven pointees back through
+acyclic wrapper chains. The pipeline indexes their call dependencies once,
+limits use graphs to callers connected to declared evidence, and runs each
+body's proof once after its relevant callees. Independent bodies remain on the
+weighted workers; completed waves publish immutable facts for the next wave.
+Calls in a callee's custom register order use a separate type map, admitted only
+when every parameter matches that integer-register list and carrier width.
+Unknown bodies, mismatched argument lists and scalar uses supply no pointer
+proof. Recursive components and their dependent callers retain the local use
+proof without exchanging provisional types. This pass does not lift omitted
+callees or infer an original source ABI from a wrapper.
+Parameters introduced by call recovery reuse the parameter type pass before
+refinement; their synchronization does not replace settled return contracts.
+Forward-only parameters without SSA ids retain distinct physical slot keys.
+A locally defined SSA version zero never acquires an entry identity, while
+independent explicit parameter uses remain eligible. Target-only calls without
+a complete zero-argument contract prevent a whole-function pointer-use proof.
+
 Local MedIR address-role inference and direct-caller pointer propagation share
 an entry-value index. A call clobber, local definition or PHI owning SSA version
 zero cannot retype an incoming parameter merely by sharing its register.
@@ -7057,6 +7090,8 @@ Explicit parameter operands require the same slot identity and complete pointer
 width. Entry self-copies and independent narrow definitions preserve the
 original live-in. The index is built once per function and reused across call
 edges; it supplies no missing register value or original-prototype proof.
+Both local and forwarded pointer carriers use the target register model's
+pointer width, including four-byte x86 and ARM32 pointers.
 
 `LLVMSourceTypeHints` carries supported pointee spellings on individual LLVM
 arguments, so opaque pointers and IR serialization do not erase them. The
@@ -15013,11 +15048,19 @@ from admitted LowFuncs. Unsupported sites remain in that selection and decode
 failures remain explicit; the state exporter independently relifts every byte
 before emission. This metadata grants no ordinary source or native rewrite
 admission. The driver owns only dispatch and instruction accounting: successful calls,
-returns, exceptions and privilege returns each consume one step and stop.
+returns, exceptions and privilege transitions each consume one step and stop.
 Native requests and invalid invocations execute nothing and consume none.
 Both C routes include a state layout checked against the semantic owner and
 an exact byte manifest bound to the emitted source hash. The ordinary source
 interface remains separate. See [the invocation contract](x64-continuation-source.md).
+
+`X64ContinuationSystemTransfers` owns the complete explicit SYSRET and Intel
+SYSENTER/SYSEXIT target contexts, including their shared flat segment-cache
+construction. The V7 profile adds live SYSENTER MSRs after the unchanged V6
+layout; the state transport's MSR owner handles their reads and writes.
+Profile inheritance is declared once in the continuation source owner so
+controls, flags, fault addresses, returns and event state advance together.
+The exporter selects distinct V6/V7 layouts and drivers from that owner.
 
 `X86LiftCoreArith` lowers legacy memory `LOCK ADD/SUB/INC/DEC` to one sequentially consistent `ATOMIC_ADD`. Flags use the returned old value after the transaction; `INC/DEC` preserve CF and FS/GS address spaces remain attached. Neutral immediate `LOCK OR/XOR 0` and `LOCK AND -1` use that same transaction with a zero addend. Their logical flags use the old value, clear CF/OF and leave AF undefined. On i386, other logical values and register sources remain refused; x64 uses the audited native locked intrinsic for those cases. HLE remains refused. HighC retains the type of an explicit atomic-result declaration so signed comparisons use its actual C carrier. This does not establish missing frame inputs, MMIO behavior or concurrent execution equivalence.
 

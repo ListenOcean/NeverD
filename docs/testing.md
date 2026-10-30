@@ -9293,6 +9293,23 @@ unchanged, and compares the resulting SYSRET context with a separate native
 CPU. The public export driver checks exact budget consumption and unchanged
 state on invalid STAR writes and unbound reads. Both C routes run at O0/O2;
 portable execution uses sanitizers. No private snapshot is needed.
+The Intel V7 fast-system cases check live SYSENTER CS/ESP/EIP MSRs, canonical
+processor and paging widths, all CPL/DPL/conforming-code combinations, selector
+wraparound, complete target caches and unchanged state/RAM on refusal. The
+portable matrix compares 317,784 states across both C routes at O0/O2 under
+ASan/UBSan. The independent original-instruction KVM matrix compares 22,400
+SYSENTER/SYSEXIT contexts and 72 MSR readbacks. It observes GPRs, flags, PC,
+segments, control/event state, all mapped RAM and the available 4096-byte
+`KVM_GET_XSAVE` image. The fixture initializes nondefault x87/XMM payloads and
+their validity bits with `KVM_SET_XSAVE`, using the capability-reported buffer
+size, and primes the oracle before its first snapshot. This avoids initial-state
+encoding changes in the x87/SSE/PKRU bitmap; it retains every compared XSAVE byte.
+This is not arbitrary full-vector or large XSAVE2/AMX qualification. The public
+V7 export test checks unchanged V6
+layout, live MSR composition, conforming CPL3 entry, both exit modes, exact
+budget consumption and refusal/reentry through SDK and CLI. Intel SEP and KVM
+absence remain explicit skips, not passing native execution.
+
 The native speculation and descriptor fixtures compile both source routes at
 O0/O2 into freestanding guests and execute them at CPL0 using Linux x64 KVM.
 They check real SPEC_CTRL readback, PRED_CMD writes, repeated writes, native
@@ -16334,7 +16351,12 @@ branching and looping Win64 wrappers, using SP directly or a physical GPR
 frame alias, and both C routes at O0/O2 with UBSan:
 two later stack arguments remain live while an earlier unwritten slot is never
 read. Selected and omitted queries and source optimization on/off retain that
-distinction; SDK replay also checks the branching body.
+distinction; SDK replay also checks the branching body with and without a
+mutable image read, including selected/omitted callees and repeated cache hits.
+Mutable RIP-relative image reads add straight-line, branching and looping
+controls. Each invocation changes the image value and compares both C routes
+with the original instructions at O0/O2 under UBSan, so removing the load or
+substituting the initial image bytes fails the oracle.
 `StackParameterHolesKeepOriginalReadsAndEscapes` covers byte overlaps, nested
 call stack ranges, unknown/stale call bindings, frame escapes, partial address
 writes, exceptional entries and exhausted work.
@@ -16350,6 +16372,14 @@ current native unread receipts at calls; stale identities, unknown observers,
 return-register aliases and may-write-only destruction remain rejected.
 Stores, return escapes, ordered memory, signed offset overflow and exact/short
 work budgets keep their negative controls.
+`StackParameterHolesKeepExactImageReadProvenance` checks direct image addresses,
+instruction-local copies and checked positive/negative affine offsets. Its
+32-case matrix rejects equal scalars, unknown/fragment/code provenance, missing
+or truncated images, cross-object arithmetic, overflowing addresses, partial or
+stale temporary definitions, loaded/GPR pointer aliases, stores, ordered/GS
+accesses and live incoming stack reads. Exact/short budgets retain all-or-nothing
+results. The existing complete-overwrite image tests cover the shared predicate
+at its other caller.
 `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
 observed high bytes, changed call bindings, other physical registers, exceptional
 observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`
@@ -16529,9 +16559,18 @@ run at O0/O2 with UBSan, including its indirect-function probe. Variant 8 suppli
 a complete later store and executes both generated C routes with an independent
 provider. Native CALL
 continuation materialization remains a separate source-ABI requirement.
-`SessionCAPITest.DecompileFunctionsNamesARefusedSelectedFunction` checks that
-a unit of selected functions names the one this proof refuses and defines the
-other, while that function alone still fails with the diagnostic.
+`SessionCAPITest.DecompileFunctionsDistinguishesLocalAndIncomingCallSlots`
+checks explicit continuation materialization for a local CALL slot and refusal
+when the CALL instead overwrites an incoming argument. Selected units name the
+refused function and retain the other; single-function queries retain the same
+diagnostic. The CLI closure test exercises both cases in PE and ELF, including
+preservation of an existing output file after a refused root query.
+`PipelineSourceStackAccesses.IncomingArgumentsRetainPhysicalCallWrites` checks
+72 combinations of x86/x64, COFF/ELF/Mach-O, HighC/source LLVM, integer/scalar FP
+reads and local/overlapping/adjacent incoming slots. Overlapping incoming bytes
+must reach the physical CALL-slot proof before ABI parameter recovery can hide
+them; disjoint incoming arguments and represented local slots remain accepted.
+Successful source LLVM modules pass verification.
 
 `MedIntegerReturnRange.*` in `NeverDMedStackAlignmentTests` checks complete
 x86/x64 leaf returns across COFF/ELF/Mach-O, reordered blocks and PHI arms,
@@ -17381,8 +17420,24 @@ outer caller to detect transitive contamination. Call clobbers, local and PHI
 definitions at version zero, narrowed values, mismatched parameter identities
 and ambiguous register slots cannot create entry pointer types. Actual entry
 values, self-copies and unrelated narrow definitions remain positive controls.
+Both local and transitive types must retain the target's pointer width.
+`UnmaterializedForwardersKeepDistinctSlots` also covers placeholder ids,
+synthetic parameter indices, clobbers and local definitions sharing a physical
+register with a distinct entry value. Unknown target-only calls block pointee
+proofs; complete zero-argument contracts remain positive controls, and
+nonempty descriptors cannot hide missing operands.
 Run it with `NeverDSourceEntryBindingTests` and the architecture call-contract
 suites; these identity checks do not supply missing runtime state.
+
+`NativeSourceHints.LocalPointerForwardersRetainProvenPointees` checks local
+chains, diamonds, a 256-wrapper chain and reversed function order, through
+both recovered and explicit call operands. Clobbers, narrowing, scalar uses,
+unknown calls, explicit integer declarations, register-order mismatches,
+conflicting record tags and recursive dependencies remain conservative.
+`LocalPointerChainsShareBothCProjections` exercises three selected machine
+functions on x64/ARM64 and COFF/ELF/Mach-O, then compiles and executes both
+generated C projections at O0/O2 with UBSan against an independent object and
+consumer. This is host C execution, not native Windows or ARM64 execution.
 
 `NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
 generic, named-record, scalar and nested pointer parameters across x64/ARM64,

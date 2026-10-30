@@ -30,12 +30,14 @@ struct X64ContinuationExport {
   std::string Manifest;
 };
 
-/// The request explicitly selects kernel-events-v6, an instruction-address
-/// list or selected CFG entries, MXCSR mask and active paging width. Native
-/// bindings are individually opt-in. Neither selection claims complete kernel
-/// coverage nor authorizes an ordinary C ABI, source patch or native execution.
-/// Both backends consume the same checked instruction-state LowIR. The emitted
-/// driver stops at calls, returns, privilege transitions and exception entry.
+/// The request explicitly selects kernel-events-v6 or intel-fast-system-v7, an
+/// instruction-address list or selected CFG entries, MXCSR mask and active
+/// paging width. Native bindings are individually opt-in. Neither selection
+/// claims complete kernel coverage nor authorizes an ordinary C ABI, source
+/// patch or native execution. Both backends consume the same checked
+/// instruction-state LowIR. The emitted driver stops at calls, returns,
+/// privilege transitions and exception entry. V7 requires
+/// sysenter_msr_address_bits and returns a distinct V7 state/driver.
 /// Unsupported native requests and invalid state leave the step unexecuted.
 llvm::Expected<X64ContinuationExport>
 exportX64Continuation(const BinaryImage &Image, llvm::StringRef RequestJSON,

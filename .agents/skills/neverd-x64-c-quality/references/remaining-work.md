@@ -164,15 +164,32 @@ scalar uses and unsupported pointee graphs retain their generic pointer or
 integer carrier. Both C routes and native source-hint inference consume that
 one result; this is a source candidate, not an original-prototype or storage
 extent proof. Portable declaration qualifiers, function-pointer signatures,
-general local wrapper-chain propagation, missing runtime state and native
-Windows execution remain separate work.
+omitted-callee and recursive wrapper propagation, missing runtime state and
+native Windows execution remain separate work. Already selected local bodies
+now propagate compatible pointees through acyclic call chains using the same
+whole-value proof. Register-ordered calls require an exact parameter-order
+match; conflicting and unsupported uses remain conservative. Each relevant
+body is analyzed once, in weighted parallel waves, without additional lifting.
+Forward-only ARM64 parameters keep their distinct incoming slots even without
+SSA ids; LLVMC refreshes newly recovered parameter carriers through the type
+owner without resetting its settled return contract.
 
 Local MedIR address inference and direct-caller pointer propagation now share
 the actual entry-value check. First definitions and call clobbers can have SSA
 version zero; they must not retype an unrelated incoming register or propagate
 that false pointer to outer callers. Cross-architecture controls retain entry
 self-copies and independent narrow writes. This fixes type contamination,
-without resolving a VM's incoming register bank or general wrapper pointees.
+without resolving a VM's incoming register bank. Local and forwarded pointer
+carriers also retain four-byte x86/ARM32 widths instead of the type factory's
+default eight bytes.
+
+Incoming x86/x64 stack-argument recovery now consults the shared physical CALL
+write proof before replacing loads with parameters. Instruction-owned FP memory
+reads participate in that proof too. Known local return-PC stores remain
+materialized, while a CALL that overwrites an incoming argument retains the
+ordinary-source refusal instead of returning its stale entry value. This closes
+an ABI-recovery ordering bug; it does not authorize arbitrary incoming-frame
+writes or supply missing kernel continuation state.
 
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
@@ -290,6 +307,13 @@ lose its coordinate without proving destruction. Stores, arbitrary pointers,
 nested opaque effects and stack-pointer escapes still prevent a complete
 unused-slot proof. The public Win64 fixture executes direct and GPR-addressed
 straight-line, branching and looping bodies against their original machine code.
+Exact image-data reads now cross this proof through instruction-local full-width
+copies and checked scalar offsets. Both spill overwrite and stack-input proofs
+share complete mapped-object ownership checks. Mutable image reads remain live
+in both C routes and match their original instructions; equal scalars, loaded
+pointers, stale/partial addresses, stores and ordered/segment accesses cannot
+supply this evidence. General pointer borrows and opaque nested-call effects
+remain open.
 
 Unknown incoming stack-pointer
 escapes still prevent a complete stack-argument bound: do not cap calls
