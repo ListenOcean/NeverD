@@ -260,6 +260,14 @@ The native breakpoint stops before compatibility code; the SDK manifest and
 driver retain all eight high-half choices and the privilege-return boundary.
 All 1,009 continuation, export, audit and proof regressions passed without skips.
 
+The [return-mode audit correction](evidence/x86-return-mode-audit-2026-10-29.json)
+records the two failing pre-fix audit tests and 1,011 passing regressions after
+the fix and integration with `dev`. Another 384 paired native/source cases
+confirm valid hardware compatibility returns while V6 retains its unchanged
+state/RAM refusal. The matrix spans both compatibility code widths, all four
+privilege levels, GDT/LDT, accessed-bit variants and the three qualified frame
+return encodings. It does not claim compatibility-return source support.
+
 `X64ContinuationIntegerTest` compares complete state and memory with original
 native instructions for audited legacy vector transfers, XOR and byte shifts,
 64-bit products, scalar exchanges and locked memory updates. It exercises
