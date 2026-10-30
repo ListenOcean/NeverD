@@ -4995,3 +4995,149 @@ TEST_F(BinaryDiffSDK, RestoreCompletionIsIndependentOfTheSavedStopState) {
     EXPECT_EQ(take(neverd_comparison_export_json(C)), BeforeEdit);
   }
 }
+
+TEST_F(BinaryDiffSDK, ArgumentAccessPagesPreserveNativeRolesGapsAndRestore) {
+  // Initialize a local, pass its address, then return the reloaded value.
+  // A relationship to both the pre-call store and post-call load is observed;
+  // this does not attribute either access to the callee.
+  const auto Bytes = llvm::fromHex(
+      "4883ec1848c744240807000000488d7c2408e80a000000488b4424084883c418c3"
+      "48c70707000000c3");
+  const auto A = input(llvm::ArrayRef(
+      reinterpret_cast<const uint8_t *>(Bytes.data()), Bytes.size()));
+  const auto B =
+      input(llvm::ArrayRef(reinterpret_cast<const uint8_t *>(Bytes.data()),
+                           Bytes.size()),
+            0x8000);
+  const auto C = compare(A, B, R"({"dataflow":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  auto Nodes = parsed(neverd_comparison_dataflow_json(
+      C, R"({"address":"0x1000","kind":"nodes"})"));
+  const auto *NodeRows = Nodes.getAsObject()->getArray("rows");
+  ASSERT_NE(NodeRows, nullptr);
+  int64_t Call = -1;
+  for (const auto &N : *NodeRows)
+    if (N.getAsObject()->getString("opcode") == "CALL")
+      Call = *N.getAsObject()->getInteger("id");
+  ASSERT_GE(Call, 0) << render(Nodes);
+  llvm::json::Object Query{{"kind", "accesses"},
+                           {"address", "0x1000"},
+                           {"call", Call},
+                           {"limit", 1}};
+  const auto Page = [&] {
+    return parsed(neverd_comparison_dataflow_json(
+        C, render(llvm::json::Object(Query)).c_str()));
+  };
+  const auto First = Page();
+  const auto *F = First.getAsObject();
+  ASSERT_EQ(F->getInteger("total"), 2) << render(First);
+  EXPECT_EQ(F->getString("observation_profile"),
+            "med-ssa-argument-accesses-v1");
+  EXPECT_EQ(F->getBoolean("inspection_complete"), true);
+  EXPECT_EQ(F->getString("callee_memory_effects"), "not_proved");
+  EXPECT_EQ(F->getString("execution_order"), "not_assessed");
+  EXPECT_EQ(F->getInteger("next_offset"), 1);
+  const auto *Store = F->getArray("rows")->front().getAsObject();
+  EXPECT_EQ(Store->getInteger("argument"), 0);
+  EXPECT_EQ(Store->getString("address"), "0x1004");
+  EXPECT_EQ(Store->getString("access"), "write");
+  EXPECT_EQ(Store->getBoolean("return_operand_path"), false);
+  Query["offset"] = 1;
+  const auto Second = Page();
+  const auto *Load =
+      Second.getAsObject()->getArray("rows")->front().getAsObject();
+  EXPECT_EQ(Load->getString("address"), "0x1017");
+  EXPECT_EQ(Load->getString("access"), "read");
+  EXPECT_EQ(Load->getBoolean("return_operand_path"), true);
+  EXPECT_EQ(Load->getInteger("access_bytes"), 8);
+  EXPECT_EQ(Second.getAsObject()->getInteger("work"), F->getInteger("work"));
+  Query["offset"] = 0;
+  EXPECT_EQ(render(Page()), render(First));
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+  ASSERT_EQ(neverd_comparison_restore_json(C, Saved.c_str()), 1);
+  EXPECT_EQ(render(Page()), render(First));
+  Query["max_work"] = 1;
+  const auto Limited = Page();
+  EXPECT_EQ(Limited.getAsObject()->getString("state"), "resource_limited");
+  EXPECT_EQ(Limited.getAsObject()->getBoolean("inspection_complete"), false);
+  Query.erase("max_work");
+  EXPECT_EQ(render(Page()), render(First));
+  Query["call"] = 0;
+  EXPECT_EQ(neverd_comparison_dataflow_json(
+                C, render(llvm::json::Object(Query)).c_str()),
+            nullptr);
+  EXPECT_EQ(neverd_comparison_dataflow_json(
+                C, R"({"kind":"nodes","address":"0x1000","call":0})"),
+            nullptr);
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
+
+TEST_F(BinaryDiffSDK,
+       AArch64ArgumentAccessesUseRecoveredValuesAndNativeWidths) {
+  // Preserve x19/LR, pass an incoming pointer and return its post-call load.
+  // The current MedIR RETURN operand is LR, not the ABI result x0.
+  const auto Code =
+      words({0xa9bf7bf3, 0xaa0003f3, 0xf900001f, 0x94000004, 0xf9400260,
+             0xa8c17bf3, 0xd65f03c0, 0xd28000e1, 0xf9000001, 0xd65f03c0});
+  const auto A = input(Code, 0x1000, "aarch64");
+  const auto C = compare(A, A, R"({"dataflow":true})");
+  const auto Nodes = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000"})"));
+  const auto *Rows = Nodes.getAsObject()->getArray("rows");
+  ASSERT_NE(Rows, nullptr);
+  int64_t Call = -1;
+  for (const auto &N : *Rows)
+    if (N.getAsObject()->getString("opcode") == "CALL")
+      Call = *N.getAsObject()->getInteger("id");
+  ASSERT_GE(Call, 0) << render(Nodes);
+  const auto Query = render(llvm::json::Object{
+      {"kind", "accesses"}, {"address", "0x1000"}, {"call", Call}});
+  const auto Accesses =
+      parsed(neverd_comparison_dataflow_json(C, Query.c_str()));
+  const auto *Observations = Accesses.getAsObject()->getArray("rows");
+  ASSERT_NE(Observations, nullptr);
+  ASSERT_EQ(Observations->size(), 2u) << render(Accesses);
+  const auto *Load = Observations->back().getAsObject();
+  EXPECT_EQ(Load->getString("address"), "0x1010");
+  EXPECT_EQ(Load->getInteger("argument"), 0);
+  EXPECT_EQ(Load->getInteger("access_bytes"), 8);
+  EXPECT_EQ(Load->getBoolean("return_operand_path"), false);
+}
+
+TEST_F(BinaryDiffSDK, AArch64NarrowAddressConstantsRemainUnobserved) {
+  const auto Code = words({0xa9be7bfd, 0x910003fd, 0xf9000bff, 0x910043e0,
+                           0x94000005, 0xf9400be0, 0xa8c27bfd, 0xd65f03c0,
+                           0xd503201f, 0xd28000e1, 0xf9000001, 0xd65f03c0});
+  const auto A = input(Code, 0x1000, "aarch64");
+  const auto C = compare(A, A, R"({"dataflow":true})");
+  const auto Saved = take(neverd_comparison_export_json(C));
+  const auto Nodes = parsed(neverd_comparison_dataflow_json(
+      C, R"({"kind":"nodes","address":"0x1000"})"));
+  const auto *Rows = Nodes.getAsObject()->getArray("rows");
+  ASSERT_NE(Rows, nullptr);
+  int64_t Call = -1;
+  bool NarrowAddress = false;
+  for (const auto &N : *Rows) {
+    const auto *Row = N.getAsObject();
+    if (Row->getString("opcode") == "CALL")
+      Call = *Row->getInteger("id");
+    if (Row->getString("address") == "0x100c" &&
+        Row->getString("opcode") == "INT_ADD") {
+      EXPECT_EQ(Row->getInteger("result_bytes"), 8);
+      ASSERT_EQ(Row->getArray("inputs")->size(), 2u);
+      EXPECT_EQ((*(*Row->getArray("inputs"))[1].getAsArray())[2].getAsInteger(),
+                4);
+      NarrowAddress = true;
+    }
+  }
+  ASSERT_GE(Call, 0);
+  ASSERT_TRUE(NarrowAddress);
+  const auto Query = render(llvm::json::Object{
+      {"kind", "accesses"}, {"address", "0x1000"}, {"call", Call}});
+  const auto Accesses =
+      parsed(neverd_comparison_dataflow_json(C, Query.c_str()));
+  EXPECT_EQ(Accesses.getAsObject()->getInteger("total"), 0);
+  EXPECT_EQ(Accesses.getAsObject()->getString("alias_completeness"),
+            "not_proved");
+  EXPECT_EQ(take(neverd_comparison_export_json(C)), Saved);
+}
