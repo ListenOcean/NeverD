@@ -487,23 +487,6 @@ bool LLVMCWriter::isTypedRecordCursorValue(const llvm::Value *V) const {
   return false;
 }
 
-const LLVMCWriter::AllocaUseFacts &
-LLVMCWriter::allocaUseFacts(const llvm::AllocaInst *Slot) const {
-  assert(Slot);
-  auto [It, Added] = AllocaUses.try_emplace(Slot);
-  if (Added)
-    for (const llvm::User *User : Slot->users()) {
-      if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
-        It->second.Loads.push_back(Load);
-        continue;
-      }
-      const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User);
-      if (!Store || Store->getPointerOperand() != Slot)
-        It->second.OnlyDirectMemoryUsers = false;
-    }
-  return It->second;
-}
-
 bool LLVMCWriter::allocaHasLoad(const llvm::AllocaInst *Slot) const {
   return Slot && !allocaUseFacts(Slot).Loads.empty();
 }

@@ -988,6 +988,7 @@ public:
   struct AllocaUseFacts {
     llvm::SmallVector<const llvm::LoadInst *, 4> Loads;
     bool OnlyDirectMemoryUsers = true;
+    bool OnlyNonvolatileStores = true;
   };
   const AllocaUseFacts &allocaUseFacts(const llvm::AllocaInst *Slot) const;
   // Stable storage permits nested queries for other homes while iterating.

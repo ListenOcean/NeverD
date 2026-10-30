@@ -5286,6 +5286,88 @@ int main(void) {
     compileAndRun(Source, Optimization, {}, true);
 }
 
+TEST(LLVMCValues, LargeLoopProjectionPreservesAliasedObservations) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("loop-projection", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<llvm::NoFolder> B(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(
+          B.getInt64Ty(), {B.getPtrTy(), B.getPtrTy(), B.getInt64Ty()}, false),
+      llvm::GlobalValue::ExternalLinkage, "projected_loop", Module);
+  auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+  constexpr unsigned Steps = 96;
+  llvm::SmallVector<llvm::BasicBlock *> Headers, Odd, Even;
+  for (unsigned I = 0; I < Steps; ++I) {
+    Headers.push_back(llvm::BasicBlock::Create(Context, "header", Function));
+    Odd.push_back(llvm::BasicBlock::Create(Context, "odd", Function));
+    Even.push_back(llvm::BasicBlock::Create(Context, "even", Function));
+  }
+  auto *Latch = llvm::BasicBlock::Create(Context, "latch", Function);
+  auto *Exit = llvm::BasicBlock::Create(Context, "exit", Function);
+  B.SetInsertPoint(Entry);
+  auto *Home = B.CreateAlloca(B.getInt64Ty());
+  auto *Pass = B.CreateAlloca(B.getInt64Ty());
+  B.CreateStore(Function->getArg(2), Home);
+  B.CreateStore(B.getInt64(0), Pass);
+  B.CreateBr(Headers.front());
+  for (unsigned I = 0; I < Steps; ++I) {
+    auto *Next = I + 1 == Steps ? Latch : Headers[I + 1];
+    B.SetInsertPoint(Headers[I]);
+    auto *Before = B.CreateLoad(B.getInt64Ty(), Function->getArg(0));
+    auto *Value = B.CreateLoad(B.getInt64Ty(), Home);
+    B.CreateStore(B.CreateXor(Before, Value), Function->getArg(1));
+    B.CreateCondBr(
+        B.CreateICmpNE(B.CreateAnd(Value, B.getInt64(1)), B.getInt64(0)),
+        Odd[I], Even[I]);
+    B.SetInsertPoint(Odd[I]);
+    B.CreateStore(B.CreateAdd(Value, B.getInt64(I + 1)), Home);
+    B.CreateStore(B.CreateAdd(Before, B.getInt64(I + 3)), Function->getArg(0));
+    B.CreateBr(Next);
+    B.SetInsertPoint(Even[I]);
+    B.CreateStore(B.CreateXor(Value, B.getInt64(I + 7)), Home);
+    B.CreateStore(B.CreateXor(Before, B.getInt64(I + 5)), Function->getArg(0));
+    B.CreateBr(Next);
+  }
+  B.SetInsertPoint(Latch);
+  auto *Count = B.CreateAdd(B.CreateLoad(B.getInt64Ty(), Pass), B.getInt64(1));
+  B.CreateStore(Count, Pass);
+  B.CreateCondBr(B.CreateICmpULT(Count, B.getInt64(2)), Headers.front(), Exit);
+  B.SetInsertPoint(Exit);
+  B.CreateRet(B.CreateLoad(B.getInt64Ty(), Home));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream Output(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Output, Options));
+  Source += "\n#define PROJECTION_STEPS " + std::to_string(Steps) + R"(
+static uint64_t reference_loop(uint64_t *p, uint64_t *q, uint64_t value) {
+  for(unsigned pass=0;pass<2;++pass)
+    for(unsigned i=0;i<PROJECTION_STEPS;++i) {
+      uint64_t before=*p;
+      *q=before^value;
+      if(value&1) { value+=i+1; *p=before+i+3; }
+      else { value^=i+7; *p=before^(i+5); }
+    }
+  return value;
+}
+int main(void) {
+  const uint64_t seeds[]={0,1,UINT64_MAX,UINT64_C(0x8000000000000000)};
+  for(unsigned s=0;s<sizeof(seeds)/sizeof(*seeds);++s)
+    for(unsigned alias=0;alias<2;++alias) {
+      uint64_t actual[]={seeds[s]^23,19}, expected[]={actual[0],actual[1]};
+      if(projected_loop(actual,actual+(alias?0:1),seeds[s])!=
+         reference_loop(expected,expected+(alias?0:1),seeds[s])) return 1;
+      if(actual[0]!=expected[0] || actual[1]!=expected[1]) return 2;
+    }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
 TEST(LLVMCValues, PreservedIndirectCallsKeepSignatureAndABI) {
   for (auto Convention : {llvm::CallingConv::C, llvm::CallingConv::Win64,
                           llvm::CallingConv::X86_64_SysV}) {
