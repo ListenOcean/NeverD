@@ -406,6 +406,13 @@ these facts with both emitters and SDK replay without compacting native slots.
 Original stack facts are computed once per prepared body, independently of the
 register-summary dependency waves. Temporary address intervals retain subrange
 taint; overlapping partial writes cannot authenticate a stale whole address.
+Exact original image addresses also survive instruction-local full-width copies
+and checked scalar offsets. A complete load within one current mapped data
+object cannot observe a source stack slot. This shares the image ownership and
+extent predicate used by stack-spill overwrite proofs. The memory effect and
+loaded value stay live; neither a scalar with equal bits nor the loaded value
+acquires pointer evidence. Truncated mappings, changed owners, stale temporaries,
+external stores, segment-relative and ordered accesses retain their refusals.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
 Win64 scalar bodies and bounded direct call chains for borrowed frame-pointer

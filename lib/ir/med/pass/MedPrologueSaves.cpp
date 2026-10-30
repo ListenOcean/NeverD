@@ -1011,6 +1011,26 @@ bool isSpillScalarStep(NdOp Opcode) {
   }
 }
 
+/// An exact mapped data object is separate from the invocation's source
+/// frame. Read the complete span from one current owner; an equal scalar,
+/// code address, fragment or truncated mapping supplies no separation fact.
+bool isCompleteSourceImageRead(const BinaryImage &Image, va_t Address,
+                               ConstantAddressProvenance Provenance, va_t Owner,
+                               uint16_t Bytes) {
+  if (!Bytes || !isExactAddressProvenance(Provenance) ||
+      isCodeAddressProvenance(Provenance))
+    return false;
+  if (Owner == InvalidVA)
+    Owner = Image.layoutAddressOwner(Address);
+  const auto End = Image.mappedObjectOwnerEnd(Address);
+  return End && Address < *End && Bytes <= *End - Address &&
+         Owner != InvalidVA && Image.layoutAddressOwner(Address) == Owner &&
+         Image.layoutAddressOwner(Address + Bytes - 1) == Owner &&
+         Image.hasObjectDataProvenance(Address) &&
+         Image.hasObjectDataProvenance(Address + Bytes - 1) &&
+         Image.readVA(Address, Bytes);
+}
+
 /// Saving a scalar into scratch storage does not read its value
 /// when every path overwrites the bytes before observing them. Keep the proof
 /// in source preparation so HighC and LLVMC discard the same transport. Calls,
@@ -1066,20 +1086,9 @@ void markUnobservedStackSpills(MedFunc &Func, Arch Architecture,
           continue;
         Pointer = Found->second;
       }
-      if (!isExactAddressProvenance(Pointer->Provenance) ||
-          isCodeAddressProvenance(Pointer->Provenance))
-        continue;
-      const va_t Address = Pointer->ConstVal;
-      const va_t Owner = Pointer->AddressOwnerVA == InvalidVA
-                             ? Image->layoutAddressOwner(Address)
-                             : Pointer->AddressOwnerVA;
-      const auto End = Image->mappedObjectOwnerEnd(Address);
-      if (End && Address < *End && Op.Output.Size <= *End - Address &&
-          Owner != InvalidVA && Image->layoutAddressOwner(Address) == Owner &&
-          Image->layoutAddressOwner(Address + Op.Output.Size - 1) == Owner &&
-          Image->hasObjectDataProvenance(Address) &&
-          Image->hasObjectDataProvenance(Address + Op.Output.Size - 1) &&
-          Image->readVA(Address, Op.Output.Size))
+      if (isCompleteSourceImageRead(*Image, Pointer->ConstVal,
+                                    Pointer->Provenance,
+                                    Pointer->AddressOwnerVA, Op.Output.Size))
         ImageReads.insert(&Op);
     }
   }
@@ -2005,9 +2014,11 @@ std::set<unsigned> sourceRegisterInputOverwrites(
   return Result;
 }
 
-std::set<unsigned> unobservedSourceStackParameters(
-    const MedFunc &Func, llvm::ArrayRef<LowBlock> OriginalBlocks,
-    const std::set<va_t> &DeclaredCallees, size_t &Budget) {
+std::set<unsigned>
+unobservedSourceStackParameters(const MedFunc &Func,
+                                llvm::ArrayRef<LowBlock> OriginalBlocks,
+                                const std::set<va_t> &DeclaredCallees,
+                                size_t &Budget, const BinaryImage *Image) {
   if (!hasSourceRegisterInputBody(Func) || OriginalBlocks.empty() ||
       OriginalBlocks.front().StartAddr != Func.Entry ||
       !OriginalBlocks.front().Preds.empty() ||
@@ -2108,6 +2119,7 @@ std::set<unsigned> unobservedSourceStackParameters(
     std::optional<int64_t> Offset;
     uint16_t Bytes = 0;
     bool Derived = false;
+    std::optional<NdVar> ImageAddress;
   };
   struct FrameAlias {
     std::optional<int64_t> Offset;
@@ -2151,6 +2163,9 @@ std::set<unsigned> unobservedSourceStackParameters(
       return At;
     };
     const auto Read = [&](const NdVar &V) -> FrameValue {
+      if (V.isConst() && V.Size == TRI.PointerSize &&
+          isExactAddressProvenance(V.Provenance))
+        return {std::nullopt, V.Size, false, V};
       if (V.isReg() && V.Offset == TRI.StackPointer)
         return {V.Size == TRI.PointerSize ? std::optional(Stack) : std::nullopt,
                 V.Size, true};
@@ -2185,8 +2200,10 @@ std::set<unsigned> unobservedSourceStackParameters(
           }
           --Budget;
           Value.Derived |= At->second.Derived;
-          if (At->first == V.Offset && At->second.Bytes == V.Size)
+          if (At->first == V.Offset && At->second.Bytes == V.Size) {
             Value.Offset = At->second.Offset;
+            Value.ImageAddress = At->second.ImageAddress;
+          }
         }
       return Value;
     };
@@ -2272,30 +2289,56 @@ std::set<unsigned> unobservedSourceStackParameters(
       if (Op.Opcode == NdOp::LOAD || Op.Opcode == NdOp::STORE) {
         if (Op.NumInputs != (Op.Opcode == NdOp::LOAD ? 1 : 2))
           return {};
-        const auto Address = Read(Op.Inputs[0]).Offset;
+        const auto Pointer = Read(Op.Inputs[0]);
+        const auto Address = Pointer.Offset;
         const auto Bytes =
             Op.Opcode == NdOp::LOAD ? Op.Output.Size : Op.Inputs[1].Size;
         const auto End = Address ? detail::checkedAffineOffset(*Address, Bytes)
                                  : std::nullopt;
-        if (!Address || !Bytes || !End ||
-            (Op.Opcode == NdOp::STORE && Read(Op.Inputs[1]).Derived))
+        const auto &ImageAddress = Pointer.ImageAddress;
+        const bool ImageRead =
+            Op.Opcode == NdOp::LOAD && Image && ImageAddress &&
+            Op.Inputs[0].Size == TRI.PointerSize &&
+            isCompleteSourceImageRead(*Image, ImageAddress->Offset,
+                                      ImageAddress->Provenance,
+                                      ImageAddress->AddressOwnerVA, Bytes);
+        if (!ImageRead &&
+            (!Address || !Bytes || !End ||
+             (Op.Opcode == NdOp::STORE && Read(Op.Inputs[1]).Derived)))
           return {};
         if (Op.Opcode == NdOp::STORE)
           continue;
-        Reads.emplace_back(*Address, *End);
+        if (!ImageRead)
+          Reads.emplace_back(*Address, *End);
+        // A mapped object read remains an actual memory effect. Its loaded
+        // bits do not inherit the address's provenance or a frame coordinate.
         Value.Derived = false;
       } else if (!isSpillScalarStep(Op.Opcode)) {
         return {};
       } else if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
                  Op.Output.Size == Op.Inputs[0].Size) {
-        Value.Offset = Read(Op.Inputs[0]).Offset;
+        const auto Input = Read(Op.Inputs[0]);
+        Value.Offset = Input.Offset;
+        Value.ImageAddress = Input.ImageAddress;
       } else if ((Op.Opcode == NdOp::INT_ADD || Op.Opcode == NdOp::INT_SUB) &&
                  Op.NumInputs == 2 && Op.Output.Size == TRI.PointerSize &&
                  Op.Inputs[1].isConst()) {
-        if (const auto Base = Read(Op.Inputs[0]).Offset)
+        const auto Input = Read(Op.Inputs[0]);
+        if (const auto Base = Input.Offset)
           Value.Offset = detail::checkedAffineOffset(
               *Base, static_cast<int64_t>(Op.Inputs[1].Offset),
               Op.Opcode == NdOp::INT_SUB);
+        const auto &Base = Input.ImageAddress;
+        if (Base && Op.Inputs[0].Size == TRI.PointerSize &&
+            Op.Inputs[1].Size == TRI.PointerSize &&
+            Op.Inputs[1].Provenance == ConstantAddressProvenance::Scalar)
+          if (const auto Address = detail::checkedAffineOffset(
+                  static_cast<int64_t>(Base->Offset),
+                  static_cast<int64_t>(Op.Inputs[1].Offset),
+                  Op.Opcode == NdOp::INT_SUB)) {
+            Value.ImageAddress = *Base;
+            Value.ImageAddress->Offset = static_cast<uint64_t>(*Address);
+          }
       }
       Value.Bytes = Op.Output.Size;
       if (Op.Output.isReg()) {
