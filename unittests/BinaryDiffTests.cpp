@@ -1771,6 +1771,33 @@ TEST(BinaryDiff, EntryGuardsRetainReviewableCandidatesAcrossBodyEdits) {
       EXPECT_EQ(counterpart(R, P, S, Primary), Secondary);
     }
   }
+  // Independent callback evidence must not reopen unrelated pairs that the
+  // entry review already deferred in favor of a stronger body candidate.
+  auto ReferencedLeft = Left, ReferencedRight = Right;
+  Fn CallbackA = leaf("reference_callback_a", 41), CallbackB = CallbackA;
+  CallbackB.Name = "reference_callback_b";
+  CallbackA.Source = CallbackB.Source = NameSource::Generated;
+  Fn Holder = leaf("reference_holder", 53);
+  Holder.AddressTargets = {CallbackA.Name, CallbackB.Name};
+  for (auto *Side : {&ReferencedLeft, &ReferencedRight})
+    Side->insert(Side->end(), {Holder, CallbackA, CallbackB});
+  const auto ReferencedA = build(ReferencedLeft, 0x400000),
+             ReferencedB = build(ReferencedRight, 0x800000);
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    const auto &P = Reverse ? ReferencedB : ReferencedA,
+               &S = Reverse ? ReferencedA : ReferencedB;
+    const auto R = compare(P, S, {});
+    EXPECT_EQ(R.Matches.size(), 3u);
+    for (const auto *Name : {"reference_callback_a", "reference_callback_b"}) {
+      EXPECT_EQ(counterpart(R, P, S, Name), Name);
+      EXPECT_EQ(matchOf(R, P, Name).Step, FunctionStep::AddressSite);
+    }
+    EXPECT_EQ(R.matchOfPrimary(indexOf(P, "write_header")), nullptr);
+    EXPECT_EQ(R.matchOfSecondary(indexOf(S, "write_header")), nullptr);
+    EXPECT_TRUE(HasCandidate(R, indexOf(P, "write_header"),
+                             indexOf(S, "write_header")));
+  }
   Fn Duplicate = After;
   Duplicate.Name = "duplicate_header";
   Right.push_back(std::move(Duplicate));

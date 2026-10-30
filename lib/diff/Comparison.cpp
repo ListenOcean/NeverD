@@ -328,7 +328,7 @@ private:
   void settle(size_t From);
   void context(uint32_t A, uint32_t B, bool Loose);
   void callSites(uint32_t A, uint32_t B);
-  unsigned approximate();
+  unsigned approximate(bool ReferenceOnly = false);
   uint64_t featureKey(FunctionStep Step, uint32_t Function,
                       bool Secondary) const;
   double contextAgreement(uint32_t A, uint32_t B) const;
@@ -760,7 +760,7 @@ bool Matcher::consistentContext(uint32_t A, uint32_t B) const {
          (It->second.DataReference && (Agreement < 0 || Agreement == 1));
 }
 
-unsigned Matcher::approximate() {
+unsigned Matcher::approximate(bool ReferenceOnly) {
   if (!Settings.Approximate && FeatureCandidates.empty())
     return 0;
   // Candidates: bounded sketch and mnemonic/CFG groups, and the unmatched
@@ -775,11 +775,18 @@ unsigned Matcher::approximate() {
   if (Ps.empty() || Ss.empty())
     return 0;
   std::vector<uint64_t> Candidates;
+  std::vector<uint8_t> ReferenceA, ReferenceB;
+  if (ReferenceOnly) {
+    ReferenceA.resize(P.Functions.size());
+    ReferenceB.resize(S.Functions.size());
+  }
   for (const auto &[Key, Evidence] : FeatureCandidates) {
-    (void)Evidence;
-    if (PMatch[uint32_t(Key >> 32)] == NoIndex &&
-        SMatch[uint32_t(Key)] == NoIndex)
+    const uint32_t A = uint32_t(Key >> 32), B = uint32_t(Key);
+    if (PMatch[A] == NoIndex && SMatch[B] == NoIndex) {
       Candidates.push_back(Key);
+      if (ReferenceOnly && (Evidence.DataReference || Evidence.AddressSite))
+        ReferenceA[A] = ReferenceB[B] = 1;
+    }
   }
   {
     struct Entry {
@@ -884,6 +891,10 @@ unsigned Matcher::approximate() {
     if (stopNow())
       return 0;
     const uint32_t A = uint32_t(K >> 32), B = uint32_t(K);
+    // After entry review, measure only reference proposals and their rivals.
+    // An unrelated candidate has no new evidence and must stay deferred.
+    if (ReferenceOnly && !ReferenceA[A] && !ReferenceB[B])
+      continue;
     if (!Rejected.contains(K) && !namesConflict(A, B)) {
       Pairs.push_back(
           {A, B, quickScore(A, B), -1, consistentContext(A, B), {}, {}});
@@ -953,6 +964,12 @@ unsigned Matcher::approximate() {
     const Scored &Pair = Pairs[I];
     const auto Feature = FeatureCandidates.find(pairKey(Pair.A, Pair.B));
     if (!Settings.Approximate && Feature == FeatureCandidates.end())
+      continue;
+    // Body alternatives still compete through ByA/ByB, but only a proposal
+    // supported by the new frozen reference evidence can be admitted here.
+    if (ReferenceOnly &&
+        (Feature == FeatureCandidates.end() ||
+         (!Feature->second.DataReference && !Feature->second.AddressSite)))
       continue;
     // A positional or lone-neighbor proposal earns the lower context
     // threshold only when every already mapped neighbor agrees. A local
@@ -1482,7 +1499,7 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
         FunctionStep::AddressSite;
   }
   if ((!Candidates.Data.empty() || !Candidates.Functions.empty()) && !stopNow())
-    approximate();
+    approximate(true);
   if (!stopNow())
     progress(1, 1);
   beginPhase("ambiguities");

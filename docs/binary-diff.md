@@ -75,6 +75,9 @@ weaker alternatives only when mapped call/address context does not contradict
 them. A stronger body or another independently supported alternative still
 prevents automatic admission. The witness correspondence is frozen for this
 pass, so proposed functions cannot justify their own data-reference evidence.
+This final pass measures reference proposals and their competing bodies, but
+only admits pairs supported by the new reference evidence. Unrelated pairs
+deferred during entry-alternative review remain available for review.
 
 The same pass proposes `address_site` callback pairs from complete function
 address operands at aligned positions in independently matched functions.
