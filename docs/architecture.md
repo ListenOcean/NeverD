@@ -9390,13 +9390,19 @@ fault-delivery model.
 `KernelReturnNoFaultV5` adds a separate 2,368-byte layout with STAR and
 visible/hidden CS and SS state. It requires CPL0 64-bit code, EFER.SCE and an
 explicit active paging width (48 or 57), with CET/FRED and asynchronous events
-excluded. SYSRETQ checks the return RIP against that paging width, preserves
-all GPRs including RSP, and produces RFLAGS plus the fixed CS/SS caches and
-wrapped STAR-derived selectors. `PrivilegeReturn` stops supervisor dispatch;
+excluded. SYSRETQ checks the return RIP against that paging width and preserves
+all GPRs including RSP. Canonical SYSRET selects compatibility mode, takes EIP
+from ECX and preserves the legacy GPR low halves; eight arbitrary slots select
+their architecturally undefined high halves in encoding order. R8–R15 remain
+preserved. The lifter owns the complete SYSRET undefined-output sidecar and
+both C routes consume it. Both forms produce RFLAGS plus the mode-specific
+fixed CS/SS caches and wrapped STAR-derived selectors. `PrivilegeReturn` stops
+supervisor dispatch;
 the source does not execute the returned user context. Invalid return RIP or
 entry code mode rejects before any state change. Earlier profiles still
-request native SYSRET execution. This models the explicit successful SYSRETQ
-transition; IRETQ, interrupt delivery and fault delivery remain outside it.
+request native SYSRET execution. This models the explicit successful SYSRET
+and SYSRETQ transitions; IRETQ, interrupt delivery and fault delivery remain
+outside V5.
 The [Intel instruction reference](https://cdrdv2-public.intel.com/782156/325383-sdm-vol-2abcd.pdf)
 owns the flag mask and segment-cache values; the paging canonicality rule is
 separate from the processor's MSR canonical width.
@@ -9426,6 +9432,13 @@ execution. The original bytes supply the unsigned discard count; the native
 audit separately authenticates Capstone's signed display value. Same-level
 returns never read an absent outer frame. Earlier layouts remain unsupported
 for these event transitions.
+
+Neither IRETQ nor RETFQ has an unconditional empty undefined-output audit:
+their live return descriptors may select compatibility mode and make legacy
+GPR high halves arbitrary. The earlier generic audit incorrectly erased this
+condition. V6's descriptor owner requires CS.L=1 and CS.D=0 before any write;
+that bounded profile owns its empty arbitrary-effect list. Ordinary LowIR
+keeps incomplete coverage and receives no native-preservation certificate.
 
 `X64ContinuationEvents` owns these transitions in LowIR above both C routes.
 Validation precedes all state and memory writes. Deferred descriptor accessed

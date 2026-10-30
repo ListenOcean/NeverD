@@ -273,8 +273,13 @@ inline bool form(const cs_insn *Insn, Arch Target) {
         Insn->id == X86_INS_XOR)
       return lockedlogicaudit::form(Insn, Target);
   }
-  if (sysretForm(Insn, Target) || longModeEventForm(Insn, Target) ||
-      farReturnForm(Insn, Target))
+  // IRETQ/RETFQ select their return mode from a live descriptor. A valid
+  // compatibility return can make the legacy GPR high halves arbitrary
+  // (Intel SDM Vol. 1, 3.4.1.1). Exact encoding alone cannot certify an empty
+  // undefined-output set. The explicit V6 continuation owns its separate
+  // descriptor guard that restricts these returns to long mode.
+  if (sysretForm(Insn, Target) ||
+      (Insn->id != X86_INS_IRETQ && longModeEventForm(Insn, Target)))
     return true;
   if (descriptorqueryaudit::form(Insn, Target))
     return true;

@@ -1032,10 +1032,18 @@ buildInstruction(SpecializationInstruction Instruction,
                     InterpreterProfileProjection::X64FarPointerLoadV1
           ? detail::x64FarPointerLoad(Instruction.NativeBytes)
           : std::nullopt;
+  // These exact frame shapes have no unconditional empty undefined-output
+  // audit: their live CS descriptor may select compatibility mode. V6's shared
+  // descriptor owner checks CS.L=1 and CS.D=0 before any write, so only this
+  // bounded continuation can discharge the target-mode condition.
+  const bool OwnedFrameReturn =
+      (Iret || FarReturn) &&
+      Instruction.UndefinedEffects.Coverage == LowUndefinedCoverage::Missing &&
+      Instruction.UndefinedEffects.Effects.empty();
   if ((!FarPointer &&
        (Instruction.ProfileProjection != InterpreterProfileProjection::None ||
-        Instruction.UndefinedEffects.Coverage !=
-            LowUndefinedCoverage::Complete)) ||
+        (!OwnedFrameReturn && Instruction.UndefinedEffects.Coverage !=
+                                  LowUndefinedCoverage::Complete))) ||
       (Instruction.Origin.Control == LowInstructionControl::Terminator &&
        !Sysret && !Iret && !FarReturn && !Interrupt))
     RequireNative("instruction requires an explicit native environment");

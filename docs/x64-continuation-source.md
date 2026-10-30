@@ -64,7 +64,7 @@ disjoint from each other and every guest access. CALL writes its original next
 PC to the physical guest stack. RET reads that stack, including changes made by
 an intervening callback. The environment can change every state field and guest
 byte before resuming. No source parameter count or callee preservation is
-assumed. Arithmetic arbitrary-value slots represent caller-selected choices
+assumed. Arbitrary-value slots represent caller-selected choices
 for each dynamic instruction; reusing them selects a subset of allowed runs.
 
 The driver continues ordinary instructions and jumps to listed addresses. Each
@@ -121,6 +121,14 @@ IOPL and VIF/VIP remain excluded). It consumes one driver step and stops even
 when the return target is selected; a returned CPL1–3 context cannot reenter
 this supervisor profile. Compatibility-mode and 16-/32-bit far returns still
 require native execution.
+
+IRETQ/RETFQ have no unconditional empty undefined-output certificate: a live
+return descriptor can select compatibility mode, where the legacy GPR high
+halves are arbitrary. V6's shared descriptor check requires CS.L=1 and CS.D=0
+before publishing state or descriptor writes. That checked long-mode domain
+owns the empty arbitrary-effect list for these continuations. It does not
+grant an ordinary LowIR or native-preservation certificate. Earlier generic
+audits incorrectly treated this profile condition as an instruction-wide fact.
 
 LSS/LFS/LGS also continue through V6. The shared descriptor owner loads the
 16/32/64-bit offset, validates the GDT or LDT descriptor, updates its accessed

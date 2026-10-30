@@ -38,7 +38,9 @@ constexpr std::array<unsigned, 7> Flags = {x86reg::CF, x86reg::PF, x86reg::AF,
                                            x86reg::ZF, x86reg::SF, x86reg::DF,
                                            x86reg::OF};
 
-std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
+std::vector<LowOp>
+lift(llvm::ArrayRef<uint8_t> Bytes,
+     LowUndefinedCoverage ExpectedCoverage = LowUndefinedCoverage::Complete) {
   Decoder Dec;
   EXPECT_TRUE(Dec.init(Arch::X64));
   Dec.setStrict(true);
@@ -53,8 +55,7 @@ std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
   Preserved.Audit = LowPreservedStateAudit::LegacyIntegerV1;
   Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
   Dec.liftToLow(Insn, Plain);
-  EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
-      << Effects.Diagnostic;
+  EXPECT_EQ(Effects.Coverage, ExpectedCoverage) << Effects.Diagnostic;
   EXPECT_TRUE(Effects.Effects.empty());
   EXPECT_EQ(Effects.OpCount, Ops.size());
   EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
@@ -1006,7 +1007,9 @@ TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
   for (const auto &Bytes :
        std::vector<std::vector<uint8_t>>{{0x48, 0xcf}, {0xcc}}) {
     SCOPED_TRACE(Bytes.size());
-    EXPECT_FALSE(lift(Bytes).empty());
+    EXPECT_FALSE(lift(Bytes, Bytes.size() == 2 ? LowUndefinedCoverage::Missing
+                                               : LowUndefinedCoverage::Complete)
+                     .empty());
     const auto Decode = [&] {
       DecodedInsn I{};
       EXPECT_EQ(
@@ -1017,16 +1020,21 @@ TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
     auto Insn = Decode();
     EXPECT_TRUE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X86));
+    EXPECT_EQ(nativestateaudit::form(Insn.Raw, Arch::X64), Bytes.size() == 1);
     Insn.Raw->bytes[0] ^= 1;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.eflags = 0;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.op_count = 1;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.prefix[0] = 0xf3;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
   }
 }
@@ -1097,7 +1105,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
         Value == 65536 ? std::vector<uint8_t>{0x48, 0xcb}
                        : std::vector<uint8_t>{0x48, 0xca, uint8_t(Value),
                                               uint8_t(Value >> 8)};
-    const auto Ops = lift(Bytes);
+    const auto Ops = lift(Bytes, LowUndefinedCoverage::Missing);
     ASSERT_EQ(Ops.size(), 4u);
     EXPECT_EQ(Ops.back().Inputs[0], NdVar::cst(uint64_t(Intrinsic::Retf), 2));
     const auto Decode = [&] {
@@ -1110,6 +1118,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
     auto Insn = Decode();
     EXPECT_TRUE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X64));
     EXPECT_FALSE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X86));
+    EXPECT_FALSE(nativestateaudit::form(Insn.Raw, Arch::X64));
     for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
       SCOPED_TRACE(Mutation);
       Insn = Decode();
@@ -1165,6 +1174,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
         if (Mutation == 15)
           Insn.Raw->bytes[2] ^= 1;
       }
+      EXPECT_FALSE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X64));
       expectUnaudited(Dec, Insn);
     }
   }
