@@ -3938,6 +3938,14 @@ snapshots and expired borrowed records before reading their detail.
 Raw classifiers and BL targets still work without detail, while operand queries
 and expired records remain conservative. These are decode/lift lifecycle checks,
 not qualification of native PAC/CPA execution or additional ISA families.
+`BinaryDiff.CallPositionDistinguishesOnlyEqualOrWeakerNearTies` covers stronger,
+equal and weaker alternatives in both directions and reordered layouts, with
+approximation enabled and disabled. `BinaryDiffSDK.NoReturnCallsDoNotAcquireLayoutDependentFallthrough`
+checks guarded x64/AArch64 calls, returning overrides and exact saved-report
+restoration. The session discovery owner checks sized and unsized direct/import
+slot calls; `InstructionFlow.ConditionalCallsKeepTheUnexecutedArm` checks ARM
+predication and patched-target refusal. Run these with `NeverDNoReturnTests`
+when changing the shared target contract.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -15071,6 +15079,14 @@ identity.
 match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
 and its table among the code; the cases stay labels only because the
 instruction reading the table, not the table's slots, names them.
+`DataSegmentDispatchKeepsIndependentCallbacks` relocates that dispatch table
+into ordinary read-only data: cases stay labels while an ordinary pointer read
+and a separate callback slot retain independent function-entry evidence.
+The operand-entry, exhausted-verification-budget and FDE-extent discovery
+tests also cover relocation-backed entries outside a proven dispatch.
+The LLVM interior-pointer, runtime-callable fallback and unmaterializable
+table-target boundaries reject unresolved or masked code owners rather than
+emitting their original numeric addresses as presumed padding.
 `PrologueMatchesInsideAFunctionAreItsCode` falls into an aligned `push esi;
 push edi` and branches back to an aligned loop head, both prologue matches the
 entry owns, while a padded function and a tail jump's target stay entries;

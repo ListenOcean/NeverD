@@ -1747,8 +1747,9 @@ after link-order changes; a producer's literal numeric suffix remains intact.
 The SDK adapter separately owns presentation names under the extraction memory
 allowance. Bounded function projections use them for display, search and sort;
 the matcher, snapshot hash and saved evidence consume only the original name.
-The `sdk-native-decode-v4`
-extraction identity distinguishes this evidence contract from older snapshots;
+The `sdk-native-decode-v5`
+extraction identity includes this evidence contract and known no-return call
+termination, distinguishing them from older snapshots;
 saved historical reports remain readable without rewriting their evidence.
 
 Native operand profile v3 retains address-reference occurrences in `Program` by
@@ -1784,9 +1785,10 @@ acceptance retains feature-backed competition and uncertainty, rather than
 accepting a moved string set before measuring a competing original body. Wide
 matched neighborhoods use the existing informative-bucket admission bound before
 materializing pairs; explicit feature proposals remain measured outside the
-quick-score allowance. Consistent call positions distinguish equally measured
-bodies, but cannot override stronger body evidence or another positional
-proposal. Their mapped-context agreement is checked again at admission.
+quick-score allowance. Matcher version 14 lets consistent call positions
+distinguish equally or less similar alternatives, but cannot override stronger
+body evidence or another positional proposal. Their mapped-context agreement is
+checked again at admission.
 Call and address-reference neighbors share the growing propagation worklist,
 so an anchored address chain does not require one global pass per link.
 
@@ -2241,6 +2243,14 @@ supplies validated, bounded records; comparison does not duplicate admission.
 Data outside the selected function inventory still changes identity, and
 removing every addition restores the historical analysis identity.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+The shared instruction summary consumes `libc::NoReturnTargetIndex` and the
+loaded-target owner for unconditional calls. Sized CFGs and unsized traversal
+therefore agree about known call termination, independent of where a later
+return block is placed. Conditional calls keep their unexecuted arm. Returning
+overrides, patched targets and unknown calls retain the owners' existing rules.
+Each multi-page capture shares one image index; listing-only summaries omit
+unused termination lookups. This is a control-flow fact, not a memory or call
+effect equivalence proof.
 Profile selection and ISA/bitness admission belong to this adapter, with the
 default in `diff/Limits.h`; consumers do not guess an input's architecture.
 The AArch64 reader consumes its own typed operand details and ordinary lifted
@@ -3184,7 +3194,13 @@ the instruction reading the table as that function's label, which the
 jump-table resolver reads; a target outside it is an entry. The reader, whose
 operand names the run, decides rather than the table's own slots: an entry
 between the cases and the table (a prologue match in dead code before it)
-bounds neither the dispatcher nor its cases. A function it takes the address of with a
+bounds neither the dispatcher nor its cases. For linked i386 PE tables in
+ordinary data, only a decoded fixed-base indexed jump transfers the table's
+relocated targets into that reader's label analysis. The relocated run ends
+at its next loader anchor or owning section boundary. An ordinary data read
+does not supply dispatch ownership, and an independent callback slot retains
+its entry evidence even when a jump table also names the target.
+A function it takes the address of with a
 relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
 object; `push offset filter`, a handler) is likewise a function
 (`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
@@ -6317,6 +6333,10 @@ becoming the mirror's relocatable fields and its bytes copied from the
 segment; the read GEPs into it at the slot's offset. A segment within the
 limit keeps its whole-segment mirror, and every code pointer in the run must
 still resolve to a lifted owner or the emission fails closed.
+Missing or masked emitted code does not establish that an unresolved target
+is padding or data. Even runtime-replaceable code-pointer storage requires an
+authenticated static fallback; data materialization needs the loader's separate
+data-pointer role.
 An exact import veneer the loader registered (`jmp [IAT]` with a named
 import) stands for its import where code names it directly: a pointer-mirror
 slot and an instruction operand of code-address provenance, such as a
