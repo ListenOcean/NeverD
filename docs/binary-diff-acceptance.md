@@ -188,6 +188,20 @@ duplicates, names/references, confirmation, rejection, persistence and undo.
 The original numeric gates remain unchanged and failed; this is development
 regression evidence, not fresh optimization-profile qualification.
 
+Matcher version 13 repairs displaced unique single-call blocks after the
+ordinary block alignment, rather than globally changing call/graph precedence.
+A consumed XZ O2/PGO+LTO pair reproduces an unchanged stack-check failure call
+misaligned with its preceding check in both directions. The native regression
+now aligns that call, retains the branch inversion and modeled fallthrough
+difference, and preserves manual pairing, original rows and exact saved undo/
+redo/reopen. All fifteen consumed cases retain every prior correct labelled
+pair and introduce no new wrong pair; automatic pair counts are unchanged.
+Broader call-priority and neighbor-consistency experiments regressed existing
+pairs and were rejected. The sibling query's swapped stack slots remain a
+separate unresolved ranking problem, and the original XZ/zstd/OpenSSL numeric
+gates remain failed. This is a structural-alignment correction, not new
+optimization-profile qualification or semantic equivalence evidence.
+
 The DWARF adapter now follows an LTO concrete body's abstract-origin chain to
 its original definition unit. A specification declaration supplies its own
 file metadata without replacing that definition unit. Multi-unit local names,

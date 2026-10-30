@@ -446,3 +446,11 @@ L’interfaccia C++ esplicita `wrapInterpreterMachineRegionSourceX64()` in `neve
 Sono ammessi solo il profilo utente senza fault e le operazioni scalari/query/XMM esistenti. Trap, stati architetturali aggiuntivi, oggetti d’ingresso e dichiarazioni supplementari di codice/import vengono rifiutati anche se inutilizzati. Emettere la memoria ospite con copie di byte o tipi alias allineati a 1. Conservare tutte le premesse di memoria/frame; solo l’allineamento è controllato a runtime. Nessun riepilogo delle chiamate, composizione, ABI ordinaria o certificazione di funzione completa/equivalenza nativa. `InterpreterMachineRegionSourceTest.*` verifica entrambi i backend C a O0/O2: stato completo, alias dei byte dello stack, uscite multiple, arresti query/allineamento e dichiarazioni alterate o non supportate.
 
 Le uscite architetturalmente indefinite mantengono i valori scelti da LowIR. Riprodurre le scelte di un processore o dimostrarne l’irrilevanza per le osservazioni native richiede un ambiente indipendente o una prova di non interferenza; questa ricevuta non fornisce nessuno dei due.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Uscite prima di un trap
+
+L’overload che riceve `InterpreterMachineRegionSourceOptions` permette di impostare esplicitamente `StopBeforeTraps = true`. Mantiene il layout di 432 byte e restituisce `TrapPending` (4), con l’indirizzo originale del trap in `PC` e tutto lo stato supportato immediatamente prima dell’istruzione. Gli effetti di memoria precedenti restano; non esegue il trap, crea il frame di eccezione, entra nel gestore o riprende l’esecuzione. L’overload predefinito continua a rifiutare le dichiarazioni di trap, anche inutilizzate. L’identità esatta del trap e i metadati di verifica restano autenticati dal proprietario della regione originale; questa opzione non aggiunge prove architetturali. Gli arresti per query o allineamento mantengono i codici e i contratti di stato esistenti.
+
+Le regioni validate conservano anche le operazioni dinamiche canoniche `RequireAligned`. Entrambi i backend C mantengono i controlli con arresto immediato; una violazione dell’allineamento dell’istruzione non fornisce stato confermato né continuazione dell’eccezione. I wrapper ordinari dello stato macchina mantengono le restrizioni esistenti.

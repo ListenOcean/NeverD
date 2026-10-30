@@ -179,6 +179,9 @@ enum class X64ContinuationProfile : uint8_t {
   /// privilege level. SYSRET zero-extends ECX into RIP and preserves ESP. Its
   /// eight arbitrary slots choose the legacy GPR high halves in encoding order;
   /// R8-R15 remain preserved. SYSRETQ preserves every complete GPR.
+  /// RDMSR/WRMSR of IA32_STAR use this same live STAR cell. Writes require
+  /// a zero low 32-bit reserved field; other values refuse without effects.
+  /// Selector fields need not be canonical addresses. No host MSR is changed.
   /// Initial CS must describe CPL0 64-bit code. CET/FRED and asynchronous
   /// events remain disabled. Earlier state layouts are never extended.
   KernelReturnNoFaultV5,
@@ -231,7 +234,8 @@ struct X64ContinuationSourceOptions {
   /// Model IA32_FS_BASE, IA32_GS_BASE and IA32_KERNEL_GS_BASE through the
   /// existing state cells. The declared processor checks 48- or 57-bit
   /// canonical addresses on WRMSR, independently of the active paging depth.
-  /// Other selectors refuse before changing state. No host segment base is
+  /// Other selectors need their own binding (V5/V6 already bind STAR).
+  /// No host segment base is
   /// changed; all source memory continues to use the explicit live bases.
   std::optional<unsigned> SegmentBaseMSRAddressBits;
   /// Execute writes to IA32_SPEC_CTRL and IA32_PRED_CMD on the native x64

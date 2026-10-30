@@ -1827,6 +1827,16 @@ callee occurrences before admitting positional pairs, and retains exact
 similarity ties even at zero ambiguity margin. `Features` keeps unresolved calls
 as `NoIndex` positions while excluding them from graph edges and import sets.
 These are shared matching rules, independent of transport and UI.
+`FunctionDelta` also repairs a displaced unique single-call block when it is an
+exit on at least one side. It first runs the ordinary block alignment, then
+rebuilds only an affected alignment with the resolved call as an anchor.
+Uniqueness includes every block's complete resolved call sequence, including
+larger blocks. During that repair, already mapped neighbors must agree before
+remaining edges can supply positional evidence. Neighbor indices are sorted
+once per function for bounded lookups. Original instructions and CFG edges
+remain authoritative: a modeled fallthrough on the relocated call stays a
+reported edge change, not an inferred no-return property. Unknown calls,
+retargeted calls and repeated targets cannot supply this unique anchor.
 The same core owns ambiguity changes during manual correspondence edits. It
 removes groups exhausted on either side before rebuilding coverage and lookup
 indices. The override effect retains changed and removed groups at their
@@ -9416,6 +9426,15 @@ MOV CR2 changes that cell. Original bytes and operand detail authenticate all
 16 register carriers and the six architecturally arbitrary arithmetic flags.
 Earlier profiles never acquire the new cell. This grants no CR3, paging or
 fault-delivery model.
+
+The continuation MSR owner binds V5/V6 STAR reads and writes to the same field
+used by SYSRET. ECX selects the register and EDX:EAX transport its value;
+source state accesses cannot fall through to native speculation writes.
+STAR's upper selector half has no address-canonicality condition. Its portable
+write domain requires a zero reserved low half, checked before effects.
+MSR block reservation includes every selector/value guard and native/state
+branch before retaining block pointers. Earlier layouts and unrelated native
+MSR permissions remain unchanged.
 
 `KernelReturnNoFaultV5` adds a separate 2,368-byte layout with STAR and
 visible/hidden CS and SS state. It requires CPL0 64-bit code, EFER.SCE and an

@@ -449,3 +449,11 @@ La interfaz C++ explícita `wrapInterpreterMachineRegionSourceX64()` de `neverd/
 Solo se admiten el perfil de usuario sin fallos y las operaciones escalares/consultas/XMM existentes. Trampas, estados arquitectónicos adicionales, objetos de entrada y declaraciones de código/importaciones adicionales se rechazan incluso sin uso. Emitir memoria invitada mediante copias de bytes o tipos alias con alineación 1. Conservar todas las premisas de memoria/marco; solo la alineación se comprueba en ejecución. No hay resúmenes de llamadas, composición, ABI ordinaria ni certificación de función completa/equivalencia nativa. `InterpreterMachineRegionSourceTest.*` comprueba ambos backends C en O0/O2: estado completo, alias de bytes de pila, múltiples salidas, paradas por consultas/alineación y declaraciones alteradas o no admitidas.
 
 Las salidas arquitectónicamente indefinidas conservan los valores elegidos por LowIR. Igualar las elecciones de un procesador o demostrar que no afectan las observaciones nativas requiere un entorno independiente o una prueba de no interferencia; este comprobante no proporciona ninguno.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Salidas antes de una trampa
+
+La sobrecarga que recibe `InterpreterMachineRegionSourceOptions` permite indicar `StopBeforeTraps = true`. Conserva la disposición de 432 bytes y devuelve `TrapPending` (4), con la dirección original de la trampa en `PC` y todo el estado admitido justo antes de esa instrucción. Los efectos de memoria anteriores permanecen; no ejecuta la trampa, crea una trama de excepción, entra en el manejador ni reanuda la ejecución. La sobrecarga predeterminada sigue rechazando las declaraciones de trampa, incluso las no utilizadas. La identidad exacta y los metadatos de auditoría siguen autenticados por el propietario de la región original; esta opción no aporta nuevas pruebas de arquitectura. Las detenciones por consulta o alineación conservan sus códigos y contratos de estado.
+
+Las regiones validadas también conservan las operaciones dinámicas canónicas `RequireAligned`. Ambos backends C mantienen sus comprobaciones con fallo inmediato; infringir la alineación de la instrucción no proporciona estado confirmado ni continuación de excepción. Los envoltorios ordinarios de estado de máquina conservan sus restricciones.

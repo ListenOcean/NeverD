@@ -3459,6 +3459,18 @@ inventory fixture exercises zero margin through paging, manual pairing,
 undo/redo and restore. These qualify structural matching behavior, not general
 function equivalence or arbitrary call reordering.
 
+`CallAnchorsSurviveRemovedGuardsAndReorderedFailurePaths` reproduces a displaced
+single-call failure block after guard removal and branch inversion. Both
+directions retain the original call and its preceding check, while preserving
+instruction and edge changes, including a modeled fallthrough after the moved
+call. Unknown targets cannot anchor the repair and actual retargeting remains
+a call change. `CallOnlyExitsStillCompeteWithLargerBlocksCallingTheSameTarget`
+keeps competing call sequences in larger blocks from becoming a false unique
+anchor. The native XZ control additionally exercises analyst pairing, original
+instruction rows, one/four-thread parity, exact undo/redo and saved reopening.
+`SingleCallEntrySurvivesAnInsertedGuard` retains the call after entry insertion
+and reports the changed entry in both directions.
+
 Long native instruction-alignment regressions reproduce a 6,001-instruction
 body with 72 inserted instructions beyond the old dense-table threshold, in
 both directions. An independent forward edit-cost oracle checks large repeated
@@ -9252,8 +9264,9 @@ cleanup, changed saved-SP cells, FS/GS-to-stack aliases, partial registers,
 upper vector preservation, packed flags and fresh arbitrary values. The
 conditional wide-read fixture retains physical bytes from an earlier CALL
 under partial callback writes; it does not assume full output initialization.
-Without an MSR binding, RDMSR and IRETQ must request native execution before changing state or touching
-the guest stack. Invalid profile/PC/flags, missing/duplicate addresses and
+Profiles without an MSR or event binding must request native execution for
+RDMSR or IRETQ before changing state or touching the guest stack.
+Invalid profile/PC/flags, missing/duplicate addresses and
 exhausted instruction/operation budgets must fail explicitly. These checks
 establish a restricted continuation interface, not full kernel execution or
 success of the ordinary source routes. Changes to its shared binary provider
@@ -9263,6 +9276,15 @@ independence and binary refinement refusal checks.
 The segment-base MSR cases check both declared canonical widths, all three
 shared cells, full EDX:EAX transport, unchanged registers/vector bytes, SWAPGS
 composition and transactional rejection of other selectors/noncanonical writes.
+The STAR cases cover V5/V6, all segment/native binding combinations, repeated
+writes, upper GPR noise, every arithmetic-flag combination, each reserved low
+bit, and a following SYSRET using the new selectors. Earlier profiles retain
+their native boundary or selector refusal. The CPL0 fixture writes and reads
+every upper STAR bit on the processor, checks source writes leave the host MSR
+unchanged, and compares the resulting SYSRET context with a separate native
+CPU. The public export driver checks exact budget consumption and unchanged
+state on invalid STAR writes and unbound reads. Both C routes run at O0/O2;
+portable execution uses sanitizers. No private snapshot is needed.
 The native speculation and descriptor fixtures compile both source routes at
 O0/O2 into freestanding guests and execute them at CPL0 using Linux x64 KVM.
 They check real SPEC_CTRL readback, PRED_CMD writes, repeated writes, native

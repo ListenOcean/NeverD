@@ -912,6 +912,151 @@ TEST(BinaryDiff, SameSizeConstantEditStaysVisible) {
   EXPECT_EQ(Constants, 1u);
 }
 
+TEST(BinaryDiff, CallAnchorsSurviveRemovedGuardsAndReorderedFailurePaths) {
+  Fn Before;
+  Before.Name = "query";
+  Before.Blocks = {
+      {{"sub", "rsp, 40"},
+       {"test", "rdi, rdi"},
+       {"je", "", InstructionFlow::Branch}},
+      {{"mov", "rax, [rdi + 56]"},
+       {"test", "rax, rax"},
+       {"je", "", InstructionFlow::Branch}},
+      {{"mov", "r8, [rax + 56]"},
+       {"test", "r8, r8"},
+       {"je", "", InstructionFlow::Branch}},
+      {{"xor", "ecx, ecx"},
+       {"mov", "rdi, [rax]"},
+       {"lea", "rsi, [rsp + 8]"},
+       {"call", "r8", InstructionFlow::IndirectCall},
+       {"test", "eax, eax"},
+       {"jne", "", InstructionFlow::Branch}},
+      {{"mov", "rax, [rsp + 8]"}, {"jmp", "", InstructionFlow::Jump}},
+      {{"nop", ""}},
+      {{"xor", "eax, eax"}},
+      {{"mov", "rdx, [rsp + 24]"},
+       {"sub", "rdx, fs:[40]"},
+       {"jne", "", InstructionFlow::Branch}},
+      {{"add", "rsp, 40"}, {"ret", "", InstructionFlow::Return}},
+      {{"call", "", InstructionFlow::Call, "failure"}}};
+  Before.Edges = {{0, 6, EdgeKind::Taken},       {0, 1, EdgeKind::NotTaken},
+                  {1, 6, EdgeKind::Taken},       {1, 2, EdgeKind::NotTaken},
+                  {2, 6, EdgeKind::Taken},       {2, 3, EdgeKind::NotTaken},
+                  {3, 6, EdgeKind::Taken},       {3, 4, EdgeKind::NotTaken},
+                  {4, 7, EdgeKind::Jump},        {5, 6, EdgeKind::Fallthrough},
+                  {6, 7, EdgeKind::Fallthrough}, {7, 9, EdgeKind::Taken},
+                  {7, 8, EdgeKind::NotTaken}};
+  Fn After;
+  After.Name = Before.Name;
+  After.Blocks = {{{"sub", "rsp, 40"},
+                   {"mov", "rax, [rdi + 56]"},
+                   {"test", "rax, rax"},
+                   {"jne", "", InstructionFlow::Branch}},
+                  {{"xor", "eax, eax"}, {"jmp", "", InstructionFlow::Jump}},
+                  Before.Blocks[2],
+                  Before.Blocks[3],
+                  {Before.Blocks[4].front()},
+                  Before.Blocks[7],
+                  Before.Blocks[9],
+                  Before.Blocks[8]};
+  After.Blocks[5].back().Mnemonic = "je";
+  After.Edges = {{0, 2, EdgeKind::Taken},      {0, 1, EdgeKind::NotTaken},
+                 {1, 5, EdgeKind::Jump},       {2, 1, EdgeKind::Taken},
+                 {2, 3, EdgeKind::NotTaken},   {3, 1, EdgeKind::Taken},
+                 {3, 4, EdgeKind::NotTaken},   {4, 5, EdgeKind::Fallthrough},
+                 {5, 7, EdgeKind::Taken},      {5, 6, EdgeKind::NotTaken},
+                 {6, 7, EdgeKind::Fallthrough}};
+  Fn Retargeted = After;
+  Retargeted.Blocks[6].front().Callee = "other_failure";
+  const auto A =
+      build({Before, import("failure"), import("other_failure")}, 0x400000);
+  const auto B =
+      build({After, import("failure"), import("other_failure")}, 0x800000);
+  const auto C =
+      build({Retargeted, import("failure"), import("other_failure")}, 0x900000);
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
+    const auto R = compare(P, S, {});
+    std::vector<uint32_t> PMap(P.Functions.size(), NoIndex),
+        SMap(S.Functions.size(), NoIndex);
+    for (const auto &M : R.Matches) {
+      PMap[M.Primary] = M.Secondary;
+      SMap[M.Secondary] = M.Primary;
+    }
+    const auto D = compareFunctions(P, 0, S, 0, {PMap, SMap});
+    ASSERT_TRUE(D.ComputationComplete);
+    EXPECT_FALSE(D.Changes & ChangeCalls);
+    EXPECT_TRUE(D.Changes & ChangeInstructions);
+    EXPECT_TRUE(D.Changes & ChangeBranchInversion);
+    const auto CallPair = D.PrimaryBlockPair[Reverse ? 6 : 9];
+    ASSERT_NE(CallPair, NoIndex);
+    EXPECT_EQ(D.Blocks[CallPair].Secondary, Reverse ? 9u : 6u);
+    EXPECT_EQ(D.Blocks[CallPair].Step, BlockStep::BlockCalls);
+    const auto GuardPair = D.PrimaryBlockPair[Reverse ? 5 : 7];
+    ASSERT_NE(GuardPair, NoIndex);
+    EXPECT_EQ(D.Blocks[GuardPair].Secondary, Reverse ? 7u : 5u);
+
+    PMap[indexOf(P, "failure")] = SMap[indexOf(S, "failure")] = NoIndex;
+    const auto Unknown = compareFunctions(P, 0, S, 0, {PMap, SMap});
+    EXPECT_FALSE(llvm::any_of(Unknown.Blocks, [](const BlockPair &Pair) {
+      return Pair.Step == BlockStep::BlockCalls;
+    }));
+    const std::vector<uint32_t> Map{0, 1, 2};
+    const auto Changed =
+        compareFunctions(Reverse ? C : A, 0, Reverse ? A : C, 0, {Map, Map});
+    EXPECT_TRUE(Changed.Changes & ChangeCalls);
+  }
+}
+
+TEST(BinaryDiff,
+     CallOnlyExitsStillCompeteWithLargerBlocksCallingTheSameTarget) {
+  Fn Before;
+  Before.Name = "query";
+  Before.Blocks = {
+      {{"test", "rdi, rdi"},
+       {"xor", "eax, eax"},
+       {"ret", "", InstructionFlow::Return}},
+      {{"call", "", InstructionFlow::Call, "failure"}},
+      {{"mov", "edi, 1"}, {"call", "", InstructionFlow::Call, "failure"}}};
+  Fn After = Before;
+  After.Blocks[2].insert(After.Blocks[2].begin(), {"xor", "eax, eax"});
+  const auto A = build({Before, import("failure")}, 0x400000),
+             B = build({After, import("failure")}, 0x800000);
+  for (bool Reverse : {false, true}) {
+    const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
+    const std::vector<uint32_t> Map{0, 1};
+    const auto D = compareFunctions(P, 0, S, 0, {Map, Map});
+    EXPECT_FALSE(llvm::any_of(D.Blocks, [](const BlockPair &Pair) {
+      return Pair.Step == BlockStep::BlockCalls;
+    }));
+  }
+}
+
+TEST(BinaryDiff, SingleCallEntrySurvivesAnInsertedGuard) {
+  Fn Before;
+  Before.Name = "fail";
+  Before.Blocks = {{{"call", "", InstructionFlow::Call, "failure"}}};
+  Fn After = Before;
+  After.Blocks = {{{"test", "edi, edi"}, {"je", "", InstructionFlow::Branch}},
+                  Before.Blocks[0],
+                  {{"ret", "", InstructionFlow::Return}}};
+  After.Edges = {{0, 2, EdgeKind::Taken}, {0, 1, EdgeKind::NotTaken}};
+  const auto A = build({Before, import("failure")}, 0x400000),
+             B = build({After, import("failure")}, 0x800000);
+  for (bool Reverse : {false, true}) {
+    const std::vector<uint32_t> Map{0, 1};
+    const auto D =
+        compareFunctions(Reverse ? B : A, 0, Reverse ? A : B, 0, {Map, Map});
+    EXPECT_FALSE(D.Changes & ChangeCalls);
+    EXPECT_TRUE(D.Changes & ChangeEntry);
+    const auto Call = D.PrimaryBlockPair[Reverse ? 1 : 0];
+    ASSERT_NE(Call, NoIndex);
+    EXPECT_EQ(D.Blocks[Call].Secondary, Reverse ? 0u : 1u);
+    EXPECT_EQ(D.Blocks[Call].Step, BlockStep::BlockCalls);
+  }
+}
+
 TEST(BinaryDiff, BranchInversionStaysVisible) {
   std::vector<Fn> Old = sample(), New = sample();
   for (Fn &F : New)
