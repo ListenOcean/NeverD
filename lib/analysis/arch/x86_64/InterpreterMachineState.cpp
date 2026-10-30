@@ -10,6 +10,7 @@
 #include "X64MachineFlags.h"
 #include "X64Recovery.h"
 
+#include "neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -44,6 +45,11 @@ constexpr uint64_t ScratchBase = uint64_t{1} << 61;
 constexpr uint64_t ScratchEnd = uint64_t{1} << 62;
 using FlagProfile = detail::X64MachineFlags;
 constexpr auto &Flags = FlagProfile::Flags;
+
+struct MachineRegionSourcePlan {
+  std::map<va_t, InterpreterMachineRegionExitX64V1> Exits;
+  std::map<va_t, va_t> NativeAddresses;
+};
 
 llvm::Error invalid(const llvm::Twine &Message) {
   return llvm::createStringError(llvm::errc::invalid_argument, "%s",
@@ -613,7 +619,8 @@ void finishQuerySourceBlock(LowBlock &Block, LowInstructionControl Control,
 llvm::Error
 emitCPUQuerySource(LowBlock &Guard, const SpecializationScalarQuery &Query,
                    CPUQuerySourcePlan &Plan, std::vector<LowBlock> &Additional,
-                   uint64_t Parameter, bool &Seeded, bool VectorState) {
+                   uint64_t Parameter, bool &Seeded, bool VectorState,
+                   std::optional<va_t> RegionQueryAddress = std::nullopt) {
   auto Match = Plan.block();
   if (!Match)
     return Match.takeError();
@@ -716,8 +723,15 @@ emitCPUQuerySource(LowBlock &Guard, const SpecializationScalarQuery &Query,
   // A single-successor block needs no new native branch instruction. Its
   // synthetic boundary explicitly describes the ordinary source fallthrough.
   finishQuerySourceBlock(*Commit, LowInstructionControl::None);
-  const auto Reject = [VectorState](LowBlock &Block, uint64_t Status) {
+  const auto Reject = [VectorState, RegionQueryAddress](LowBlock &Block,
+                                                        uint64_t Status) {
     InstructionWriter Writer{Block.Ops, Block.StartAddr, false, VectorState};
+    if (RegionQueryAddress) {
+      Writer.store(offsetof(InterpreterMachineRegionStateX64V1, PC),
+                   scalar(*RegionQueryAddress));
+      Writer.store(offsetof(InterpreterMachineRegionStateX64V1, ExitKind),
+                   scalar(uint64_t(InterpreterMachineRegionExitX64V1::None)));
+    }
     Writer.emit(NdOp::COPY, NdVar::reg(ProfileStatus, 8), {scalar(Status)});
     Writer.leave();
     finishQuerySourceBlock(Block, LowInstructionControl::Return);
@@ -764,8 +778,9 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                    InterpreterMachineStateProfile Profile, bool StateRegisters,
                    std::optional<InterpreterEntryAlignment> EntryAlignment,
                    InterpreterMachineStateLayout Layout,
-                   bool CPUQueryTape = false, bool VectorState = false) {
-  if (hasLowRawEnvironmentRequirement(Residual))
+                   bool CPUQueryTape = false, bool VectorState = false,
+                   const MachineRegionSourcePlan *Region = nullptr) {
+  if (hasLowRawEnvironmentRequirement(Residual) && !Region)
     return invalid(
         "raw environment requirement has no machine-source contract");
   if (Layout != InterpreterMachineStateLayout::InlineReturns &&
@@ -837,14 +852,22 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   std::vector<LowBlock> QueryBlocks;
   bool HasReturn = false;
   bool Seeded = false;
+  std::set<va_t> ConsumedRegionExits;
   for (LowBlock &Block : Result.Function.Blocks) {
     if (!Block.ExceptionalSuccs.empty() || !Block.ExceptionalPreds.empty())
       return invalid("machine source cannot wrap exceptional edges");
     if (const auto Query = Queries.Queries.find(Block.Id);
         Query != Queries.Queries.end()) {
-      if (auto Error =
-              emitCPUQuerySource(Block, Query->second, Queries, QueryBlocks,
-                                 ParameterRegister, Seeded, VectorState))
+      std::optional<va_t> QueryAddress;
+      if (Region) {
+        const auto Native = Region->NativeAddresses.find(Block.StartAddr);
+        if (Native == Region->NativeAddresses.end())
+          return invalid("region query lacks original instruction provenance");
+        QueryAddress = Native->second;
+      }
+      if (auto Error = emitCPUQuerySource(Block, Query->second, Queries,
+                                          QueryBlocks, ParameterRegister,
+                                          Seeded, VectorState, QueryAddress))
         return std::move(Error);
       continue;
     }
@@ -862,6 +885,10 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
       for (uint64_t Index = Boundary.FirstOp;
            Index != Boundary.FirstOp + Boundary.OpCount; ++Index) {
         LowOp Op = Original[Index];
+        // Only the checked region entry point can supply this plan. Its raw
+        // receipt authenticated the unique marker and the entire source graph.
+        if (Region && isLowRawEnvironmentRequirement(Op))
+          continue;
         if (Op.MemoryOrdering != NdMemoryOrdering::None ||
             Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           return invalid(
@@ -958,10 +985,34 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         switch (Op.Opcode) {
         case NdOp::CALL:
         case NdOp::INDIR_CALL:
-        case NdOp::INDIR_BR:
           return invalid(
               "machine source requires resolved call-free control flow");
+        case NdOp::INDIR_BR: {
+          if (!Region)
+            return invalid(
+                "machine source requires resolved call-free control flow");
+          const auto Exit = Region->Exits.find(Boundary.Address);
+          if (Exit == Region->Exits.end() || Op.Output.Size ||
+              Op.NumInputs != 1 || Op.Inputs[0].Size != 8 ||
+              Index + 1 != Boundary.FirstOp + Boundary.OpCount ||
+              !Block.Succs.empty() ||
+              !ConsumedRegionExits.insert(Boundary.Address).second)
+            return invalid("machine region has an unauthenticated exit span");
+          Writer.store(offsetof(InterpreterMachineRegionStateX64V1, PC),
+                       Op.Inputs[0]);
+          Writer.store(offsetof(InterpreterMachineRegionStateX64V1, ExitKind),
+                       scalar(uint64_t(Exit->second)));
+          Writer.leave();
+          Boundary.Control = LowInstructionControl::Return;
+          Boundary.ControlFlags = LowInstructionControlFlag::Return;
+          Boundary.TargetMode = LowInstructionTargetMode::Preserve;
+          Boundary.Immediate.reset();
+          HasReturn = true;
+          break;
+        }
         case NdOp::RETURN:
+          if (Region)
+            return invalid("machine region has an ordinary return boundary");
           if (Op.Output.Size || Op.NumInputs > 1 ||
               Index + 1 != Boundary.FirstOp + Boundary.OpCount)
             return invalid("machine source has a malformed return boundary");
@@ -1041,6 +1092,8 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   }
   if (!HasReturn)
     return invalid("machine source has no ordinary return boundary");
+  if (Region && ConsumedRegionExits.size() != Region->Exits.size())
+    return invalid("machine region did not consume every authenticated exit");
   if (SharedReturn) {
     InstructionWriter Writer{SharedReturn->Ops, SharedReturn->StartAddr,
                              StateRegisters, VectorState};
@@ -1078,7 +1131,8 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   ABI.ReturnLocation = {SourceABICarrierKind::IntegerRegister, x86reg::RAX, 0,
                         8};
   SourceParameterTypeHint Parameter;
-  Parameter.Name = VectorState    ? "machine_query_vector_state"
+  Parameter.Name = Region         ? "machine_region_state"
+                   : VectorState  ? "machine_query_vector_state"
                    : CPUQueryTape ? "machine_query_state"
                                   : "machine_state";
   Parameter.Type = NdType::makePtr(NdType::makeInt(1, false));
@@ -1089,6 +1143,64 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   if (!validateSourceABI(ABI, Diagnostic))
     return invalid(Diagnostic);
   return Result;
+}
+
+llvm::Expected<InterpreterMachineRegionSource>
+wrapInterpreterMachineRegionSourceX64(const SpecializationResult &Result,
+                                      const SpecializationOptions &Expected,
+                                      BinaryFormat SourceFormat) {
+  if (Expected.X64MachineExits.empty() ||
+      Expected.X64FlagsProfile !=
+          InterpreterMachineStateProfile::UserX64NoFaultV1 ||
+      Expected.X64SegmentedReads || Expected.X64SegmentedWrites ||
+      Expected.X64LegacyGSState || Expected.X64CR8State ||
+      Expected.X64MXCSRMask || !Expected.X64CodeRegions.empty() ||
+      !Expected.X64ImportBindings.empty() ||
+      !Expected.X64TerminalImports.empty() ||
+      !Expected.EntryFrameExcludedObjects.empty())
+    return invalid("unsupported machine-region source environment");
+  for (const auto &Exit : Expected.X64MachineExits)
+    if (Exit.Kind == SpecializationX64MachineExitKind::Trap)
+      return invalid("machine-region source cannot supply trap continuation");
+  if (auto Error = validateSpecializationRawEnvironment(Result, Expected))
+    return std::move(Error);
+  if (!Result.RawEnvironment || Result.ExternalExits.empty())
+    return invalid("machine-region source requires authenticated exits");
+  MachineRegionSourcePlan Plan;
+  for (const auto &Origin : Result.Origins) {
+    const auto [At, Inserted] = Plan.NativeAddresses.emplace(
+        Origin.ResidualAddress, Origin.NativeInstruction.Address);
+    if (!Inserted && At->second != Origin.NativeInstruction.Address)
+      return invalid("machine region has conflicting original addresses");
+  }
+  for (const auto &Exit : Result.ExternalExits) {
+    if (!Exit.MachineExit)
+      return invalid("machine-region source has a non-region exit");
+    InterpreterMachineRegionExitX64V1 Kind;
+    switch (Exit.MachineExit->Kind) {
+    case SpecializationX64MachineExitKind::Call:
+      Kind = InterpreterMachineRegionExitX64V1::Call;
+      break;
+    case SpecializationX64MachineExitKind::Jump:
+      Kind = InterpreterMachineRegionExitX64V1::Jump;
+      break;
+    case SpecializationX64MachineExitKind::Return:
+      Kind = InterpreterMachineRegionExitX64V1::Return;
+      break;
+    default:
+      return invalid("unsupported machine-region source exit kind");
+    }
+    if (!Plan.Exits.emplace(Exit.ResidualAddress, Kind).second)
+      return invalid("machine region has duplicate physical exits");
+  }
+  auto Source = buildMachineSource(
+      Result.Residual, SourceFormat, *Expected.X64FlagsProfile, false,
+      Expected.EntryFrameAlignment,
+      InterpreterMachineStateLayout::InlineReturns, true, true, &Plan);
+  if (!Source)
+    return Source.takeError();
+  return InterpreterMachineRegionSource{std::move(*Source),
+                                        *Result.RawEnvironment};
 }
 
 llvm::Expected<InterpreterMachineSource>

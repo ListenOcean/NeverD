@@ -5,9 +5,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "../lift/NeverDLiftFixture.h"
+#include "../web/NativeFixture.h"
 
 #include "neverd/analysis/InterpreterMachineState.h"
 #include "neverd/analysis/arch/x86_64/BinaryInterpreterSpecialization.h"
+#include "neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h"
 #include "neverd/backend/c/HighC/HighCEmitter.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/llvm/MedLLVMEmitter.h"
@@ -18,6 +20,7 @@
 #include "neverd/ir/med/MedTypePass.h"
 #include "neverd/lift/X86/X86Regs.h"
 #include "neverd/loader/BinaryImage.h"
+#include "neverd/loader/Loader.h"
 #include "neverd/pipeline/Pipeline.h"
 
 #include "llvm/IR/LLVMContext.h"
@@ -98,6 +101,17 @@ protected:
                              Alignment, Layout);
     ASSERT_TRUE(static_cast<bool>(Wrapped))
         << llvm::toString(Wrapped.takeError());
+    emitAndRun(*Wrapped, Harness, Preamble, ConversionImage, CPUQueryTape,
+               VectorState, SourceFormat);
+  }
+
+  void emitAndRun(const InterpreterMachineSource &Source,
+                  llvm::StringRef Harness, llvm::StringRef Preamble = {},
+                  const BinaryImage *ConversionImage = nullptr,
+                  bool CPUQueryTape = false, bool VectorState = false,
+                  BinaryFormat SourceFormat = BinaryFormat::ELF) {
+    const auto *Wrapped = &Source;
+    const auto &Function = Source.Function;
     for (bool LLVM : {false, true}) {
       SCOPED_TRACE(LLVM ? "LLVMC" : "HighC");
       LowToMedConverter Converter;
@@ -117,6 +131,9 @@ protected:
       CEmitterOptions Options;
       Options.TheArch = Arch::X64;
       Options.Format = SourceFormat;
+      // Machine addresses may be unaligned and byte-alias one another. The
+      // default listing casts do not promise those semantics to a C compiler.
+      Options.UseUnalignedPointers = false;
       if (LLVM) {
         llvm::LLVMContext Context;
         MedLLVMEmitter Emitter;
@@ -1548,5 +1565,7 @@ int main(void) {
 }
 )");
 }
+
+#include "InterpreterMachineRegionSourceTests.inc"
 
 } // namespace

@@ -437,3 +437,15 @@ Las API C v10 `neverd_devirtualize_source_v10()` y `neverd_devirtualize_machine_
 En una vista C, seleccione **Recuperar función del intérprete**. Las opciones eligen el almacenamiento de estado, los límites de trabajo y las premisas explícitas del marco de entrada; los valores predeterminados no añaden supuestos de marco, alineación o separación. El informe conserva los diagnósticos. Cancelar o recibir un resultado incompleto mantiene el código anterior; **Volver al código fuente ordinario** restaura la vista normal.
 
 El proceso de trabajo acepta `source_options.interpreter_recovery` como única opción de fuente y llama al SDK C v10. Almacena y pagina el C completo sin modificaciones, sin ediciones de variables ordinarias ni mapas de instrucciones inventados. El informe completo aparece en la primera página; `source_available` distingue el código generado de una recuperación detenida. Esto no certifica equivalencia nativa.
+
+<!-- i18n-section: machine-region-source -->
+
+## Código verificado de regiones de máquina
+
+La interfaz C++ explícita `wrapInterpreterMachineRegionSourceX64()` de `neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h` recibe un resultado completo y opciones esperadas especificadas independientemente. Valida todo el grafo bruto, el entorno y las salidas físicas antes de convertir el código y conserva el comprobante original. Los envoltorios ordinarios siguen rechazando dominios brutos. La CLI, el SDK C y la GUI aún no exponen esta interfaz.
+
+`InterpreterMachineRegionStateX64V1` usa un diseño separado de 432 bytes: prefijo de consultas/XMM de 416 bytes, `PC` en 416 y `ExitKind` en 424. La entrada es fija; ambos campos son salidas. CALL/JMP/RET conservan el destino real y los efectos físicos de pila, guardan todo el estado admitido y paran antes de ejecutar el destino. Los tipos de salida son 1/2/3. Los estados 3/4 paran antes de una consulta agotada/incompatible con su PC original y tipo 0; conservan efectos anteriores. El estado 2 rechaza la alineación sin cambiar el estado. El estado 1 no proporciona una continuación válida.
+
+Solo se admiten el perfil de usuario sin fallos y las operaciones escalares/consultas/XMM existentes. Trampas, estados arquitectónicos adicionales, objetos de entrada y declaraciones de código/importaciones adicionales se rechazan incluso sin uso. Emitir memoria invitada mediante copias de bytes o tipos alias con alineación 1. Conservar todas las premisas de memoria/marco; solo la alineación se comprueba en ejecución. No hay resúmenes de llamadas, composición, ABI ordinaria ni certificación de función completa/equivalencia nativa. `InterpreterMachineRegionSourceTest.*` comprueba ambos backends C en O0/O2: estado completo, alias de bytes de pila, múltiples salidas, paradas por consultas/alineación y declaraciones alteradas o no admitidas.
+
+Las salidas arquitectónicamente indefinidas conservan los valores elegidos por LowIR. Igualar las elecciones de un procesador o demostrar que no afectan las observaciones nativas requiere un entorno independiente o una prueba de no interferencia; este comprobante no proporciona ninguno.
