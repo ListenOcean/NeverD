@@ -447,6 +447,16 @@ Sono ammessi solo il profilo utente senza fault e le operazioni scalari/query/XM
 
 Le uscite architetturalmente indefinite mantengono i valori scelti da LowIR. Riprodurre le scelte di un processore o dimostrarne l’irrilevanza per le osservazioni native richiede un ambiente indipendente o una prova di non interferenza; questa ricevuta non fornisce nessuno dei due.
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## Valori scalari arbitrari dell’architettura
+
+L’API C++ delle regioni macchina consente `SpecializationUndefinedModel::FreshScalarV1`. Le descrizioni complete degli effetti scalari indefiniti producono un valore indipendente a ogni visita dinamica, prima delle prove sui rami e sulle destinazioni. Le copie condividono la stessa produzione; le visite ripetute usano nuovi valori. Il grafo residuo conserva gli aggiornamenti condizionali dei bit, incluse le produzioni con condizione falsa, e la ricevuta vincola il modello.
+
+L’opzione richiede uscite esplicite di regioni x64 e prove complete per le istruzioni scalari. Effetti non supportati e budget esauriti vengono rifiutati. L’adattatore C attuale, gli emettitori ordinari e le interfacce di prova nativa rifiutano questo modello senza un ambiente esplicito di valori a runtime; non deducono valori specifici di un processore né un’ABI ordinaria.
+
+Una proiezione RDSSP verificata esattamente, con CET esplicitamente disabilitato, preserva la destinazione senza una nuova produzione; il suo registro generale degli effetti indefiniti resta assente. Le trap autenticate rimangono confini non eseguiti.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Uscite prima di un trap

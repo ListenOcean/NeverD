@@ -16314,7 +16314,8 @@ remain unknown; unused register positions stay padding on repeated recovery.
 `AReintroducedRegisterInputStillReachesImplicitCalls` rejects a restore of the
 original SSA value after an independent register overwrite.
 `UnusedIncomingStackSlotsDoNotRequireValues` executes original straight-line,
-branching and looping Win64 wrappers and both C routes at O0/O2 with UBSan:
+branching and looping Win64 wrappers, using SP directly or a physical GPR
+frame alias, and both C routes at O0/O2 with UBSan:
 two later stack arguments remain live while an earlier unwritten slot is never
 read. Selected and omitted queries and source optimization on/off retain that
 distinction; SDK replay also checks the branching body.
@@ -16326,6 +16327,13 @@ order, stable/changing loops, stack joins, late flag taint across calls, incompl
 or overlapping CFGs, unreachable cycles, PHI/call/clobber observations, partial
 temporary reads/writes and exact/short budgets. Unknown pointer aliases remain
 barriers; these tests grant no general nested-call or native-entry contract.
+`StackParameterHolesTrackPhysicalFrameAliases` covers affine copies, agreeing
+and disagreeing joins, stable and changing loops, partial physical definitions,
+explicit zero-extension and independent byte destruction. Live aliases require
+current native unread receipts at calls; stale identities, unknown observers,
+return-register aliases and may-write-only destruction remain rejected.
+Stores, return escapes, ordered memory, signed offset overflow and exact/short
+work budgets keep their negative controls.
 `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
 observed high bytes, changed call bindings, other physical registers, exceptional
 observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`
