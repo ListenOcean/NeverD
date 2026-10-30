@@ -10373,7 +10373,7 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
       auto FunctionSymbol = Symbol::makeFunc(0x1000);
       FunctionSymbol.Name = "forward_pointer";
       Image.Symbols.push_back(std::move(FunctionSymbol));
-      for (unsigned Pointee = 0; Pointee != 4; ++Pointee)
+      for (unsigned Pointee = 0; Pointee != 5; ++Pointee)
         for (bool Explicit : {false, true})
           for (bool LLVM : {false, true}) {
             Debug.ExplicitEntry = Explicit;
@@ -10384,6 +10384,13 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
             if (Pointee == 3)
               Type = NdType::makePtr(Type);
             Debug.PointerType = NdType::makePtr(Type);
+            if (Pointee == 4) {
+              Debug.PointerType->TypedefName = "PFORWARDED_OBJECT";
+              Type->Size = 16;
+              Type->FieldDisplayNames = {"value"};
+              Type->FieldDisplayOffsets = {0};
+              Type->FieldDisplayTypes = {NdType::makeInt(4)};
+            }
             SCOPED_TRACE(Pointee);
             SCOPED_TRACE(Explicit);
             SCOPED_TRACE(LLVM);
@@ -10402,6 +10409,21 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
             COptions.TheArch = Architecture;
             COptions.Format = Format;
             COptions.Image = &Image;
+            COptions.RecordDefinitions =
+                [&](const std::vector<TypeRef> &Types) {
+                  CRecordDefinitions Definitions;
+                  for (const auto &Requested : Types) {
+                    auto Leaf = Requested;
+                    while (Leaf && Leaf->Kind == NdTypeKind::Ptr)
+                      Leaf = Leaf->Pointee;
+                    if (Leaf && Leaf->SourceName == "ForwardedObject") {
+                      EXPECT_EQ(Requested->Kind, NdTypeKind::Ptr);
+                      Definitions.Tags[Leaf->SourceName] = false;
+                    }
+                    EXPECT_NE(Leaf->SourceName, "PFORWARDED_OBJECT");
+                  }
+                  return Definitions;
+                };
             std::string Source;
             llvm::raw_string_ostream Out(Source);
             if (LLVM) {
@@ -10412,13 +10434,14 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
               ASSERT_TRUE(
                   HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
             }
-            EXPECT_EQ(Source.find(std::string("forward_pointer(") +
-                                  (Pointee == 0   ? "void*"
-                                   : Pointee == 1 ? "ForwardedObject*"
-                                   : Pointee == 2 ? "uint16_t*"
-                                                  : "ForwardedObject**") +
-                                  " arg0)") != std::string::npos,
-                      !Explicit)
+            EXPECT_EQ(
+                Source.find(std::string("forward_pointer(") +
+                            (Pointee == 0                   ? "void*"
+                             : Pointee == 1 || Pointee == 4 ? "ForwardedObject*"
+                             : Pointee == 2 ? "uint16_t*"
+                                            : "ForwardedObject**") +
+                            " arg0)") != std::string::npos,
+                !Explicit)
                 << Source;
           }
     }
@@ -10432,6 +10455,8 @@ TEST(NativeSourceHints, BoundCallsRetainTheirPointeeCandidates) {
     auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
     const auto Object =
         NdType::makePtr(NdType::makeNamedRecord("ForwardedObject", 0));
+    Object->TypedefName = "PFORWARDED_OBJECT";
+    Object->Pointee->Size = 64;
     const auto Text = NdType::makePtr(NdType::makeInt(2, false));
     Hint->Signature.Parameters[0].Type = Object;
     Hint->Signature.Parameters[1].Type = Text;
@@ -10440,7 +10465,12 @@ TEST(NativeSourceHints, BoundCallsRetainTheirPointeeCandidates) {
     const auto Inferred = Fixture.infer(Error);
     ASSERT_TRUE(Inferred) << Error;
     ASSERT_EQ(Inferred->Parameters.size(), 2U);
-    EXPECT_TRUE(equalSourceTypes(Inferred->Parameters[0].Type, Object));
+    EXPECT_TRUE(Inferred->Parameters[0].Type->TypedefName.empty());
+    ASSERT_TRUE(Inferred->Parameters[0].Type->Pointee);
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->SourceName,
+              "ForwardedObject");
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->Size, 0u);
+    EXPECT_EQ(Object->Pointee->Size, 64u);
     EXPECT_TRUE(equalSourceTypes(Inferred->Parameters[1].Type, Text));
     EXPECT_EQ(Fixture.Med.TypedParams[0].Type->Kind, NdTypeKind::Int);
     EXPECT_EQ(Fixture.Med.TypedParams[1].Type->Kind, NdTypeKind::Int);

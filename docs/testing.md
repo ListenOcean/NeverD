@@ -17312,8 +17312,13 @@ Synthetic LLVM C stack slots retain the complete 128-bit integer store before a 
 `NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
 generic, named-record, scalar and nested pointer parameters across x64/ARM64,
 COFF/ELF/Mach-O and both C routes, with explicit integer prototypes remaining
-authoritative. `BoundCallsRetainTheirPointeeCandidates` checks native source
-hint inference without changing machine parameter types.
+authoritative. Pointer-only wrappers request tags rather than record bodies,
+including imported typedefs with nominal sizes and display fields.
+`BoundCallsRetainTheirPointeeCandidates` checks native source hint inference
+without changing machine parameter types or inheriting object extents.
+`HighCSourceCalls.OpaqueParametersCompleteOnlyForMemberAccess` executes the
+contrast: an opaque parameter needs only a tag, while a field read triggers
+the existing completion pass and preserves the independent record's value.
 `PointeeConflictsConvergeThroughSharedPhiUses` reverses call and block order
 through a shared loop PHI and checks conflicting nominal tags, typedefs,
 indirection, scalar uses, missing callees and unsupported callback inference.

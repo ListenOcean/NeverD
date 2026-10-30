@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <deque>
 #include <map>
+#include <memory>
 #include <set>
 #include <tuple>
 
@@ -308,6 +309,26 @@ TypeRef objectPointerType(const TypeRef &Type) {
     return nullptr;
   return Type;
 }
+
+// Forwarding proves the nominal pointee, not the wrapper's original typedef
+// or any object extent. Keep that distinction in both source pipelines.
+TypeRef pointerCandidate(const TypeRef &Type) {
+  TypeRef Result;
+  auto *Next = &Result;
+  for (auto Node = Type; Node; Node = Node->Pointee) {
+    auto Copy = std::make_shared<NdType>();
+    Copy->Kind = Node->Kind;
+    Copy->Size = Node->Kind == NdTypeKind::Struct ? 0 : Node->Size;
+    Copy->IsSigned = Node->IsSigned;
+    Copy->IsEnum = Node->IsEnum;
+    Copy->SourceName = Node->SourceName;
+    *Next = Copy;
+    Next = &Copy->Pointee;
+    if (Node->Kind != NdTypeKind::Ptr)
+      break;
+  }
+  return Result;
+}
 } // namespace
 
 static std::vector<TypeRef> inferPointerParameters(
@@ -520,7 +541,7 @@ static std::vector<TypeRef> inferPointerParameters(
         Found == Values.end() || Found->second.Roles != Pointer)
       continue;
     if (Found->second.PointerType) {
-      Result[Index] = Found->second.PointerType;
+      Result[Index] = pointerCandidate(Found->second.PointerType);
     } else {
       if (!GenericPointer) {
         GenericPointer = NdType::makePtr(NdType::makeVoid());
