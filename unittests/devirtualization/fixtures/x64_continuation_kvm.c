@@ -185,6 +185,7 @@ static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
   REQUIRE(ioctl(cpu, KVM_GET_SREGS, &before) == 0);
   struct kvm_vcpu_events events;
   REQUIRE(ioctl(cpu, KVM_GET_VCPU_EVENTS, &events) == 0);
+  REQUIRE(events.interrupt.shadow == 0);
   events.nmi.masked = q->nmi_blocked;
   events.flags |= KVM_VCPUEVENT_VALID_NMI_PENDING;
   REQUIRE(ioctl(cpu, KVM_SET_VCPU_EVENTS, &events) == 0);
@@ -254,6 +255,11 @@ static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
   q->flags = registers.rflags;
   q->pc = registers.rip;
   REQUIRE(ioctl(cpu, KVM_GET_VCPU_EVENTS, &events) == 0);
+  // LSS atomically loads both destinations and does not establish MOV SS's
+  // interrupt/debug inhibition. Stop at its immediate fallthrough above and
+  // independently check the CPU's shadow state here.
+  if (kind == 7)
+    REQUIRE(events.interrupt.shadow == 0);
   q->nmi_blocked = events.nmi.masked;
   return 0;
 }

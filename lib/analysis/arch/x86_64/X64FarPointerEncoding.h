@@ -4,7 +4,7 @@
 //
 //===----------------------------------------------------------------------===//
 /// \file
-/// Closed byte grammar for the descriptor-owning LFS/LGS continuation.
+/// Closed byte grammar for descriptor-owning LSS/LFS/LGS continuations.
 //===----------------------------------------------------------------------===//
 
 #ifndef NEVERD_LIB_ANALYSIS_ARCH_X86_64_X64FARPOINTERENCODING_H
@@ -18,11 +18,13 @@
 
 namespace neverd::analysis::detail {
 
+enum class X64FarPointerSegment : uint8_t { SS, FS, GS };
+
 struct X64FarPointerLoad {
   unsigned Destination = 0;
   unsigned Bytes = 4;
   unsigned AddressBytes = 8;
-  bool GS = false;
+  X64FarPointerSegment DestinationSegment = X64FarPointerSegment::FS;
   // Zero for ordinary addressing, 1 for FS, 2 for GS.
   unsigned Segment = 0;
   std::optional<unsigned> Base;
@@ -57,9 +59,11 @@ x64FarPointerLoad(llvm::ArrayRef<uint8_t> Bytes) {
   if (P < Bytes.size() && (Bytes[P] & 0xf0) == 0x40)
     Rex = Bytes[P++];
   if (P + 3 > Bytes.size() || Bytes[P] != 0x0f ||
-      (Bytes[P + 1] != 0xb4 && Bytes[P + 1] != 0xb5))
+      (Bytes[P + 1] != 0xb2 && Bytes[P + 1] != 0xb4 && Bytes[P + 1] != 0xb5))
     return std::nullopt;
-  F.GS = Bytes[P + 1] == 0xb5;
+  F.DestinationSegment = Bytes[P + 1] == 0xb2   ? X64FarPointerSegment::SS
+                         : Bytes[P + 1] == 0xb4 ? X64FarPointerSegment::FS
+                                                : X64FarPointerSegment::GS;
   F.Bytes = Rex & 8 ? 8 : Operand16 ? 2 : 4;
   F.AddressBytes = Address32 ? 4 : 8;
   const uint8_t ModRM = Bytes[P + 2];

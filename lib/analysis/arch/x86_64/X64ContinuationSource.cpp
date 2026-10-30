@@ -544,6 +544,28 @@ struct Writer {
     Block = &Function.Blocks.back();
   }
 
+  /// The taken path must leave the instruction. Its reads and writes never
+  /// execute on the fallthrough path (unlike an eager SELECT expression).
+  template <class Emit> void exitIf(NdVar Condition, Emit EmitExit) {
+    const int Parent = Block->Id;
+    const int ExitId = static_cast<int>(Function.Blocks.size());
+    const int NextId = ExitId + 1;
+    for (int Id : {ExitId, NextId}) {
+      LowBlock Child;
+      Child.Id = Id;
+      Child.StartAddr = Function.Entry + Id;
+      Child.Preds = {Parent};
+      Function.Blocks.push_back(std::move(Child));
+    }
+    Block = &Function.Blocks[Parent];
+    Block->Succs = {NextId, ExitId};
+    emit(NdOp::COND_BR, {},
+         {NdVar::cst(Function.Blocks[ExitId].StartAddr, 8), Condition});
+    Block = &Function.Blocks[ExitId];
+    EmitExit();
+    Block = &Function.Blocks[NextId];
+  }
+
   NdVar address(uint64_t Offset) {
     const NdVar V = temporary();
     emit(NdOp::INT_ADD, V, {NdVar::reg(StatePointer, 8), constant(Offset)});
@@ -1140,7 +1162,8 @@ buildInstruction(SpecializationInstruction Instruction,
     else if (FarReturn)
       Event.farReturn(*FarReturn);
     else if (FarPointer)
-      Event.farPointerLoad(*FarPointer, Instruction.Fallthrough.Address);
+      Event.farPointerLoad(*FarPointer, Instruction.Fallthrough.Address,
+                           Options.NullSegmentBasePolicy);
     else
       Event.softwareInterrupt(*Interrupt, Instruction.Fallthrough.Address);
   } else if (Sysret) {
@@ -1205,6 +1228,11 @@ buildX64ContinuationSource(const BinaryImage &Image,
        *Options.PagingAddressBits != 57))
     return invalid(
         "V5/V6 require the active 48- or 57-bit paging address width");
+  if (Options.NullSegmentBasePolicy &&
+      (Options.Profile != X64ContinuationProfile::KernelEventsNoFaultV6 ||
+       (*Options.NullSegmentBasePolicy != X64NullSegmentBasePolicy::Clear &&
+        *Options.NullSegmentBasePolicy != X64NullSegmentBasePolicy::Preserve)))
+    return invalid("null segment base policy requires V6 and a valid policy");
   if (Options.NativeTimestampReads && !Controls)
     return invalid("native timestamp source requires an x64 host profile");
   if (Options.NativeWritePrefetch && !Controls)

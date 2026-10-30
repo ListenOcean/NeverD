@@ -294,6 +294,55 @@ int main(void) {
   }
 }
 
+TEST_F(X64ContinuationExportTest, FarPointerNullPolicyAndStackSwitchResume) {
+  // lfs eax,[rbx]; lgs rcx,[rsi]; lss rsp,[rdx]; mov rax,[rsp]; ret
+  load({0x0f, 0xb4, 3, 0x48, 0x0f, 0xb5, 0x0e, 0x48, 0x0f, 0xb2, 0x22, 0x48,
+        0x8b, 4, 0x24, 0xc3});
+  for (llvm::StringRef Policy : {"clear", "preserve"})
+    for (bool LLVM : {false, true}) {
+      SCOPED_TRACE(Policy.str());
+      SCOPED_TRACE(LLVM);
+      auto Request = request(
+          (R"("instructions":[4096,4099,4103,4107,4111],"null_segment_base_policy":")" +
+           Policy + "\"")
+              .str());
+      auto [Source, Manifest] = source(Request, LLVM);
+      auto Parsed = llvm::json::parse(Manifest);
+      ASSERT_TRUE(bool(Parsed));
+      EXPECT_EQ(Parsed->getAsObject()->getInteger("native_requests"), 0);
+      EXPECT_NE(Manifest.find(Policy.str()), std::string::npos);
+      std::string Harness = Seed;
+      Harness += std::string("static const unsigned clear_base=") +
+                 (Policy == "clear" ? "1;\n" : "0;\n");
+      Harness += R"C(
+int main(void) {
+    uint64_t stack[2]={0x98765432,0x6789};
+    unsigned char a[6],b[10],c[10];uint32_t offset=0x89abcdef;
+    uint64_t wide=0xfedcba9876543210ULL,sp=(uintptr_t)stack;
+    uint16_t fs=1,gs=3,ss=0;
+    memcpy(a,&offset,4);memcpy(a+4,&fs,2);
+    memcpy(b,&wide,8);memcpy(b+8,&gs,2);
+    memcpy(c,&sp,8);memcpy(c+8,&ss,2);
+    neverd_x64_state_v6 s=seed(),initial=s;
+    s.GPR[3]=(uintptr_t)a;s.GPR[6]=(uintptr_t)b;s.GPR[2]=(uintptr_t)c;
+    s.GDTR.Base=1ULL<<47;s.GDTR.Limit=0;
+    uint64_t budget=2;CHECK(neverd_x64_continue_v6(&s,&budget)==9 && budget==0);
+    CHECK(s.PC==0x1007 && s.GPR[0]==offset && s.GPR[1]==wide);
+    CHECK(s.FS.Selector==1 && s.GS.Selector==3 && (s.Unusable&48)==48);
+    CHECK(s.FSBase==(clear_base?0:initial.FSBase) && s.GSBase==(clear_base?0:initial.GSBase));
+    budget=1;CHECK(neverd_x64_continue_v6(&s,&budget)==9 && budget==0);
+    CHECK(s.PC==0x100b && s.GPR[4]==sp && s.SS.Selector==0 && (s.Unusable&2));
+    CHECK(s.SS.Base==initial.SS.Base && s.SS.Limit==initial.SS.Limit && s.SS.Attributes==initial.SS.Attributes);
+    budget=2;CHECK(neverd_x64_continue_v6(&s,&budget)==3 && budget==0);
+    CHECK(s.GPR[0]==stack[0] && s.PC==stack[0] && s.GPR[4]==sp+8);
+    CHECK(s.RFlags==initial.RFlags && s.NMIBlocked==initial.NMIBlocked);
+    return 0;
+}
+)C";
+      execute(Source, Harness);
+    }
+}
+
 TEST_F(X64ContinuationExportTest, DriverRetainsPhysicalCallsPivotsAndReentry) {
   load({0x48, 0x89, 0x4c, 0x24, 0x08,         // mov [rsp+8],rcx
         0xe8, 0x06, 0x00, 0x00, 0x00,         // call 1010
@@ -406,6 +455,10 @@ TEST_F(X64ContinuationExportTest,
            request(R"("instructions":[4096.25])"),
            request(R"("instructions":[4096],"entries":[4096])"),
            request(R"("instructions":[4096],"native_timestamp_reads":1)"),
+           request(R"("instructions":[4096],"null_segment_base_policy":true)"),
+           request(R"("instructions":[4096],"null_segment_base_policy":null)"),
+           request(
+               R"("instructions":[4096],"null_segment_base_policy":"intel")"),
            request(R"("instructions":[4096],"unknown_option":true)"),
            request(R"("instructions":[4096],"max_instructions":0)"),
            request(R"("instructions":[4096],"max_operations":1)"),

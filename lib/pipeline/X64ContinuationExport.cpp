@@ -79,6 +79,7 @@ llvm::Expected<Request> readRequest(llvm::StringRef Text) {
                                        "entries",
                                        "mxcsr_mask",
                                        "paging_address_bits",
+                                       "null_segment_base_policy",
                                        "segment_base_msr_address_bits",
                                        "native_timestamp_reads",
                                        "native_write_prefetch",
@@ -115,6 +116,15 @@ llvm::Expected<Request> readRequest(llvm::StringRef Text) {
   if (*Paging != 48 && *Paging != 57)
     return invalid("paging_address_bits must be 48 or 57");
   Options.PagingAddressBits = unsigned(*Paging);
+  if (const auto *Value = Object->get("null_segment_base_policy")) {
+    const auto Policy = Value->getAsString();
+    if (Policy == "clear")
+      Options.NullSegmentBasePolicy = X64NullSegmentBasePolicy::Clear;
+    else if (Policy == "preserve")
+      Options.NullSegmentBasePolicy = X64NullSegmentBasePolicy::Preserve;
+    else
+      return invalid("null_segment_base_policy must be clear or preserve");
+  }
   if (const auto *Value = Object->get("segment_base_msr_address_bits")) {
     auto Bits = integer(*Value);
     if (!Bits)

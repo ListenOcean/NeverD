@@ -22,12 +22,12 @@
 
 namespace neverd::analysis::detail {
 
-/// Writer supplies temporary/emit/load/store/storeIf/write/rejectIf/leave.
-/// Keeping this lowering above both C backends gives one owner for descriptor
-/// validation, frame accesses and final state. All checks precede writes. A
-/// pending CS accessed-bit update is forwarded into later reads: eager frame
-/// loads or committing descriptors only after frame stores would change aliased
-/// RAM.
+/// Writer supplies
+/// temporary/emit/load/store/storeIf/write/rejectIf/exitIf/leave. Keeping this
+/// lowering above both C backends gives one owner for descriptor validation,
+/// frame accesses and final state. All checks precede writes. A pending CS
+/// accessed-bit update is forwarded into later reads: eager frame loads or
+/// committing descriptors only after frame stores would change aliased RAM.
 template <class Writer> class X64ContinuationEvents {
   using State = X64ContinuationStateV1;
   using V5 = X64ContinuationStateV5;
@@ -231,7 +231,8 @@ public:
   X64ContinuationEvents(Writer &Output, unsigned Bits)
       : W(Output), AddressBits(Bits) {}
 
-  void farPointerLoad(const X64FarPointerLoad &F, uint64_t NextPC) {
+  void farPointerLoad(const X64FarPointerLoad &F, uint64_t NextPC,
+                      std::optional<X64NullSegmentBasePolicy> NullBasePolicy) {
     auto Address = k(uint64_t(F.Displacement));
     if (F.Relative)
       Address = op(NdOp::INT_ADD, {Address, k(NextPC)});
@@ -264,31 +265,66 @@ public:
     const auto Value = op(NdOp::LOAD, {Address}, F.Bytes);
     const auto Selector =
         op(NdOp::INT_ZEXT, {op(NdOp::LOAD, {SelectorAddress}, 2)});
-    // Null-selector base updates differ between processor families. V6 has
-    // no CPU-specific null-load policy, so reject before descriptor access or
-    // any write, rather than guessing whether a live 64-bit base survives.
-    W.rejectIf(eq(masked(Selector, 0xfffc), k(0)));
+    const bool SS = F.DestinationSegment == X64FarPointerSegment::SS;
+    const bool GS = F.DestinationSegment == X64FarPointerSegment::GS;
+    const uint64_t Offset = SS   ? offsetof(V5, SS)
+                            : GS ? offsetof(V6, GS)
+                                 : offsetof(V6, FS);
+    const uint64_t SelectorOffset =
+        Offset +
+        (SS ? offsetof(Segment, Selector) : offsetof(Metadata, Selector));
+    const uint64_t BaseOffset =
+        GS ? offsetof(State, GSBase) : offsetof(State, FSBase);
+    const unsigned UnusableBit = SS ? 2 : GS ? 32 : 16;
+    const auto Null = eq(masked(Selector, 0xfffc), k(0));
+    if (SS || NullBasePolicy) {
+      // CPL0 permits only null SS selector 0. A null load never consults the
+      // GDT/LDT, even when their addresses are unmapped or noncanonical.
+      if (SS)
+        W.rejectIf(both(Null, ne(Selector, k(0))));
+      W.exitIf(Null, [&] {
+        if (!SS && *NullBasePolicy == X64NullSegmentBasePolicy::Clear)
+          W.store(BaseOffset, k(0));
+        W.store(SelectorOffset, narrow(Selector, 2));
+        W.store(offsetof(V6, Unusable),
+                narrow(op(NdOp::INT_OR,
+                          {load(offsetof(V6, Unusable), 1), k(UnusableBit)}),
+                       1));
+        W.write(NdVar::reg(F.Destination * 8, F.Bytes), Value);
+        W.leave(Exit::Continue, k(NextPC));
+      });
+    } else {
+      W.rejectIf(Null);
+    }
     const auto D = descriptor(Selector);
     const auto Access = shifted(D.Value, 40);
-    W.rejectIf(ne(masked(Access, 0x90), k(0x90)));
-    W.rejectIf(eq(masked(Access, 0x0a), k(8))); // Execute-only code.
-    const auto DPL = masked(shifted(Access, 5), 3);
-    W.rejectIf(
-        both(ne(masked(Access, 12), k(12)), less(DPL, masked(Selector, 3))));
+    if (SS) {
+      W.rejectIf(ne(masked(Selector, 3), k(0)));
+      // Present writable data, DPL=CPL=0; expand-down and A are independent.
+      W.rejectIf(ne(masked(Access, 0xfa), k(0x92)));
+    } else {
+      W.rejectIf(ne(masked(Access, 0x90), k(0x90)));
+      W.rejectIf(eq(masked(Access, 0x0a), k(8))); // Execute-only code.
+      const auto DPL = masked(shifted(Access, 5), 3);
+      W.rejectIf(
+          both(ne(masked(Access, 12), k(12)), less(DPL, masked(Selector, 3))));
+    }
     // Both pointer fields are captured before the descriptor's A-bit write.
     // In particular the loaded offset can alias that very descriptor byte.
     accessed(D);
-    const uint64_t Offset = F.GS ? offsetof(V6, GS) : offsetof(V6, FS);
-    W.store(F.GS ? offsetof(State, GSBase) : offsetof(State, FSBase),
-            segmentBase(D.Value));
-    W.store(Offset + offsetof(Metadata, Limit),
-            narrow(segmentLimit(D.Value), 4));
-    W.store(Offset + offsetof(Metadata, Selector), narrow(Selector, 2));
-    W.store(Offset + offsetof(Metadata, Attributes),
-            narrow(segmentAttributes(D.Value), 2));
+    if (SS) {
+      segment(Offset, Selector, D.Value);
+    } else {
+      W.store(BaseOffset, segmentBase(D.Value));
+      W.store(Offset + offsetof(Metadata, Limit),
+              narrow(segmentLimit(D.Value), 4));
+      W.store(SelectorOffset, narrow(Selector, 2));
+      W.store(Offset + offsetof(Metadata, Attributes),
+              narrow(segmentAttributes(D.Value), 2));
+    }
     W.store(
         offsetof(V6, Unusable),
-        narrow(masked(load(offsetof(V6, Unusable), 1), F.GS ? 0xdf : 0xef), 1));
+        narrow(masked(load(offsetof(V6, Unusable), 1), 0xff ^ UnusableBit), 1));
     W.write(NdVar::reg(F.Destination * 8, F.Bytes), Value);
     W.leave(Exit::Continue, k(NextPC));
   }

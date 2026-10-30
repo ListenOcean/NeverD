@@ -192,11 +192,19 @@ enum class X64ContinuationProfile : uint8_t {
   /// Software interrupts accept TF/RF, all IOPL values and VIF/VIP in the input
   /// flags. Other steps retain the earlier entry-flags domain. IRETQ may
   /// produce these flags but exits before their target-instruction effects.
-  /// LFS/LGS use Intel 16/32/64-bit operand rules and own non-null selector
-  /// loads, descriptor caches and coupled GPR writes. Null-selector base
-  /// policy, LSS interrupt shadow and compatibility-mode loads are not owned.
+  /// LSS/LFS/LGS use Intel 16/32/64-bit operand rules and own selector loads,
+  /// descriptor caches and coupled GPR writes. LSS accepts null SS at CPL0;
+  /// unlike MOV/POP SS, it does not inhibit subsequent interrupts or debug
+  /// events. Null FS/GS loads require an explicit base policy below.
+  /// Compatibility-mode loads remain outside this profile.
   KernelEventsNoFaultV6,
 };
+
+/// Bind the original processor's null FS/GS load behavior. No vendor-wide
+/// default is inferred: AMD behavior also depends on processor capabilities.
+/// The selector becomes unusable; its ignored limit/attribute bytes are kept.
+/// FS/GS base remains architectural and follows this declared policy.
+enum class X64NullSegmentBasePolicy : uint8_t { Clear, Preserve };
 
 struct X64ContinuationSourceOptions {
   X64ContinuationProfile Profile = X64ContinuationProfile::Unspecified;
@@ -204,6 +212,10 @@ struct X64ContinuationSourceOptions {
   /// V5/V6 require 48 or 57 according to active paging, independently of the
   /// processor's MSR canonical width. Earlier profiles do not accept it.
   std::optional<unsigned> PagingAddressBits;
+  /// V6 only. Bind the actual original CPU's null LFS/LGS base transition.
+  /// Without this declaration those loads reject before any state/RAM write
+  /// or descriptor access. This is not a claim that all AMD CPUs preserve it.
+  std::optional<X64NullSegmentBasePolicy> NullSegmentBasePolicy;
   /// Opt in to the executing x64 host's TSC and IA32_TSC_AUX, including its
   /// actual timestamp access/ordering behavior. The caller must bind this
   /// native environment to the source run and ensure RDTSC/RDTSCP support and

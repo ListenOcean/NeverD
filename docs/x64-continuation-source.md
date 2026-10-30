@@ -104,10 +104,11 @@ when the return target is selected; a returned CPL1–3 context cannot reenter
 this supervisor profile. Compatibility-mode and 16-/32-bit far returns still
 require native execution.
 
-LFS/LGS also continue through V6 for non-null selectors. The shared descriptor
-owner loads the 16/32/64-bit offset, validates a GDT or LDT data/readable-code
-descriptor, updates its accessed bit and installs the selected FS/GS cache and
-base together with the destination GPR. A 16-bit destination retains its upper
+LSS/LFS/LGS also continue through V6. The shared descriptor owner loads the
+16/32/64-bit offset, validates the GDT or LDT descriptor, updates its accessed
+bit and installs the selected cache and base together with the destination
+GPR. LSS requires writable data with RPL=DPL=CPL=0; LFS/LGS accept the
+corresponding data/readable-code privilege rules. A 16-bit destination retains its upper
 bits; a 32-bit destination zero-extends. Both pointer fields are read before
 the descriptor write, even when they alias it. The next PC is the original
 fallthrough, and flags, NMI blocking and other state remain unchanged.
@@ -117,9 +118,17 @@ operand/address-size and FS/GS prefixes in any order, an optional final REX,
 and complete ModRM/SIB/displacement addressing. Each field's address wraps
 independently at the address size before adding the original FS/GS base. Thus
 an addr32 selector may be 4 GiB away from the offset's end in linear memory.
-Null selectors are rejected with status
-5 before any descriptor access or write because V6 has no processor-specific
-null-load base policy. LSS still needs ownership of interrupt/debug inhibition;
+Null SS selector 0 is supported at CPL0; selectors 1..3 reject. LSS does not
+establish MOV SS / POP SS interrupt/debug inhibition, as specified in
+[Intel SDM Volume 3A, section 7.8.3](https://cdrdv2-public.intel.com/835754/253668-sdm-vol-3a.pdf).
+The previous documentation incorrectly attributed that inhibition to LSS.
+Null LFS/LGS selectors 0..3 require `"null_segment_base_policy": "clear"` or
+`"preserve"` in the request (`NullSegmentBasePolicy` in C++). Bind the actual
+original processor's behavior; vendor identity alone is insufficient. Both
+policies install the selector and mark it unusable, retain ignored cache bytes,
+and read no descriptor. The live FS/GS base follows the selected policy. When
+omitted, null LFS/LGS still reject with status 5 before descriptor access or
+any write. LSS does not need this option. The manifest retains the declaration.
 LDS/LES and compatibility-mode loads remain outside this long-mode profile.
 Ordinary strict/permissive lifting continues to refuse these far loads. The
 continuation receipt retains exact bytes with an incomplete ordinary sidecar;
@@ -205,8 +214,17 @@ including independent addr32 field wrapping, old segment bases, every GPR,
 descriptor-bit variants and accessed-bit aliasing into either pointer field.
 It also records 408 unchanged-state/RAM refusals, 24 exact-width/read-only
 page checks and 387 passing continuation, export and proof regressions.
-The native CPU was Intel; null-selector policy, LSS shadow state and faulting
-execution are not qualified by these counts.
+The native CPU was Intel; null-selector policy and LSS were not qualified by
+those earlier counts. The subsequent
+[far-load completion record](evidence/x86-far-load-continuation-2026-10-29.json)
+covers LSS, null loads and the public policy binding: 175,040 native state/RAM
+comparisons, immediate fallthrough breakpoints and zero CPU interrupt shadow.
+Guard pages check that null loads never read descriptors and retain exact
+pointer widths. Both base policies and the original-base read/new-base write
+sequence execute under ASan/UBSan; hardware qualifies the clearing policy on
+the measured Intel CPU. A public driver test switches SS/RSP, resumes a stack
+load and returns using the new physical stack. Fault delivery remains outside
+these successful-completion contracts.
 
 `X64ContinuationIntegerTest` compares complete state and memory with original
 native instructions for audited legacy vector transfers, XOR and byte shifts,

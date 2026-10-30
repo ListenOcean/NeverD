@@ -1269,7 +1269,10 @@ TEST(OriginalBinaryUndefinedIndependence,
                            {0x48, 0x0f, 0xb4, 3},
                            {0x66, 0x0f, 0xb5, 3},
                            {0x0f, 0xb5, 3},
-                           {0x48, 0x0f, 0xb5, 3}})
+                           {0x48, 0x0f, 0xb5, 3},
+                           {0x66, 0x0f, 0xb2, 3},
+                           {0x0f, 0xb2, 3},
+                           {0x48, 0x0f, 0xb2, 3}})
     for (bool Sibling : {false, true}) {
       Program P({});
       if (Sibling)
