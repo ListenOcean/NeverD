@@ -3714,6 +3714,18 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
                 const MedOp *Scaled = lookupDef(IdxDef->Inputs[0]);
                 return Scaled && Scaled->Opcode == NdOp::INT_ZEXT;
               }
+              // A mask AND bounds the index by the mask itself, exactly as a
+              // zero extension bounds it by its width.
+              if (IdxDef->Opcode == NdOp::INT_AND && IdxDef->NumInputs >= 2) {
+                const MedVar *Mask = nullptr;
+                if (IdxDef->Inputs[1].isConst() &&
+                    !IdxDef->Inputs[0].isConst())
+                  Mask = &IdxDef->Inputs[1];
+                else if (IdxDef->Inputs[0].isConst() &&
+                         !IdxDef->Inputs[1].isConst())
+                  Mask = &IdxDef->Inputs[0];
+                return Mask && Mask->ConstVal != 0;
+              }
               return IdxDef->Opcode == NdOp::INT_ZEXT;
             };
             if (Def->Inputs[1].isConst() && !Def->Inputs[0].isConst())
