@@ -107,8 +107,10 @@ TypeRef readLLVMSourcePointerParameter(const llvm::Argument &Argument) {
     return nullptr;
   }
   const auto *Chain = Parsed->getAsArray();
+  // Source ABI equality checks an opaque record at its owning pointer's depth;
+  // the serialized chain also contains that record's leaf entry.
   if (!Chain || Chain->size() < 2 ||
-      Chain->size() > limits::ir::kSourceABIEqualTypesDepthLimit + 1u)
+      Chain->size() > limits::ir::kSourceABIEqualTypesDepthLimit + 2u)
     return nullptr;
   TypeRef Result;
   for (size_t Index = Chain->size(); Index; --Index) {
