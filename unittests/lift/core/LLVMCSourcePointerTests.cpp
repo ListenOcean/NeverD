@@ -24,6 +24,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <utility>
 
 namespace {
 using namespace neverd;
@@ -46,13 +47,19 @@ public:
 };
 
 TEST(LLVMCSourcePointers, HeaderCallbackCastsKeepNestedPointeesAndQualifiers) {
-  for (const auto Arch : {Arch::X64, Arch::AArch64}) {
+  for (const auto &[Arch, Convention] :
+       {std::pair{Arch::X86, types::CallingConvention::Cdecl},
+        std::pair{Arch::X86, types::CallingConvention::Stdcall},
+        std::pair{Arch::X64, types::CallingConvention::Unspecified},
+        std::pair{Arch::AArch64, types::CallingConvention::Unspecified}}) {
     SCOPED_TRACE(static_cast<int>(Arch));
+    SCOPED_TRACE(static_cast<int>(Convention));
+    const bool Narrow = Arch == Arch::X86;
     llvm::LLVMContext Context;
     llvm::Module Module("header-callback", Context);
-    Module.setDataLayout("e-p:64:64");
+    Module.setDataLayout(Narrow ? "e-p:32:32" : "e-p:64:64");
     llvm::IRBuilder<> Builder(Context);
-    auto *Word = Builder.getInt64Ty();
+    auto *Word = Narrow ? Builder.getInt32Ty() : Builder.getInt64Ty();
     auto *Signature = llvm::FunctionType::get(Word, {Word, Word, Word}, false);
     auto *Callee =
         llvm::Function::Create(Signature, llvm::GlobalValue::ExternalLinkage,
@@ -68,8 +75,12 @@ TEST(LLVMCSourcePointers, HeaderCallbackCastsKeepNestedPointeesAndQualifiers) {
         NdType::makePtr(NdType::makeNamedRecord("CallbackRecord", 4));
     const auto Output = NdType::makePtr(NdType::makeInt(4, false));
     const auto Callback = NdType::makePtr(
-        NdType::makeFunc(NdType::makeVoid(), {Record, Output},
-                         types::CallingConvention::Unspecified));
+        NdType::makeFunc(NdType::makeVoid(), {Record, Output}, Convention));
+    Record->Size = Output->Size = Callback->Size = Narrow ? 4 : 8;
+    const std::string Keyword = !Narrow ? ""
+                                : Convention == types::CallingConvention::Cdecl
+                                    ? "__cdecl "
+                                    : "__stdcall ";
     PointerContext Debug;
     FunctionSym Function;
     Function.Name = "register_callback";
@@ -79,12 +90,14 @@ TEST(LLVMCSourcePointers, HeaderCallbackCastsKeepNestedPointeesAndQualifiers) {
     Function.PrototypeLibrary = "fixture-header";
     Function.PrototypeFromHeader = true;
     Function.PortablePrototypeDeclaration =
-        "uint32_t register_callback(void (*Callback)(const struct "
+        "uint32_t register_callback(void (" + Keyword +
+        "*Callback)(const struct "
         "CallbackRecord *, "
         "volatile uint32_t *), const struct CallbackRecord *Input, volatile "
         "uint32_t *Output)";
     Function.PortableParameterTypes = {
-        "void (*)(const struct CallbackRecord *, volatile uint32_t *)",
+        "void (" + Keyword +
+            "*)(const struct CallbackRecord *, volatile uint32_t *)",
         "const struct CallbackRecord *", "volatile uint32_t *"};
     Debug.Functions[0x2000] = Function;
     CEmitterOptions Options;
@@ -96,6 +109,21 @@ TEST(LLVMCSourcePointers, HeaderCallbackCastsKeepNestedPointeesAndQualifiers) {
     Out.flush();
     Text = "#include <stdint.h>\nstruct CallbackRecord { uint32_t Value; };\n" +
            Text;
+    if (Narrow) {
+      Text +=
+          "typedef void (" + Keyword +
+          "*ExpectedCallback)(const struct CallbackRecord *, volatile uint32_t "
+          "*);\n"
+          "typedef uint32_t (*ExpectedRegister)(ExpectedCallback, const struct "
+          "CallbackRecord *, volatile uint32_t *);\n"
+          "_Static_assert(__builtin_types_compatible_p(__typeof__(&register_"
+          "callback), ExpectedRegister), \"source callback identity\");\n";
+      source_call_execution_test::checkSyntax(
+          Text, {"--target=i686-w64-windows-gnu",
+                 "-Werror=incompatible-pointer-types",
+                 "-Werror=incompatible-function-pointer-types"});
+      continue;
+    }
     Text += R"c(
 uint32_t register_callback(void (*Callback)(const struct CallbackRecord *, volatile uint32_t *),
                            const struct CallbackRecord *Input, volatile uint32_t *Output) {

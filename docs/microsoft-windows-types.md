@@ -183,9 +183,8 @@ Callback pointees retain borrowed record identities without recursively
 reconstructing their members. For admitted portable prototypes, source
 declarations and call conversions share parameter spellings from the same
 type graph, preserving nested qualifiers even though the machine carrier
-does not encode them. Nested explicit x86 MSVC convention keywords still use
-the machine-type declaration fallback: its convention and record identity
-survive, but its exact source qualifiers remain unqualified coverage.
+does not encode them. The admitted x86 `__cdecl` and `__stdcall` keywords
+retain nested callback qualifiers without requiring an SDK typedef.
 Recursive record back references also remain separate borrowed identities,
 so releasing an analysis does not retain a shared ownership cycle. Member
 access can still complete those identities from the selected type library.

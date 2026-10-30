@@ -308,7 +308,7 @@ TEST(HighCSourceCalls, CallbackBorrowsDeclareNestedRecordTags) {
   for (const auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64}) {
     SCOPED_TRACE(static_cast<int>(Architecture));
     const bool Narrow = Architecture == Arch::X86;
-    const auto Word = NdType::makeInt(pointerBytes(Architecture), false);
+    const auto Word = NdType::makeInt(Narrow ? 4 : 8, false);
     const auto Input =
         NdType::makePtr(NdType::makeNamedRecord("CallbackInput"));
     const auto Output =
@@ -368,6 +368,10 @@ TEST(HighCSourceCalls, CallbackBorrowsDeclareNestedRecordTags) {
               std::string::npos)
         << Source;
     EXPECT_EQ(Source.find("struct CallbackOutput"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("const struct CallbackInput *"), std::string::npos)
+        << Source;
+    EXPECT_NE(Source.find("volatile union CallbackOutput *"), std::string::npos)
         << Source;
     source_call_execution_test::checkSyntax(
         Source,
