@@ -302,10 +302,11 @@ TypeRef objectPointerType(const TypeRef &Type) {
   auto Pointee = Type;
   while (Pointee->Kind == NdTypeKind::Ptr)
     Pointee = Pointee->Pointee;
-  // Function-pointer and anonymous-record declarations need their own source
+  // Callback, enum and anonymous-record declarations need their own source
   // identity proof. Keep their previously established generic pointer role.
   if (Pointee->Kind == NdTypeKind::Func ||
-      (Pointee->Kind == NdTypeKind::Struct && Pointee->SourceName.empty()))
+      (Pointee->Kind == NdTypeKind::Struct &&
+       (Pointee->IsEnum || Pointee->SourceName.empty())))
     return nullptr;
   return Type;
 }

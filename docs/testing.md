@@ -17321,7 +17321,8 @@ contrast: an opaque parameter needs only a tag, while a field read triggers
 the existing completion pass and preserves the independent record's value.
 `PointeeConflictsConvergeThroughSharedPhiUses` reverses call and block order
 through a shared loop PHI and checks conflicting nominal tags, typedefs,
-indirection, scalar uses, missing callees and unsupported callback inference.
+indirection, scalar uses, missing callees and unsupported callback, array and
+enum inference. Enum definitions must not become opaque record tags.
 Run `NeverDSourceEntryBindingTests` with the Windows/SysV call-contract and
 source-pointer suites. Windows qualifier execution checks retain independent
 record/union providers; target compilation and host C execution do not certify

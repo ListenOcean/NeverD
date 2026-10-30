@@ -12158,7 +12158,7 @@ TEST(NativeSourceHints, RecoveredCallPointerUsesKeepWidthsAndEntryIdentity) {
 TEST(NativeSourceHints, PointeeConflictsConvergeThroughSharedPhiUses) {
   for (auto Architecture : {Arch::X64, Arch::AArch64})
     for (bool Reverse : {false, true})
-      for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
         SCOPED_TRACE(unsigned(Architecture));
         SCOPED_TRACE(Reverse);
         SCOPED_TRACE(Mutation);
@@ -12227,6 +12227,17 @@ TEST(NativeSourceHints, PointeeConflictsConvergeThroughSharedPhiUses) {
           Callback->ParamTypes = {NdType::makeInt(4)};
           Declared[0x3000][0] = NdType::makePtr(Callback);
           Second[0] = NdType::makePtr(Callback);
+        } else if (Mutation == 10 || Mutation == 11) {
+          // Array extents and enum definitions are not nominal object tags.
+          auto Pointee = Mutation == 10
+                             ? NdType::makeArray(NdType::makeInt(4), 3, 12)
+                             : NdType::makeStruct({NdType::makeInt(4)});
+          if (Mutation == 11) {
+            Pointee->SourceName = "ForwardedEnum";
+            Pointee->IsEnum = true;
+          }
+          Declared[0x3000][0] = NdType::makePtr(Pointee);
+          Second[0] = NdType::makePtr(Pointee);
         }
         const std::array<va_t, 2> Targets =
             Reverse ? std::array<va_t, 2>{0x4000, 0x3000}
