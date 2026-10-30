@@ -2108,6 +2108,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*` 檢查直接、暫存器及記憶體目標、反向與未對齊的槽、過期證據和暫存變數重疊。`InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots` 在選定值及新鮮未定義值兩種模型下，以 UBSan 執行 HighC、LLVMC 的 O0/O2 結果，比較完整狀態與記憶體，並涵蓋槽內容變化及前置別名寫入。固定地址案例要求 Linux x64；其 PE 位址位於 ASan 的影子記憶體空隙。執行 `NeverDInterpreterSpecializationTests` 和 `NeverDInterpreterMachineStateTests`。
+
 這些檢查驗證宣告區域，不證明例外處理或原始碼／原生等價。
 
 

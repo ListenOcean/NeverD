@@ -2263,6 +2263,8 @@ Las regresiones comprueban la conservación exacta de CC, F1 y CD 03, el rechazo
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*` comprueba destinos directos, por registro y de memoria, ranuras anteriores y no alineadas, evidencia obsoleta y solapamientos de temporales. `InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots` ejecuta HighC y LLVMC a O0/O2 con UBSan para los modelos de valores indefinidos seleccionados y frescos. Compara el estado y la memoria completos, contenidos variables y una escritura previa con alias. La prueba de dirección fija requiere Linux x64; sus direcciones PE están en el hueco de la memoria sombra de ASan. Ejecutar `NeverDInterpreterSpecializationTests` y `NeverDInterpreterMachineStateTests`.
+
 Estas comprobaciones validan regiones declaradas, sin demostrar el manejo de excepciones ni la equivalencia fuente/nativa.
 
 

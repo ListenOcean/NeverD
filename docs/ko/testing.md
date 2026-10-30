@@ -2152,6 +2152,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*`는 직접·레지스터·메모리 대상, 역방향 및 비정렬 슬롯, 오래된 증거와 임시 값 중첩을 검사합니다. `InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots`는 선택된 값 및 fresh 미정의 값 모델 모두에서 HighC와 LLVMC를 O0/O2 및 UBSan으로 실행합니다. 전체 상태와 메모리, 슬롯 내용 변경, 앞선 별칭 쓰기를 검사합니다. 고정 주소 테스트에는 Linux x64가 필요하며 해당 PE 주소는 ASan 섀도 메모리 간극에 있습니다. `NeverDInterpreterSpecializationTests`와 `NeverDInterpreterMachineStateTests`를 실행하세요.
+
 이 검사는 선언된 영역을 검증하며 예외 처리나 소스/native 동등성을 증명하지 않습니다.
 
 

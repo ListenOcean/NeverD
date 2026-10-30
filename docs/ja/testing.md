@@ -2162,6 +2162,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*` は直接・レジスタ・メモリの転送先、後方・非整列スロット、古い証拠、一時値の重複を検査します。`InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots` は選択値と fresh 未定義値の両モデルで、HighC と LLVMC を O0/O2・UBSan 付きで実行します。状態とメモリ全体、スロット内容の変化、先行する別名ストアを検査します。固定アドレスのテストには Linux x64 が必要で、PE アドレスは ASan のシャドウ領域の隙間に位置します。`NeverDInterpreterSpecializationTests` と `NeverDInterpreterMachineStateTests` を実行してください。
+
 これらの検査が検証するのは宣言された領域であり、例外処理やソース/native 等価性は証明しません。
 
 

@@ -2230,6 +2230,8 @@ ctest --test-dir build-release -L "^(NeverDX86ScalarMoveAuditTests|NeverDX86Lega
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*` проверяет прямые, регистровые и память-зависимые цели, обратные и невыровненные ячейки, устаревшие свидетельства и перекрытие временных переменных. `InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots` выполняет HighC и LLVMC с O0/O2 и UBSan для выбранных и свежих неопределённых значений. Сравниваются полные состояние и память, меняющееся содержимое и предшествующая запись по совпадающему адресу. Тест с фиксированным адресом требует Linux x64: адреса PE попадают в промежуток теневой памяти ASan. Запустите `NeverDInterpreterSpecializationTests` и `NeverDInterpreterMachineStateTests`.
+
 Эти проверки подтверждают заявленные области, но не обработку исключений и не эквивалентность исходного и машинного кода.
 
 

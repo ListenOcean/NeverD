@@ -2278,6 +2278,8 @@ Die Regressionen prüfen die exakte Erhaltung von CC, F1 und CD 03, die Ablehnun
 
 `NativeStackControl.TrapExit*` · `InterpreterSpecialization.TrapIntrinsicsCannotFallThroughWithoutAnAuthenticatedExit` · `PEFixedImageTest.MachineTrapExitEndsRegionAtDeclaredTrap` · `PEFixedImageTest.UndeclaredTrapRemainsUnsupported` · `PEFixedImageTest.MachineTrapExitRejectsNonTrapInstruction` · `NativeUndefinedIndependence.UntakenTrapStillRequiresExactEvidence`.
 
+`NativeStackControl.JumpExit*` prüft direkte, Register- und Speicherziele, rückwärts liegende und nicht ausgerichtete Speicherstellen, veraltete Belege und überlappende Hilfswerte. `InterpreterMachineRegionSourceTest.MemoryJumpExitsReadCurrentGuestSlots` führt HighC und LLVMC mit O0/O2 und UBSan für ausgewählte und frische undefinierte Werte aus. Geprüft werden vollständiger Zustand und Speicher, wechselnde Inhalte und ein vorheriger aliasierender Schreibzugriff. Der Test mit fester Adresse benötigt Linux x64; seine PE-Adressen liegen in der Lücke des ASan-Schattenbereichs. `NeverDInterpreterSpecializationTests` und `NeverDInterpreterMachineStateTests` ausführen.
+
 Diese Prüfungen qualifizieren deklarierte Regionen, nicht die Ausnahmebehandlung oder Quell-/Native-Äquivalenz.
 
 
