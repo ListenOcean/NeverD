@@ -403,17 +403,26 @@ register-summary dependency waves. Temporary address intervals retain subrange
 taint; overlapping partial writes cannot authenticate a stale whole address.
 
 After shared call-signature recovery, `MedPrologueSaves` also checks complete
-Win64 scalar leaf bodies for borrowed frame-pointer uses. Both source routes
-use the resulting byte-read intervals to suppress private stores that cannot
+Win64 scalar bodies and bounded direct call chains for borrowed frame-pointer
+uses. Both source routes use the resulting byte-read intervals to suppress
+private stores that cannot
 be observed. Read intervals retain their operation positions: an explicit
 partial overwrite kills only those bytes on that path before the next local
 or callee read. Dead and already omitted stores do not establish overwrites;
 callee writes are never assumed. The complete-use walk and temporal path walk
 share one work budget. The same checked private-frame extent owner admits
 incoming home addresses when requesting omitted callee bodies.
-Negative offsets count; pointer capture, lossy transforms,
-exceptional edges, nested calls and incoming stack parameters refuse the proof.
-Implicit register inputs are checked independently of inferred source arity.
+Negative offsets count. Each direct, acyclic scalar-register call composes the
+callee's complete read intervals; its implicit GPR inputs and entry-SP reads
+must independently exclude hidden observations above its own call home area.
+Only complete bound native operands can stand in for CallInfos in an omitted
+memo body. The analysis indexes each body's uses, entry roots and call bindings
+once and shares the existing work budget; a separate call-depth bound prevents
+tiny relay chains from exhausting the host stack. Unfinished recursive indexes,
+stale bindings, pointer capture, lossy transforms, exceptional observers and
+incoming pointer stack parameters refuse the proof. No callee write proves
+initialization. Implicit register inputs are checked independently of inferred
+source arity.
 An SSA version of zero is not itself an entry input: a first load or arithmetic
 definition can also have that version. Call home areas and released frame bytes
 remain observable without explicit pointer arguments. This proof annotates only

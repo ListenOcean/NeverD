@@ -319,18 +319,24 @@ The shared stack-address owner also recognizes canonical zero-extended
 treating truncated 64-bit pointers or wider incoming registers as frame roots.
 Both spill proofs share a checked private-frame extent predicate: extreme
 positive offsets cannot wrap into frame storage or Windows home slots.
-Post-recovery Win64 scalar leaf borrows now have a shared complete-use proof.
+Post-recovery Win64 scalar borrows now have a shared complete-use proof over
+bounded direct call chains.
 The read intervals also retain their operation positions, so a partial overwrite
 before every borrow or local read can remove an older spill without erasing its
 unwritten neighbors. Dead or omitted stores do not kill bytes. Omitted callee
 body requests include positive incoming-home addresses through the same checked
-private extent owner. Nested callees and physical machine-state captures still
-need separate evidence; the public leaf tests do not close those original gaps.
+private extent owner. Direct scalar-register chains compose complete byte-read
+intervals, including in omitted memo bodies with bound native operands. Every
+level checks its own call home area and implicit GPR inputs; recursive and stale
+bindings refuse the proof. Physical machine-state captures still need separate
+evidence; the public bounded-chain tests do not close those original gaps.
 Only unread private bytes can lose their stores; negative offsets, implicit
 register inputs and source call home areas retain observations. SSA version
-zero alone is not an incoming register. Nested callees, incoming pointer stack
-parameters and opaque external effects remain unsupported by this proof. The
-ntos `StDmpSinglePageAdd` gap therefore still requires broader authenticated
+zero alone is not an incoming register. Recursive or indirect callees, incoming
+pointer stack parameters and opaque external effects remain unsupported by this
+proof. GS/EH observers retain the physical frame; ordinary unwind metadata
+without such an observer is admitted. The ntos `StDmpSinglePageAdd` gap
+therefore still requires broader authenticated
 pointer effects and per-slot incoming argument reads; a leaf fixture is not
 evidence that this original function is fixed.
 Complete mapped data-object reads no longer block a proved full overwrite of

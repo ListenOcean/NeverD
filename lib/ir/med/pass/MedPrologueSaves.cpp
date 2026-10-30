@@ -26,6 +26,7 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/STLExtras.h"
 #include "llvm/Support/MathExtras.h"
+#include "llvm/Support/SaveAndRestore.h"
 
 #include <algorithm>
 #include <map>
@@ -139,7 +140,8 @@ public:
       ReadSites[Call].emplace_back(-Func.FrameSize, End);
       LocatedCalls.insert(Call);
     }
-    return through(Func, roots(Func, TRI.StackPointer, std::nullopt), true);
+    return through(Func, roots(Func, TRI.StackPointer, std::nullopt), true,
+                   true);
   }
 
   /// The complete frame-use proof above supplies every possible reader. A
@@ -242,51 +244,95 @@ private:
   BinaryFormat Format;
   const std::map<va_t, const MedFunc *> &Callees;
   size_t Budget = limits::ir::kSourceFrameBorrowWork;
+  unsigned CallDepth = 0;
   std::set<const MedOp *> EmptyPrefixCalls;
   std::set<const MedOp *> LocatedCalls;
   Ranges ImplicitFrameReads;
   std::map<const MedOp *, Ranges> ReadSites;
   std::map<std::pair<va_t, uint64_t>, std::optional<Ranges>> Known;
 
+  struct FunctionUses {
+    std::map<ValueKey, std::vector<Use>> Uses;
+    std::map<std::pair<int, int>, MedCallInfo> NativeCalls;
+    Ranges StackReads;
+    bool Ready = false;
+  };
+  std::map<va_t, FunctionUses> IndexedUses;
+  std::map<va_t, std::vector<MedVar>> IncomingRoots;
+
   std::vector<MedVar> roots(const MedFunc &Func, uint64_t Register,
-                            std::optional<unsigned> Parameter) const {
-    std::map<ValueKey, MedVar> Values;
-    std::set<ValueKey> Defined;
-    for (const MedBlock &Block : Func.Blocks) {
-      for (const PhiNode &Phi : Block.Phis)
-        Defined.insert(keyOf(Phi.Output));
-      for (const MedOp &Op : Block.Ops)
-        if (Op.Output.Size && !Op.Output.isConst())
-          Defined.insert(keyOf(Op.Output));
+                            std::optional<unsigned> Parameter) {
+    if (Func.Blocks.empty())
+      return {};
+    auto [Cached, New] = IncomingRoots.try_emplace(Func.Entry);
+    if (New) {
+      std::map<ValueKey, MedVar> Values;
+      std::set<ValueKey> Defined, EntrySeeds;
+      for (const MedOp &Op : Func.Blocks.front().Ops) {
+        if (!Budget)
+          return {};
+        --Budget;
+        if (Op.Opcode != NdOp::COPY)
+          break;
+        if (Op.Output.Kind == MedVar::Reg && Op.NumInputs == 1 &&
+            Op.Inputs[0].Kind == MedVar::Reg &&
+            Op.Inputs[0].Id == Op.Output.Id &&
+            Op.Inputs[0].RegOff == Op.Output.RegOff &&
+            Op.Inputs[0].SSAVer == 0) {
+          EntrySeeds.insert(keyOf(Op.Output));
+          EntrySeeds.insert(keyOf(Op.Inputs[0]));
+        }
+      }
+      for (const MedBlock &Block : Func.Blocks) {
+        for (const PhiNode &Phi : Block.Phis) {
+          if (!Budget)
+            return {};
+          --Budget;
+          Defined.insert(keyOf(Phi.Output));
+        }
+        for (const MedOp &Op : Block.Ops) {
+          if (!Budget)
+            return {};
+          --Budget;
+          if (Op.Output.Size && !Op.Output.isConst())
+            Defined.insert(keyOf(Op.Output));
+        }
+      }
+      const auto Note = [&](const MedVar &V) {
+        if (!Budget)
+          return;
+        --Budget;
+        // A first definition can have version zero. Only an unbound value
+        // or an entry seed carries the incoming register.
+        if ((!Defined.count(keyOf(V)) || EntrySeeds.count(keyOf(V))) &&
+            ((V.Kind == MedVar::Reg && V.SSAVer == 0) ||
+             V.Kind == MedVar::Param))
+          Values.emplace(keyOf(V), V);
+      };
+      for (const MedBlock &Block : Func.Blocks) {
+        for (const PhiNode &Phi : Block.Phis)
+          for (const auto &[Pred, Value] : Phi.Args)
+            Note(Value);
+        for (const MedOp &Op : Block.Ops)
+          for (unsigned I = 0; I < Op.NumInputs; ++I)
+            Note(Op.Inputs[I]);
+      }
+      for (const MedCallInfo &Call : Func.CallInfos)
+        for (const MedVar &Arg : Call.Args)
+          Note(Arg);
+      for (const auto &[Key, Value] : Values)
+        Cached->second.push_back(Value);
     }
-    auto Note = [&](const MedVar &V) {
-      // SSA version zero can be the first definition, such as the result of
-      // a leaf's load into EAX. Only an unbound value or the entry-seed copy
-      // denotes an incoming register; returning the load is not a capture of
-      // the register's previous contents.
-      if (Defined.count(keyOf(V)) &&
-          !(V.Kind == MedVar::Reg && isEntryLiveInValue(Func, V, V.RegOff)))
-        return;
-      if ((Register != kNoParamReg && V.Kind == MedVar::Reg &&
-           V.RegOff / TRI.PointerSize == Register / TRI.PointerSize &&
-           V.SSAVer == 0) ||
-          (Parameter && V.Kind == MedVar::Param && V.Id == *Parameter))
-        Values.emplace(keyOf(V), V);
-    };
-    for (const MedBlock &Block : Func.Blocks) {
-      for (const PhiNode &Phi : Block.Phis)
-        for (const auto &[Pred, Value] : Phi.Args)
-          Note(Value);
-      for (const MedOp &Op : Block.Ops)
-        for (unsigned I = 0; I < Op.NumInputs; ++I)
-          Note(Op.Inputs[I]);
-    }
-    for (const MedCallInfo &Call : Func.CallInfos)
-      for (const MedVar &Arg : Call.Args)
-        Note(Arg);
     std::vector<MedVar> Result;
-    for (const auto &[Key, Value] : Values)
-      Result.push_back(Value);
+    for (const auto &Value : Cached->second) {
+      if (!Budget)
+        return {};
+      --Budget;
+      if ((Register != kNoParamReg && Value.Kind == MedVar::Reg &&
+           Value.RegOff / TRI.PointerSize == Register / TRI.PointerSize) ||
+          (Parameter && Value.Kind == MedVar::Param && Value.Id == *Parameter))
+        Result.push_back(Value);
+    }
     return Result;
   }
 
@@ -317,132 +363,218 @@ private:
     const auto Key = std::pair{Func.Entry, Register};
     if (const auto It = Known.find(Key); It != Known.end())
       return It->second;
+    if (CallDepth >= limits::ir::kSourceFrameBorrowCallDepth)
+      return std::nullopt;
+    llvm::SaveAndRestore<unsigned> Depth(CallDepth, CallDepth + 1);
     const int Index = TRI.integerArgumentLayout(Format).registerIndex(Register);
     auto Result = through(
         Func,
         roots(Func, Register,
               Index < 0 ? std::nullopt : std::optional<unsigned>(Index)),
-        false);
+        false, Register == TRI.StackPointer);
     Known.emplace(Key, Result);
     return Result;
   }
 
-  std::optional<Ranges>
-  through(const MedFunc &Func, const std::vector<MedVar> &Roots, bool IsFrame) {
-    if (Func.SkippedSSA || Func.AnalystStackFrame || Func.Blocks.empty() ||
+  std::optional<Ranges> through(const MedFunc &Func,
+                                const std::vector<MedVar> &Roots, bool IsFrame,
+                                bool IsStack = false) {
+    if (!Budget || Func.SkippedSSA || Func.AnalystStackFrame ||
+        Func.Blocks.empty() || Func.SourceParametersBound || Func.IsVariadic ||
+        Func.CC != CallingConv::Win64 || !Func.FPParamScalarBytes.empty() ||
+        !Func.IntegerArgumentRegisters.empty() ||
         Func.EntryKind != StackEntryKind::Call ||
+        (Func.ExceptionMetadata &&
+         (Func.ExceptionMetadata->Personality != ExceptionPersonality::None ||
+          Func.ExceptionMetadata->ParseStatus !=
+              ExceptionParseStatus::Complete)) ||
         llvm::any_of(Func.ModuleAnalysisRoots,
                      [&](va_t Root) { return Root != Func.Entry; }))
       return std::nullopt;
-    std::map<ValueKey, std::vector<Use>> Uses;
-    std::vector<const MedOp *> OpaquePrefixCalls;
-    std::map<std::pair<int, int>, const MedCallInfo *> Calls;
-    for (const MedCallInfo &Call : Func.CallInfos)
-      Calls.emplace(std::pair{Call.BlockId, Call.OpIdx}, &Call);
-    for (const MedBlock &Block : Func.Blocks) {
-      if (!Block.ExceptionalSuccs.empty())
-        return std::nullopt;
-      for (const PhiNode &Phi : Block.Phis) {
-        if (Phi.ExceptionalEntry)
-          return std::nullopt;
-        for (const auto &[Pred, Value] : Phi.Args)
-          Uses[keyOf(Value)].push_back({nullptr, &Phi});
-      }
-      for (size_t I = 0; I < Block.Ops.size(); ++I) {
+    auto [Indexed, New] = IndexedUses.try_emplace(Func.Entry);
+    auto &Graph = Indexed->second;
+    if (!New && !Graph.Ready)
+      return std::nullopt;
+    auto &Uses = Graph.Uses;
+    if (New) {
+      // Index each immutable body once, independently of the queried register.
+      // A recursive call reaches an unfinished index and supplies no fact.
+      std::vector<const MedOp *> OpaquePrefixCalls;
+      std::map<std::pair<int, int>, const MedCallInfo *> Calls;
+      for (const MedCallInfo &Call : Func.CallInfos) {
         if (!Budget)
           return std::nullopt;
         --Budget;
-        const MedOp &Op = Block.Ops[I];
-        if (Op.Dead)
-          continue;
-        const auto Call = Calls.find({Block.Id, static_cast<int>(I)});
-        if (Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL) {
-          // Initially admit scalar-register leaf borrows. Inferred source
-          // arity alone cannot prove that a nested call ignores stale machine
-          // registers, nor that incoming stack storage is noncapturing.
-          if (!IsFrame || !LocatedCalls.count(&Op) || Call == Calls.end() ||
-              Op.SourceCallHint || Op.CalleeStackArgs != 0 ||
-              Op.CalleeVectorArgs > 0 || Op.CalleeVectorSlots ||
-              Op.CalleeRegisterArgs < 0 ||
-              Call->second->Args.size() != size_t(Op.CalleeRegisterArgs))
+        if (!Calls.emplace(std::pair{Call.BlockId, Call.OpIdx}, &Call).second)
+          return std::nullopt;
+      }
+      std::vector<std::pair<const MedOp *, const MedCallInfo *>> Invocations;
+      std::set<const MedOp *> LocalCalls;
+      if (IsFrame) {
+        LocalCalls = LocatedCalls;
+        Graph.StackReads = ImplicitFrameReads;
+      } else {
+        const auto StackPointers =
+            sourceCallStackPointers(Func, Arch::X64, Budget);
+        std::vector<MedVar> Values;
+        for (const auto &[Call, Stack] : StackPointers)
+          Values.push_back(Stack);
+        const auto Offsets =
+            entryStackOffsets(Func, Values, Arch::X64, Format, Func.EntryKind);
+        size_t I = 0;
+        for (const auto &[Call, Stack] : StackPointers) {
+          const auto Offset = Offsets[I++];
+          int64_t End;
+          if (!Offset || *Offset > 0 ||
+              llvm::AddOverflow(*Offset,
+                                TRI.integerArgumentLayout(Format).CallStackBase,
+                                End))
             return std::nullopt;
-          const auto Callee = Callees.find(Call->second->TargetAddr);
-          if (Call->second->IsIndirect || Callee == Callees.end()) {
-            if (!EmptyPrefixCalls.count(&Op) || Op.CalleeRegisterArgs != 0)
+          LocalCalls.insert(Call);
+          Graph.StackReads.emplace_back(-Func.FrameSize, End);
+        }
+      }
+      for (const MedBlock &Block : Func.Blocks) {
+        if (!Block.ExceptionalPreds.empty() || !Block.ExceptionalSuccs.empty())
+          return std::nullopt;
+        for (const PhiNode &Phi : Block.Phis) {
+          if (!Budget || Phi.ExceptionalEntry)
+            return std::nullopt;
+          --Budget;
+          for (const auto &[Pred, Value] : Phi.Args) {
+            if (!Budget)
               return std::nullopt;
-            OpaquePrefixCalls.push_back(&Op);
-          } else {
-            const auto &Body = *Callee->second;
-            const auto Registers = TRI.integerArgumentLayout(Format).Registers;
-            if (Body.SourceParametersBound || Body.IsVariadic ||
-                Body.CC != CallingConv::Win64 ||
-                Call->second->ArgumentsInCalleeRegisterOrder ||
-                Call->second->Args.size() > Registers.size())
+            --Budget;
+            Uses[keyOf(Value)].push_back({nullptr, &Phi});
+          }
+        }
+        for (size_t I = 0; I < Block.Ops.size(); ++I) {
+          if (!Budget)
+            return std::nullopt;
+          --Budget;
+          const MedOp &Op = Block.Ops[I];
+          if (Op.Dead)
+            continue;
+          const auto Position = std::pair{Block.Id, static_cast<int>(I)};
+          auto At = Calls.find(Position);
+          const MedCallInfo *Call = At == Calls.end() ? nullptr : At->second;
+          const bool IsCall =
+              Op.Opcode == NdOp::CALL || Op.Opcode == NdOp::INDIR_CALL;
+          if (Call && !IsCall)
+            return std::nullopt;
+          if (IsCall) {
+            if (!LocalCalls.count(&Op) || Op.SourceCallHint ||
+                Op.CalleeStackArgs != 0 || Op.CalleeVectorArgs != 0 ||
+                Op.CalleeVectorSlots || Op.CalleeRegisterArgs < 0 ||
+                size_t(Op.CalleeRegisterArgs) >
+                    TRI.integerArgumentLayout(Format).Registers.size() ||
+                Op.IsTailCall || Op.DoesNotReturn)
               return std::nullopt;
-            // A zero argument count does not rule out an alias manufactured
-            // from the callee's entry SP, or a read above its home area.
-            const auto StackReads = inputRegister(Body, TRI.StackPointer);
-            const int64_t Incoming =
-                TRI.integerArgumentLayout(Format).EntryStackBase;
-            if (!StackReads ||
-                llvm::any_of(*StackReads, [&](const Range &Read) {
-                  return Read.second > Incoming;
-                }))
+            // Omitted memo bodies precede source call recovery. Their bound
+            // native scalar operands are already complete for this restricted
+            // zero-stack convention; never infer arguments from stale GPRs.
+            if (!Call && !IsFrame && Func.CallInfos.empty() &&
+                Op.Opcode == NdOp::CALL && Op.NumInputs &&
+                Op.Inputs[0].isConst() &&
+                Op.NumInputs == unsigned(Op.CalleeRegisterArgs) + 1) {
+              auto &Native = Graph.NativeCalls[Position];
+              Native.BlockId = Block.Id;
+              Native.OpIdx = static_cast<int>(I);
+              Native.TargetAddr = Op.Inputs[0].ConstVal;
+              Native.Args.assign(Op.Inputs.begin() + 1,
+                                 Op.Inputs.begin() + Op.NumInputs);
+              Call = &Native;
+            }
+            if (!Call || Call->SourceCallHint ||
+                Call->ArgumentsInCalleeRegisterOrder ||
+                Call->Args.size() != size_t(Op.CalleeRegisterArgs) ||
+                !Op.NumInputs ||
+                (Op.Opcode == NdOp::CALL &&
+                 (Call->IsIndirect || !Op.Inputs[0].isConst() ||
+                  Call->TargetAddr != Op.Inputs[0].ConstVal)))
               return std::nullopt;
-            // Check every implicit GPR input against the body, including
-            // results and nonvolatile families. A declaration or a truncated
-            // C argument list cannot hide a pointer observation there.
-            for (unsigned Family = 0; Family < kX64VectorFamilyBase; ++Family) {
-              const uint64_t Register = Family * TRI.PointerSize;
-              const int Index =
-                  TRI.integerArgumentLayout(Format).registerIndex(Register);
-              if (Register == TRI.StackPointer ||
-                  (Index >= 0 && size_t(Index) < Call->second->Args.size()))
-                continue;
-              const auto Implicit = inputRegister(Body, Register);
-              if (!Implicit || !Implicit->empty())
+            Invocations.emplace_back(&Op, Call);
+          }
+          if (!IsFrame)
+            for (unsigned K = 0; K < Op.NumInputs; ++K) {
+              const MedVar &Input = Op.Inputs[K];
+              if (Input.Kind == MedVar::Reg && Input.SSAVer == 0 &&
+                  !TRI.isGeneralReg(Input.RegOff) &&
+                  !TRI.isFlag(Input.RegOff, Input.Size))
                 return std::nullopt;
             }
-          }
-        }
-        if (!IsFrame)
           for (unsigned K = 0; K < Op.NumInputs; ++K) {
-            const MedVar &Input = Op.Inputs[K];
-            if (Input.Kind == MedVar::Reg && Input.SSAVer == 0 &&
-                !TRI.isGeneralReg(Input.RegOff) &&
-                !TRI.isFlag(Input.RegOff, Input.Size))
+            if (!Budget)
               return std::nullopt;
+            --Budget;
+            if (K && Call && K <= Call->Args.size() &&
+                Op.Inputs[K] == Call->Args[K - 1])
+              continue;
+            Uses[keyOf(Op.Inputs[K])].push_back({&Op, nullptr, nullptr, K});
           }
-        for (unsigned K = 0; K < Op.NumInputs; ++K) {
-          // CallInfos owns recovered arguments, including stack arguments.
-          // The operation's first input is still its potentially indirect
-          // target. An unbound operation keeps all of its explicit uses.
-          if (K && Call != Calls.end() && K <= Call->second->Args.size() &&
-              Op.Inputs[K] == Call->second->Args[K - 1])
-            continue;
-          Uses[keyOf(Op.Inputs[K])].push_back({&Op, nullptr, nullptr, K});
+          if (Call)
+            for (unsigned K = 0; K < Call->Args.size(); ++K) {
+              if (!Budget)
+                return std::nullopt;
+              --Budget;
+              Uses[keyOf(Call->Args[K])].push_back({&Op, nullptr, Call, K});
+            }
         }
-        if (Call != Calls.end())
-          for (unsigned K = 0; K < Call->second->Args.size(); ++K)
-            Uses[keyOf(Call->second->Args[K])].push_back(
-                {&Op, nullptr, Call->second, K});
       }
-    }
-    // A conditional physical-register preservation is not a simple SSA copy.
-    // Such a use needs the clobber owner's proof before a borrow can cross it.
-    for (const MedCallClobber &Clobber : Func.CallClobbers)
-      Uses[keyOf(Clobber.PreservedInput)].push_back({});
-    // A result from an opaque prefix call could itself supply a frame alias.
-    // Only an unobserved result can cross this limited prefix exception.
-    for (const MedOp *Call : OpaquePrefixCalls)
-      if (Call->Output.Size && !Uses[keyOf(Call->Output)].empty())
+      for (const MedCallClobber &Clobber : Func.CallClobbers) {
+        if (!Budget)
+          return std::nullopt;
+        --Budget;
+        Uses[keyOf(Clobber.PreservedInput)].push_back({});
+      }
+      if (Invocations.size() != LocalCalls.size() ||
+          (!Func.CallInfos.empty() &&
+           Invocations.size() != Func.CallInfos.size()))
         return std::nullopt;
+      for (const auto &[Op, Call] : Invocations) {
+        const auto Callee = Callees.find(Call->TargetAddr);
+        if (Op->Opcode == NdOp::INDIR_CALL || Call->IsIndirect ||
+            Callee == Callees.end()) {
+          if (!IsFrame || !EmptyPrefixCalls.count(Op) ||
+              Op->CalleeRegisterArgs != 0)
+            return std::nullopt;
+          OpaquePrefixCalls.push_back(Op);
+          continue;
+        }
+        const auto &Body = *Callee->second;
+        const auto Layout = TRI.integerArgumentLayout(Format);
+        if (Body.Entry != Call->TargetAddr ||
+            Body.Params.size() > Layout.Registers.size())
+          return std::nullopt;
+        const auto StackReads = inputRegister(Body, TRI.StackPointer);
+        if (!StackReads || llvm::any_of(*StackReads, [&](const Range &Read) {
+              return Read.second > Layout.EntryStackBase;
+            }))
+          return std::nullopt;
+        // Every implicit family must ignore a possible borrowed pointer.
+        // An inferred argument count or a may-write mask cannot prove that.
+        for (unsigned Family = 0; Family < kX64VectorFamilyBase; ++Family) {
+          const uint64_t Register = Family * TRI.PointerSize;
+          const int Index = Layout.registerIndex(Register);
+          if (Register == TRI.StackPointer ||
+              (Index >= 0 && size_t(Index) < Call->Args.size()))
+            continue;
+          const auto Implicit = inputRegister(Body, Register);
+          if (!Implicit || !Implicit->empty())
+            return std::nullopt;
+        }
+      }
+      for (const MedOp *Call : OpaquePrefixCalls)
+        if (Call->Output.Size && !Uses[keyOf(Call->Output)].empty())
+          return std::nullopt;
+      Graph.Ready = true;
+    }
 
     std::vector<std::pair<MedVar, int64_t>> Work;
     for (const MedVar &Root : Roots)
       Work.emplace_back(Root, 0);
     std::map<ValueKey, int64_t> Seen;
-    Ranges Reads = IsFrame ? ImplicitFrameReads : Ranges{};
+    Ranges Reads = IsStack ? Graph.StackReads : Ranges{};
     while (!Work.empty()) {
       const auto [Value, Offset] = Work.back();
       Work.pop_back();
