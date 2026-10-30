@@ -9409,6 +9409,15 @@ MOV CR2 changes that cell. Original bytes and operand detail authenticate all
 Earlier profiles never acquire the new cell. This grants no CR3, paging or
 fault-delivery model.
 
+The continuation MSR owner binds V5/V6 STAR reads and writes to the same field
+used by SYSRET. ECX selects the register and EDX:EAX transport its value;
+source state accesses cannot fall through to native speculation writes.
+STAR's upper selector half has no address-canonicality condition. Its portable
+write domain requires a zero reserved low half, checked before effects.
+MSR block reservation includes every selector/value guard and native/state
+branch before retaining block pointers. Earlier layouts and unrelated native
+MSR permissions remain unchanged.
+
 `KernelReturnNoFaultV5` adds a separate 2,368-byte layout with STAR and
 visible/hidden CS and SS state. It requires CPL0 64-bit code, EFER.SCE and an
 explicit active paging width (48 or 57), with CET/FRED and asynchronous events

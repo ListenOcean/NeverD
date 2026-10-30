@@ -113,6 +113,21 @@ a particular CPU's high-half results are witnesses, not a preservation guarantee
 Successful execution requires SYSCALL/SYSRET enabled and the profile's existing
 CET/FRED-disabled environment. Ordinary source and proof admission stay closed.
 
+V5/V6 also bind `RDMSR` and `WRMSR` selector `0xc0000081` to that same live
+`STAR` field. A write followed by a read or SYSRET observes the new selectors;
+the executing host's STAR is unchanged. The low 32 bits of RCX select the MSR,
+and only EDX:EAX supply its write value. Reads zero-extend EAX and EDX.
+Writes require zero in STAR's low 32-bit reserved field. Nonzero values return
+status 5 with unchanged state and budget; this restriction does not assert
+that every processor faults on them. The upper selector fields are not
+canonical addresses. These fields follow
+[Intel SDM Volume 3, Figure 6-14](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf).
+
+This STAR binding needs no additional request option because V5/V6 already
+declare it as live return state. Earlier profiles retain their previous MSR
+boundaries. Segment-base and native speculation MSRs still require their own
+options below; an unbound runtime selector returns status 5 before effects.
+
 RETFQ reads RIP/CS alone for a same-privilege return and retains SS. For a
 return to an outer privilege level, its unsigned imm16 skips parameter bytes
 before saved RSP/SS and also adjusts the restored RSP. The transition preserves

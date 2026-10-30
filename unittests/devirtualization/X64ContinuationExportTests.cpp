@@ -395,7 +395,7 @@ TEST_F(X64ContinuationExportTest, DriverRetainsPhysicalCallsPivotsAndReentry) {
         0xe8, 0x06, 0x00, 0x00, 0x00,         // call 1010
         0x48, 0x8b, 0x44, 0x24, 0x08,         // mov rax,[rsp+8]
         0xc3, 0x48, 0x8b, 0x22, 0xc3,         // ret; mov rsp,[rdx]; ret
-        0xff, 0xe0, 0x0f, 0x32, 0xeb, 0xfe}); // jmp rax; rdmsr; jmp self
+        0xff, 0xe0, 0x0f, 0x33, 0xeb, 0xfe}); // jmp rax; rdpmc; jmp self
   const auto Request = request(
       R"("instructions":[4096,4101,4106,4111,4112,4115,4116,4118,4120])");
   for (bool LLVM : {false, true}) {
@@ -431,6 +431,44 @@ int main(void) {
     s=seed();s.RFlags|=1u<<17;s.GPR[4]=(uintptr_t)&a[4];saved=s;
     CHECK(neverd_x64_continue_v6(&s,&budget)==5 && budget==5 && !memcmp(&s,&saved,sizeof(s)));
     return 0;
+}
+)C");
+  }
+}
+
+TEST_F(X64ContinuationExportTest, StarMsrDriverRetainsStateAndRefusalBudget) {
+  load({0x0f, 0x30, 0x0f, 0x32, 0x48, 0x0f, 0x07});
+  for (bool LLVM : {false, true}) {
+    auto [Source, Manifest] =
+        source(request(R"("instructions":[4096,4098,4100])"), LLVM);
+    auto Parsed = llvm::json::parse(Manifest);
+    ASSERT_TRUE(bool(Parsed));
+    EXPECT_EQ(Parsed->getAsObject()->getInteger("native_requests"), 0);
+    execute(Source, std::string(Seed) + R"C(
+int main(void) {
+  neverd_x64_state_v6 s=seed(),want;
+  s.GPR[1]=0x12345678c0000081ULL;s.GPR[0]=0xaabbccdd00000000ULL;
+  s.GPR[2]=0x8765432100330020ULL;
+  want=s;want.STAR=0x0033002000000000ULL;want.PC=0x1002;
+  uint64_t budget=1;
+  CHECK(neverd_x64_continue_v6(&s,&budget)==9 && budget==0);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  want=s;want.GPR[0]=0;want.GPR[2]=0x00330020;want.PC=0x1004;budget=1;
+  CHECK(neverd_x64_continue_v6(&s,&budget)==9 && budget==0);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  s.GPR[1]=0x12345678;s.GPR[11]=0x246;
+  want=s;want.PC=0x12345678;want.RFlags=0x246;
+  want.CS=(neverd_x64_segment){0,0xffffffff,0x43,0xa0fb};
+  want.SS=(neverd_x64_segment){0,0xffffffff,0x3b,0xc0f3};budget=3;
+  CHECK(neverd_x64_continue_v6(&s,&budget)==6 && budget==2);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  s=seed();s.GPR[1]=0xc0000081;s.GPR[0]=1;want=s;budget=4;
+  CHECK(neverd_x64_continue_v6(&s,&budget)==5 && budget==4);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  s.PC=0x1002;s.GPR[1]=0xc0000082;want=s;
+  CHECK(neverd_x64_continue_v6(&s,&budget)==5 && budget==4);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  return 0;
 }
 )C");
   }
