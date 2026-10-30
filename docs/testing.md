@@ -3419,6 +3419,24 @@ prebuilt-LLVM guidance.
 
 ## Structural binary comparison
 
+`BinaryDiffArgumentAccess.*` in `NeverDBinaryDiffTests` checks recovered argument
+roles across frame layouts, swapped output slots, duplicate arguments, reads and
+writes, exact-width modular offsets, COPY/PHI RETURN operand paths, node reordering,
+unknown inputs, separate pointer loads, call clobbers, address spaces, literal
+provenance, affine cycles and work/record/cancellation stops. The original graph
+and effect gaps must remain unchanged. These are address observations, not
+interprocedural memory equivalence.
+`BinaryDiffSDK.ArgumentAccessPagesPreserveNativeRolesGapsAndRestore` loads an
+owned x64 fixture with a local initialized before a call and reloaded afterward;
+pages retain both access origins, reuse the function index and survive restore.
+`AArch64ArgumentAccessesUseRecoveredValuesAndNativeWidths` checks incoming pointer
+uses and keeps a RETURN control target distinct from the ABI result.
+The Qt `argumentAccessReviewNavigatesNativeReadsAndClearsOldEvidence` case checks
+LTR/RTL argument numbering, keyboard navigation, tracing, side changes and
+recomparison. Run both GUI scales used for comparison acceptance when changing
+this view. The existing dataflow CLI/Python/worker paths exercise the same query
+kind; no frontend owns a separate address inference.
+
 Native identity controls cover function pointers, operand order/multiplicity,
 reused call bytes after reordering, raw-file slices and filtered target lists.
 Conditional external transfers are checked in both directions on x64 and

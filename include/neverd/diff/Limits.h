@@ -159,6 +159,10 @@ inline constexpr char kLLVMInvariantBoundProgressSSAProfile[] =
     "llvm-progress-ssa-v7";
 inline constexpr uint32_t kDefaultFlowMaxNodes = 65536;
 inline constexpr uint32_t kMaxFlowNodes = 1u << 20;
+// Address observations may join several argument positions to the same access.
+// Bound retained relationships separately from graph nodes.
+inline constexpr uint32_t kDefaultFlowAccessRecords = 65536;
+inline constexpr uint32_t kMaxFlowAccessRecords = 1u << 20;
 inline constexpr uint32_t kDefaultFlowMaxBlocks = 1024;
 inline constexpr uint32_t kMaxFlowBlocks = 4096;
 inline constexpr uint64_t kDefaultFlowMaxWork = 1u << 24;
