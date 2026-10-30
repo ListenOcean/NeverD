@@ -2910,7 +2910,9 @@ int main(void) {
 }
 
 TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
-  for (unsigned Flow : {0u, 1u, 2u}) {
+  for (unsigned Flow : {0u, 1u, 2u, 3u, 4u, 5u}) {
+    const unsigned Shape = Flow % 3;
+    const bool Alias = Flow >= 3;
     SCOPED_TRACE(Flow);
     constexpr va_t Wrapper = Text + 0x80;
     std::vector<uint8_t> Code(0xC0, 0xCC);
@@ -2927,14 +2929,32 @@ TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
                                  0x48, 0x83, 0xEC, 0x20, // sub rsp,20h
                                  0x48, 0x8B, 0x5C, 0x24,
                                  0x58}; // mov rbx,[rsp+58h] (argument 5)
-    if (Flow == 1) {
+    if (Alias) {
+      Body = {0x53, 0x48, 0x83, 0xEC, 0x20, // push rbx; sub rsp,20h
+              0x49, 0x89, 0xE3,             // mov r11,rsp
+              0x49, 0x8B, 0x5B, 0x58};      // mov rbx,[r11+58h]
+    }
+    if (Alias && Shape == 1) {
+      Body.insert(Body.end(), {0xF6, 0xC1, 0x01,         // test cl,1
+                               0x74, 0x06,               // jz subtract
+                               0x49, 0x03, 0x5B, 0x60,   // add rbx,[r11+60h]
+                               0xEB, 0x04,               // jmp join
+                               0x49, 0x2B, 0x5B, 0x60}); // sub rbx,[r11+60h]
+    } else if (Alias && Shape == 2) {
+      Body.insert(Body.end(), {0x41, 0xBA, 0x03, 0x00, 0x00, 0x00, // mov r10d,3
+                               0x49, 0x03, 0x5B, 0x60, // add rbx,[r11+60h]
+                               0x41, 0xFF, 0xCA,       // dec r10d
+                               0x75, 0xF7});           // jnz add
+    } else if (Alias) {
+      Body.insert(Body.end(), {0x49, 0x03, 0x5B, 0x60});
+    } else if (Shape == 1) {
       Body.insert(Body.end(),
                   {0xF6, 0xC1, 0x01,               // test cl,1
                    0x74, 0x07,                     // jz subtract
                    0x48, 0x03, 0x5C, 0x24, 0x60,   // add rbx,[rsp+60h]
                    0xEB, 0x05,                     // jmp join
                    0x48, 0x2B, 0x5C, 0x24, 0x60}); // sub rbx,[rsp+60h]
-    } else if (Flow == 2) {
+    } else if (Shape == 2) {
       Body.insert(Body.end(),
                   {0x41, 0xBA, 0x03, 0x00, 0x00, 0x00, // mov r10d,3
                    0x48, 0x03, 0x5C, 0x24, 0x60,       // add rbx,[rsp+60h]
@@ -2943,6 +2963,10 @@ TEST(CallExitRegisters, UnusedIncomingStackSlotsDoNotRequireValues) {
     } else {
       Body.insert(Body.end(), {0x48, 0x03, 0x5C, 0x24, 0x60});
     }
+    // Kill the complete physical alias before the opaque import. The lifted
+    // 32-bit definition includes its explicit zero-extension to all 64 bits.
+    if (Alias)
+      Body.insert(Body.end(), {0x45, 0x31, 0xDB}); // xor r11d,r11d
     const auto Random = throughSlot(Wrapper + Body.size(), Iat);
     Body.insert(Body.end(), Random.begin(), Random.end());
     Body.insert(Body.end(), {0x48, 0x01, 0xD8, // add rax,rbx
@@ -3034,7 +3058,7 @@ int main(void) {
           for (llvm::StringRef Level : {"-O0", "-O2"})
             source_call_execution_test::compileAndRun(
                 Source + Providers + "\n#define FLOW_KIND " +
-                    std::to_string(Flow) + "\n" + NativeOracle + Oracle,
+                    std::to_string(Shape) + "\n" + NativeOracle + Oracle,
                 {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
         }
   }

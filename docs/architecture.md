@@ -391,12 +391,17 @@ edges must agree; unreachable or exceptional blocks supply no evidence.
 Stack coordinates must agree at joins. Frame-derived flag taint is unioned and
 propagated again when another predecessor adds an observation; stable loops
 reach the same bounded fixed point. Every original load supplies its complete
-interval, including loads removed by source conversion. Only exact SP-relative
-accesses and currently bound ordinary calls with fixed native stack bounds are
-admitted.
+interval, including loads removed by source conversion. Exact SP-relative
+accesses may use physical GPR aliases with constant affine offsets. A join
+retains a coordinate only when every predecessor agrees, and unions byte taint;
+partial register definitions cannot authenticate an old whole pointer. Calls
+need fixed native stack bounds and a current, occurrence-bound native unread
+receipt for each live alias. A may-clobber mask or CALL result does not prove
+pointer destruction; a clobber loses the coordinate but retains possible taint.
 The callee's home and argument area remains an implicit read range; missing
-source operands alone prove nothing. Frame addresses cannot escape through
-other registers, stored values or lossy arithmetic. Source preparation shares
+source operands alone prove nothing. Every alias must be explicitly destroyed
+before return. Stored frame values, lossy pointer arithmetic and unknown
+observers still reject the proof. Source preparation shares
 these facts with both emitters and SDK replay without compacting native slots.
 Original stack facts are computed once per prepared body, independently of the
 register-summary dependency waves. Temporary address intervals retain subrange

@@ -2101,17 +2101,22 @@ std::set<unsigned> unobservedSourceStackParameters(
       return {};
     Successors[Index].assign(Actual.begin(), Actual.end());
   }
-  // A wrapper may retain instruction-local address temporaries, but no frame
-  // address may enter another physical register or stored value. Keep taint
-  // after lossy arithmetic as well as exact affine coordinates.
+  // Track exact frame coordinates in physical GPRs as well as instruction
+  // temporaries. Byte taint survives partial definitions and disagreeing joins;
+  // neither a lost coordinate nor an unread source value proves nonescape.
   struct FrameValue {
     std::optional<int64_t> Offset;
     uint16_t Bytes = 0;
     bool Derived = false;
   };
+  struct FrameAlias {
+    std::optional<int64_t> Offset;
+    uint16_t TaintedBytes = 0;
+  };
   struct FrameState {
     int64_t Stack = 0;
     std::set<uint64_t> Flags;
+    std::map<uint64_t, FrameAlias> Registers;
   };
   std::vector<std::optional<FrameState>> Entries(OriginalBlocks.size());
   Entries[0] = FrameState{};
@@ -2123,11 +2128,14 @@ std::set<unsigned> unobservedSourceStackParameters(
     const size_t Index = Work.back();
     Work.pop_back();
     const auto &Block = OriginalBlocks[Index];
-    if (1 + Entries[Index]->Flags.size() > Budget)
+    const size_t StateCost =
+        1 + Entries[Index]->Flags.size() + Entries[Index]->Registers.size();
+    if (StateCost > Budget)
       return {};
-    Budget -= 1 + Entries[Index]->Flags.size();
+    Budget -= StateCost;
     int64_t Stack = Entries[Index]->Stack;
     auto FrameFlags = Entries[Index]->Flags;
+    auto Registers = Entries[Index]->Registers;
     std::map<uint64_t, FrameValue> Temps;
     va_t Instruction = InvalidVA;
     // Keep nonoverlapping temporary intervals. A subrange read still carries
@@ -2148,6 +2156,23 @@ std::set<unsigned> unobservedSourceStackParameters(
                 V.Size, true};
       if (V.isReg() && FrameFlags.count(V.Offset))
         return {std::nullopt, V.Size, true};
+      if (V.isReg())
+        if (const auto Family = gprFamilyOf(Arch::X64, V.Offset)) {
+          const uint64_t Base = *Family * TRI.PointerSize;
+          const unsigned Byte = V.Offset - Base;
+          if (!V.Size || V.Size > TRI.PointerSize - Byte) {
+            Bounded = false;
+            return {};
+          }
+          if (Base == TRI.StackPointer)
+            return {std::nullopt, V.Size, true};
+          if (const auto At = Registers.find(Base); At != Registers.end()) {
+            const uint16_t Mask = ((uint16_t{1} << V.Size) - 1) << Byte;
+            return {V.Size == TRI.PointerSize ? At->second.Offset
+                                              : std::nullopt,
+                    V.Size, bool(At->second.TaintedBytes & Mask)};
+          }
+        }
       FrameValue Value;
       if (V.isTemp())
         for (auto At = FirstOverlap(V);
@@ -2204,12 +2229,34 @@ std::set<unsigned> unobservedSourceStackParameters(
             MatchedCalls.emplace(Occurrence{Op.Addr, Op.Seq}, &Op);
         if (!New && Matched->second != &Op)
           return {};
-        // A call may overwrite flags, but does not prove destruction of an old
-        // frame-derived value. Retain that taint until an original definition.
+        // Authenticate every implicit register observer at this exact call.
+        // A may-write summary or the CALL result operand cannot erase an old
+        // pointer on a preserving path. Clobbers lose their coordinate but
+        // retain possible taint until an original full definition.
+        const auto Unread = Func.CallUnreadRegisters.find(Call.CallSiteId);
+        for (auto &[Register, Alias] : Registers) {
+          if (!Budget)
+            return {};
+          --Budget;
+          if (TRI.isReturnReg(Register) || TRI.isReturnControlReg(Register) ||
+              llvm::is_contained(TRI.IntReturnRegs, Register) ||
+              !Call.CallSiteId || Unread == Func.CallUnreadRegisters.end() ||
+              Unread->second.Instruction != Op.Addr ||
+              Unread->second.OriginSeq != Op.Seq ||
+              Unread->second.Target != Op.Inputs[0].Offset ||
+              !callPreservesRegisterBytes(Arch::X64, Unread->second.Families,
+                                          Register, TRI.PointerSize))
+            return {};
+          if (!callPreservesRegisterBytes(Arch::X64, Call.CallPreservedGPRs,
+                                          Register, TRI.PointerSize))
+            Alias.Offset.reset();
+        }
+        // Calls do not prove destruction of frame-derived flags either.
         continue;
       }
       if (Op.Opcode == NdOp::RETURN) {
-        if (&Op != &Block.Ops.back() || Stack || Op.NumInputs != 1 ||
+        if (&Op != &Block.Ops.back() || Stack || !Registers.empty() ||
+            Op.NumInputs != 1 ||
             Op.Inputs[0] != NdVar::reg(TRI.IntReturnReg, TRI.PointerSize))
           return {};
         continue;
@@ -2261,6 +2308,24 @@ std::set<unsigned> unobservedSourceStackParameters(
             FrameFlags.insert(Op.Output.Offset);
           else
             FrameFlags.erase(Op.Output.Offset);
+        } else if (const auto Family =
+                       gprFamilyOf(Arch::X64, Op.Output.Offset)) {
+          const uint64_t Base = *Family * TRI.PointerSize;
+          const unsigned Byte = Op.Output.Offset - Base;
+          if (Base == TRI.StackPointer || !Op.Output.Size ||
+              Op.Output.Size > TRI.PointerSize - Byte ||
+              (Value.Derived &&
+               (Op.Output.Size != TRI.PointerSize || !Value.Offset)))
+            return {};
+          const uint16_t Mask = ((uint16_t{1} << Op.Output.Size) - 1) << Byte;
+          auto &Alias = Registers[Base];
+          Alias.TaintedBytes &= ~Mask;
+          if (Value.Derived)
+            Alias.TaintedBytes |= Mask;
+          Alias.Offset =
+              Op.Output.Size == TRI.PointerSize ? Value.Offset : std::nullopt;
+          if (!Alias.TaintedBytes)
+            Registers.erase(Base);
         } else if (Value.Derived) {
           return {};
         }
@@ -2284,16 +2349,18 @@ std::set<unsigned> unobservedSourceStackParameters(
         return {};
       }
     }
-    // Offsets must agree at joins. Flag taint is a may-fact: retain it if
-    // any predecessor carries it, and revisit users when the union grows.
-    // Stable loops terminate without assuming that a backedge is unread.
+    // SP coordinates must agree. GPR coordinates survive only identical
+    // incoming facts; byte/flag taint is a union. Revisit a join when either
+    // its taint grows or its exact coordinate is lost, including loop edges.
     for (size_t Next : Successors[Index]) {
-      if (1 + FrameFlags.size() > Budget)
+      const size_t Cost = 1 + FrameFlags.size() + Registers.size() +
+                          (Entries[Next] ? Entries[Next]->Registers.size() : 0);
+      if (Cost > Budget)
         return {};
-      Budget -= 1 + FrameFlags.size();
+      Budget -= Cost;
       auto &Entry = Entries[Next];
       if (!Entry) {
-        Entry = FrameState{Stack, FrameFlags};
+        Entry = FrameState{Stack, FrameFlags, Registers};
         Work.push_back(Next);
         continue;
       }
@@ -2302,6 +2369,20 @@ std::set<unsigned> unobservedSourceStackParameters(
       bool Changed = false;
       for (uint64_t Flag : FrameFlags)
         Changed |= Entry->Flags.insert(Flag).second;
+      for (auto &[Register, Alias] : Entry->Registers) {
+        const auto At = Registers.find(Register);
+        if (Alias.Offset &&
+            (At == Registers.end() || Alias.Offset != At->second.Offset)) {
+          Alias.Offset.reset();
+          Changed = true;
+        }
+      }
+      for (const auto &[Register, Alias] : Registers) {
+        auto &Joined = Entry->Registers[Register];
+        const uint16_t Combined = Joined.TaintedBytes | Alias.TaintedBytes;
+        Changed |= Combined != Joined.TaintedBytes;
+        Joined.TaintedBytes = Combined;
+      }
       if (Changed)
         Work.push_back(Next);
     }
