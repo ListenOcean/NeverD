@@ -154,6 +154,8 @@ updates and never write the executing host's system-call MSRs. The rules
 follow [Intel SDM Volume 4, Table 2-2](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf).
 
 Canonical `SYSENTER` (`0F 34`) accepts a valid CPL0–3 64-bit source context.
+Nonconforming CS requires DPL equal to CPL; conforming CS permits DPL below
+or equal to CPL. CPL still comes from the live CS selector's RPL.
 It installs the live entry PC and SP, CPL0 flat CS/SS caches, clears IF, and
 preserves the other admitted flags and registers. It returns status 10 before
 the handler executes, including when the handler is selected in the manifest.

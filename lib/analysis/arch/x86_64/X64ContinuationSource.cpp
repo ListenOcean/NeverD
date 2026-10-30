@@ -1197,24 +1197,34 @@ buildInstruction(SpecializationInstruction Instruction,
     const NdVar RPL = Guard.temporary(2), SegmentBits = Guard.temporary(2);
     const NdVar CPLBad = Guard.temporary(1), ModeBad = Guard.temporary(1);
     const NdVar SegmentBad = Guard.temporary(1), AllBad = Guard.temporary(1);
+    const NdVar Attributes =
+        Guard.load(offsetof(StateV5, CS) + offsetof(Segment, Attributes), 2);
     Guard.emit(
         NdOp::INT_AND, RPL,
         {Guard.load(offsetof(StateV5, CS) + offsetof(Segment, Selector), 2),
          constant(3, 2)});
-    Guard.emit(NdOp::INT_NOTEQUAL, CPLBad,
-               {Sysenter ? constant(0, 2) : RPL, constant(0, 2)});
-    Guard.emit(
-        NdOp::INT_AND, SegmentBits,
-        {Guard.load(offsetof(StateV5, CS) + offsetof(Segment, Attributes), 2),
-         constant(0x60f8, 2)});
-    NdVar Expected = constant(0x2098, 2);
     if (Sysenter) {
-      const NdVar DPL = Guard.temporary(2);
-      Expected = Guard.temporary(2);
-      Guard.emit(NdOp::INT_LEFT, DPL, {RPL, constant(5, 2)});
-      Guard.emit(NdOp::INT_OR, Expected, {DPL, constant(0x2098, 2)});
+      // Conforming code retains the caller's CPL even when CS.DPL is lower.
+      const NdVar Shifted = Guard.temporary(2), DPL = Guard.temporary(2);
+      const NdVar ConformingBits = Guard.temporary(2);
+      const NdVar Nonconforming = Guard.temporary(1),
+                  Above = Guard.temporary(1);
+      const NdVar Different = Guard.temporary(1), WrongDPL = Guard.temporary(1);
+      Guard.emit(NdOp::INT_RIGHT, Shifted, {Attributes, constant(5, 2)});
+      Guard.emit(NdOp::INT_AND, DPL, {Shifted, constant(3, 2)});
+      Guard.emit(NdOp::INT_AND, ConformingBits, {Attributes, constant(4, 2)});
+      Guard.emit(NdOp::INT_EQUAL, Nonconforming,
+                 {ConformingBits, constant(0, 2)});
+      Guard.emit(NdOp::INT_LESS, Above, {RPL, DPL});
+      Guard.emit(NdOp::INT_NOTEQUAL, Different, {RPL, DPL});
+      Guard.emit(NdOp::BOOL_AND, WrongDPL, {Nonconforming, Different});
+      Guard.emit(NdOp::BOOL_OR, CPLBad, {Above, WrongDPL});
+    } else {
+      Guard.emit(NdOp::INT_NOTEQUAL, CPLBad, {RPL, constant(0, 2)});
     }
-    Guard.emit(NdOp::INT_NOTEQUAL, ModeBad, {SegmentBits, Expected});
+    Guard.emit(NdOp::INT_AND, SegmentBits,
+               {Attributes, constant(Sysenter ? 0x6098 : 0x60f8, 2)});
+    Guard.emit(NdOp::INT_NOTEQUAL, ModeBad, {SegmentBits, constant(0x2098, 2)});
     Guard.emit(NdOp::BOOL_OR, SegmentBad, {CPLBad, ModeBad});
     Guard.emit(NdOp::BOOL_OR, AllBad, {Bad, SegmentBad});
     Bad = AllBad;

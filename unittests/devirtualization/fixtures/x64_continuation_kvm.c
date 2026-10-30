@@ -276,15 +276,38 @@ static int event_query(int cpu, struct kvm_run *run, uint8_t *memory,
 // independent vCPU executes SYSENTER/SYSEXIT. No expected segment/flag values
 // are synthesized here. All MSRs, RAM and the available XSAVE image are checked
 // independently for preservation across the transfer.
-static int fast_system_query(int cpu, struct kvm_run *run, uint8_t *memory,
-                             size_t memory_size,
+static int fast_system_query(int vm, int cpu, struct kvm_run *run,
+                             uint8_t *memory, size_t memory_size,
                              const struct kvm_sregs *initial,
                              fast_system_state_t *q, unsigned kind) {
-  // KVM materializes its initial PKRU XSAVE component on the first VM entry.
-  // Prime this single oracle vCPU before taking any instruction-state snapshot;
-  // otherwise the init-state encoding changes despite identical PKRU data.
+  // Initial x87/SSE in-use bits can change without changing register values.
+  // Seed noninitial payloads and their XSAVE validity bits together; SET_FPU
+  // alone does not establish those bits. Prime PKRU before the first snapshot.
   static int primed;
   if (!primed) {
+    const int capacity = ioctl(vm, KVM_CHECK_EXTENSION, KVM_CAP_XSAVE2);
+    REQUIRE(capacity >= 0);
+    const size_t xsave_size =
+        capacity ? (size_t)capacity : sizeof(struct kvm_xsave);
+    // SET_XSAVE reads the capability-reported size, including any large state.
+    struct kvm_xsave *seed = calloc(1, xsave_size);
+    REQUIRE(seed);
+    REQUIRE(ioctl(cpu,
+                  xsave_size > sizeof(*seed) ? KVM_GET_XSAVE2 : KVM_GET_XSAVE,
+                  seed) == 0);
+    uint8_t *bytes = (uint8_t *)seed;
+    bytes[0] = 0x7f;
+    bytes[1] = 2;    // Noninitial x87 precision control: FCW=0x027f.
+    bytes[4] = 0xff; // All eight x87 registers contain normal 1.0 values.
+    for (unsigned i = 0; i < 8; ++i) {
+      bytes[32 + i * 16 + 7] = 0x80;
+      bytes[32 + i * 16 + 8] = 0xff;
+      bytes[32 + i * 16 + 9] = 0x3f;
+    }
+    memset(bytes + 160, 0xa5, 256); // Sixteen noninitial XMM registers.
+    bytes[512] |= 3;                // XSTATE_BV: x87 and SSE are present.
+    REQUIRE(ioctl(cpu, KVM_SET_XSAVE, seed) == 0);
+    free(seed);
     struct kvm_regs r = {.rip = 0x1010, .rflags = 2};
     struct kvm_guest_debug d = {.control = KVM_GUESTDBG_ENABLE |
                                            KVM_GUESTDBG_USE_HW_BP};
@@ -323,6 +346,11 @@ static int fast_system_query(int cpu, struct kvm_run *run, uint8_t *memory,
   controls.efer |= 1;
   struct kvm_xsave before_xsave = {0}, after_xsave = {0};
   REQUIRE(ioctl(cpu, KVM_GET_XSAVE, &before_xsave) == 0);
+  const uint8_t *seeded = (const uint8_t *)&before_xsave;
+  REQUIRE(seeded[0] == 0x7f && seeded[1] == 2 && seeded[4] == 0xff &&
+          (seeded[512] & 3) == 3);
+  for (unsigned i = 160; i < 416; ++i)
+    REQUIRE(seeded[i] == 0xa5);
   uint8_t *saved = malloc(memory_size);
   REQUIRE(saved);
   // Install the exact oracle instruction and breakpoint bytes before the
@@ -482,7 +510,7 @@ int main(int argc, char **argv) {
     } else if (kind >= 9) {
       fast_system_state_t query;
       memcpy(&query, memory + registers.rdi, sizeof(query));
-      REQUIRE(fast_system_query(oracle, oracle_run, memory, memory_size,
+      REQUIRE(fast_system_query(vm, oracle, oracle_run, memory, memory_size,
                                 &special, &query, kind) == 0);
       memcpy(memory + registers.rdi, &query, sizeof(query));
     } else {

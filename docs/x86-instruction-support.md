@@ -3114,3 +3114,32 @@ is excluded. CET, faults, asynchronous events/unwinding, other processors and
 successful FRED/UIRET transitions remain unqualified. NeverD decoding and
 lifting admission are unchanged by this compiler-interface work. The global
 goal, SDK release and production pin update remain incomplete.
+
+## Explicit Intel fast-system continuation
+
+The separate [V7 continuation profile](x64-continuation-source.md#intel-fast-system-calls-v7)
+now owns canonical SYSENTER and both SYSEXIT widths through the shared
+`X64ContinuationSystemTransfers` owner. Its state appends live SYSENTER
+CS/ESP/EIP MSRs to the unchanged V6 layout. MSR reads, writes and transfers
+use the same cells; invalid selectors, noncanonical addresses and unsupported
+source contexts refuse before state or RAM changes. SYSENTER admits CPL0–3
+long-mode code, including conforming segments with DPL below CPL. Both exits
+require CPL0; 32-bit SYSEXIT retains the eight architectural arbitrary high
+halves through the existing compatibility-return owner. Every transfer stops
+before the destination executes, including destinations selected for export.
+
+The portable matrix compares 317,784 complete states at O0/O2 through HighC
+and LLVMC with sanitizers. The independent Intel KVM matrix compares 22,400
+native contexts and 72 live MSR readbacks. It observes all mapped RAM and the
+available 4096-byte XSAVE image, with explicitly initialized x87/XMM payloads;
+larger XSAVE2/AMX and arbitrary full-vector hardware state are not qualified.
+The public SDK and CLI export checks cover both C routes, layout, state,
+manifest identity and exact instruction budgets. Their generated C also
+executes through NeverC and NeverC IR lowered by the LLVM fork at O0/O2.
+
+SYSENTER's strict lift now records an opaque terminal instruction; the V7
+owner supplies its explicit semantics. This does not establish an ordinary
+source ABI or a complete native rewritten-register context. Earlier profiles,
+compatibility entry, legacy modes, faults, CET/FRED, asynchronous events and
+SMM restoration retain their existing boundaries. The LLVM release and pins
+remain deferred until the other instruction contracts are complete.

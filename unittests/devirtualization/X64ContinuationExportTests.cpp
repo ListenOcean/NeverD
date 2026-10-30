@@ -253,6 +253,8 @@ int main(void) {
   CHECK(neverd_x64_continue_v7(&s,&budget)==9&&budget==0&&!memcmp(&s,&want,sizeof(s)));
   want=s;want.GPR[2]=0;want.PC=0x1004;budget=1;
   CHECK(neverd_x64_continue_v7(&s,&budget)==9&&budget==0&&!memcmp(&s,&want,sizeof(s)));
+  s.CS=(neverd_x64_segment){0,UINT32_MAX,11,0xa09f};
+  s.SS=(neverd_x64_segment){0,UINT32_MAX,19,0xc0f3};
   want=s;want.PC=0x1006;want.GPR[4]=s.SysenterESP;want.RFlags&=~0x200ULL;
   want.CS=(neverd_x64_segment){0,UINT32_MAX,0xfff8,0xa09b};
   want.SS=(neverd_x64_segment){0,UINT32_MAX,0,0xc093};budget=4;

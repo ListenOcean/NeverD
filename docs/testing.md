@@ -9293,6 +9293,23 @@ unchanged, and compares the resulting SYSRET context with a separate native
 CPU. The public export driver checks exact budget consumption and unchanged
 state on invalid STAR writes and unbound reads. Both C routes run at O0/O2;
 portable execution uses sanitizers. No private snapshot is needed.
+The Intel V7 fast-system cases check live SYSENTER CS/ESP/EIP MSRs, canonical
+processor and paging widths, all CPL/DPL/conforming-code combinations, selector
+wraparound, complete target caches and unchanged state/RAM on refusal. The
+portable matrix compares 317,784 states across both C routes at O0/O2 under
+ASan/UBSan. The independent original-instruction KVM matrix compares 22,400
+SYSENTER/SYSEXIT contexts and 72 MSR readbacks. It observes GPRs, flags, PC,
+segments, control/event state, all mapped RAM and the available 4096-byte
+`KVM_GET_XSAVE` image. The fixture initializes nondefault x87/XMM payloads and
+their validity bits with `KVM_SET_XSAVE`, using the capability-reported buffer
+size, and primes the oracle before its first snapshot. This avoids initial-state
+encoding changes in the x87/SSE/PKRU bitmap; it retains every compared XSAVE byte.
+This is not arbitrary full-vector or large XSAVE2/AMX qualification. The public
+V7 export test checks unchanged V6
+layout, live MSR composition, conforming CPL3 entry, both exit modes, exact
+budget consumption and refusal/reentry through SDK and CLI. Intel SEP and KVM
+absence remain explicit skips, not passing native execution.
+
 The native speculation and descriptor fixtures compile both source routes at
 O0/O2 into freestanding guests and execute them at CPL0 using Linux x64 KVM.
 They check real SPEC_CTRL readback, PRED_CMD writes, repeated writes, native

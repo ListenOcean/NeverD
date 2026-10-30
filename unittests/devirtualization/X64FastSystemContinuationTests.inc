@@ -83,6 +83,18 @@ int main(void) {
         CHECK(neverd_step_v7_1000(ARG(&s))==(good?(KIND==0?10:6):5));
         CHECK(!memcmp(&s,&want,sizeof(s))&&!memcmp(memory,saved,sizeof(memory)));
       }
+  for(unsigned cpl=0;cpl<4;++cpl)for(unsigned dpl=0;dpl<4;++dpl)
+    for(unsigned conforming=0;conforming<2;++conforming) {
+      fast_system_state_t s=fast_seed((uintptr_t)memory),want;
+      s.core.cs.selector=8|cpl;s.core.cs.attributes=0xa09b|(dpl<<5)|(conforming<<2);
+      s.core.ss.selector=16|cpl;s.core.ss.attributes=0xc093|(cpl<<5);
+      s.core.gpr[1]=0x10000;s.core.gpr[2]=0x1800;
+      want=s;memcpy(saved,memory,sizeof(memory));
+      unsigned good=KIND==0?(conforming?dpl<=cpl:dpl==cpl):(cpl==0&&dpl==0);
+      if(good)fast_expect(&want,KIND);
+      CHECK(neverd_step_v7_1000(ARG(&s))==(good?(KIND==0?10:6):5));
+      CHECK(!memcmp(&s,&want,sizeof(s))&&!memcmp(memory,saved,sizeof(memory)));
+    }
   for(unsigned bad=0;bad<9;++bad) {
     fast_system_state_t s=fast_seed((uintptr_t)memory);s.core.gpr[1]=0x9000;s.core.gpr[2]=0x1800;
     if(bad==0)s.sysenter_cs|=1ULL<<32;
@@ -251,12 +263,14 @@ int main(void) {
   unsigned char *memory=(unsigned char *)0x8000;
   for(unsigned sel=0;sel<7;++sel)for(unsigned flag=0;flag<5;++flag)
     for(unsigned stack=0;stack<5;++stack)for(unsigned nmi=0;nmi<2;++nmi)
-      for(unsigned cpl=0;cpl<(KIND==0?4:1);++cpl) {
+      for(unsigned context=0;context<(KIND==0?32:1);++context) {
+        unsigned cpl=context&3,dpl=(context>>2)&3,conforming=context>>4;
+        if(conforming?dpl>cpl:dpl!=cpl)continue;
         fast_system_state_t s=fast_seed((uintptr_t)memory),q,want;
         s.sysenter_cs=selectors[sel];s.sysenter_esp=stacks[stack];
         s.core.flags=flags[flag];s.core.nmi_blocked=nmi;
         s.core.gpr[1]=stacks[stack];s.core.gpr[2]=KIND==1?0x1234567800001800ULL:0x1800;
-        s.core.cs.selector=8|cpl;s.core.cs.attributes=0xa09b|(cpl<<5);
+        s.core.cs.selector=8|cpl;s.core.cs.attributes=0xa09b|(dpl<<5)|(conforming<<2);
         s.core.ss.selector=16|cpl;s.core.ss.attributes=0xc093|(cpl<<5);
         s.core.ds=s.core.es=s.core.ss;
         s.core.fs=(event_metadata_t){UINT32_MAX,(uint16_t)(16|cpl),(uint16_t)(0xc093|(cpl<<5))};
