@@ -90,6 +90,14 @@ This component is a tested foundation, not yet a lifting/emission contract:
 strict MPX admission remains closed until original-transfer effects and
 memory completion are connected throughout the pipeline.
 
+The LLVM/NeverC native MPX APIs independently retain the ambient bounds bank.
+Their operands use allocated legacy-encodable carriers, preserving reserved
+realignment and PIC bases. BNDMOV stack addresses use an unmodified frame
+pointer plus a computed index, including 67H encodings whose MPX arithmetic
+remains 64-bit. `llvm/IR/X86MpxState.h` owns these address controls for both
+frontend admission and backend lowering. This compiler contract does not
+authorize a NeverD placeholder MPX intrinsic or infer original branch effects.
+
 `lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
 The full and lightweight decoder adapters share it, including native-width
 addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
@@ -15120,3 +15128,23 @@ The shared OR builder can discard an XOR operand when the accumulated constant c
 ## Image storage reached through advancing cursors
 
 HighC follows pointer-width assignments, copies and addition/subtraction from ordinary memory operands to image-address constants. Loop backedges retain the complete object supplied by the existing symbol/section owner and its alignment residue. This function-local storage dependency walk does not substitute pointer values, prove dereference validity or follow loaded pointers and narrowing conversions. Direct bounded indexed accesses keep their existing extent proof.
+
+## Native x64 dispatch frame source
+
+`loader/X86/X64DispatchFrame.h` recognizes the complete fixed instruction
+sequence of a PE physical service bridge, including its two checked relative
+code targets. Relocated, truncated and near-matching sequences provide no
+identity. Both C routes render the same native frame construction and selector
+transfer in a naked Win64 function. A known service's existing Windows ABI
+record owns its parameter widths and arity, including arguments beyond the
+four-register bank. LLVM declarations settle that interface before callers are
+emitted, so an internal dispatcher's inferred arity cannot trim stack operands.
+
+The source explicitly requires CPL0 and original-environment native linkage and
+dispatch symbols. Those symbols are native boundaries, not generated ordinary
+C providers. The projection does not implement services, promise exception
+unwinding or admit a native image rewrite. Explicit source signatures remain
+separate. LLVM C checks that the retained inline assembly and original image
+still match before printing the bridge; body fragments require a complete
+native function. Unknown ordinary calls and physical interrupt/system entry
+return proofs retain their existing admission rules.

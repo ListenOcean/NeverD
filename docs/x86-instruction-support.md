@@ -517,6 +517,18 @@ NeverC's `development.md`. QEMU 10.2.2's explicit limitation mode skips 180/520
 instruction cases and one of six branch-state cases; skipped behavior and
 physical MPX hardware execution are not qualified as passing.
 
+Native compiler MPX operands now use allocated legacy registers rather than
+fixed BX/SI copies, preserving realigned dynamic-stack and PIC bases. The three
+BNDMOV memory APIs additionally accept stack-default provenance in both
+long-mode encoding widths; MPX still consumes full 64-bit addresses with 67H.
+The frontend and backend share the control validator. MIB table operations
+and effective-address APIs retain their separate contracts. The
+[frame/address evidence](evidence/x86-mpx-native-frames-2026-10-30.json) records
+26,256 controlled encoding/operand/ABI checks, native processor-model tests
+with explicit skips, and the original stack corruption reproduction. This
+closes compiler transport gaps; the strict NeverD lifting boundary above
+remains unchanged.
+
 The shared `X86MpxContext` foundation now models enable evidence, all four
 bounds registers with known-bit masks, lower/complemented-upper/raw-upper
 checks, completed loads, store values, BDE/BTE addresses, pointer-match

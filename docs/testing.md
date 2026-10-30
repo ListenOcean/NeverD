@@ -1336,6 +1336,16 @@ ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
 The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
 rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
 
+The native compiler MPX frame qualification is recorded in
+[the frame/address evidence](evidence/x86-mpx-native-frames-2026-10-30.json).
+NeverC's encoding verifier composes `--frame` (aligned locals plus a dynamic
+allocation) with `--stack-memory` (BNDMOV stack-default controls), over three
+object formats and both optimization levels. It executes surrounding code,
+checks input addresses, canaries and saved registers, and compares instruction
+bytes through both assembly dialects. The processor-model test accepts the
+same flags; skipped QEMU behaviors remain separate from successful execution.
+These compiler tests do not open NeverD's strict MPX admission boundary.
+
 `NeverDX86MpxContextTests` checks the shared state foundation independently of
 host MPX availability: 324 enable-evidence combinations, 864 unsigned bounds
 comparisons, all 4,352 single-bit MAWA/CPL address cases, nonzero directory
@@ -17503,3 +17513,22 @@ connects that result to the copied memory.
 <!-- i18n-section: mutable-alignment-guards -->
 
 The `MedMutableSource.AlignmentChecks*` cases execute aligned and inactive-guard inputs through both C routes at O0/O2, require active misaligned inputs to trap, and reject malformed widths, alignments, outputs and address spaces.
+
+## Native x64 dispatch frame bridges
+
+`NeverDX64DispatchFrameSourceTests` checks the exact PE byte sequence, 32-bit
+selectors and signed segment immediates, executable targets, changed opcodes, truncated code,
+overlapping fixups, foreign formats and invalid assembler names. Both HighC and
+LLVMC preserve the native frame as a naked Win64 bridge. A synthetic ordinary
+caller exercises the documented six-argument service interface through the
+whole pipeline, including stack arguments and a signed 32-bit result.
+
+On Linux x64, the existing KVM runner executes original instruction bytes and
+recompiled C at CPL0, with pipeline optimization on/off and Clang O0/O2. It
+compares every GPR, RFLAGS and all 4096 stack bytes for 64 flag patterns. The
+native dispatcher fixture captures the transfer interface and independently
+checks the frame contents; it does not implement an operating-system service.
+Changed LLVM bodies and image metadata must refuse the native projection.
+Pair this target with the Windows call-contract, source-entry, C pointer,
+internal-call and pipeline-outcome suites. Other hosts compile the native
+source but do not qualify privileged execution.

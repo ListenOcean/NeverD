@@ -14,6 +14,7 @@
 
 #include "../CDeferredValue.h"
 #include "../VariadicImportStub.h"
+#include "../X86/X64DispatchFrame.h"
 #include "../X86/X86GetPcThunk.h"
 #include "../render/X86/X86NativeFeatures.h"
 #include "LLVMCStackAllocation.h"
@@ -9590,6 +9591,42 @@ dropUnreferencedFallthroughEHLabels(std::string Text,
 } // namespace
 
 void LLVMCWriter::writeFunction(llvm::Function &Fn) {
+  if (Fn.hasFnAttribute("neverd.x64_dispatch_frame")) {
+    if (!EmitFunctionWrapper || Opts.TheArch != Arch::X64)
+      throw std::invalid_argument(
+          "physical dispatch bridges require a complete x64 function");
+    const auto Assembly =
+        Fn.getFnAttribute("neverd.x64_dispatch_frame").getValueAsString();
+    std::string LLVMAssembly;
+    for (char C : Assembly) {
+      LLVMAssembly += C;
+      if (C == '$')
+        LLVMAssembly += C;
+    }
+    const auto *Call = Fn.size() == 1 && Fn.front().size() == 2
+                           ? llvm::dyn_cast<llvm::CallInst>(&Fn.front().front())
+                           : nullptr;
+    const auto *Native =
+        Call ? llvm::dyn_cast<llvm::InlineAsm>(Call->getCalledOperand())
+             : nullptr;
+    if (!Fn.hasFnAttribute(llvm::Attribute::Naked) ||
+        Fn.getCallingConv() != llvm::CallingConv::Win64 || !Native ||
+        !Call->arg_empty() || !Call->getType()->isVoidTy() ||
+        !Native->hasSideEffects() || Native->getAsmString() != LLVMAssembly ||
+        Native->getConstraintString() != "~{memory}" ||
+        !llvm::isa<llvm::UnreachableInst>(Fn.front().back()))
+      throw std::invalid_argument("physical dispatch bridge body was changed");
+    if (Img) {
+      auto Address = rewrite_source::getOriginalVA(Fn);
+      if (!Address)
+        throw std::invalid_argument(llvm::toString(Address.takeError()));
+      const auto Frame =
+          *Address ? x64DispatchFrame(*Img, **Address) : std::nullopt;
+      if (!Frame || x64DispatchFrameAssembly(*Frame) != Assembly)
+        throw std::invalid_argument(
+            "physical dispatch bridge image was changed");
+    }
+  }
   if (Fn.hasFnAttribute("neverd.x86_get_pc_thunk") && EmitFunctionWrapper) {
     unsigned Reg = 0;
     if (Fn.getFnAttribute("neverd.x86_get_pc_thunk")
@@ -10113,6 +10150,13 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
   };
 
   if (EmitFunctionWrapper) {
+    if (Fn.hasFnAttribute("neverd.x64_dispatch_frame")) {
+      InferredVoid = false;
+      std::string Preamble;
+      llvm::raw_string_ostream Stream(Preamble);
+      c_stub::writeDispatchFramePreamble(Stream);
+      OS << Preamble;
+    }
     auto *FuncTy = Fn.getFunctionType();
     std::string RetStr =
         InferredVoid ? "void" : typeToCLLVM(FuncTy->getReturnType());
@@ -10128,6 +10172,16 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
     }
     if (ProgramMain && !InferredVoid)
       RetStr = typeToC(DebugFn->ReturnType);
+    // The original dispatcher supplies a bridge's return value. Its source
+    // scalar declaration may be narrower than that internal target's inferred
+    // machine word; the known source ABI owns the result width and signedness.
+    if (Fn.hasFnAttribute("neverd.x64_dispatch_frame") && DebugFn &&
+        !Opts.PreserveLLVMFunctionTypes)
+      if (const auto Return = cDisplayType(DebugFn->ReturnType);
+          Return && Return->Kind == NdTypeKind::Int &&
+          (Return->Size == 1 || Return->Size == 2 || Return->Size == 4 ||
+           Return->Size == 8))
+        RetStr = typeToC(NdType::makeInt(Return->Size, Return->IsSigned));
     std::string Signature;
     llvm::raw_string_ostream SignatureOS(Signature);
     SignatureOS << RetStr << " " << FName << "(";
@@ -10160,7 +10214,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       SignatureOS << "...";
     }
     SignatureOS << ")";
-    DefinitionDeclarations[&Fn] = Signature;
+    DefinitionDeclarations[&Fn] =
+        (Fn.hasFnAttribute("neverd.x64_dispatch_frame")
+             ? "__attribute__((ms_abi)) "
+             : "") +
+        Signature;
     if (const auto Protection = getLLVMAArch64ReturnProtection(Fn)) {
       if (Opts.TheArch != Arch::AArch64)
         throw std::invalid_argument(kReturnProtectionCRequiresAArch64);
@@ -10168,6 +10226,19 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
                           aarch64ReturnProtectionCTarget(*Protection));
     }
     OS << Signature << " {\n";
+    if (Fn.hasFnAttribute("neverd.x64_dispatch_frame")) {
+      std::string Body;
+      llvm::raw_string_ostream Stream(Body);
+      c_stub::writeDispatchFrameBody(
+          Stream,
+          Fn.getFnAttribute("neverd.x64_dispatch_frame").getValueAsString());
+      OS << Body;
+      BufOS.flush();
+      Guard.Armed = false;
+      OS.retarget(Guard.Primary);
+      OS << Buffered;
+      return;
+    }
   } else {
     unsigned ParamIdx = 0;
     for (auto &Arg : Fn.args()) {
