@@ -331,6 +331,10 @@ checks representative functions across x86/x64/ARM64; the source-call probe
 checks ETW callbacks, paths and strings through both C routes. Callback
 conversion now shares the declaration's portable spelling and preserves
 borrowed record identities without reconstructing recursive layouts.
+Nested x86 callbacks with explicit MSVC convention keywords still fall back
+to the machine-type declarator. Calling convention and record tags survive;
+exact nested source qualifiers need a portable convention spelling before
+that path can claim source-type identity with the original header.
 Name-only Windows `swprintf`/`vswprintf` forwarding remains unavailable because
 legacy/kernel and ISO declarations differ; selected prototypes retain their
 own signatures.
