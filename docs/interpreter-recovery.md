@@ -643,3 +643,11 @@ An ordinary `LOAD` with an exhaustively proved finite set of entry-frame offsets
 ## Runtime validity across graph boundaries
 
 With control-state discovery enabled, a nonconstant runtime validity predicate can request the producer bits lost at a graph boundary. Recovery then retries under the existing shared budgets and must prove validity for every reachable incoming state. This preserves established alignment and masked control-register values across nodes and loops; it does not assume that rejected states are impossible or remove the original runtime operation.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Ordered CPU queries in C++ source recovery
+
+`wrapInterpreterMachineQueryStateX64()` is an opt-in C++ source interface. Its 160-byte state keeps the original 136-byte machine prefix, then three 64-bit fields: query-array address, count and cursor. Each 24-byte record contains six 32-bit words: leaf, subleaf, EAX, EBX, ECX and EDX. Canonical CPUID instructions consume one matching record in order and zero-extend all four results; repeated selectors may have different answers. No host CPU instruction provides answers.
+
+Exhaustion returns status 3 and selector mismatch returns 4. Both stop before that query, commit the current machine state, retain earlier guest memory effects and leave the cursor unchanged. Entry-alignment rejection still returns 2 without writes. The caller must provide an accessible, immutable, nonwrapping array disjoint from state and guest memory; zero count permits a null address. Existing machine-state and flag-profile contracts still apply. This interface adds no CLI, C SDK, GUI, native-equivalence or hardware-serialization support. Existing wrappers still refuse CPU queries, and other unsupported intrinsics and raw environments remain rejected.

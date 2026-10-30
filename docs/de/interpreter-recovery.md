@@ -408,3 +408,11 @@ Ein gewöhnliches `LOAD` mit vollständig bewiesener endlicher Menge von Offsets
 ## Laufzeitgültigkeit über Graphgrenzen
 
 Bei aktivierter Kontrollzustandserkennung kann ein nichtkonstantes Gültigkeitsprädikat die an einer Graphgrenze verlorenen Erzeugerbits anfordern. Die Wiederherstellung versucht es innerhalb der bestehenden gemeinsamen Budgets erneut und muss die Gültigkeit für jeden erreichbaren Eingangszustand beweisen. So bleiben festgestellte Ausrichtung und maskierte Kontrollregisterwerte über Knoten und Schleifen erhalten. Abgelehnte Zustände werden weder als unmöglich angenommen noch wird die ursprüngliche Laufzeitoperation entfernt.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Geordnete CPU-Abfragen bei der C++-Quelltexterzeugung
+
+`wrapInterpreterMachineQueryStateX64()` ist eine optionale C++-Schnittstelle. Der 160-Byte-Zustand behält das bisherige 136-Byte-Maschinenpräfix und ergänzt drei 64-Bit-Felder: Arrayadresse, Anzahl und Cursor. Jeder 24-Byte-Eintrag enthält sechs 32-Bit-Wörter: leaf, subleaf, EAX, EBX, ECX und EDX. Kanonische CPUID-Befehle verbrauchen nacheinander einen passenden Eintrag und erweitern alle vier Ergebnisse mit Nullen. Gleiche Selektoren dürfen unterschiedliche Antworten haben. Kein Host-CPU-Befehl liefert die Antworten.
+
+Erschöpfung liefert Status 3, ein Selektorkonflikt Status 4. Beide stoppen vor dieser Abfrage, speichern den aktuellen Maschinenzustand, erhalten frühere Gastspeichereffekte und lassen den Cursor unverändert. Eine abgelehnte Eingangsausrichtung liefert weiterhin 2 ohne Schreibzugriffe. Das Array muss zugänglich, unveränderlich, ohne Adressüberlauf und von Zustand sowie Gastspeicher getrennt sein; Anzahl null erlaubt eine Nulladresse. Bestehende Maschinenzustands- und Flagverträge gelten weiter. CLI, C-SDK, GUI, native Äquivalenzbeweise und Hardwareserialisierung werden nicht erweitert. Bisherige Wrapper lehnen CPU-Abfragen weiterhin ab; andere nicht unterstützte Intrinsics und rohe Umgebungen bleiben abgelehnt.

@@ -402,3 +402,11 @@ Un normale `LOAD` con un insieme finito di offset dal frame d’ingresso dimostr
 ## Validità a runtime attraverso i confini del grafo
 
 Con la scoperta dello stato di controllo abilitata, un predicato non costante di validità a runtime può richiedere i bit del produttore persi al confine del grafo. Il recupero riprova entro i budget condivisi esistenti e deve dimostrare la validità di ogni stato in ingresso raggiungibile. Questo conserva l’allineamento stabilito e i valori mascherati dei registri di controllo tra nodi e cicli, senza supporre impossibili gli stati rifiutati né rimuovere l’operazione originale.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Query CPU ordinate nel recupero del sorgente C++
+
+`wrapInterpreterMachineQueryStateX64()` è un’interfaccia C++ facoltativa. Lo stato di 160 byte conserva il prefisso macchina di 136 byte e aggiunge tre campi a 64 bit: indirizzo dell’array, conteggio e cursore. Ogni record di 24 byte contiene sei parole a 32 bit: leaf, subleaf, EAX, EBX, ECX ed EDX. Ogni CPUID canonico consuma in ordine un record corrispondente ed estende con zeri i quattro risultati. Selettori uguali possono avere risposte diverse. Nessuna istruzione CPU dell’host fornisce le risposte.
+
+L’esaurimento restituisce stato 3, la mancata corrispondenza dei selettori stato 4. Entrambi arrestano l’esecuzione prima della query, salvano lo stato corrente, conservano gli effetti precedenti sulla memoria guest e lasciano invariato il cursore. Il rifiuto dell’allineamento d’ingresso restituisce ancora 2 senza scritture. L’array deve essere accessibile, immutabile, senza riavvolgimento degli indirizzi e separato dallo stato e dalla memoria guest; un conteggio zero ammette un indirizzo nullo. Restano validi i contratti esistenti di stato e flag. Non viene aggiunto supporto CLI, SDK C, GUI, equivalenza nativa o serializzazione hardware. I wrapper precedenti rifiutano ancora le query CPU, gli altri intrinseci non supportati e gli ambienti grezzi.

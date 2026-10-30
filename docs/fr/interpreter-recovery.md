@@ -406,3 +406,11 @@ Un `LOAD` ordinaire dont l’ensemble fini des décalages depuis la trame d’en
 ## Validité à l’exécution aux frontières du graphe
 
 Lorsque la découverte de l’état de contrôle est activée, un prédicat non constant de validité à l’exécution peut demander les bits du producteur perdus à une frontière du graphe. La récupération réessaie avec les budgets partagés existants et doit prouver la validité de chaque état entrant atteignable. Cela conserve l’alignement établi et les valeurs masquées des registres de contrôle entre nœuds et dans les boucles, sans supposer les états rejetés impossibles ni supprimer l’opération d’origine.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Requêtes CPU ordonnées dans la restitution de source C++
+
+`wrapInterpreterMachineQueryStateX64()` est une interface C++ facultative. Son état de 160 octets conserve le préfixe machine de 136 octets, suivi de trois champs de 64 bits : adresse du tableau, nombre et curseur. Chaque enregistrement de 24 octets contient six mots de 32 bits : leaf, subleaf, EAX, EBX, ECX et EDX. Une instruction CPUID canonique consomme un enregistrement correspondant dans l’ordre et étend les quatre résultats par des zéros. Des sélecteurs identiques peuvent recevoir des réponses différentes. Aucune instruction CPU hôte ne fournit les réponses.
+
+L’épuisement renvoie le statut 3, un sélecteur incompatible le statut 4. Les deux arrêtent l’exécution avant cette requête, enregistrent l’état machine courant, conservent les effets mémoire précédents et ne changent pas le curseur. Un alignement d’entrée refusé renvoie toujours 2 sans écriture. Le tableau doit être accessible, immuable, sans débordement d’adresse et distinct de l’état et de la mémoire invitée ; un nombre nul autorise une adresse nulle. Les contrats existants de machine et de drapeaux restent applicables. Aucun support CLI, SDK C, GUI, preuve d’équivalence native ou sérialisation matérielle n’est ajouté. Les wrappers existants refusent toujours les requêtes CPU ; les autres intrinsèques et environnements bruts non pris en charge restent refusés.
