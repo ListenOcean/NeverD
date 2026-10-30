@@ -16334,7 +16334,8 @@ branching and looping Win64 wrappers, using SP directly or a physical GPR
 frame alias, and both C routes at O0/O2 with UBSan:
 two later stack arguments remain live while an earlier unwritten slot is never
 read. Selected and omitted queries and source optimization on/off retain that
-distinction; SDK replay also checks the branching body.
+distinction; SDK replay also checks the branching body with and without a
+mutable image read, including selected/omitted callees and repeated cache hits.
 Mutable RIP-relative image reads add straight-line, branching and looping
 controls. Each invocation changes the image value and compares both C routes
 with the original instructions at O0/O2 under UBSan, so removing the load or
