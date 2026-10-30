@@ -1058,7 +1058,7 @@ int main(void) {
   s.core.pc=0x1000; s.core.gpr[1]=0xc0000102;
   CHECK(neverd_step_v2_1000(ARG(&s))==0);
   CHECK(s.core.gpr[0]==0x12345678 && s.core.gpr[2]==0xffff8000);
-  const uint32_t refused[]={0,0x48,0x49,0xc0000082,0xc0000103,0xffffffff};
+  const uint32_t refused[]={0,0x48,0x49,0xc0000081,0xc0000082,0xc0000103,0xffffffff};
   for (unsigned i=0;i<sizeof(refused)/sizeof(refused[0]);++i)
     for (unsigned write=0;write<2;++write) {
       s=seed_v2(write?0x1002:0x1000);s.core.gpr[1]=refused[i];want=s;
@@ -1071,6 +1071,179 @@ int main(void) {
 )C";
     run({0x0f, 0x32, 0x0f, 0x30, 0x0f, 0x01, 0xf8}, {0x1000, 0x1002, 0x1004},
         Harness, false, O);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, SyscallStarMsrsRequireReturnState) {
+  for (auto Profile : {X64ContinuationProfile::KernelNoFaultV1,
+                       X64ContinuationProfile::KernelControlsNoFaultV2,
+                       X64ContinuationProfile::KernelSmapNoFaultV3,
+                       X64ContinuationProfile::KernelFaultAddressNoFaultV4}) {
+    auto O = controlsOptions();
+    O.Profile = Profile;
+    if (Profile == X64ContinuationProfile::KernelNoFaultV1)
+      O.MXCSRMask.reset();
+    auto Units = buildX64ContinuationSource(image({0x0f, 0x30, 0x0f, 0x32}),
+                                            {0x1000, 0x1002}, O);
+    ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
+    ASSERT_EQ(Units->size(), 2u);
+    for (const auto &Unit : *Units)
+      EXPECT_TRUE(Unit.RequiresNativeExecution);
+  }
+}
+
+TEST_F(X64ContinuationSourceTest, SyscallStarMsrsShareReturnState) {
+  for (bool Events : {false, true})
+    for (bool Segments : {false, true})
+      for (bool Native : {false, true}) {
+        SCOPED_TRACE(Events);
+        SCOPED_TRACE(Segments);
+        SCOPED_TRACE(Native);
+        auto O = eventOptions();
+        if (!Events)
+          O.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+        if (Segments)
+          O.SegmentBaseMSRAddressBits = 48;
+        O.NativeSpeculationControlMsrs = Native;
+        const std::string Prefix =
+            Events ? "neverd_step_v6_" : "neverd_step_v5_";
+        const std::string Harness =
+            "\n#define SEGMENTS " + std::to_string(Segments) +
+            "\n#define WRITE " + Prefix + "1000\n#define READ " + Prefix +
+            "1002\n#define RETURN " + Prefix + "1004\n" + R"C(
+int main(void) {
+  const uint64_t values[]={0,0x0023001000000000ULL,0xffffffff00000000ULL,
+                          0x8000000000000000ULL,0x0000800000000000ULL,
+                          0x1122334400000000ULL};
+  const unsigned flags[]={0,2,4,6,7,11};
+  for(unsigned v=0;v<sizeof(values)/sizeof(values[0]);++v)
+    for(unsigned bits=0;bits<64;++bits) {
+      event_state_t s={0},want;
+      state_v5_t core=seed_v5(0x1000);memcpy(&s,&core,sizeof(core));
+      // Tail fields remain observable even when the selected profile is V5.
+      s.gdt.base=0x123456789;s.nmi_blocked=1;
+      s.flags=0x202;
+      for(unsigned b=0;b<6;++b)s.flags|=((bits>>b)&1ULL)<<flags[b];
+      s.gpr[0]=0x1234567800000000ULL;
+      s.gpr[2]=0xabcdef0100000000ULL|(values[v]>>32);
+      s.gpr[1]=0x98765432c0000081ULL;
+      for(unsigned repeat=0;repeat<2;++repeat) {
+        s.pc=0x1000;want=s;want.star=values[v];want.pc=0x1002;
+        CHECK(WRITE(ARG(&s))==0);CHECK(memcmp(&s,&want,sizeof(s))==0);
+      }
+      want=s;want.gpr[0]=0;want.gpr[2]=(uint32_t)(values[v]>>32);
+      want.pc=0x1004;
+      CHECK(READ(ARG(&s))==0);CHECK(memcmp(&s,&want,sizeof(s))==0);
+      s.gpr[1]=0x12345678;s.gpr[11]=0x246;
+      want=s;want.pc=s.gpr[1];want.flags=0x246;
+      const uint16_t selector=(values[v]>>48)&0xfffc;
+      want.cs=(event_segment_t){0,0xffffffff,(uint16_t)((selector+16)|3),0xa0fb};
+      want.ss=(event_segment_t){0,0xffffffff,(uint16_t)((selector+8)|3),0xc0f3};
+      CHECK(RETURN(ARG(&s))==6);CHECK(memcmp(&s,&want,sizeof(s))==0);
+    }
+  for(unsigned bit=0;bit<32;++bit) {
+    event_state_t s={0},want;state_v5_t core=seed_v5(0x1000);
+    memcpy(&s,&core,sizeof(core));s.gpr[1]=0xc0000081;
+    s.gpr[0]=1ULL<<bit;s.gpr[2]=0x00230010;want=s;
+    CHECK(WRITE(ARG(&s))==5);CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  const uint32_t unknown[]={0,0x48,0xc0000080,0xc0000082,0xc0000103,0xffffffff};
+  for(unsigned i=0;i<sizeof(unknown)/sizeof(unknown[0]);++i) {
+    event_state_t s={0},want;state_v5_t core=seed_v5(0x1002);
+    memcpy(&s,&core,sizeof(core));s.gpr[1]=unknown[i];want=s;
+    CHECK(READ(ARG(&s))==5);CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  for(unsigned bank=0;bank<3;++bank) {
+    event_state_t s={0},want;state_v5_t core=seed_v5(0x1000);
+    memcpy(&s,&core,sizeof(core));s.gpr[1]=0xc0000100+bank;
+    s.gpr[0]=0x12345678;s.gpr[2]=0xffff8000;want=s;
+    if(SEGMENTS) {
+      want.pc=0x1002;
+      if(bank==0)want.fs_base=0xffff800012345678ULL;
+      if(bank==1)want.gs_base=0xffff800012345678ULL;
+      if(bank==2)want.kernel_gs=0xffff800012345678ULL;
+    }
+    CHECK(WRITE(ARG(&s))==(SEGMENTS?0:5));CHECK(memcmp(&s,&want,sizeof(s))==0);
+    s.pc=0x1000;s.gpr[0]=0;s.gpr[2]=0x8000;want=s;
+    CHECK(WRITE(ARG(&s))==5);CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  return 0;
+}
+)C";
+        run({0x0f, 0x30, 0x0f, 0x32, 0x48, 0x0f, 0x07},
+            {0x1000, 0x1002, 0x1004}, Harness, false, O);
+      }
+}
+
+TEST_F(X64ContinuationSourceTest, SyscallStarMsrsMatchSupervisorState) {
+  for (bool Events : {false, true}) {
+    auto O = eventOptions();
+    if (!Events)
+      O.Profile = X64ContinuationProfile::KernelReturnNoFaultV5;
+    // Native speculation writes and modeled STAR writes must remain distinct
+    // even without enabling the separate segment-base MSR binding.
+    O.NativeSpeculationControlMsrs = true;
+    const std::string Prefix = Events ? "neverd_step_v6_" : "neverd_step_v5_";
+    const std::string Harness =
+        "\n#define WRITE " + Prefix + "1000\n#define READ " + Prefix +
+        "1002\n#define RETURN " + Prefix + "1004\n" + R"C(
+static uint64_t native_star(void) {
+  uint32_t a,d;__asm__ volatile("rdmsr":"=a"(a),"=d"(d):"c"(0xc0000081):"memory");
+  return ((uint64_t)d<<32)|a;
+}
+static void set_star(uint64_t value) {
+  __asm__ volatile("wrmsr"::"a"((uint32_t)value),"d"((uint32_t)(value>>32)),
+                   "c"(0xc0000081):"memory");
+}
+typedef struct {uint64_t gpr[16],flags,pc,star;segment_t cs,ss;} star_return_t;
+int main(void) {
+  const uint64_t original=native_star();
+  for(unsigned bit=0;bit<34;++bit) {
+    const uint64_t value=bit<32?1ULL<<(bit+32):bit==32?0:0xffffffff00000000ULL;
+    set_star(value);const uint64_t observed=native_star();CHECK(observed==value);
+    set_star(original);
+    event_state_t s={0},want;state_v5_t core=seed_v5(0x1000);
+    memcpy(&s,&core,sizeof(core));s.gpr[1]=0x12345678c0000081ULL;
+    s.gpr[0]=0x8765432100000000ULL;s.gpr[2]=0xaabbccdd00000000ULL|(value>>32);
+    want=s;want.star=observed;want.pc=0x1002;
+    CHECK(WRITE(ARG(&s))==0);CHECK(memcmp(&s,&want,sizeof(s))==0);
+    CHECK(native_star()==original);
+    want=s;want.gpr[0]=(uint32_t)observed;want.gpr[2]=(uint32_t)(observed>>32);
+    want.pc=0x1004;
+    CHECK(READ(ARG(&s))==0);CHECK(memcmp(&s,&want,sizeof(s))==0);
+    CHECK(native_star()==original);
+    s.gpr[1]=0x1800;s.gpr[11]=0x246;
+    star_return_t q={0};memcpy(q.gpr,s.gpr,sizeof(q.gpr));
+    q.flags=s.flags;q.star=observed;
+    __asm__ volatile("outb %%al,$0xe9"::"a"(1),"D"(&q):"memory");
+    want=s;memcpy(want.gpr,q.gpr,sizeof(q.gpr));want.flags=q.flags;want.pc=q.pc;
+    memcpy(&want.cs,&q.cs,sizeof(q.cs));memcpy(&want.ss,&q.ss,sizeof(q.ss));
+    CHECK(RETURN(ARG(&s))==6);CHECK(memcmp(&s,&want,sizeof(s))==0);
+  }
+  set_star(original);
+  uint32_t a=7,b,c=0,d;
+  __asm__ volatile("cpuid":"+a"(a),"=b"(b),"+c"(c),"=d"(d));
+  if(d&(1u<<26)) {
+    uint32_t low,high;
+    __asm__ volatile("rdmsr":"=a"(low),"=d"(high):"c"(0x48):"memory");
+    const uint64_t spec=((uint64_t)high<<32)|low;
+    for(unsigned value=0;value<2;++value)for(unsigned repeat=0;repeat<2;++repeat) {
+      event_state_t s={0},want;state_v5_t core=seed_v5(0x1000);
+      memcpy(&s,&core,sizeof(core));s.gpr[1]=0x1234567800000048ULL;
+      s.gpr[0]=0x8765432100000000ULL|value;s.gpr[2]=0xaabbccdd00000000ULL;
+      want=s;want.pc=0x1002;
+      CHECK(WRITE(ARG(&s))==0);CHECK(memcmp(&s,&want,sizeof(s))==0);
+      __asm__ volatile("rdmsr":"=a"(low),"=d"(high):"c"(0x48):"memory");
+      CHECK(((uint64_t)high<<32|low)==value);CHECK(native_star()==original);
+    }
+    __asm__ volatile("wrmsr"::"a"((uint32_t)spec),"d"((uint32_t)(spec>>32)),
+                     "c"(0x48):"memory");
+  }
+  return 0;
+}
+)C";
+    run({0x0f, 0x30, 0x0f, 0x32, 0x48, 0x0f, 0x07}, {0x1000, 0x1002, 0x1004},
+        Harness, false, O, {}, true);
   }
 }
 

@@ -62,6 +62,12 @@ invalidation. V5 records SYSRETQ's complete return RIP, flags, STAR-derived
 selectors and hidden CS/SS caches; it exits before user execution. Native
 instruction comparisons cover 585 return inputs through both C routes at O0/O2.
 V6 adds successful 64-bit IRETQ and CPL0 INT3 transitions with live descriptor tables, IST selection, segment invalidation and NMI state. Both C routes match native instructions, including descriptor/frame aliases and read-only accessed descriptors. Fault delivery, compatibility returns and ordinary kernel entry ABI recovery remain open.
+V5/V6 RDMSR/WRMSR now share SYSRET's live STAR cell. Writes preserve the
+portable zero-reserved-low-half domain; unbound selectors and invalid writes
+refuse before effects. Public CPL0 read/write and return comparisons cover
+both C routes, including mixed segment and native speculation bindings.
+This closes state transport through that MSR, not ordinary service-wrapper
+ABI recovery or full kernel execution.
 Native x64 LOCK AND/OR/XOR now retain one ordered memory transaction and its defined flags in both C routes. This restores callee summaries previously lost at these instructions; it does not supply an ordinary ABI for physical kernel continuations.
 Native timestamp and PREFETCHW bindings are also explicit opt-ins. Its V3 SMAP profile adds a live AC bit and audited STAC/CLAC transitions under an explicit
 nonfaulting supervisor domain. Earlier profiles retain their AC restriction.

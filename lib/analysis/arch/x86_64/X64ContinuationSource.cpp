@@ -73,6 +73,11 @@ bool hasControlState(const X64ContinuationSourceOptions &Options) {
          Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
 }
 
+bool hasReturnState(const X64ContinuationSourceOptions &Options) {
+  return Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
+         Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+}
+
 static_assert(std::is_standard_layout_v<State>);
 static_assert(offsetof(State, RFlags) == 128);
 static_assert(offsetof(State, PC) == 136);
@@ -212,10 +217,9 @@ bool faultAddressIntrinsic(const LowOp &Op,
 bool sysretIntrinsic(const LowOp &Op,
                      const X64ContinuationSourceOptions &Options) {
   const auto Width = Op.Inputs[1].Size;
-  return (Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
-          Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6) &&
-         Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 3 && !Op.Output.Size &&
-         Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
+  return hasReturnState(Options) && Op.Opcode == NdOp::INTRINSIC &&
+         Op.NumInputs == 3 && !Op.Output.Size && Op.Inputs[0].isConst() &&
+         Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == uint64_t(Intrinsic::Sysretq) &&
          (Width == 4 || Width == 8) &&
          Op.Inputs[1] == NdVar::reg(x86reg::RCX, Width) &&
@@ -371,10 +375,10 @@ bool msrIntrinsic(const LowOp &Op,
     return false;
   const auto Id = static_cast<Intrinsic>(Op.Inputs[0].Offset);
   if (Id == Intrinsic::Rdmsr)
-    return Options.SegmentBaseMSRAddressBits && Op.NumInputs == 2 &&
-           Op.Output.Size == 8 && Op.Inputs[1].Size == 4;
+    return (Options.SegmentBaseMSRAddressBits || hasReturnState(Options)) &&
+           Op.NumInputs == 2 && Op.Output.Size == 8 && Op.Inputs[1].Size == 4;
   return Id == Intrinsic::Wrmsr &&
-         (Options.SegmentBaseMSRAddressBits ||
+         (Options.SegmentBaseMSRAddressBits || hasReturnState(Options) ||
           Options.NativeSpeculationControlMsrs) &&
          Op.NumInputs == 3 && !Op.Output.Size && Op.Inputs[1].Size == 4 &&
          Op.Inputs[2].Size == 8;
@@ -710,7 +714,18 @@ struct Writer {
       emit(NdOp::SELECT, Offset,
            {FS, constant(offsetof(State, FSBase)), GSOffset});
     }
-    NdVar Native = constant(0, 1), Allowed = Segment;
+    NdVar StateBacked = Segment, Star = constant(0, 1);
+    if (hasReturnState(Options)) {
+      Star = temporary(1);
+      StateBacked = temporary(1);
+      const NdVar StateOffset = temporary();
+      emit(NdOp::INT_EQUAL, Star, {Selector, constant(0xc0000081, 4)});
+      emit(NdOp::BOOL_OR, StateBacked, {Segment, Star});
+      emit(NdOp::SELECT, StateOffset,
+           {Star, constant(offsetof(StateV5, STAR)), Offset});
+      Offset = StateOffset;
+    }
+    NdVar Native = constant(0, 1), Allowed = StateBacked;
     if (Write && Options.NativeSpeculationControlMsrs) {
       const NdVar Control = temporary(1), Command = temporary(1);
       Native = temporary(1);
@@ -718,11 +733,21 @@ struct Writer {
       emit(NdOp::INT_EQUAL, Control, {Selector, constant(0x48, 4)});
       emit(NdOp::INT_EQUAL, Command, {Selector, constant(0x49, 4)});
       emit(NdOp::BOOL_OR, Native, {Control, Command});
-      emit(NdOp::BOOL_OR, Allowed, {Segment, Native});
+      emit(NdOp::BOOL_OR, Allowed, {StateBacked, Native});
     }
     const NdVar Unknown = temporary(1);
     emit(NdOp::BOOL_NOT, Unknown, {Allowed});
     rejectIf(Unknown);
+    if (Write && hasReturnState(Options)) {
+      // The portable STAR write domain keeps Intel's reserved low half zero.
+      // This is a profile refusal, not a claim that every CPU faults on a
+      // nonzero value. The upper half contains selectors, not a code address.
+      const NdVar Low = temporary(), Nonzero = temporary(1), Bad = temporary(1);
+      emit(NdOp::INT_AND, Low, {Op.Inputs[2], constant(UINT32_MAX)});
+      emit(NdOp::INT_NOTEQUAL, Nonzero, {Low, constant(0)});
+      emit(NdOp::BOOL_AND, Bad, {Star, Nonzero});
+      rejectIf(Bad);
+    }
     if (Write && Options.SegmentBaseMSRAddressBits) {
       const NdVar Shifted = temporary(), Canonical = temporary();
       const NdVar Noncanonical = temporary(1), Bad = temporary(1);
@@ -733,7 +758,7 @@ struct Writer {
       emit(NdOp::BOOL_AND, Bad, {Segment, Noncanonical});
       rejectIf(Bad);
     }
-    const auto SegmentAccess = [&] {
+    const auto StateAccess = [&] {
       const NdVar Address = temporary();
       emit(NdOp::INT_ADD, Address, {NdVar::reg(StatePointer, 8), Offset});
       if (Write)
@@ -742,8 +767,8 @@ struct Writer {
         emit(NdOp::LOAD, Op.Output, {Address});
     };
     if (!Write || !Options.NativeSpeculationControlMsrs) {
-      SegmentAccess();
-    } else if (!Options.SegmentBaseMSRAddressBits) {
+      StateAccess();
+    } else if (!Options.SegmentBaseMSRAddressBits && !hasReturnState(Options)) {
       Block->Ops.push_back(Op);
     } else {
       const int SegmentId = static_cast<int>(Function.Blocks.size());
@@ -763,7 +788,7 @@ struct Writer {
       for (int Id : {SegmentId, NativeId}) {
         Block = &Function.Blocks[Id];
         if (Id == SegmentId)
-          SegmentAccess();
+          StateAccess();
         else
           Block->Ops.push_back(Op);
         Block->Succs = {JoinId};
@@ -1085,13 +1110,21 @@ buildInstruction(SpecializationInstruction Instruction,
         RequireNative("instruction requires a different flags domain");
     }
   }
-  // At most one control-value guard per original operation. Reserve before
-  // taking block references, and keep synthetic block addresses representable.
-  const size_t MaxBlocks =
-      Instruction.Ops.size() + 3 +
-      (Options.SegmentBaseMSRAddressBits && Options.NativeSpeculationControlMsrs
-           ? 3
-           : 0);
+  // Reserve before taking block references. Most operations need at most one
+  // control-value guard; a modeled MSR write also checks each bound value
+  // domain and may split state writes from native speculation effects.
+  size_t ExtraMSRBlocks = 0;
+  for (const auto &Op : Instruction.Ops)
+    if (msrIntrinsic(Op, Options) &&
+        Op.Inputs[0].Offset == uint64_t(Intrinsic::Wrmsr)) {
+      ExtraMSRBlocks +=
+          unsigned(Options.SegmentBaseMSRAddressBits.has_value()) +
+          unsigned(hasReturnState(Options));
+      if ((Options.SegmentBaseMSRAddressBits || hasReturnState(Options)) &&
+          Options.NativeSpeculationControlMsrs)
+        ExtraMSRBlocks += 3;
+    }
+  const size_t MaxBlocks = Instruction.Ops.size() + 3 + ExtraMSRBlocks;
   if (MaxBlocks > Options.MaxOperations ||
       Result.Address >= InvalidVA - MaxBlocks)
     return invalid("continuation source block budget or address exhausted");
@@ -1241,9 +1274,7 @@ buildX64ContinuationSource(const BinaryImage &Image,
   const bool Controls = hasControlState(Options);
   if (Options.Profile != X64ContinuationProfile::KernelNoFaultV1 && !Controls)
     return invalid("continuation source requires its explicit kernel domain");
-  const bool Returns =
-      Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
-      Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6;
+  const bool Returns = hasReturnState(Options);
   if (Returns != Options.PagingAddressBits.has_value() ||
       (Options.PagingAddressBits && *Options.PagingAddressBits != 48 &&
        *Options.PagingAddressBits != 57))
