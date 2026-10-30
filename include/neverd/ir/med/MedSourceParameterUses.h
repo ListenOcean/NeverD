@@ -51,5 +51,12 @@ std::vector<bool> inferMedSourcePointerParameters(const MedFunc &Function);
 std::vector<bool> inferMedSourcePointerParameters(
     const MedFunc &Function, Arch Architecture,
     const std::map<va_t, std::vector<TypeRef>> &CalleeParameters);
+/// The same whole-value proof with retained compatible object-pointee types.
+/// Null entries have no pointer proof. Conflicting or unsupported pointee
+/// identities retain a generic pointer of the target width. These source
+/// candidates add neither storage extents nor native ABI authority.
+std::vector<TypeRef> inferMedSourcePointerParameterTypes(
+    const MedFunc &Function, Arch Architecture,
+    const std::map<va_t, std::vector<TypeRef>> &CalleeParameters = {});
 } // namespace neverd
 #endif

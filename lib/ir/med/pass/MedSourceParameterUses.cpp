@@ -24,6 +24,9 @@ enum Use : unsigned { Pointer = 1, Scalar = 2 };
 
 struct ValueUses {
   unsigned Roles = 0;
+  // Null after pointer evidence means that its declarations disagree or do not
+  // carry a supported object pointee. The pointer role itself remains valid.
+  TypeRef PointerType;
   // Backward identity edges; narrow copies propagate only conflicting uses.
   std::vector<std::pair<ValueKey, bool>> Inputs;
 };
@@ -274,10 +277,43 @@ observedMedSourceEntryRegisters(const MedFunc &Function,
   return Registers;
 }
 
-static std::vector<bool> inferPointerParameters(
+namespace {
+// Source ABI equality compares carrier structure, not C's nominal record or
+// typedef identity. Keep those names as well when retaining a declaration.
+bool samePointerType(const TypeRef &Left, const TypeRef &Right) {
+  if (Left == Right)
+    return true;
+  if (!equalSourceTypes(Left, Right))
+    return false;
+  auto L = Left, R = Right;
+  while (L->Kind == NdTypeKind::Ptr && R->Kind == NdTypeKind::Ptr) {
+    if (L->SourceName != R->SourceName || L->TypedefName != R->TypedefName)
+      return false;
+    L = L->Pointee;
+    R = R->Pointee;
+  }
+  return L->SourceName == R->SourceName && L->TypedefName == R->TypedefName;
+}
+
+TypeRef objectPointerType(const TypeRef &Type) {
+  if (!Type || !equalSourceTypes(Type, Type))
+    return nullptr;
+  auto Pointee = Type;
+  while (Pointee->Kind == NdTypeKind::Ptr)
+    Pointee = Pointee->Pointee;
+  // Function-pointer and anonymous-record declarations need their own source
+  // identity proof. Keep their previously established generic pointer role.
+  if (Pointee->Kind == NdTypeKind::Func ||
+      (Pointee->Kind == NdTypeKind::Struct && Pointee->SourceName.empty()))
+    return nullptr;
+  return Type;
+}
+} // namespace
+
+static std::vector<TypeRef> inferPointerParameters(
     const MedFunc &Function, unsigned PointerBytes,
     const std::map<va_t, std::vector<TypeRef>> *CalleeParameters) {
-  std::vector<bool> Result(Function.Params.size(), false);
+  std::vector<TypeRef> Result(Function.Params.size());
   std::map<ValueKey, ValueUses> Values;
   std::set<ValueKey> Definitions;
   std::map<ValueKey, const MedVar *> Parameters;
@@ -321,13 +357,19 @@ static std::vector<bool> inferPointerParameters(
     if (Found == Parameters.end() || Found->second->RegOff != Value.RegOff)
       Ambiguous = true;
   };
-  std::vector<std::pair<ValueKey, unsigned>> Pending;
-  auto Seed = [&](const MedVar &Value, unsigned Role) {
+  struct UseFact {
+    ValueKey Value;
+    unsigned Role;
+    TypeRef Type;
+  };
+  std::vector<UseFact> Pending;
+  auto Seed = [&](const MedVar &Value, unsigned Role, TypeRef Type = nullptr) {
     Observe(Value);
     if (!Value.isConst())
-      Pending.emplace_back(
-          key(Value),
-          Role == Pointer && Value.Size != PointerBytes ? Scalar : Role);
+      Pending.push_back(
+          {key(Value),
+           Role == Pointer && Value.Size != PointerBytes ? Scalar : Role,
+           Role == Pointer ? objectPointerType(Type) : nullptr});
   };
   auto Connect = [&](const MedVar &Output, const MedVar &Input) {
     Observe(Input);
@@ -396,11 +438,12 @@ static std::vector<bool> inferPointerParameters(
           }
           for (size_t I = 0; I < Call.Args.size(); ++I) {
             const auto Type = Types ? (*Types)[I] : nullptr;
-            Seed(Call.Args[I], SameArguments && Type &&
-                                       Type->Kind == NdTypeKind::Ptr &&
-                                       Type->Size == PointerBytes
-                                   ? Pointer
-                                   : Scalar);
+            Seed(Call.Args[I],
+                 SameArguments && Type && Type->Kind == NdTypeKind::Ptr &&
+                         Type->Size == PointerBytes
+                     ? Pointer
+                     : Scalar,
+                 Type);
           }
           if (SameArguments) {
             if (Op.NumInputs)
@@ -418,10 +461,12 @@ static std::vector<bool> inferPointerParameters(
             Seed(Op.Inputs[0], Scalar);
             for (size_t I = 0; I < Declared->second.size(); ++I) {
               const auto &Type = Declared->second[I];
-              Seed(Op.Inputs[I + 1], Type && Type->Kind == NdTypeKind::Ptr &&
-                                             Type->Size == PointerBytes
-                                         ? Pointer
-                                         : Scalar);
+              Seed(Op.Inputs[I + 1],
+                   Type && Type->Kind == NdTypeKind::Ptr &&
+                           Type->Size == PointerBytes
+                       ? Pointer
+                       : Scalar,
+                   Type);
             }
             continue;
           }
@@ -436,41 +481,83 @@ static std::vector<bool> inferPointerParameters(
         }
         // Other operations may consume integer bits, compare addresses, or
         // change their identity. They never seed pointer evidence here.
-        Seed(Op.Inputs[Index], Role);
+        Seed(Op.Inputs[Index], Role,
+             BoundCall && Index ? Parameters[Index - 1].Type : nullptr);
       }
     }
   }
   if (Ambiguous)
     return Result;
 
-  // Each role visits each SSA value once. Loops and shared PHI chains converge
-  // without recursion, path enumeration, or dependence on block order.
+  // Each role visits each value once. A pointee changes at most twice:
+  // unobserved -> one declared type -> ambiguous. Loops and shared PHI chains
+  // converge without recursion, path enumeration or block-order dependence.
   for (size_t Cursor = 0; Cursor < Pending.size(); ++Cursor) {
-    const auto [Value, Roles] = Pending[Cursor];
+    const auto [Value, Roles, Type] = Pending[Cursor];
     auto &Node = Values[Value];
-    const unsigned NewRoles = Roles & ~Node.Roles;
-    if (!NewRoles)
+    unsigned Changes = Roles & ~Node.Roles;
+    if (Roles & Pointer) {
+      if (!(Node.Roles & Pointer)) {
+        Node.PointerType = Type;
+      } else if (Node.PointerType &&
+                 (!Type || !samePointerType(Node.PointerType, Type))) {
+        Node.PointerType.reset();
+        Changes |= Pointer;
+      }
+    }
+    Node.Roles |= Roles;
+    if (!Changes)
       continue;
-    Node.Roles |= NewRoles;
     for (const auto &[Input, PreservesPointer] : Node.Inputs)
-      Pending.emplace_back(Input, PreservesPointer ? NewRoles : Scalar);
+      Pending.push_back({Input, PreservesPointer ? Changes : Scalar,
+                         PreservesPointer ? Node.PointerType : nullptr});
   }
+  TypeRef GenericPointer;
   for (size_t Index = 0; Index < Function.Params.size(); ++Index) {
     const auto &Parameter = Function.Params[Index];
     const auto Found = Values.find(key(Parameter));
-    Result[Index] = Parameter.Id >= 0 && Parameter.Size == PointerBytes &&
-                    Found != Values.end() && Found->second.Roles == Pointer;
+    if (Parameter.Id < 0 || Parameter.Size != PointerBytes ||
+        Found == Values.end() || Found->second.Roles != Pointer)
+      continue;
+    if (Found->second.PointerType) {
+      Result[Index] = Found->second.PointerType;
+    } else {
+      if (!GenericPointer) {
+        GenericPointer = NdType::makePtr(NdType::makeVoid());
+        GenericPointer->Size = PointerBytes;
+      }
+      Result[Index] = GenericPointer;
+    }
   }
   return Result;
 }
-std::vector<bool> inferMedSourcePointerParameters(const MedFunc &Function) {
-  return inferPointerParameters(Function, 8, nullptr);
-}
 
-std::vector<bool> inferMedSourcePointerParameters(
+std::vector<TypeRef> inferMedSourcePointerParameterTypes(
     const MedFunc &Function, Arch Architecture,
     const std::map<va_t, std::vector<TypeRef>> &CalleeParameters) {
   return inferPointerParameters(
       Function, getTargetRegInfo(Architecture).PointerSize, &CalleeParameters);
 }
+
+std::vector<bool> inferMedSourcePointerParameters(const MedFunc &Function) {
+  const auto Types = inferPointerParameters(Function, 8, nullptr);
+  std::vector<bool> Result;
+  Result.reserve(Types.size());
+  for (const auto &Type : Types)
+    Result.push_back(bool(Type));
+  return Result;
+}
+
+std::vector<bool> inferMedSourcePointerParameters(
+    const MedFunc &Function, Arch Architecture,
+    const std::map<va_t, std::vector<TypeRef>> &CalleeParameters) {
+  const auto Types = inferMedSourcePointerParameterTypes(Function, Architecture,
+                                                         CalleeParameters);
+  std::vector<bool> Result;
+  Result.reserve(Types.size());
+  for (const auto &Type : Types)
+    Result.push_back(bool(Type));
+  return Result;
+}
+
 } // namespace neverd

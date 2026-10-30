@@ -5148,10 +5148,8 @@ void checkPointerQualifiers(bool Local) {
               if (!Type || Type->SourceName != "fixture_record")
                 continue;
               Definitions.Tags["fixture_record"] = Debug.Union;
-              if (!Pointer) {
-                Definitions.Records["fixture_record"] = Debug.Union;
-                Definitions.Text = Debug.element() + " { uint16_t value; };";
-              }
+              // Pointer-only declarations need the tag, not a record body.
+              // The independent provider below owns the complete definition.
             }
             return Definitions;
           };

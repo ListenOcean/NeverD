@@ -151,9 +151,15 @@ fixed scalar import declarations in both C routes, including explicit call
 operands on independent register-bank ABIs. The shared COPY/PHI proof excludes
 scalar conflicts, truncated inputs and call-clobbered version-zero values;
 independent narrow register writes do not invalidate earlier full-width inputs.
-Explicit entry declarations still win. The result is a generic `void*` carrier,
-not a recovered named pointee type. General local wrapper-chain propagation,
-missing runtime state and native Windows execution remain separate work.
+Explicit entry declarations still win. Compatible admitted object-pointee
+declarations now survive the same use graph, including named records, scalar
+pointees and pointer indirection. Conflicting nominal tags, typedef identities,
+scalar uses and unsupported pointee graphs retain their generic pointer or
+integer carrier. Both C routes and native source-hint inference consume that
+one result; this is a source candidate, not an original-prototype or storage
+extent proof. Portable declaration qualifiers, function-pointer signatures,
+general local wrapper-chain propagation, missing runtime state and native
+Windows execution remain separate work.
 
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
