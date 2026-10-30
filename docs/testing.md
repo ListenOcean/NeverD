@@ -17357,8 +17357,24 @@ outer caller to detect transitive contamination. Call clobbers, local and PHI
 definitions at version zero, narrowed values, mismatched parameter identities
 and ambiguous register slots cannot create entry pointer types. Actual entry
 values, self-copies and unrelated narrow definitions remain positive controls.
+Both local and transitive types must retain the target's pointer width.
+`UnmaterializedForwardersKeepDistinctSlots` also covers placeholder ids,
+synthetic parameter indices, clobbers and local definitions sharing a physical
+register with a distinct entry value. Unknown target-only calls block pointee
+proofs; complete zero-argument contracts remain positive controls, and
+nonempty descriptors cannot hide missing operands.
 Run it with `NeverDSourceEntryBindingTests` and the architecture call-contract
 suites; these identity checks do not supply missing runtime state.
+
+`NativeSourceHints.LocalPointerForwardersRetainProvenPointees` checks local
+chains, diamonds, a 256-wrapper chain and reversed function order, through
+both recovered and explicit call operands. Clobbers, narrowing, scalar uses,
+unknown calls, explicit integer declarations, register-order mismatches,
+conflicting record tags and recursive dependencies remain conservative.
+`LocalPointerChainsShareBothCProjections` exercises three selected machine
+functions on x64/ARM64 and COFF/ELF/Mach-O, then compiles and executes both
+generated C projections at O0/O2 with UBSan against an independent object and
+consumer. This is host C execution, not native Windows or ARM64 execution.
 
 `NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
 generic, named-record, scalar and nested pointer parameters across x64/ARM64,
