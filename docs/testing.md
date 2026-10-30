@@ -1351,6 +1351,16 @@ ELF/COFF/Mach-O, including both orders of an incomplete arm and raw FS offsets.
 The shared native memory owner is also covered by the AArch64/x86-64 ELF/PE
 rematerialized-table recurrence in `NeverDNativePointerRelocationBoundaryTests`.
 
+The native compiler MPX frame qualification is recorded in
+[the frame/address evidence](evidence/x86-mpx-native-frames-2026-10-30.json).
+NeverC's encoding verifier composes `--frame` (aligned locals plus a dynamic
+allocation) with `--stack-memory` (BNDMOV stack-default controls), over three
+object formats and both optimization levels. It executes surrounding code,
+checks input addresses, canaries and saved registers, and compares instruction
+bytes through both assembly dialects. The processor-model test accepts the
+same flags; skipped QEMU behaviors remain separate from successful execution.
+These compiler tests do not open NeverD's strict MPX admission boundary.
+
 `NeverDX86MpxContextTests` checks the shared state foundation independently of
 host MPX availability: 324 enable-evidence combinations, 864 unsigned bounds
 comparisons, all 4,352 single-bit MAWA/CPL address cases, nonzero directory
@@ -1514,15 +1524,24 @@ original machine bytes. Malformed LowIR, MedIR, HighIR and native assembly
 cannot drop bank, memory or feature effects. Concrete tests retain arithmetic,
 row conversion and partial-progress oracles.
 `NeverDX86AMXAddressTests` independently checks default-stack provenance across
-all decoder routes, rejects unqualified stack row strides before LowIR effects,
-and covers versioned/native/legacy-assembly source admission. Set
+all decoder routes, retains independent stack row bases and strides, and
+covers versioned/native/legacy-assembly source admission. Isolated stack leaves
+are checked before and after IPO specialization; forged frame ownership is
+refused. Set
 `NEVERD_TEST_AMX_ADDRESS_EXPORT` to export its HighC and LLVMC memory wrappers.
 `scripts/verify_x86_amx_addresses.py --exports DIR --clang CLANG --compiler NEVERC
 --llc LLC --keep RESULTS` compiles those exports in realigned dynamic frames
 through Clang, NeverC fallback, NeverC native and NeverC-to-fork routes at O0/O2
 for ELF/COFF/Mach-O. It independently reads the native VEX/EVEX address fields
 and uses controlled completions to check address/stride transport, stack canaries
-and saved registers. This does not qualify physical AMX faults or tile restart.
+and saved registers. Stack-row C expressions require the new native compiler
+capability and have no ordinary inline-assembly fallback. Same-section ELF,
+COFF and Mach-O call relocations are resolved before controlled execution of
+the compiler-owned leaves. The exported complete `stack-leaf-*.c/.ll` modules
+also compile and execute through native LLVM, NeverC bitcode import, NeverC C
+and the C-to-fork bridge. These retain prototypes before target-attributed
+definitions and IPO-specialized constant operands. This does not qualify
+physical AMX faults or tile restart.
 `RowSelectorsIgnoreHighBitsAndZeroOutOfRangeRows` covers all six operations,
 both selector forms, ignored high bits and an independent exact-value oracle.
 It follows ISE 062 rather than the superseded row-chunk exception rules.
@@ -3433,6 +3452,24 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md) for clone, build-profile, and macOS
 prebuilt-LLVM guidance.
 
 ## Structural binary comparison
+
+`BinaryDiffArgumentAccess.*` in `NeverDBinaryDiffTests` checks recovered argument
+roles across frame layouts, swapped output slots, duplicate arguments, reads and
+writes, exact-width modular offsets, COPY/PHI RETURN operand paths, node reordering,
+unknown inputs, separate pointer loads, call clobbers, address spaces, literal
+provenance, affine cycles and work/record/cancellation stops. The original graph
+and effect gaps must remain unchanged. These are address observations, not
+interprocedural memory equivalence.
+`BinaryDiffSDK.ArgumentAccessPagesPreserveNativeRolesGapsAndRestore` loads an
+owned x64 fixture with a local initialized before a call and reloaded afterward;
+pages retain both access origins, reuse the function index and survive restore.
+`AArch64ArgumentAccessesUseRecoveredValuesAndNativeWidths` checks incoming pointer
+uses and keeps a RETURN control target distinct from the ABI result.
+The Qt `argumentAccessReviewNavigatesNativeReadsAndClearsOldEvidence` case checks
+LTR/RTL argument numbering, keyboard navigation, tracing, side changes and
+recomparison. Run both GUI scales used for comparison acceptance when changing
+this view. The existing dataflow CLI/Python/worker paths exercise the same query
+kind; no frontend owns a separate address inference.
 
 Native identity controls cover function pointers, operand order/multiplicity,
 reused call bytes after reordering, raw-file slices and filtered target lists.
@@ -17487,3 +17524,22 @@ a previous call result. The ordinary-call case executes both copies against
 the independent input after the source has been overwritten. The adjacent
 narrow-store/wide-copy case checks the positive control where an actual store
 connects that result to the copied memory.
+
+## Native x64 dispatch frame bridges
+
+`NeverDX64DispatchFrameSourceTests` checks the exact PE byte sequence, 32-bit
+selectors and signed segment immediates, executable targets, changed opcodes, truncated code,
+overlapping fixups, foreign formats and invalid assembler names. Both HighC and
+LLVMC preserve the native frame as a naked Win64 bridge. A synthetic ordinary
+caller exercises the documented six-argument service interface through the
+whole pipeline, including stack arguments and a signed 32-bit result.
+
+On Linux x64, the existing KVM runner executes original instruction bytes and
+recompiled C at CPL0, with pipeline optimization on/off and Clang O0/O2. It
+compares every GPR, RFLAGS and all 4096 stack bytes for 64 flag patterns. The
+native dispatcher fixture captures the transfer interface and independently
+checks the frame contents; it does not implement an operating-system service.
+Changed LLVM bodies and image metadata must refuse the native projection.
+Pair this target with the Windows call-contract, source-entry, C pointer,
+internal-call and pipeline-outcome suites. Other hosts compile the native
+source but do not qualify privileged execution.

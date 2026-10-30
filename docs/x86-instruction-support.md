@@ -277,7 +277,7 @@ test resumes through a coupled SS/RSP switch and uses the new stack.
 | Remaining compact-memory descriptor/fault execution | Native LLVM and both C routes retain long-mode stack references and i386 CS/ES/SS offsets, including implicit SS for SP/BP bases, alongside DS/FS/GS. Concrete i386 CS/ES/SS accesses still require a descriptor environment; zero-mask suppression remains available. Physical AVX-512 and descriptor-fault execution remain unqualified. |
 | Remaining four-source descriptor/fault execution | Native lowering retains explicit SSA sources, long-mode stack references and i386 CS/ES/SS offsets, including implicit SS. Concrete active CS/ES/SS accesses still require a descriptor environment. Physical AVX512_4FMAPS/AVX512_4VNNIW execution and faults remain unqualified. Legacy implicit-bank IDs remain guarded at native output. |
 | Remaining RAO-INT/CMPccXADD descriptor/fault execution | Legacy and EVEX AADD/AAND/AOR/AXOR, and VEX/EVEX CMPccXADD, have distinct native encoding contracts. Legacy RAO includes i386 CS/ES/SS and implicit SS offsets; long-mode default-stack memory retains its independent provenance control. Concrete i386 CS/ES/SS accesses still require a descriptor environment. Physical atomicity, memory-type behavior and CPU faults remain unqualified. |
-| AMX tile row-memory with addr64 SP/BP bases | Its SIB index is the architectural stride and cannot also carry the configuration API's offset relative to RBP. These forms fail before LowIR effects unless FS/GS selects the segment. LDTILECFG/STTILECFG use the independent version-2 stack-reference contract below. |
+| AMX physical execution and restart qualification | All five tile-memory forms now retain addr64 SP/BP provenance through an isolated native leaf, with independent full-width stride and both C routes. Current local hardware has no AMX. Controlled address/completion and instrumented signal-unwind tests do not qualify physical AMX arithmetic, tile faults or restart. |
 | VMCALL/VMMCALL | Existing narrow argument/result spellings do not provide a complete hypercall register/state ABI. They must not be treated as full machine-state support. |
 
 ADCX/ADOX now have complete form-specific undefined-output audits for legacy
@@ -516,6 +516,18 @@ The compiler qualification is recorded in LLVM's `X86MPXIntrinsics.rst` and
 NeverC's `development.md`. QEMU 10.2.2's explicit limitation mode skips 180/520
 instruction cases and one of six branch-state cases; skipped behavior and
 physical MPX hardware execution are not qualified as passing.
+
+Native compiler MPX operands now use allocated legacy registers rather than
+fixed BX/SI copies, preserving realigned dynamic-stack and PIC bases. The three
+BNDMOV memory APIs additionally accept stack-default provenance in both
+long-mode encoding widths; MPX still consumes full 64-bit addresses with 67H.
+The frontend and backend share the control validator. MIB table operations
+and effective-address APIs retain their separate contracts. The
+[frame/address evidence](evidence/x86-mpx-native-frames-2026-10-30.json) records
+26,256 controlled encoding/operand/ABI checks, native processor-model tests
+with explicit skips, and the original stack corruption reproduction. This
+closes compiler transport gaps; the strict NeverD lifting boundary above
+remains unchanged.
 
 The shared `X86MpxContext` foundation now models enable evidence, all four
 bounds registers with known-bit masks, lower/complemented-upper/raw-upper
@@ -1148,7 +1160,8 @@ it retains an original stack-default operand's noncanonical `#SS` provenance
 using `[RBP + (offset - RBP)]`, without replacing RBP or probing memory. An SS
 prefix alone still describes a data-default reference. FS/GS and address32
 cannot use the bit. Descriptor/VMX, compact/four-source, RAO/CMPccXADD and AMX
-configuration APIs support it; AMX row-memory and MPX do not. NeverD's AMX
+configuration APIs support it. AMX row-memory subsequently gained the isolated
+leaf contract described below; MPX still needs its state contract. NeverD's AMX
 configuration path now carries it through descriptor version 2 and both source
 routes; the other decoded native-memory families remain guarded until their IR
 and all output routes transport the same provenance.
@@ -1791,9 +1804,31 @@ the compiler's RBP is never replaced and no extra memory access is introduced.
 Data-default memory uses AX as the address carrier and tile memory uses CX for
 the stride, preventing allocation to a compiler frame base. This also applies
 to generated HighC and LLVM-to-C source. Stack-default addr64 tile-row memory
-is still rejected before emitting LowIR effects: its SIB index is the row
-stride and cannot also carry the configuration operation's frame-relative
-offset. FS/GS and addr32 tile memory retain their supported contracts.
+uses a compiler-owned leaf with BP as the complete base and CX as the complete
+stride. Its normal host frame saves BP and supplies RSP-based DWARF/SEH, so it
+does not borrow the caller's frame pointer or probe the tile operand. The native
+compiler helper also preserves MPX bounds on return. FS/GS and addr32 tile
+memory retain their existing direct instruction contracts.
+
+`__NEVERC_X86_AMX_STACK_MEMORY__ == 1` and `LLVM_X86_AMX_STACK_MEMORY == 1`
+advertise this addition without changing intrinsic IDs. Older SDKs can emit
+the isolated LLVM assembly leaf; its reader checks the exact body and frame
+ownership even after IPO removes constant formal arguments. Both C routes
+select the native builtin, with an explicit compile error on compilers lacking
+the capability. No inline assembly in an ordinary C expression may borrow BP.
+The native call and saved-register host frame are additional compiler transport.
+
+The follow-up passes 3,552 source objects and 42,624 controlled completions,
+including both C routes and realigned dynamic frames. An additional 120
+complete exported LLVM/C modules retain constant operands, function prototypes
+and ABI state. This uncovered and repaired NeverC's stale target features when
+an earlier use created a function before its attributed definition. The
+standalone compiler
+matrix checks all five operations, eight tiles, five stack controls and both
+encodings in ELF/COFF/MachO at O0/O2. Instrumented UD2 slots additionally check
+real signal unwinding and resumption. These tests do not qualify physical AMX
+faults or tile restart; the local CPU does not provide AMX. The evidence record
+is [x86-amx-stack-memory-2026-10-30.json](evidence/x86-amx-stack-memory-2026-10-30.json).
 
 Version-1 nonmemory operations, addr32 memory and FS/GS memory remain readable,
 including their exact historical owned-assembly forms. Version-1 unsegmented
@@ -1801,7 +1836,7 @@ addr64 memory is rejected as ambiguous: it conflated explicit SS with a stack
 default and lost that default under DS overrides. A reader cannot safely
 reconstruct the missing provenance from the old descriptor.
 
-Both SDK profiles pass the six address-contract tests, including 420 decode
+The earlier SDK qualification passed six address-contract tests, including 420 decode
 and admission combinations and 300 strict/permissive early refusals. Their
 128 exported HighC/LLVM-to-C wrappers and case manifests are byte-identical.
 Clang fallback, NeverC fallback, NeverC native and NeverC IR through the full

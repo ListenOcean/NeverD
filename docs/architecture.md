@@ -90,6 +90,14 @@ This component is a tested foundation, not yet a lifting/emission contract:
 strict MPX admission remains closed until original-transfer effects and
 memory completion are connected throughout the pipeline.
 
+The LLVM/NeverC native MPX APIs independently retain the ambient bounds bank.
+Their operands use allocated legacy-encodable carriers, preserving reserved
+realignment and PIC bases. BNDMOV stack addresses use an unmodified frame
+pointer plus a computed index, including 67H encodings whose MPX arithmetic
+remains 64-bit. `llvm/IR/X86MpxState.h` owns these address controls for both
+frontend admission and backend lowering. This compiler contract does not
+authorize a NeverD placeholder MPX intrinsic or infer original branch effects.
+
 `lift/X86/X86MpxEncoding.h` owns the qualified MPX byte-to-operand mapping.
 The full and lightweight decoder adapters share it, including native-width
 addresses despite long-mode 67H, mode-sized BNDMOV memory fields, LOCK stores,
@@ -134,8 +142,15 @@ stack provenance. Native configuration APIs carry control bit `0x100` when the
 SDK advertises it. Older SDKs use an owned `[RBP + (offset - RBP)]` access,
 preserving the compiler's RBP and declaring the arithmetic scratch/flags.
 Data-address fallbacks use AX, and row strides use CX, under the shared scalar
-carrier authority. Tile row-memory with default-stack addr64 remains refused:
-its architectural stride occupies the index needed by the configuration plan.
+carrier authority. Default-stack addr64 tile rows instead use an isolated
+leaf: BP carries the full base, CX the independent stride, and the compiler
+owns an RSP-based frame with normal register saves and unwind metadata.
+Native builtins advertise `__NEVERC_X86_AMX_STACK_MEMORY__`; the LLVM SDK
+advertises `LLVM_X86_AMX_STACK_MEMORY`. Older SDKs emit an internal
+`preserve_allcc` leaf with the exact owned assembly marker. Its C reader
+authenticates the complete leaf body and frame attributes, including after IPO
+specializes constant arguments. Both C routes require the native capability
+for these forms; they never place BP-borrowing assembly in the caller.
 Legacy version-1 FS/GS, address32 and non-memory forms remain readable, including
 their exact old assembly contracts. Unsegmented version-1 addr64 memory must be
 lifted again from the original bytes because it lost default-stack provenance.
@@ -1935,6 +1950,17 @@ Call-argument metadata binds to an exact MedIR block/operation, with duplicate
 or stale owners rejected. Its arguments remain a distinct span of node inputs,
 separate from raw call operands and preserved clobber prefixes. Missing argument
 metadata stays unknown. This v2 observation does not assert ABI formal bindings.
+`FlowArgumentAccess` derives caller-side address observations from that immutable
+MedIR projection. It memoizes width-preserving affine definitions once per graph,
+then joins ordered call arguments to indexed ordinary LOAD/STORE operands.
+Roots are local SSA definitions or parameters, never equality of unknown inputs,
+separate memory reads or a call node's multiple clobbers. Iterative dependency
+walks refuse cyclic affine roots. COPY/PHI paths to RETURN operands preserve widths and do
+not infer ABI results, path feasibility, temporal ordering or callee writes. This observer
+retains the original gaps and does not feed the function matcher or rewrite
+SSA. The C API caches one graph's bounded index across selected calls and pages;
+restore invalidates it. CLI, Python, worker and Qt consume the same observations.
+
 The comparison adapter requests `PipelineOptions::MedAnalysisOnly`: the existing
 machine ABI preparation, including omitted-callee summaries, ends after final
 MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source
@@ -15102,3 +15128,23 @@ The shared OR builder can discard an XOR operand when the accumulated constant c
 ## Image storage reached through advancing cursors
 
 HighC follows pointer-width assignments, copies and addition/subtraction from ordinary memory operands to image-address constants. Loop backedges retain the complete object supplied by the existing symbol/section owner and its alignment residue. This function-local storage dependency walk does not substitute pointer values, prove dereference validity or follow loaded pointers and narrowing conversions. Direct bounded indexed accesses keep their existing extent proof.
+
+## Native x64 dispatch frame source
+
+`loader/X86/X64DispatchFrame.h` recognizes the complete fixed instruction
+sequence of a PE physical service bridge, including its two checked relative
+code targets. Relocated, truncated and near-matching sequences provide no
+identity. Both C routes render the same native frame construction and selector
+transfer in a naked Win64 function. A known service's existing Windows ABI
+record owns its parameter widths and arity, including arguments beyond the
+four-register bank. LLVM declarations settle that interface before callers are
+emitted, so an internal dispatcher's inferred arity cannot trim stack operands.
+
+The source explicitly requires CPL0 and original-environment native linkage and
+dispatch symbols. Those symbols are native boundaries, not generated ordinary
+C providers. The projection does not implement services, promise exception
+unwinding or admit a native image rewrite. Explicit source signatures remain
+separate. LLVM C checks that the retained inline assembly and original image
+still match before printing the bridge; body fragments require a complete
+native function. Unknown ordinary calls and physical interrupt/system entry
+return proofs retain their existing admission rules.
