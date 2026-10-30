@@ -103,6 +103,9 @@ inline constexpr size_t kSourceRegisterCallOps = 4096;
 inline constexpr size_t kSourceCallReturnReadWork = 262144;
 // Per-function work for complete noncapturing frame/pointee use proofs.
 inline constexpr size_t kSourceFrameBorrowWork = 262144;
+// A direct borrow chain also consumes native stack while composing summaries;
+// the work budget alone permits many thousands of tiny relay functions.
+inline constexpr unsigned kSourceFrameBorrowCallDepth = 32;
 /// Closed internal-call return proofs are bounded independently of general
 /// CFG discovery. Larger groups retain the ordinary conservative admission.
 inline constexpr size_t kOwnInteriorReturnProofFunctions = 32;
