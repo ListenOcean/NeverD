@@ -1680,6 +1680,11 @@ add_neverd_unittest(NeverDIntegerCallArgumentsTests
 target_include_directories(NeverDIntegerCallArgumentsTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
+add_neverd_unittest(NeverDMedParameterEntryTests
+  core/MedParameterEntryTests.cpp
+  LINK_COMPONENTS IR
+)
+
 add_neverd_unittest(NeverDRecordCallContractTests
   core/RecordCallContractTests.cpp
   "${CMAKE_SOURCE_DIR}/lib/sdk/capi/LocalTypesDebugContext.cpp"

@@ -7015,6 +7015,14 @@ original prototype, record storage, addresses, missing machine state or native
 rewriting contracts. Portable qualifiers and callback signatures remain owned
 by their existing declarations.
 
+Local MedIR address-role inference and direct-caller pointer propagation share
+an entry-value index. A call clobber, local definition or PHI owning SSA version
+zero cannot retype an incoming parameter merely by sharing its register.
+Explicit parameter operands require the same slot identity and complete pointer
+width. Entry self-copies and independent narrow definitions preserve the
+original live-in. The index is built once per function and reused across call
+edges; it supplies no missing register value or original-prototype proof.
+
 `LLVMSourceTypeHints` carries supported pointee spellings on individual LLVM
 arguments, so opaque pointers and IR serialization do not erase them. The
 reader checks the actual pointer carrier and data-layout width; malformed or
