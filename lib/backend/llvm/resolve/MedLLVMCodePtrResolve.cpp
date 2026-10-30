@@ -542,13 +542,6 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
     Data,
     Import,
     RuntimeCallable,
-    // A relocation-covered slot whose stored target lies in the executable
-    // section's tail padding (all-zero bytes past the last instruction, the
-    // landing zone of the classic `etext`/`_etext` boundary marker MinGW's CRT
-    // places in .data). It is an address constant of the guest image, not a
-    // callable pointer: no lifted function or block can ever own it, so it is
-    // emitted with its original value instead of failing the module.
-    PaddingAddress,
   };
   struct PtrSlot {
     uint64_t VA;
@@ -730,35 +723,18 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
                      ? (!Img->isCodeAddress(TargetVA) ||
                         !Img->readVA(TargetVA, 1))
                      : !resolveImageFunctionAddress(TargetVA)) {
-        // A target no emitted code covers and no entry claims is data the
-        // linker placed among the code — the `etext` boundary marker's
-        // landing zone, or MinGW's runtime pseudo-relocation list in .text's
-        // tail. It is an address constant of the guest image, never a
-        // callable identity; keep the slot with its original value instead
-        // of aborting the whole emission.
-        bool DataAmongCode = true;
-        for (const auto &[Entry, Ranges] : EmittedFuncCodeRanges) {
-          (void)Entry;
-          for (const auto &[Begin, End] : Ranges)
-            if (TargetVA >= Begin && TargetVA < End) {
-              DataAmongCode = false;
-              break;
-            }
-          if (!DataAmongCode)
-            break;
-        }
-        if (DataAmongCode) {
-          Kind = PtrSlotKind::PaddingAddress;
-        } else {
-          if (!FatalCodePointerResolution)
-            llvm::WithColor::error()
-                << "med_llvm_emitter: relocation-proven code pointer at 0x"
-                << llvm::utohexstr(Slot.VA) << " targets unresolved address 0x"
-                << llvm::utohexstr(TargetVA)
-                << "; refusing stale-address fallback\n";
-          FatalCodePointerResolution = true;
-          return nullptr;
-        }
+        // Missing or masked code is not evidence of data. Only the loader's
+        // data-pointer role can authorize data materialization; a code slot
+        // must retain a lifted callable/block identity, including its static
+        // fallback when runtime storage can later replace the pointer.
+        if (!FatalCodePointerResolution)
+          llvm::WithColor::error()
+              << "med_llvm_emitter: relocation-proven code pointer at 0x"
+              << llvm::utohexstr(Slot.VA) << " targets unresolved address 0x"
+              << llvm::utohexstr(TargetVA)
+              << "; refusing stale-address fallback\n";
+        FatalCodePointerResolution = true;
+        return nullptr;
       }
     }
     Kept.push_back({Off, TargetVA, Kind, std::move(ImportName),
@@ -849,11 +825,6 @@ llvm::Constant *MedLLVMEmitter::buildCodePtrSegmentGlobal(
         return nullptr;
       }
       FieldVal = llvm::ConstantExpr::getPtrToInt(Target, PtrIntTy);
-    } else if (K.Kind == PtrSlotKind::PaddingAddress) {
-      // An address constant into the guest image's executable tail padding
-      // (an `etext`-style boundary marker). Its value is the address itself;
-      // no recompiled counterpart exists to reference.
-      FieldVal = llvm::ConstantInt::get(PtrIntTy, K.TargetVA);
     } else if (K.Kind == PtrSlotKind::SuppressedCode) {
       // A post-SSA terminal-use proof replaced every observable load of this
       // slot with the recovered switch.  Keep an addressable, layout-preserving
@@ -3709,8 +3680,7 @@ MedLLVMEmitter::tryResolveIndirectCallTarget(const MedVar &V,
               if (!IdxDef)
                 return false;
               if (IdxDef->Opcode == NdOp::INT_MULT && IdxDef->NumInputs >= 2 &&
-                  IdxDef->Inputs[1].isConst() &&
-                  !IdxDef->Inputs[0].isConst()) {
+                  IdxDef->Inputs[1].isConst() && !IdxDef->Inputs[0].isConst()) {
                 const MedOp *Scaled = lookupDef(IdxDef->Inputs[0]);
                 return Scaled && Scaled->Opcode == NdOp::INT_ZEXT;
               }

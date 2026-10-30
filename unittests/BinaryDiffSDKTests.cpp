@@ -1140,6 +1140,45 @@ TEST_F(BinaryDiffSDK, UnpairedMOVPRFXCannotReportCompleteSemanticComparison) {
             false);
 }
 
+TEST_F(BinaryDiffSDK, NoReturnCallsDoNotAcquireLayoutDependentFallthrough) {
+  for (bool AArch64 : {false, true}) {
+    SCOPED_TRACE(AArch64);
+    // A conditional guard can bypass the call and reach the return. The
+    // callee's stated contract, not the next block's position, decides whether
+    // the call also reaches it.
+    const auto Bytes =
+        AArch64 ? words({0x7100001f, 0x54000040, 0x94000002, 0xd65f03c0,
+                         0xd65f03c0})
+                : std::vector<uint8_t>{0x85, 0xff, 0x74, 5,    0xe8, 2,
+                                       0,    0,    0,    0xc3, 0x90, 0xc3};
+    const auto S = input(Bytes, 0x1000, AArch64 ? "aarch64" : "x86_64");
+    const uint64_t Callee = AArch64 ? 0x1010 : 0x100b;
+    ASSERT_EQ(neverd_func_create(S, Callee), 0) << take(neverd_last_error(S));
+    for (bool NoReturn : {true, false, true}) {
+      SCOPED_TRACE(NoReturn);
+      ASSERT_EQ(neverd_func_edit(S, Callee,
+                                 NoReturn ? R"({"noreturn":true})"
+                                          : R"({"noreturn":false})"),
+                0)
+          << take(neverd_last_error(S));
+      const auto C = compare(S, S);
+      const auto Graph = parsed(neverd_comparison_graph_json(
+          C, R"({"side":"primary","address":"0x1000"})"));
+      const auto *Edges = Graph.getAsObject()->getArray("edges");
+      ASSERT_TRUE(Edges) << render(Graph);
+      EXPECT_EQ(Edges->size(), NoReturn ? 2u : 3u) << render(Graph);
+      const auto Detail = parsed(neverd_comparison_function_json(C, 0, 0x1000));
+      const auto *Evidence = Detail.getAsObject()->getObject("evidence");
+      ASSERT_TRUE(Evidence) << render(Detail);
+      EXPECT_EQ(Evidence->getBoolean("analysis_complete"), true);
+      const auto Saved = take(neverd_comparison_export_json(C));
+      const auto Reopened = compare(S, S);
+      EXPECT_EQ(neverd_comparison_restore_json(Reopened, Saved.c_str()), 1);
+      EXPECT_EQ(take(neverd_comparison_export_json(Reopened)), Saved);
+    }
+  }
+}
+
 TEST_F(BinaryDiffSDK, AArch64BranchBitIndexIsNotASecondTargetOperand) {
   // At base 0, TBZ's bit index and target both equal 12. At base 8 they both
   // equal 20. The CFG and relative branch displacement agree, but the tested
@@ -2678,7 +2717,7 @@ TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Saved = take(neverd_comparison_export_json(C));
   const auto Document = parsed(neverd_comparison_export_json(C));
   ASSERT_TRUE(Document.getAsObject());
-  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 13);
+  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 14);
   const auto *Matches = Document.getAsObject()->getArray("matches");
   ASSERT_TRUE(Matches);
   const std::map<std::string, std::string> Expected = {{"0x3000", "0xa010"},
