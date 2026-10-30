@@ -10291,6 +10291,7 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
   class Header : public NullDebugContext {
   public:
     bool ExplicitEntry = false;
+    TypeRef PointerType = NdType::makePtr(NdType::makeVoid());
     std::optional<FunctionSym>
     resolvePrototype(llvm::StringRef Name) const override {
       if (Name != "consume_pointer")
@@ -10298,7 +10299,7 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
       FunctionSym Function;
       Function.Name = Name.str();
       Function.ReturnType = NdType::makeVoid();
-      Function.Params = {{"object", NdType::makePtr(NdType::makeVoid())},
+      Function.Params = {{"object", PointerType},
                          {"tag", NdType::makeInt(4, false)}};
       Function.PrototypeFromHeader = true;
       Function.PrototypeLibrary = "test-header";
@@ -10372,42 +10373,108 @@ TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
       auto FunctionSymbol = Symbol::makeFunc(0x1000);
       FunctionSymbol.Name = "forward_pointer";
       Image.Symbols.push_back(std::move(FunctionSymbol));
-      for (bool Explicit : {false, true})
-        for (bool LLVM : {false, true}) {
-          Debug.ExplicitEntry = Explicit;
-          SCOPED_TRACE(Explicit);
-          SCOPED_TRACE(LLVM);
-          llvm::LLVMContext Context;
-          PipelineOptions Options;
-          Options.EmitDumpOutput = false;
-          Options.OnlyFunctionEntries = {0x1000};
-          Options.LiftMode = Options.SourceProjection = LLVM;
-          auto Result = Pipeline().run(Image, Context, Options, &Debug);
-          ASSERT_TRUE(Result.Success) << Result.Error;
-          ASSERT_EQ(Result.MedFuncs.size(), 1U);
-          ASSERT_EQ(Result.MedFuncs[0].TypedParams.size(), 1U);
-          EXPECT_EQ(Result.MedFuncs[0].TypedParams[0].Type->Kind,
-                    Explicit ? NdTypeKind::Int : NdTypeKind::Ptr);
-          CEmitterOptions COptions;
-          COptions.TheArch = Architecture;
-          COptions.Format = Format;
-          COptions.Image = &Image;
-          std::string Source;
-          llvm::raw_string_ostream Out(Source);
-          if (LLVM) {
-            ASSERT_TRUE(Result.LlvmModule);
-            ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
-                                            &Debug, &Image));
-          } else {
-            ASSERT_TRUE(
-                HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+      for (unsigned Pointee = 0; Pointee != 5; ++Pointee)
+        for (bool Explicit : {false, true})
+          for (bool LLVM : {false, true}) {
+            Debug.ExplicitEntry = Explicit;
+            auto Type = Pointee == 2 ? NdType::makeInt(2, false)
+                        : Pointee
+                            ? NdType::makeNamedRecord("ForwardedObject", 0)
+                            : NdType::makeVoid();
+            if (Pointee == 3)
+              Type = NdType::makePtr(Type);
+            Debug.PointerType = NdType::makePtr(Type);
+            if (Pointee == 4) {
+              Debug.PointerType->TypedefName = "PFORWARDED_OBJECT";
+              Type->Size = 16;
+              Type->FieldDisplayNames = {"value"};
+              Type->FieldDisplayOffsets = {0};
+              Type->FieldDisplayTypes = {NdType::makeInt(4)};
+            }
+            SCOPED_TRACE(Pointee);
+            SCOPED_TRACE(Explicit);
+            SCOPED_TRACE(LLVM);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {0x1000};
+            Options.LiftMode = Options.SourceProjection = LLVM;
+            auto Result = Pipeline().run(Image, Context, Options, &Debug);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            ASSERT_EQ(Result.MedFuncs.size(), 1U);
+            ASSERT_EQ(Result.MedFuncs[0].TypedParams.size(), 1U);
+            EXPECT_EQ(Result.MedFuncs[0].TypedParams[0].Type->Kind,
+                      Explicit ? NdTypeKind::Int : NdTypeKind::Ptr);
+            CEmitterOptions COptions;
+            COptions.TheArch = Architecture;
+            COptions.Format = Format;
+            COptions.Image = &Image;
+            COptions.RecordDefinitions =
+                [&](const std::vector<TypeRef> &Types) {
+                  CRecordDefinitions Definitions;
+                  for (const auto &Requested : Types) {
+                    auto Leaf = Requested;
+                    while (Leaf && Leaf->Kind == NdTypeKind::Ptr)
+                      Leaf = Leaf->Pointee;
+                    if (Leaf && Leaf->SourceName == "ForwardedObject") {
+                      EXPECT_EQ(Requested->Kind, NdTypeKind::Ptr);
+                      Definitions.Tags[Leaf->SourceName] = false;
+                    }
+                    EXPECT_NE(Leaf->SourceName, "PFORWARDED_OBJECT");
+                  }
+                  return Definitions;
+                };
+            std::string Source;
+            llvm::raw_string_ostream Out(Source);
+            if (LLVM) {
+              ASSERT_TRUE(Result.LlvmModule);
+              ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                              &Debug, &Image));
+            } else {
+              ASSERT_TRUE(
+                  HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+            }
+            EXPECT_EQ(
+                Source.find(std::string("forward_pointer(") +
+                            (Pointee == 0                   ? "void*"
+                             : Pointee == 1 || Pointee == 4 ? "ForwardedObject*"
+                             : Pointee == 2 ? "uint16_t*"
+                                            : "ForwardedObject**") +
+                            " arg0)") != std::string::npos,
+                !Explicit)
+                << Source;
           }
-          EXPECT_EQ(Source.find("forward_pointer(void* arg0)") !=
-                        std::string::npos,
-                    !Explicit)
-              << Source;
-        }
     }
+}
+
+TEST(NativeSourceHints, BoundCallsRetainTheirPointeeCandidates) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    addPointerCall(Fixture);
+    auto &Call = Fixture.Med.Blocks.front().Ops.front();
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+    const auto Object =
+        NdType::makePtr(NdType::makeNamedRecord("ForwardedObject", 0));
+    Object->TypedefName = "PFORWARDED_OBJECT";
+    Object->Pointee->Size = 64;
+    const auto Text = NdType::makePtr(NdType::makeInt(2, false));
+    Hint->Signature.Parameters[0].Type = Object;
+    Hint->Signature.Parameters[1].Type = Text;
+    Call.SourceCallHint = std::move(Hint);
+    std::string Error;
+    const auto Inferred = Fixture.infer(Error);
+    ASSERT_TRUE(Inferred) << Error;
+    ASSERT_EQ(Inferred->Parameters.size(), 2U);
+    EXPECT_TRUE(Inferred->Parameters[0].Type->TypedefName.empty());
+    ASSERT_TRUE(Inferred->Parameters[0].Type->Pointee);
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->SourceName,
+              "ForwardedObject");
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->Size, 0u);
+    EXPECT_EQ(Object->Pointee->Size, 64u);
+    EXPECT_TRUE(equalSourceTypes(Inferred->Parameters[1].Type, Text));
+    EXPECT_EQ(Fixture.Med.TypedParams[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Fixture.Med.TypedParams[1].Type->Kind, NdTypeKind::Int);
+  }
 }
 
 TEST(NativeSourceHints, AmbiguousValuesAndUnboundCallsDoNotSupplyPointerFacts) {
@@ -12086,4 +12153,126 @@ TEST(NativeSourceHints, RecoveredCallPointerUsesKeepWidthsAndEntryIdentity) {
       EXPECT_EQ(Pointers[0], Mutation == 0 || Mutation >= 7);
       EXPECT_EQ(Pointers[1], Mutation != 1 && Mutation != 6);
     }
+}
+
+TEST(NativeSourceHints, PointeeConflictsConvergeThroughSharedPhiUses) {
+  for (auto Architecture : {Arch::X64, Arch::AArch64})
+    for (bool Reverse : {false, true})
+      for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+        SCOPED_TRACE(unsigned(Architecture));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Mutation);
+        MedFunc Function;
+        const auto &Registers = getTargetRegInfo(Architecture);
+        for (unsigned I = 0; I != 2; ++I) {
+          MedVar P;
+          P.Kind = MedVar::Param;
+          P.Id = I;
+          P.Size = 8;
+          P.RegOff = Registers.IntParamRegs[I];
+          Function.Params.push_back(P);
+        }
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 10;
+        Copy.Output.Size = 8;
+        Copy.addInput(Function.Params[0]);
+        PhiNode Phi;
+        Phi.Output = Copy.Output;
+        ++Phi.Output.Id;
+        Phi.Args = {{1, Copy.Output}, {2, Phi.Output}};
+        MedBlock Uses, Producer, Loop;
+        Uses.Id = 0;
+        Producer.Id = 1;
+        Loop.Id = 2;
+        Producer.Ops.push_back(Copy);
+        Loop.Phis.push_back(Phi);
+        const auto Object = [] {
+          return NdType::makePtr(NdType::makeNamedRecord("ForwardedObject", 0));
+        };
+        const auto Text = [] {
+          return NdType::makePtr(NdType::makeInt(2, false));
+        };
+        std::map<va_t, std::vector<TypeRef>> Declared{
+            {0x3000, {Object(), Text()}}, {0x4000, {Object(), Text()}}};
+        auto &Second = Declared[0x4000];
+        if (Mutation == 1)
+          Second[0] =
+              NdType::makePtr(NdType::makeNamedRecord("OtherObject", 0));
+        else if (Mutation == 2)
+          Second[0] = NdType::makePtr(NdType::makeVoid());
+        else if (Mutation == 3)
+          Second[0] = NdType::makePtr(Object());
+        else if (Mutation == 4)
+          Second[0] = NdType::makeInt(8);
+        else if (Mutation == 5)
+          Second[1] = NdType::makePtr(NdType::makeInt(4, false));
+        else if (Mutation == 6) {
+          // Same ABI layout cannot choose between C's distinct nominal tags.
+          auto FirstRecord = NdType::makeStruct({NdType::makeInt(8)});
+          auto SecondRecord = NdType::makeStruct({NdType::makeInt(8)});
+          FirstRecord->SourceName = "FirstRecord";
+          SecondRecord->SourceName = "SecondRecord";
+          Declared[0x3000][0] = NdType::makePtr(FirstRecord);
+          Second[0] = NdType::makePtr(SecondRecord);
+        } else if (Mutation == 7) {
+          Second[0]->Pointee->TypedefName = "OtherAlias";
+        } else if (Mutation == 8) {
+          Declared.erase(0x4000);
+        } else if (Mutation == 9) {
+          auto Callback = std::make_shared<NdType>();
+          Callback->Kind = NdTypeKind::Func;
+          Callback->RetType = NdType::makeVoid();
+          Callback->ParamTypes = {NdType::makeInt(4)};
+          Declared[0x3000][0] = NdType::makePtr(Callback);
+          Second[0] = NdType::makePtr(Callback);
+        } else if (Mutation == 10 || Mutation == 11) {
+          // Array extents and enum definitions are not nominal object tags.
+          auto Pointee = Mutation == 10
+                             ? NdType::makeArray(NdType::makeInt(4), 3, 12)
+                             : NdType::makeStruct({NdType::makeInt(4)});
+          if (Mutation == 11) {
+            Pointee->SourceName = "ForwardedEnum";
+            Pointee->IsEnum = true;
+          }
+          Declared[0x3000][0] = NdType::makePtr(Pointee);
+          Second[0] = NdType::makePtr(Pointee);
+        }
+        const std::array<va_t, 2> Targets =
+            Reverse ? std::array<va_t, 2>{0x4000, 0x3000}
+                    : std::array<va_t, 2>{0x3000, 0x4000};
+        for (const auto Target : Targets) {
+          MedCallInfo Call;
+          Call.BlockId = Uses.Id;
+          Call.OpIdx = Uses.Ops.size();
+          Call.TargetAddr = Target;
+          Call.Args = {Phi.Output, Function.Params[1]};
+          Function.CallInfos.push_back(Call);
+          MedOp Op;
+          Op.Opcode = NdOp::CALL;
+          Op.addInput(MedVar::makeConst(Target, 8));
+          Uses.Ops.push_back(Op);
+        }
+        Function.Blocks = {Uses, Producer, Loop};
+        if (Reverse)
+          std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+        const auto Types = inferMedSourcePointerParameterTypes(
+            Function, Architecture, Declared);
+        ASSERT_EQ(Types.size(), 2U);
+        TypeRef FirstExpected, SecondExpected;
+        if (Mutation != 4 && Mutation != 8)
+          FirstExpected = Mutation == 0 || Mutation == 5
+                              ? Object()
+                              : NdType::makePtr(NdType::makeVoid());
+        if (Mutation != 8)
+          SecondExpected =
+              Mutation == 5 ? NdType::makePtr(NdType::makeVoid()) : Text();
+        EXPECT_EQ(bool(Types[0]), bool(FirstExpected));
+        EXPECT_EQ(bool(Types[1]), bool(SecondExpected));
+        if (Types[0] && FirstExpected)
+          EXPECT_TRUE(equalSourceTypes(Types[0], FirstExpected));
+        if (Types[1] && SecondExpected)
+          EXPECT_TRUE(equalSourceTypes(Types[1], SecondExpected));
+      }
 }

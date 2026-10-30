@@ -6998,9 +6998,31 @@ SSA version zero is not an incoming register, and a separately defined narrow
 register view does not redefine the full-width entry value.
 `PipelineSourcePointerParameters` owns declaration admission and runs candidate
 use graphs on the existing weighted workers. Explicit entry declarations remain
-authoritative. This x64/AArch64 source-only refinement produces `void*` carriers;
-it does not infer pointee records, supply missing machine state, authenticate
-addresses, or change native rewriting contracts.
+authoritative. The shared use graph also meets compatible declared object
+pointees: an SSA value moves from unobserved to one type and then, on conflict,
+to a generic pointer. Pointer depth, nominal record names and typedef identity
+must agree as well as the source carrier shape. Named records and scalar
+pointees therefore survive both source pipelines and native source-hint
+inference without repeated path exploration. The resulting candidate keeps
+nominal names and pointer depth, while discarding the callee's typedef aliases,
+record layouts and extents. HighC initially requests only an opaque record's
+tag; an actual member access uses its existing demand-driven completion pass.
+Forward-only wrappers therefore do not initialize the full record renderer.
+Unsupported pointee graphs and
+conflicting declarations keep generic pointers; scalar conflicts still prevent
+pointer refinement. This x64/AArch64 source candidate does not authenticate an
+original prototype, record storage, addresses, missing machine state or native
+rewriting contracts. Portable qualifiers and callback signatures remain owned
+by their existing declarations.
+
+`LLVMSourceTypeHints` carries supported pointee spellings on individual LLVM
+arguments, so opaque pointers and IR serialization do not erase them. The
+reader checks the actual pointer carrier and data-layout width; malformed or
+unsupported chains are ignored. Only scalar types, C record identifiers and
+pointer indirection survive this display transport. Record layouts and extents
+are deliberately absent. LLVMC's shared definition/call projection consumes
+these facts only in the absence of an explicit entry declaration, and respects
+selected-function and preserve-LLVM-types modes.
 
 When an unrelated unresolved value prevents a complete entry-demand graph,
 native helper inference may retain an independent full-word, call-preserved

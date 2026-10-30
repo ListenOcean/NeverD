@@ -76,6 +76,7 @@ add_neverd_component_library(NeverDBackendC
   LINK_COMPONENTS
   IR
   LLVMCallContract
+  LLVMSourceTypeHints
   LibC
   LLVMScalarLoopRecovery
   PassIR

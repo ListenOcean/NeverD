@@ -14,9 +14,12 @@
 
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 
+#include "llvm/AsmParser/Parser.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/Verifier.h"
+#include "llvm/Support/SourceMgr.h"
 
 #include <map>
 #include <optional>
@@ -145,5 +148,142 @@ int main(void) {
                      "-Werror=incompatible-pointer-types",
                      "-fsanitize=undefined", "-fsanitize-trap=all"});
       }
+}
+TEST(LLVMCSourcePointers, InferredPointeesSurviveSerializationAndShareCalls) {
+  for (unsigned Kind : {0u, 1u, 2u})
+    for (unsigned Mode : {0u, 1u, 2u, 3u}) {
+      SCOPED_TRACE(Kind);
+      SCOPED_TRACE(Mode);
+      const bool Nested = Kind == 2;
+      const bool Explicit = Mode == 1;
+      const bool Preserve = Mode == 2;
+      const bool Selected = Mode == 3;
+      llvm::LLVMContext Context;
+      llvm::Module Module("inferred-source-pointers", Context);
+      Module.setDataLayout("e-p:64:64");
+      llvm::IRBuilder<> Builder(Context);
+      const auto Scalar = NdType::makeInt(2, false);
+      const auto Record = NdType::makeNamedRecord("PointerPayload", 64);
+      auto Type = NdType::makePtr(Kind ? Record : Scalar);
+      if (Nested)
+        Type = NdType::makePtr(Type);
+      auto *Entry = llvm::Function::Create(
+          llvm::FunctionType::get(Builder.getInt16Ty(), {Builder.getInt64Ty()},
+                                  false),
+          llvm::GlobalValue::ExternalLinkage, "pointer_entry", Module);
+      auto *Forward = llvm::Function::Create(
+          llvm::FunctionType::get(Builder.getInt16Ty(), {Builder.getPtrTy()},
+                                  false),
+          llvm::GlobalValue::ExternalLinkage, "pointer_forward", Module);
+      rewrite_source::setOriginalVA(*Forward, 0x2000);
+      writeLLVMSourcePointerParameter(*Forward->getArg(0), Type);
+      const auto Read = readLLVMSourcePointerParameter(*Forward->getArg(0));
+      ASSERT_TRUE(Read);
+      auto Leaf = Read;
+      while (Leaf->Kind == NdTypeKind::Ptr)
+        Leaf = Leaf->Pointee;
+      if (Kind) {
+        EXPECT_EQ(Leaf->Size, 0u);
+        EXPECT_TRUE(Leaf->Fields.empty());
+      }
+      Builder.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Entry));
+      Builder.CreateRet(Builder.CreateCall(
+          Forward,
+          {Builder.CreateIntToPtr(Entry->getArg(0), Builder.getPtrTy())}));
+      Builder.SetInsertPoint(
+          llvm::BasicBlock::Create(Context, "entry", Forward));
+      llvm::Value *Address = Forward->getArg(0);
+      if (Nested)
+        Address = Builder.CreateLoad(Builder.getPtrTy(), Address);
+      Builder.CreateRet(Builder.CreateLoad(Builder.getInt16Ty(), Address));
+      ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+      std::string Serialized;
+      llvm::raw_string_ostream IR(Serialized);
+      Module.print(IR, nullptr);
+      llvm::LLVMContext RestoredContext;
+      llvm::SMDiagnostic Diagnostic;
+      const auto Restored =
+          llvm::parseAssemblyString(Serialized, Diagnostic, RestoredContext);
+      ASSERT_TRUE(Restored);
+      PointerContext Debug;
+      if (Explicit) {
+        FunctionSym Declared;
+        Declared.Addr = 0x2000;
+        Declared.ReturnType = Scalar;
+        Declared.Params = {{"input", NdType::makePtr()}};
+        Debug.Functions.emplace(Declared.Addr, Declared);
+      }
+      CEmitterOptions Options;
+      Options.TheArch = Arch::X64;
+      Options.Format = BinaryFormat::COFF;
+      Options.PreserveLLVMFunctionTypes = Preserve;
+      std::string Text;
+      llvm::raw_string_ostream Out(Text);
+      ASSERT_TRUE(LLVMCEmitter().emit(
+          *Restored, Out, Options, Explicit ? &Debug : nullptr, nullptr,
+          Selected ? Restored->getFunction("pointer_entry") : nullptr));
+      Out.flush();
+      if (Explicit || Preserve || Selected)
+        EXPECT_EQ(Text.find("PointerPayload"), std::string::npos) << Text;
+      else
+        EXPECT_NE(Text.find(std::string(Kind ? "PointerPayload" : "uint16_t") +
+                            (Nested ? "** " : "* ")),
+                  std::string::npos)
+            << Text;
+      if (Selected)
+        Text +=
+            std::string("\nuint16_t pointer_forward(void *input) { return ") +
+            (Nested ? "**(uint16_t **)input; }\n" : "*(uint16_t *)input; }\n");
+      Text += R"c(
+struct PointerPayload { uint16_t value; };
+int main(void) {
+  struct PointerPayload value = {0x1234};
+  struct PointerPayload *pointer = &value;
+)c";
+      Text += std::string("  return pointer_entry((uintptr_t)") +
+              (Nested ? "&pointer" : "&value") + " ) != 0x1234;\n}\n";
+      for (const auto Optimization : {"-O0", "-O2"})
+        source_call_execution_test::compileAndRun(
+            Text, {Optimization, "-Werror=int-conversion",
+                   "-Werror=incompatible-pointer-types", "-fsanitize=undefined",
+                   "-fsanitize-trap=all"});
+    }
+}
+
+TEST(LLVMCSourcePointers, MalformedOrChangedPointerCarriersIgnoreSpelling) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("pointer-attribute-boundary", Context);
+  Module.setDataLayout("e-p:64:64-p1:32:32");
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(
+          Builder.getVoidTy(),
+          {Builder.getPtrTy(), Builder.getInt64Ty(), Builder.getPtrTy(1)},
+          false),
+      llvm::GlobalValue::ExternalLinkage, "boundary", Module);
+  const auto Type = NdType::makePtr(NdType::makeInt(2, false));
+  writeLLVMSourcePointerParameter(*Function->getArg(0), Type);
+  const auto Good =
+      Function->getAttributes().getParamAttr(0, LLVMSourcePointerParameter);
+  ASSERT_TRUE(readLLVMSourcePointerParameter(*Function->getArg(0)));
+  for (unsigned Index : {1u, 2u}) {
+    Function->getArg(Index)->addAttr(Good);
+    EXPECT_FALSE(readLLVMSourcePointerParameter(*Function->getArg(Index)));
+  }
+  Module.setDataLayout("e-p:32:32");
+  EXPECT_FALSE(readLLVMSourcePointerParameter(*Function->getArg(0)));
+  Module.setDataLayout("e-p:64:64");
+  for (llvm::StringRef Text :
+       {"invalid", "[]", "[[\"ptr\",8,false,\"\"]]",
+        "[[\"ptr\",4,false,\"\"],[\"int\",2,false,\"\"]]",
+        "[[\"ptr\",8,false,\"\"],[\"int\",3,false,\"\"]]",
+        "[[\"ptr\",8,false,\"\"],[\"record\",8,false,\"Record\"]]",
+        "[[\"ptr\",8,false,\"\"],[\"record\",0,false,\"bad;name\"]]",
+        "[[\"ptr\",8,false,\"\"],[\"function\",0,false,\"\"]]"}) {
+    Function->getArg(0)->addAttr(
+        llvm::Attribute::get(Context, LLVMSourcePointerParameter, Text));
+    EXPECT_FALSE(readLLVMSourcePointerParameter(*Function->getArg(0)))
+        << Text.str();
+  }
 }
 } // namespace

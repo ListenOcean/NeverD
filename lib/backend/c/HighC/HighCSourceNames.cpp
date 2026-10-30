@@ -32,6 +32,7 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   std::vector<TypeRef> Records;
   std::set<const NdType *> Seen;
   std::set<std::string> Named;
+  std::set<std::string> PointerRecords;
   std::function<void(const TypeRef &)> Visit = [&](const TypeRef &Type) {
     if (!Type || !Seen.insert(Type.get()).second)
       return;
@@ -39,6 +40,18 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
       Records.push_back(NdType::makeNamedRecord(Type->TypedefName));
     switch (Type->Kind) {
     case NdTypeKind::Ptr:
+      // An opaque pointee requires only its tag. A later member access asks
+      // for a complete definition through the existing WantedRecords pass.
+      // Completing every forwarded pointer would build the full local-type
+      // renderer even when the function never accesses the object itself.
+      if (const auto &Record = Type->Pointee;
+          Record && Record->Kind == NdTypeKind::Struct && !Record->IsEnum &&
+          !Record->Size && Record->Fields.empty() &&
+          Record->FieldDisplayNames.empty() && !Record->SourceName.empty()) {
+        if (PointerRecords.insert(Record->SourceName).second)
+          Records.push_back(Type);
+        return;
+      }
       Visit(Type->Pointee);
       return;
     case NdTypeKind::Array:
@@ -67,7 +80,6 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
   };
   // Import pointers need the library's tag kind, but do not require its
   // layout. In particular, a union must not acquire a struct forward tag.
-  std::set<std::string> ImportRecords;
   const auto VisitImportType = [&](TypeRef Type, bool NeedsDeclaration) {
     VisitEnumeration(Type);
     // A callee's included header already owns its opaque parameter types.
@@ -79,7 +91,7 @@ void HighCWriter::prepareRecordDefinitions(const std::vector<HighFunc> &Funcs) {
     while (Type && Type->Kind == NdTypeKind::Ptr) {
       if (Type->Pointee && Type->Pointee->Kind == NdTypeKind::Struct &&
           !Type->Pointee->IsEnum &&
-          ImportRecords.insert(Type->Pointee->SourceName).second)
+          PointerRecords.insert(Type->Pointee->SourceName).second)
         Records.push_back(Type);
       Type = Type->Pointee;
     }

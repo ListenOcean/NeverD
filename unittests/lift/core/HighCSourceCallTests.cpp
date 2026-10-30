@@ -112,6 +112,64 @@ std::string emit(const std::vector<HighFunc> &Functions, bool Includes = true,
 
 using source_call_execution_test::compileAndRun;
 
+TEST(HighCSourceCalls, OpaqueParametersCompleteOnlyForMemberAccess) {
+  class RecordContext final : public NullDebugContext {
+  public:
+    void completeType(const TypeRef &Type) const override {
+      if (Type && Type->Kind == NdTypeKind::Struct &&
+          Type->SourceName == "LazyRecord") {
+        Type->FieldDisplayNames = {"value"};
+        Type->FieldDisplayOffsets = {0};
+        Type->FieldDisplayTypes = {NdType::makeInt(4, false)};
+        Type->FieldDisplayAlignment = 4;
+      }
+    }
+  } Debug;
+  for (bool Read : {false, true}) {
+    SCOPED_TRACE(Read);
+    const auto Pointer = NdType::makePtr(NdType::makeNamedRecord("LazyRecord"));
+    auto Function =
+        returning("opaque_record",
+                  Read ? HighExpr::makeLoad(parameter(0, Pointer),
+                                            NdType::makeInt(4, false))
+                       : HighExpr::makeConst(7, 4),
+                  {Pointer});
+    bool Complete = false;
+    CEmitterOptions Options;
+    Options.RecordDefinitions = [&](const std::vector<TypeRef> &Types) {
+      CRecordDefinitions Definitions;
+      for (const auto &Type : Types) {
+        const bool Opaque = Type->Kind == NdTypeKind::Ptr;
+        const auto Record = Opaque ? Type->Pointee : Type;
+        if (Record->SourceName != "LazyRecord")
+          continue;
+        Definitions.Tags[Record->SourceName] = false;
+        if (!Opaque) {
+          Complete = true;
+          Definitions.Records[Record->SourceName] = false;
+          Definitions.Text = "struct LazyRecord { uint32_t value; };\n";
+        }
+      }
+      return Definitions;
+    };
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(HighCEmitter().emit({Function}, Out, Options, &Debug));
+    EXPECT_EQ(Complete, Read) << Source;
+    if (Read)
+      EXPECT_NE(Source.find("arg0->value"), std::string::npos) << Source;
+    else
+      Source += "\nstruct LazyRecord { uint32_t value; };\n";
+    Source += "\nint main(void) { struct LazyRecord value = {37}; return "
+              "opaque_record(&value) != " +
+              std::string(Read ? "37" : "7") + "; }\n";
+    for (auto Optimization : {"-O0", "-O2"})
+      compileAndRun(Source, {Optimization, "-Werror=incompatible-pointer-types",
+                             "-Werror=int-conversion", "-fsanitize=undefined",
+                             "-fsanitize-trap=all"});
+  }
+}
+
 MedFunc savedFloatingRecord(unsigned Calls, bool ReplaceFirst = false,
                             bool ReadUpper = false) {
   const auto &TRI = getTargetRegInfo(Arch::AArch64);
