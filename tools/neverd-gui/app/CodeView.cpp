@@ -3,6 +3,7 @@
 #include "../Config.h"
 #include "../ResourceLimits.h"
 #include "Icons.h"
+#include "InterpreterRecoveryDialog.h"
 #include "Session.h"
 #include "SettingsKeys.h"
 #include "ShrinkableRow.h"
@@ -685,6 +686,14 @@ void CodeText::load(Address function, const QString &representation,
   function_ = function;
   representation_ = representation;
   sourceOptions_ = nextOptions;
+  if (!same) {
+    RecoveryReport = {};
+    RecoveryOptions = {};
+  }
+  if (sourceOptions_.contains("interpreter_recovery")) {
+    RecoveryOptions = sourceOptions_.value("interpreter_recovery").toObject();
+    RecoveryReport = {};
+  }
   unresolvedDeclaration_.clear();
   const quint64 serial = ++serial_;
   if (!same) {
@@ -713,7 +722,9 @@ void CodeText::load(Address function, const QString &representation,
     library_.reset({}, {}, {});
   if (!nameRefresh) {
     emit foldingChanged();
-    status_ = tr("Decompiling…");
+    status_ = sourceOptions_.contains("interpreter_recovery")
+                  ? tr("Recovering interpreter control flow…")
+                  : tr("Decompiling…");
   }
   emit statusChanged();
   request(0, serial);
@@ -729,7 +740,9 @@ QJsonObject CodeText::defaultSourceOptions() const {
 }
 
 void CodeText::cancelTransformation() {
-  if (loading_ && lines_.isEmpty() && sourceOptions_.value("symbolic").toBool())
+  if (loading_ && lines_.isEmpty() &&
+      (sourceOptions_.value("symbolic").toBool() ||
+       sourceOptions_.contains("interpreter_recovery")))
     showOrdinary(tr("Cancelled"));
   else
     cancel();
@@ -738,6 +751,7 @@ void CodeText::cancelTransformation() {
 void CodeText::showOrdinary(const QString &why) {
   auto options = sourceOptions_;
   options.remove("symbolic");
+  options.remove("interpreter_recovery");
   load(*function_, representation_, options);
   // Pages arrive from the event loop, after this.
   statusNote_ = why;
@@ -757,6 +771,23 @@ void CodeText::request(int offset, quint64 serial) {
       [this, offset, serial](const QJsonObject &payload) {
         if (serial != serial_)
           return;
+        if (offset == 0 && payload.contains("recovery_report")) {
+          RecoveryReport = payload.value("recovery_report").toObject();
+          if (!payload.value("source_available").toBool()) {
+            loading_ = false;
+            interrupted_ = true;
+            refreshPages_.reset();
+            pendingAddress_.reset();
+            placeAfterLoad_.reset();
+            selectAllAfterLoad_ = false;
+            sourceOptions_ = renderedOptions_;
+            status_ = tr("Recovery stopped: %1")
+                          .arg(RecoveryReport.value("error").toString(
+                              tr("No complete source was produced")));
+            emit statusChanged();
+            return;
+          }
+        }
         const auto next = payload.value("next_offset");
         struct RefreshPlace {
           int cursor, top, horizontal;
@@ -944,6 +975,11 @@ void CodeText::request(int offset, quint64 serial) {
           }
         if (sourceOptions_.value("symbolic").toBool())
           status_ += QStringLiteral(" · ") + tr("Symbolic simplification");
+        if (sourceOptions_.contains("interpreter_recovery"))
+          status_ +=
+              QStringLiteral(" · ") +
+              tr("Interpreter recovered · %1 blocks")
+                  .arg(RecoveryReport.value("residualBlocks").toInteger());
         if (representation_ == QLatin1String("llvmc"))
           status_ +=
               QStringLiteral(" · ") + sourceOptions_.value("llvm_optimization")
@@ -3209,6 +3245,47 @@ CodeView::CodeView(Session &session, const QString &representation,
 void CodeView::addSourceActions(QMenu &menu) {
   if (!isSource(representation()) || !text_->function())
     return;
+  if (session_.recoversInterpreterSource() &&
+      (representation() == QLatin1String("c") ||
+       representation() == QLatin1String("source") ||
+       representation() == QLatin1String("llvmc"))) {
+    const auto Start = [this](const QJsonObject &Options) {
+      text_->setSourceOptions({{"interpreter_recovery", Options}});
+    };
+    auto *Recover = menu.addAction(icon(QStringLiteral("source_control_flow")),
+                                   tr("Recover interpreter function"));
+    Recover->setObjectName(QStringLiteral("sourceInterpreterRecovery"));
+    connect(Recover, &QAction::triggered, this, [this, Start] {
+      Start(text_->recoveryOptions().isEmpty()
+                ? InterpreterRecoveryDialog::defaults()
+                : text_->recoveryOptions());
+    });
+    auto *Configure = menu.addAction(tr("Interpreter recovery options…"));
+    Configure->setObjectName(
+        QStringLiteral("sourceInterpreterRecoveryOptions"));
+    connect(Configure, &QAction::triggered, this, [this, Start] {
+      InterpreterRecoveryDialog Dialog(text_->recoveryOptions(), this);
+      if (Dialog.exec() == QDialog::Accepted)
+        Start(Dialog.options());
+    });
+    auto *Report = menu.addAction(tr("Interpreter recovery report…"));
+    Report->setObjectName(QStringLiteral("sourceInterpreterRecoveryReport"));
+    Report->setEnabled(!text_->recoveryReport().isEmpty());
+    connect(Report, &QAction::triggered, this, [this] {
+      InterpreterRecoveryDialog::showReport(text_->recoveryReport(), this);
+    });
+    if (text_->sourceOptions().contains("interpreter_recovery")) {
+      auto *Ordinary = menu.addAction(tr("Return to ordinary source"));
+      Ordinary->setObjectName(QStringLiteral("sourceInterpreterOrdinary"));
+      connect(Ordinary, &QAction::triggered, this, [this] {
+        text_->setSourceOptions(text_->defaultSourceOptions());
+      });
+      // Expression transformations operate on ordinary source views. Do not
+      // present them as transformations of a different recovered document.
+      return;
+    }
+    menu.addSeparator();
+  }
   auto *symbolic = menu.addAction(icon(QStringLiteral("source_symbolic")),
                                   tr("Symbolic simplification"));
   symbolic->setObjectName(QStringLiteral("sourceSymbolic"));

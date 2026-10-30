@@ -91,6 +91,9 @@ public:
   bool reportsX87Capabilities() const {
     return capabilities_.contains(QStringLiteral("x87_capabilities"));
   }
+  bool recoversInterpreterSource() const {
+    return capabilities_.contains(QStringLiteral("interpreter_recovery"));
+  }
   /// The configured NeverD worker, also used by separate offline workbenches.
   QString workerPath() const { return workerPath_; }
   bool loaded() const { return loaded_; }

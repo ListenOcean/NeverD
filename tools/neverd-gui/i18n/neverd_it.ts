@@ -2050,6 +2050,23 @@ Fai doppio clic per andare alla dichiarazione.</translation>
         <source>Could not refresh source: %1</source>
         <translation>Impossibile aggiornare il codice sorgente: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>Interprete ricostruito · %1 blocchi</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>Non è stato prodotto un sorgente completo</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>Ricostruzione del flusso di controllo dell’interprete…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>Ricostruzione interrotta: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2116,6 +2133,23 @@ Fai doppio clic per andare alla dichiarazione.</translation>
     <message>
         <source>Cancel transformation</source>
         <translation>Annulla la trasformazione</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>Opzioni di ricostruzione dell’interprete…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>Rapporto di ricostruzione dell’interprete…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Ricostruisci funzione dell’interprete</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>Torna al sorgente ordinario</translation>
     </message>
 </context>
 <context>
@@ -9948,6 +9982,150 @@ Il grafo precedente è ancora disponibile.</translation>
     <message>
         <source>Timeline</source>
         <translation>Cronologia</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>Assumi che le scritture esterne evitino il frame d’ingresso dichiarato</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>Vuoto o zero mantiene il valore predefinito del motore. Più lavoro non consente sorgenti incompleti né aggiunge ipotesi sulla memoria.</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>Trasferimenti concatenati</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>Visite concatenate per destinazione</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>Contesti per indirizzo</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>Campi di controllo</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>Affinamenti del controllo</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>Nodi del flusso di controllo</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>Visite alle dipendenze</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>Termina una catena a una destinazione ripetuta</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>Valore predefinito del motore</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>Inserisci un intero valido per %1.</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>Inserisci entrambi gli estremi del frame d’ingresso oppure lasciali entrambi vuoti.</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>Allineamento RSP d’ingresso</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>Fine dell’intervallo RSP d’ingresso (esclusa)</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>Inizio dell’intervallo RSP d’ingresso</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>Resto RSP d’ingresso</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>Operazioni valutate</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>Registri generali</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>Registri generali e query CPU</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>Registri generali, query CPU e XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>Rapporto di ricostruzione dell’interprete</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>Valutazioni dei nodi</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>Dimostra che le scritture evitano gli slot di ritorno e le celle del frame salvate</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>Dimostra che le scritture evitano il frame d’ingresso dichiarato</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>Ricostruisci</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Ricostruisci funzione dell’interprete</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>Ricostruisci il flusso di controllo raggiungibile e genera C con stato esplicito dei registri x64. Il sorgente descrive un’esecuzione normale senza errori con mappature d’immagine fisse. Le ipotesi sulla memoria seguenti si applicano solo se le inserisci.</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>Offset con segno rispetto al RSP d’ingresso. Dichiarare questo intervallo assume che l’aritmetica degli indirizzi non ritorni a zero; non dimostra accessibilità o assenza di sovrapposizione.</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>Query al risolutore</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>Stato del sorgente</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>Stato e memoria</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>Nodi delle espressioni simboliche</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>Non specificato</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>Limiti di lavoro</translation>
     </message>
 </context>
 </TS>
