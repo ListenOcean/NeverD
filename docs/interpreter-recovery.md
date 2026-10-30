@@ -650,7 +650,7 @@ With control-state discovery enabled, a nonconstant runtime validity predicate c
 
 `wrapInterpreterMachineQueryStateX64()` is an opt-in C++ source interface. Its 160-byte state keeps the original 136-byte machine prefix, then three 64-bit fields: query-array address, count and cursor. Each 24-byte record contains six 32-bit words: leaf, subleaf, EAX, EBX, ECX and EDX. Canonical CPUID instructions consume one matching record in order and zero-extend all four results; repeated selectors may have different answers. No host CPU instruction provides answers.
 
-Exhaustion returns status 3 and selector mismatch returns 4. Both stop before that query, commit the current machine state, retain earlier guest memory effects and leave the cursor unchanged. Entry-alignment rejection still returns 2 without writes. The caller must provide an accessible, immutable, nonwrapping array disjoint from state and guest memory; zero count permits a null address. Existing machine-state and flag-profile contracts still apply. This interface adds no CLI, C SDK, GUI, native-equivalence or hardware-serialization support. Existing wrappers still refuse CPU queries, and other unsupported intrinsics and raw environments remain rejected.
+Exhaustion returns status 3 and selector mismatch returns 4. Both stop before that query, commit the current machine state, retain earlier guest memory effects and leave the cursor unchanged. Entry-alignment rejection still returns 2 without writes. The caller must provide an accessible, immutable, nonwrapping array disjoint from state and guest memory; zero count permits a null address. Existing machine-state and flag-profile contracts still apply. This interface adds no native-equivalence or hardware-serialization support. Existing wrappers still refuse CPU queries, and other unsupported intrinsics and raw environments remain rejected.
 
 <!-- i18n-section: xmm-query-source -->
 
@@ -658,4 +658,20 @@ Exhaustion returns status 3 and selector mismatch returns 4. Both stop before th
 
 `wrapInterpreterMachineQueryStateX64V2()` uses a separate 416-byte layout: the unchanged 160-byte query-state prefix followed by XMM0–XMM15, each stored as low and high 64-bit words. Eight-byte state alignment suffices. Every XMM byte is loaded at entry and committed at ordinary returns and query-failure exits. Query and entry-alignment statuses retain their earlier meanings.
 
-This C++ interface admits whole 128-bit XMM operands and reconstructs instruction-local temporary reads from their current byte definitions, preserving partial overwrites. Missing bytes and function-temporary aliases fail explicitly. Only exact constant-address alignment checks proved by the architecture owner can be removed; dynamic or malformed checks remain refused. Partial XMM operands, wider vector banks and floating-point environments remain unsupported. This adds no CLI, C SDK, GUI or native-equivalence support; earlier wrappers retain their layouts and restrictions.
+This C++ interface admits whole 128-bit XMM operands and reconstructs instruction-local temporary reads from their current byte definitions, preserving partial overwrites. Missing bytes and function-temporary aliases fail explicitly. Only exact constant-address alignment checks proved by the architecture owner can be removed; dynamic or malformed checks remain refused. Partial XMM operands, wider vector banks and floating-point environments remain unsupported. This adds no native-equivalence support; earlier wrappers retain their layouts and restrictions.
+
+<!-- i18n-section: source-abi-v10 -->
+
+## Selecting the source layout through CLI and SDK
+
+Use `--vm-source-abi=scalar|queries|xmm` with `--devirtualize --vm-machine-state`. The default `scalar` retains 136 bytes; `queries` selects the 160-byte ordered-query state; `xmm` selects the 416-byte query and XMM state described above. Reports identify `sourceABI` and `sourceStateBytes`, and generated C describes the matching storage contract.
+
+The v10 C APIs `neverd_devirtualize_source_v10()` and `neverd_devirtualize_machine_source_v10()` accept `neverd_devirtualize_options_v10`. Zero-initialize it, set the v1 prefix’s `struct_size` to the full size and select `machine_source_abi` using `NEVERD_DEVIRTUALIZE_MACHINE_SCALAR_V1`, `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_V1` or `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_XMM_V2`. Unknown selectors, nonzero reserved fields and extended layouts with ordinary source reject. Older APIs ignore the new tail; v10 ignores future tails. Null options retain scalar defaults. Python exposes `NeverDDevirtualizeOptionsV10` and `DevirtualizeMachineSourceABI`. Native certification is unchanged.
+
+<!-- i18n-section: gui-interpreter-recovery -->
+
+## Interpreter recovery in the desktop
+
+In a C source view, use **Recover interpreter function**. **Interpreter recovery options…** selects state storage, work limits and explicit entry-frame premises; defaults add no frame, alignment or separation assumption. **Interpreter recovery report…** retains the engine diagnostics. Cancellation or an incomplete result keeps the preceding source. **Return to ordinary source** restores the normal view.
+
+The worker accepts `source_options.interpreter_recovery` as the only source option and calls C SDK v10. It caches and pages the completed C unchanged, without ordinary-source variable edits or invented instruction mappings. The full report appears on the first page; `source_available` distinguishes generated source from a stopped recovery. This does not certify native equivalence.

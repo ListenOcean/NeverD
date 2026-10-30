@@ -286,8 +286,12 @@ ProgramFeatures computeFeatures(const Program &P,
           Out.TailCallee = Instructions.back().Callee;
       }
 
-      StableHash Bytes, Shape, Mnemonics, BodyWithoutPadding, BodyWithPadding;
-      uint32_t BodyInstructions = 0;
+      StableHash Bytes, Shape, Mnemonics, BodyWithoutPadding, BodyWithPadding,
+          EntryBody;
+      uint32_t BodyInstructions = 0, EntryInstructions = 0;
+      bool EntryCalls = false;
+      const Block *Entry =
+          F.EntryBlock == NoIndex ? nullptr : &P.blocks(F)[F.EntryBlock];
       uint64_t Prime = 1;
       Skeletons.clear();
       for (const Block &B : P.blocks(F))
@@ -298,12 +302,17 @@ ProgramFeatures computeFeatures(const Program &P,
           Shape.add(I.Shape);
           BodyWithPadding.add(I.AddressIndependentShape);
           const auto &Name = P.Mnemonics[I.Mnemonic];
-          const bool Landing = F.EntryBlock != NoIndex &&
-                               I.Address == P.blocks(F)[F.EntryBlock].Address &&
+          const bool Landing = Entry && I.Address == Entry->Address &&
                                (Name == "endbr32" || Name == "endbr64");
           if (I.Flow != InstructionFlow::None || (Name != "nop" && !Landing)) {
             BodyWithoutPadding.add(I.AddressIndependentShape);
             ++BodyInstructions;
+            if (&B == Entry) {
+              EntryBody.add(I.AddressIndependentShape);
+              ++EntryInstructions;
+              EntryCalls |= I.Flow == InstructionFlow::Call ||
+                            I.Flow == InstructionFlow::IndirectCall;
+            }
           }
           const uint64_t Mnemonic = R.MnemonicKeys[I.Mnemonic];
           Mnemonics.add(Mnemonic);
@@ -341,6 +350,10 @@ ProgramFeatures computeFeatures(const Program &P,
       if (BodyInstructions >= limits::diff::kMinShapeInstructions)
         Out.BodyWithoutPadding = BodyWithoutPadding.value();
       Out.BodyWithPadding = BodyWithPadding.value();
+      if (F.BlockCount > 1 && !EntryCalls &&
+          EntryInstructions >= limits::diff::kMinBlockHashInstructions &&
+          P.instructions(*Entry).back().Flow == InstructionFlow::Branch)
+        Out.EntryBody = EntryBody.value();
       Out.Mnemonics = Mnemonics.value();
       Out.Prime = Prime;
 

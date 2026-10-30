@@ -1864,66 +1864,121 @@ int main(void) {
 
 TEST(Win64CallContract, PartialOverwriteBeforeBorrowDropsOnlyUnreadBytes) {
   constexpr va_t Consumer = Text + 0x80;
-  for (bool Home : {false, true})
-    for (bool ReadsNeighbor : {false, true}) {
-      SCOPED_TRACE(Home);
-      SCOPED_TRACE(ReadsNeighbor);
-      std::vector<uint8_t> Code(0x90, 0xCC);
-      std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38};
-      const auto Random = throughSlot(Text + Caller.size(), Iat);
-      Caller.insert(Caller.end(), Random.begin(), Random.end());
-      // The call leaves RCX unavailable. Only the low byte of its spill is
-      // overwritten before this complete leaf borrow. Positive offsets use
-      // the caller's incoming home storage, outside the nested call's home.
-      const uint8_t Slot = Home ? 0x40 : 0x28;
-      Caller.insert(Caller.end(),
-                    {0x48, 0x89, 0x4C, 0x24, Slot, 0xC6, 0x44, 0x24, Slot, 37,
-                     0x48, 0x8D, 0x4C, 0x24, Slot, 0xE8});
-      const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
-      Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
-      Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
-      put(Code, Text, Caller);
-      put(Code, Consumer,
-          ReadsNeighbor ? std::vector<uint8_t>{0x0F, 0xB6, 0x41, 1, 0xC3}
-                        : std::vector<uint8_t>{0x0F, 0xB6, 0x01, 0xC3});
-      const auto Image =
-          makeImage(Code, {{Text, "partial_borrow"}, {Consumer, "byte_reader"}},
-                    {"rand"});
-      for (bool OmitCallee : {false, true})
-        for (bool NoOpt : {false, true})
-          for (bool LLVM : {false, true}) {
-            SCOPED_TRACE(OmitCallee);
-            SCOPED_TRACE(NoOpt);
-            SCOPED_TRACE(LLVM);
-            llvm::LLVMContext Context;
-            PipelineOptions Options;
-            Options.EmitDumpOutput = false;
-            Options.OnlyFunctionEntries = {Text};
-            if (!OmitCallee)
-              Options.OnlyFunctionEntries.insert(Consumer);
-            Options.NoOpt = NoOpt;
-            Options.SourceProjection = true;
-            Options.LiftMode = LLVM;
-            auto Result = Pipeline().run(Image, Context, Options);
-            ASSERT_TRUE(Result.Success) << Result.Error;
-            std::string Source;
-            llvm::raw_string_ostream Output(Source);
-            CEmitterOptions COptions;
-            COptions.TheArch = Image.Arch;
-            COptions.Format = Image.Format;
-            COptions.Image = &Image;
-            ASSERT_TRUE(
-                LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output, COptions,
-                                           nullptr, &Image)
-                     : HighCEmitter().emit(Result.HighFuncs, Output, COptions));
-            const bool Unknown =
-                Source.find("__builtin_trap") != std::string::npos;
-            EXPECT_EQ(Unknown, ReadsNeighbor) << Source;
-            if (ReadsNeighbor || Unknown)
-              continue;
-            std::string Oracle;
-            if (OmitCallee)
-              Oracle = R"(
+  for (unsigned Depth : {1u, 2u, 3u})
+    for (bool Home : {false, true})
+      for (bool ReadsNeighbor : {false, true}) {
+        SCOPED_TRACE(Depth);
+        SCOPED_TRACE(Home);
+        SCOPED_TRACE(ReadsNeighbor);
+        std::vector<uint8_t> Code(0x120, 0xCC);
+        std::vector<uint8_t> Caller = {0x48, 0x83, 0xEC, 0x38};
+        const auto Random = throughSlot(Text + Caller.size(), Iat);
+        Caller.insert(Caller.end(), Random.begin(), Random.end());
+        // The call leaves RCX unavailable. Only the low byte of its spill is
+        // overwritten before this complete bounded borrow. Positive offsets use
+        // the caller's incoming home storage, outside the nested call's home.
+        const uint8_t Slot = Home ? 0x40 : 0x28;
+        Caller.insert(Caller.end(),
+                      {0x48, 0x89, 0x4C, 0x24, Slot, 0xC6, 0x44, 0x24, Slot, 37,
+                       0x48, 0x8D, 0x4C, 0x24, Slot, 0xE8});
+        const auto Displacement = rel32(Text + Caller.size() + 4, Consumer);
+        Caller.insert(Caller.end(), Displacement.begin(), Displacement.end());
+        Caller.insert(Caller.end(), {0x48, 0x83, 0xC4, 0x38, 0xC3});
+        put(Code, Text, Caller);
+        const va_t Leaf = Consumer + 0x40 * (Depth - 1);
+        for (unsigned Level = 0; Level + 1 < Depth; ++Level) {
+          const va_t Relay = Consumer + 0x40 * Level;
+          std::vector<uint8_t> Forward = {0x48, 0x83, 0xEC, 0x28, 0xE8};
+          const auto Jump = rel32(Relay + Forward.size() + 4, Relay + 0x40);
+          Forward.insert(Forward.end(), Jump.begin(), Jump.end());
+          Forward.insert(Forward.end(), {0x48, 0x83, 0xC4, 0x28, 0xC3});
+          put(Code, Relay, Forward);
+        }
+        put(Code, Leaf,
+            ReadsNeighbor ? std::vector<uint8_t>{0x0F, 0xB6, 0x41, 1, 0xC3}
+                          : std::vector<uint8_t>{0x0F, 0xB6, 0x01, 0xC3});
+        std::vector<std::pair<va_t, const char *>> Names{
+            {Text, "partial_borrow"}, {Consumer, "byte_reader"}};
+        const char *RelayNames[] = {"byte_reader", "byte_relay_one",
+                                    "byte_relay_two"};
+        for (unsigned Level = 1; Level < Depth; ++Level)
+          Names.emplace_back(Consumer + 0x40 * Level, RelayNames[Level]);
+        const auto Image = makeImage(Code, Names, {"rand"});
+        std::string NativeOracle;
+        llvm::raw_string_ostream Native(NativeOracle);
+        Native << R"(
+#if defined(__linux__) && defined(__x86_64__)
+#include <sys/mman.h>
+#include <string.h>
+static uint64_t native_seed;
+static __attribute__((ms_abi)) int machine_rand(void) {
+  ++observed;
+  __asm__ volatile("mov %0, %%rcx" : : "r"(native_seed) : "rcx");
+  return 17;
+}
+static int check_native(uint64_t seed) {
+  static const uint8_t original[] = {
+)";
+        for (uint8_t Byte : Code)
+          Native << unsigned(Byte) << ',';
+        Native << "};\n  const size_t size = " << Iat - Text + 8 << R"(;
+  uint8_t *mapping = mmap(0, size + 16, PROT_READ | PROT_WRITE | PROT_EXEC,
+                         MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+  if (mapping == MAP_FAILED) return 1;
+  uint8_t *code = mapping + 16;
+  memcpy(code, original, sizeof(original));
+  uintptr_t random = (uintptr_t)machine_rand;
+)";
+        Native << "  memcpy(code + " << Iat - Text << ", &random, 8);\n";
+        Native << R"(
+  native_seed = seed;
+  observed = 0;
+  __builtin___clear_cache((char *)code, (char *)code + size);
+  uint64_t actual = ((uint64_t (__attribute__((ms_abi)) *)(void))code)();
+  int bad = actual != 37 || observed != 1;
+  if (munmap(mapping, size + 16)) return 1;
+  return bad;
+}
+#else
+static int check_native(uint64_t seed) { return 0; }
+#endif
+)";
+        for (bool OmitCallee : {false, true})
+          for (bool NoOpt : {false, true})
+            for (bool LLVM : {false, true}) {
+              SCOPED_TRACE(OmitCallee);
+              SCOPED_TRACE(NoOpt);
+              SCOPED_TRACE(LLVM);
+              llvm::LLVMContext Context;
+              PipelineOptions Options;
+              Options.EmitDumpOutput = false;
+              Options.OnlyFunctionEntries = {Text};
+              if (!OmitCallee)
+                for (unsigned Level = 0; Level < Depth; ++Level)
+                  Options.OnlyFunctionEntries.insert(Consumer + 0x40 * Level);
+              Options.NoOpt = NoOpt;
+              Options.SourceProjection = true;
+              Options.LiftMode = LLVM;
+              auto Result = Pipeline().run(Image, Context, Options);
+              ASSERT_TRUE(Result.Success) << Result.Error;
+              std::string Source;
+              llvm::raw_string_ostream Output(Source);
+              CEmitterOptions COptions;
+              COptions.TheArch = Image.Arch;
+              COptions.Format = Image.Format;
+              COptions.Image = &Image;
+              ASSERT_TRUE(LLVM ? LLVMCEmitter().emit(*Result.LlvmModule, Output,
+                                                     COptions, nullptr, &Image)
+                               : HighCEmitter().emit(Result.HighFuncs, Output,
+                                                     COptions));
+              const bool Unknown =
+                  Source.find("__builtin_trap") != std::string::npos;
+              EXPECT_EQ(Unknown, ReadsNeighbor) << Source;
+              if (ReadsNeighbor || Unknown)
+                continue;
+              std::string Oracle;
+              if (OmitCallee)
+                Oracle = R"(
 #define SYMBOL_PREFIX_(prefix) #prefix
 #define SYMBOL_PREFIX(prefix) SYMBOL_PREFIX_(prefix)
 uint64_t byte_provider(uint64_t address)
@@ -1932,17 +1987,26 @@ uint64_t byte_provider(uint64_t address) {
   return *(uint8_t *)(uintptr_t)address;
 }
 )";
-            Oracle += R"(
+              Oracle += R"(
 static unsigned observed;
 int rand(void) { ++observed; return 17; }
-int main(void) { return partial_borrow() != 37 || observed != 1; }
+static int check_native(uint64_t seed);
+int main(void) {
+  for (unsigned i = 0; i < 32; ++i) {
+    observed = 0;
+    if (partial_borrow() != 37 || observed != 1) return 1;
+    if (check_native(UINT64_C(0xFEDCBA9876543210) ^
+                     (uint64_t)i * UINT64_C(0x100010001))) return 2;
+  }
+  return 0;
+}
 )";
-            for (llvm::StringRef Level : {"-O0", "-O2"})
-              source_call_execution_test::compileAndRun(
-                  Source + Oracle,
-                  {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
-          }
-    }
+              for (llvm::StringRef Level : {"-O0", "-O2"})
+                source_call_execution_test::compileAndRun(
+                    Source + Oracle + NativeOracle,
+                    {Level, "-fsanitize=undefined", "-fsanitize-trap=all"});
+            }
+      }
 }
 
 TEST(Win64CallContract, BoundIntegerOperandsAgreeAcrossSourceRoutes) {

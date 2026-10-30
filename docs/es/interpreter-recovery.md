@@ -412,7 +412,7 @@ Con el descubrimiento del estado de control activado, un predicado no constante 
 
 `wrapInterpreterMachineQueryStateX64()` es una interfaz C++ opcional. Su estado de 160 bytes conserva el prefijo de máquina de 136 bytes y añade tres campos de 64 bits: dirección del arreglo, cantidad y cursor. Cada registro de 24 bytes contiene seis palabras de 32 bits: leaf, subleaf, EAX, EBX, ECX y EDX. Cada CPUID canónico consume en orden un registro coincidente y extiende con ceros los cuatro resultados. Selectores iguales pueden tener respuestas distintas. Ninguna instrucción de la CPU anfitriona proporciona respuestas.
 
-El agotamiento devuelve estado 3 y la discrepancia de selectores devuelve 4. Ambos detienen la ejecución antes de esa consulta, guardan el estado actual, conservan los efectos previos en memoria invitada y dejan el cursor intacto. El rechazo de alineación inicial sigue devolviendo 2 sin escrituras. El arreglo debe ser accesible, inmutable, sin desbordamiento de dirección y separado del estado y de la memoria invitada; una cantidad cero permite una dirección nula. Se mantienen los contratos existentes de estado y banderas. No se añade soporte de CLI, SDK C, GUI, equivalencia nativa ni serialización de hardware. Los envoltorios existentes siguen rechazando consultas de CPU, otros intrínsecos no admitidos y entornos sin modelar.
+El agotamiento devuelve estado 3 y la discrepancia de selectores devuelve 4. Ambos detienen la ejecución antes de esa consulta, guardan el estado actual, conservan los efectos previos en memoria invitada y dejan el cursor intacto. El rechazo de alineación inicial sigue devolviendo 2 sin escrituras. El arreglo debe ser accesible, inmutable, sin desbordamiento de dirección y separado del estado y de la memoria invitada; una cantidad cero permite una dirección nula. Se mantienen los contratos existentes de estado y banderas. No se añade soporte de equivalencia nativa ni serialización de hardware. Los envoltorios existentes siguen rechazando consultas de CPU, otros intrínsecos no admitidos y entornos sin modelar.
 
 <!-- i18n-section: xmm-query-source -->
 
@@ -420,4 +420,20 @@ El agotamiento devuelve estado 3 y la discrepancia de selectores devuelve 4. Amb
 
 `wrapInterpreterMachineQueryStateX64V2()` usa una disposición separada de 416 bytes: el prefijo de consultas de 160 bytes sin cambios, seguido de XMM0–XMM15, cada uno como palabras baja y alta de 64 bits. Basta una alineación de ocho bytes. Todos los bytes XMM se leen al entrar y se guardan en retornos ordinarios y salidas por fallo de consulta. Los estados de consulta y alineación mantienen su significado.
 
-Esta interfaz C++ admite operandos XMM completos de 128 bits y reconstruye lecturas temporales locales a la instrucción a partir de las definiciones actuales de bytes, conservando sobrescrituras parciales. Los bytes ausentes y los alias temporales de función fallan explícitamente. Solo se eliminan comprobaciones de alineación de direcciones constantes demostradas por la capa de arquitectura; las dinámicas o mal formadas se rechazan. No se admiten operandos XMM parciales, bancos más anchos ni entornos de coma flotante. No se añade CLI, SDK C, GUI ni equivalencia nativa; los envoltorios anteriores conservan sus disposiciones y restricciones.
+Esta interfaz C++ admite operandos XMM completos de 128 bits y reconstruye lecturas temporales locales a la instrucción a partir de las definiciones actuales de bytes, conservando sobrescrituras parciales. Los bytes ausentes y los alias temporales de función fallan explícitamente. Solo se eliminan comprobaciones de alineación de direcciones constantes demostradas por la capa de arquitectura; las dinámicas o mal formadas se rechazan. No se admiten operandos XMM parciales, bancos más anchos ni entornos de coma flotante. No se añade equivalencia nativa; los envoltorios anteriores conservan sus disposiciones y restricciones.
+
+<!-- i18n-section: source-abi-v10 -->
+
+## Elegir la disposición mediante CLI y SDK
+
+Use `--vm-source-abi=scalar|queries|xmm` con `--devirtualize --vm-machine-state`. El valor predeterminado `scalar` conserva 136 bytes; `queries` elige el estado ordenado de 160 bytes y `xmm` el de 416 bytes con XMM. Los informes incluyen `sourceABI` y `sourceStateBytes`; el C generado describe el contrato de almacenamiento.
+
+Las API C v10 `neverd_devirtualize_source_v10()` y `neverd_devirtualize_machine_source_v10()` aceptan `neverd_devirtualize_options_v10`. Inicialícelo a cero, establezca `struct_size` del prefijo v1 al tamaño completo y elija `machine_source_abi` con `NEVERD_DEVIRTUALIZE_MACHINE_SCALAR_V1`, `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_V1` o `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_XMM_V2`. Se rechazan valores desconocidos, campos reservados no nulos y disposiciones extendidas con fuente ordinaria. Las API anteriores ignoran esta cola; v10 ignora colas futuras. Opciones nulas conservan los valores escalares predeterminados. Python expone `NeverDDevirtualizeOptionsV10` y `DevirtualizeMachineSourceABI`. La certificación nativa no cambia.
+
+<!-- i18n-section: gui-interpreter-recovery -->
+
+## Recuperación del intérprete en el escritorio
+
+En una vista C, seleccione **Recuperar función del intérprete**. Las opciones eligen el almacenamiento de estado, los límites de trabajo y las premisas explícitas del marco de entrada; los valores predeterminados no añaden supuestos de marco, alineación o separación. El informe conserva los diagnósticos. Cancelar o recibir un resultado incompleto mantiene el código anterior; **Volver al código fuente ordinario** restaura la vista normal.
+
+El proceso de trabajo acepta `source_options.interpreter_recovery` como única opción de fuente y llama al SDK C v10. Almacena y pagina el C completo sin modificaciones, sin ediciones de variables ordinarias ni mapas de instrucciones inventados. El informe completo aparece en la primera página; `source_available` distingue el código generado de una recuperación detenida. Esto no certifica equivalencia nativa.

@@ -3482,7 +3482,14 @@ ambiguous, explicit Unmatch decisions remain effective, and disabling
 approximation does not accept the layout-body proposal as an exact identity.
 `PartialInstructionPairsDoNotIdentifyUnrelatedBodies` retains an unrelated
 reordered body as unmatched even though it shares an initial instruction pair,
-much of the instruction inventory and the same one-block CFG.
+much of the instruction inventory and the same one-block CFG. Multi-block,
+same-CFG conditional guards and call-containing entry controls remain unmatched.
+`EntryGuardsRetainReviewableCandidatesAcrossBodyEdits` places a complete shared
+entry before a changed multi-block body, beyond exhaustive candidate admission.
+Final review must preserve the omitted candidate and defer a weaker graph match
+without automatically pairing the shared prefix. Both directions, duplicate
+alternatives, names, mapped references, confirmation, manual choice, rejection,
+approximation off, exact save/reopen and undo are covered.
 
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
@@ -9793,10 +9800,14 @@ C routes at O0/O2 after wide-return recovery reconverts the caller; its saved
 R8 must not become an unknown-register trap.
 
 `SourceFrameBorrows.ReadExtentsAndEscapesBoundPrivateStoreRemoval` checks the
-post-recovery Win64 leaf-borrow proof, including negative and wide reads,
-implicit incoming registers, pointer capture, home-area storage and refusal
+post-recovery Win64 borrow proof over scalar-register call chains, including
+negative and wide reads, implicit incoming registers, pointer capture,
+home-area storage and refusal
 boundaries. High-byte GPR inputs, scalar vector lanes and callee-SP aliases are
-negative controls too. `Win64CallContract.BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes`
+negative controls too. Its nested variants include raw omitted-body operands,
+recursive calls, stale target/position bindings, stack and hidden-register
+readers, GS/EH observers, capture, and exact/one-over call-depth bounds.
+`Win64CallContract.BoundedCalleeReadDoesNotExposeAdjacentUnknownBytes`
 executes both source routes at O0/O2 with UBSan, with optimization enabled or
 disabled and with the callee selected or omitted. Its observing negative control
 must retain the unknown-value guard.
@@ -9804,9 +9815,18 @@ must retain the unknown-value guard.
 writes before a borrow, late writes, bypass paths, dead/omitted writes, wide
 readers and capture. `Win64CallContract.PartialOverwriteBeforeBorrowDropsOnlyUnreadBytes`
 executes both C routes at O0/O2 with UBSan, with optimization enabled/disabled
-and callees selected/omitted, for private and incoming-home slots. Its adjacent
-byte reader retains the unknown guard. These checks do not qualify nested borrows,
-incoming pointer stack arguments or undocumented external pointer effects.
+and callees selected/omitted, for private and incoming-home slots, through one,
+two and three functions. On Linux x64 it also executes the original Win64
+machine code with 32 different incoming register seeds: 3,072 original/source
+pairs across the full matrix. Its adjacent byte reader retains the unknown
+guard. These checks do not qualify incoming pointer stack arguments, recursive
+or indirect calls, GS/EH captures or undocumented external pointer effects.
+`LLVMCPointerAddresses.PackedSiblingPreservesFullSnapshot` initializes all
+sixteen copied bytes, overwrites the source between two copies of the loaded
+value, and executes 256 payloads at O0/O2 with UBSan. The invoke variant checks
+the same emitted copies across a normal EH edge. A call that controls a branch
+cannot supply unrelated copied bytes; the former uninitialized fixtures did
+not establish such a dataflow and their guessed-result assertions were removed.
 `MissingInteriorStackSlotCannotDiscardLaterArguments` also places known local
 words beyond the seven recovered arguments. Both routes must retain the missing
 interior operand and seventh argument without appending those neighboring words.
@@ -17336,7 +17356,9 @@ selected-function emission and preserved LLVM signatures. The accompanying
 malformed/carrier test rejects invalid JSON, widths, kinds, record extents,
 names and changed address spaces or data layouts.
 
-`LLVMCPointerAddresses.UndefinedPackedSiblingCannotInventCallResult` and its
-invoke variant retain unknown copied bytes instead of manufacturing a previous
-call result. The adjacent narrow-store/wide-copy case checks the positive
-control where an actual store connects that result to the copied memory.
+`LLVMCPointerAddresses.PackedSiblingPreservesFullSnapshot` and its invoke
+variant preserve independently initialized copied bytes instead of substituting
+a previous call result. The ordinary-call case executes both copies against
+the independent input after the source has been overwritten. The adjacent
+narrow-store/wide-copy case checks the positive control where an actual store
+connects that result to the copied memory.

@@ -6,6 +6,7 @@
 #include "Contributions.h"
 #include "EngineSymbols.h"
 #include "GraphSnapshot.h"
+#include "InterpreterRecoveryView.h"
 #include "LineageService.h"
 #include "Listing.h"
 #include "OperandFormat.h"
@@ -778,6 +779,9 @@ bool Engine::reportsUnwindFrames() {
 bool Engine::reportsX87Capabilities() {
   return x87CapabilitiesFunction() != nullptr;
 }
+bool Engine::recoversInterpreterSource() {
+  return interpreter_recovery::function() != nullptr;
+}
 std::string Engine::error() const {
   return ownedString(neverd_last_error(session_));
 }
@@ -1058,6 +1062,14 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
                           representation == "source" ||
                           representation == "cpp" || representation == "rust" ||
                           representation == "go";
+  const bool recovery = options.contains(interpreter_recovery::kCapability);
+  std::optional<neverd_devirtualize_options_v10> recoveryOptions;
+  if (recovery) {
+    recoveryOptions = interpreter_recovery::options(options, representation);
+    if (!interpreter_recovery::function())
+      throw Error("unsupported",
+                  "This engine does not support interpreter source recovery");
+  }
   if (!sourceView && !options.empty())
     throw Error("invalid_request", "Source options require a source view");
   Json engineOptions = options;
@@ -1068,7 +1080,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       typeImage = inputHash();
     return type.value("input_sha256", std::string()) == *typeImage;
   };
-  if (sourceView) {
+  if (sourceView && !recovery) {
     const auto row = codeEditRow(address);
     const auto route = representation == "source" ? "c" : representation;
     const auto edits =
@@ -1178,7 +1190,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     }
   // A hit answers from its finished document without pretending the mutable
   // Session still holds this function. Graph/IR requests prepare it normally.
-  if (original.is_null())
+  if (original.is_null() && !recovery)
     prepareFunction(address, representation);
   // Whole-program VM preparation can analyze(), invalidating the listing and
   // advancing the revision. Rebuild aliases and stamp the prepared context;
@@ -1194,6 +1206,39 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
     // The whole function, from as many engine pages as it fills: the engine
     // emits it once and pages it from there.
     Json full = std::move(original);
+    if (full.is_null() && recovery) {
+      const char *report = nullptr;
+      const char *source = interpreter_recovery::function()(
+          session_, address, &*recoveryOptions, &report);
+      const bool hasSource = source != nullptr;
+      std::unique_ptr<const char, decltype(&neverd_free_string)> ownedReport(
+          report, neverd_free_string);
+      auto text = ownedString(source);
+      auto evidence = Json::parse(ownedString(ownedReport.release()));
+      if (!evidence.is_object())
+        throw Error("unavailable", "Interpreter recovery returned no report");
+      const bool available =
+          hasSource && !text.empty() && evidence.value("complete", false);
+      if (!available)
+        text.clear();
+      full = {{"schema_version", 1},
+              {"address", hexAddress(address)},
+              {"representation", representation},
+              {"dialect", "c"},
+              {"mapping_status", "unmapped_recovery_source"},
+              {"text", std::move(text)},
+              {"rows", Json::array()},
+              {"library_regions", Json::array()},
+              {"code_names", Json::array()},
+              {"source_names", Json::array()},
+              {"references", Json::array()},
+              {"offset", 0},
+              {"byte_offset", 0},
+              {"complete", true},
+              {"next_offset", nullptr},
+              {"source_available", available},
+              {"recovery_report", std::move(evidence)}};
+    }
     auto backendRepresentation = representation;
     for (std::size_t next = 0;
          full.is_null() || !full.value("complete", false);) {
@@ -1259,7 +1304,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
       document->original = full.dump();
     for (const auto &reason : staleVariableTypes)
       full["stale_variable_types"].push_back(reason);
-    if (sourceView)
+    if (sourceView && !recovery)
       CodeEdits::spellIdentifierSymbols(full);
     // The resolver below runs other operations, so the decoration names
     // functions from a copy of the listing's display names.
@@ -1278,7 +1323,7 @@ Engine::namedView(std::uint64_t address, const std::string &representation,
           displayNames.emplace(source.substr(begin, end - begin), *alias);
       }
     }
-    if (sourceView)
+    if (sourceView && !recovery)
       CodeEdits::decorate(
           full, codeEditRow(address), address, representation,
           backendJson(neverd_renames_json(session_)),
@@ -1472,6 +1517,7 @@ std::optional<Json> Engine::namedViewPage(std::uint64_t address,
   Json page = Json::object();
   for (const auto &[field, value] : namedView_.items())
     if (field != "text" && field != "rows" &&
+        (field != "recovery_report" || offset == 0) &&
         !((field == "source_names" || field == "code_names" ||
            field == "references") &&
           value.is_array()))

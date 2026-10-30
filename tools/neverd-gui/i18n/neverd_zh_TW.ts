@@ -2045,6 +2045,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>無法重新整理原始碼：%1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>直譯器還原完成 · %1 個區塊</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>未產生完整原始碼</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>正在還原直譯器控制流程…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>還原已停止：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2111,6 +2128,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>取消轉換</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>直譯器還原選項…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>直譯器還原報告…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>還原直譯器函式</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>返回一般原始碼</translation>
     </message>
 </context>
 <context>
@@ -9912,6 +9946,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>時間軸</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>假設外部寫入不與宣告的進入堆疊框架重疊</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>留空或填零保留引擎預設值。增加工作量不會允許不完整原始碼，也不會新增記憶體假設。</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>連續轉移次數</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>每個目標的連續存取次數</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>每個位址的上下文數</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>控制欄位數</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>控制細化次數</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>控制流程節點數</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>相依存取次數</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>遇到重複目標時結束連續分析</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>引擎預設值</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>請為 %1 輸入有效整數。</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>請輸入進入堆疊框架的兩個端點，或將兩者均留空。</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>進入 RSP 對齊</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>進入 RSP 範圍終點（不含）</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>進入 RSP 範圍起點</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>進入 RSP 餘數</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>求值運算數</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>通用暫存器</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>通用暫存器與 CPU 查詢</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>通用暫存器、CPU 查詢與 XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>直譯器還原報告</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>節點求值次數</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>證明寫入避開返回位址槽與已儲存的框架單元</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>證明寫入避開宣告的進入堆疊框架</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>還原</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>還原直譯器函式</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>還原可達控制流程並產生帶明確 x64 暫存器狀態的 C 原始碼。原始碼描述固定映像對映下無故障的正常執行。下方記憶體假設僅在您填寫後生效。</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>相對於進入 RSP 的有號位移。宣告此範圍表示假設位址運算不會回繞，並不證明記憶體可存取或互不重疊。</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>求解器查詢次數</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>原始碼狀態</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>狀態與記憶體</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>符號運算式節點數</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>未指定</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>工作量限制</translation>
     </message>
 </context>
 </TS>

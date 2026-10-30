@@ -2055,6 +2055,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>Не удалось обновить исходный код: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>Интерпретатор восстановлен · блоков: %1</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>Полный исходный код не создан</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>Восстановление потока управления интерпретатора…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>Восстановление остановлено: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2121,6 +2138,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>Отменить преобразование</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>Параметры восстановления интерпретатора…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>Отчёт о восстановлении интерпретатора…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Восстановить функцию интерпретатора</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>Вернуться к обычному исходному коду</translation>
     </message>
 </context>
 <context>
@@ -9984,6 +10018,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>Хронология</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>Предположить, что внешние записи не затрагивают заданный входной кадр</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>Пустое поле или ноль сохраняет значение движка по умолчанию. Увеличение объёма работы не разрешает неполный код и не добавляет предположений о памяти.</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>Переходы в цепочке</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>Посещения каждой цели в цепочке</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>Контексты на адрес</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>Поля управления</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>Уточнения управления</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>Узлы потока управления</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>Посещения зависимостей</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>Завершать цепочку при повторном посещении цели</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>По умолчанию в движке</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>Введите допустимое целое число для %1.</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>Укажите обе границы входного кадра или оставьте обе пустыми.</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>Выравнивание входного RSP</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>Конец диапазона входного RSP (не включается)</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>Начало диапазона входного RSP</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>Остаток входного RSP</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>Вычисленные операции</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>Регистры общего назначения</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>Общие регистры и запросы CPU</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>Общие регистры, запросы CPU и XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>Отчёт о восстановлении интерпретатора</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>Вычисления узлов</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>Доказать, что записи не затрагивают слоты возврата и сохранённые ячейки кадра</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>Доказать, что записи не затрагивают заданный входной кадр</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>Восстановить</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Восстановить функцию интерпретатора</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>Восстановить достижимый поток управления и создать C с явным состоянием регистров x64. Код описывает нормальное выполнение без сбоев при фиксированных отображениях образа. Указанные ниже предположения о памяти применяются только после их ввода.</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>Знаковые смещения относительно входного RSP. Задание диапазона предполагает отсутствие переполнения адресной арифметики, но не доказывает доступность или отсутствие перекрытия.</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>Запросы решателю</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>Состояние исходного кода</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>Состояние и память</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>Узлы символьных выражений</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>Не задано</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>Ограничения работы</translation>
     </message>
 </context>
 </TS>
