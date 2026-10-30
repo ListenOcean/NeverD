@@ -24,6 +24,7 @@
 #include "HexView.h"
 #include "InstanceServer.h"
 #include "InteractionMetrics.h"
+#include "InterpreterRecoveryDialog.h"
 #include "JumpDialog.h"
 #include "LinkDispatch.h"
 #include "LinkOpener.h"
@@ -7596,6 +7597,136 @@ private slots:
     QVERIFY(view->text()->sourceOptions().isEmpty());
     QCOMPARE(view->text()->allText(), original);
     QVERIFY(view->text()->status().contains("Transformation failed"));
+  }
+
+  void interpreterRecoveryPublishesCompleteSourceAndKeepsRefusals() {
+    for (bool Refused : {false, true}) {
+      QTemporaryDir Directory;
+      Workbench Bench;
+      Bench.window->openFile(writeFixture(
+          Directory, Refused ? "recovery-refused.bin" : "recovery-source.bin"));
+      QTRY_VERIFY_WITH_TIMEOUT(Bench.session.loaded(), OpenTimeoutMs);
+      QVERIFY(Bench.session.recoversInterpreterSource());
+      Bench.window->disassembly()->navigate(Base);
+      QTRY_COMPARE(Bench.window->disassembly()->currentFunction(),
+                   std::optional<Address>(Base));
+      Bench.action(ActionId::JumpPseudocode)->trigger();
+      auto *View = Bench.codeView("source");
+      QVERIFY(View);
+      QTRY_VERIFY(!View->text()->loading() &&
+                  !View->text()->allText().isEmpty());
+      const auto Original = View->text()->allText();
+      QMenu Actions;
+      View->addSourceActions(Actions);
+      auto *Recover = Actions.findChild<QAction *>("sourceInterpreterRecovery");
+      QVERIFY(Recover && Recover->isEnabled());
+      Recover->trigger();
+      QTRY_VERIFY(!View->text()->loading());
+      QVERIFY(!View->text()->recoveryReport().isEmpty());
+      QCOMPARE(View->text()->recoveryReport().value("complete").toBool(),
+               !Refused);
+      if (Refused) {
+        QCOMPARE(View->text()->allText(), Original);
+        QVERIFY(View->text()->status().contains(
+            "fixture unresolved indirect branch"));
+        QVERIFY(View->text()->sourceOptions().isEmpty());
+      } else {
+        QVERIFY(View->text()->allText().contains("recovered_fixture"));
+        QVERIFY(View->text()->status().contains("3 blocks"));
+      }
+      QMenu ResultActions;
+      View->addSourceActions(ResultActions);
+      QVERIFY(
+          ResultActions.findChild<QAction *>("sourceInterpreterRecoveryReport")
+              ->isEnabled());
+      if (!Refused) {
+        QVERIFY(!ResultActions.findChild<QAction *>("sourceSymbolic"));
+        ResultActions.findChild<QAction *>("sourceInterpreterOrdinary")
+            ->trigger();
+        QTRY_VERIFY(!View->text()->loading());
+        QCOMPARE(View->text()->allText(), Original);
+      }
+      View->showFunction(Base + 16);
+      QTRY_VERIFY(!View->text()->loading());
+      QVERIFY(View->text()->recoveryReport().isEmpty());
+      QVERIFY(View->text()->recoveryOptions().isEmpty());
+    }
+  }
+
+  void interpreterRecoveryCancellationKeepsThePreviousDocument() {
+    QTemporaryDir Directory;
+    Workbench Bench;
+    QStringList Diagnostics;
+    connect(&Bench.session, &Session::message, this,
+            [&](const QString &Text, int) { Diagnostics.append(Text); });
+    Bench.window->openFile(writeFixture(Directory, "recovery-slow.bin"));
+    QTRY_VERIFY_WITH_TIMEOUT(Bench.session.loaded(), OpenTimeoutMs);
+    Bench.window->disassembly()->navigate(Base);
+    QTRY_COMPARE(Bench.window->disassembly()->currentFunction(),
+                 std::optional<Address>(Base));
+    Bench.action(ActionId::JumpPseudocode)->trigger();
+    auto *View = Bench.codeView("source");
+    QVERIFY(View);
+    QTRY_VERIFY(!View->text()->loading() && !View->text()->allText().isEmpty());
+    const auto Original = View->text()->allText();
+    View->text()->setSourceOptions(
+        {{"interpreter_recovery", InterpreterRecoveryDialog::defaults()}});
+    QTRY_VERIFY_WITH_TIMEOUT(
+        Diagnostics.join('\n').contains("fixture interpreter recovery started"),
+        5000);
+    QVERIFY(View->text()->loading());
+    QCOMPARE(View->text()->allText(), Original);
+    View->text()->cancelTransformation();
+    QTRY_VERIFY(!View->text()->loading());
+    QCOMPARE(View->text()->allText(), Original);
+    QVERIFY(View->text()->sourceOptions().isEmpty());
+    QVERIFY(View->text()->recoveryReport().isEmpty());
+  }
+
+  void interpreterRecoveryOptionsKeepMemoryPremisesExplicit() {
+    Theme::instance().apply();
+    InterpreterRecoveryDialog Dialog({});
+    QCOMPARE(Dialog.options(), InterpreterRecoveryDialog::defaults());
+    Dialog.show();
+    auto *Buttons = Dialog.findChild<QDialogButtonBox *>();
+    auto *Begin = Dialog.findChild<QLineEdit *>("entry_frame_begin");
+    auto *End = Dialog.findChild<QLineEdit *>("entry_frame_end");
+    auto *Nodes = Dialog.findChild<QLineEdit *>("max_nodes");
+    auto *Separation =
+        Dialog.findChild<QCheckBox *>("external_stores_disjoint_frame");
+    QVERIFY(Buttons && Begin && End && Nodes && Separation);
+    QVERIFY(Begin->text().isEmpty() && End->text().isEmpty() &&
+            !Separation->isChecked());
+    Begin->setText("-4096");
+    Buttons->button(QDialogButtonBox::Ok)->click();
+    QVERIFY(Dialog.isVisible());
+    QVERIFY(Dialog.findChild<QLabel *>("recoveryOptionsError")
+                ->text()
+                .contains("both"));
+    End->setText("4096");
+    Nodes->setText("4294967296");
+    Buttons->button(QDialogButtonBox::Ok)->click();
+    QVERIFY(Dialog.isVisible());
+    QVERIFY(Dialog.findChild<QLabel *>("recoveryOptionsError")
+                ->text()
+                .contains("Control-flow nodes"));
+    Nodes->setText("512");
+    const auto Captures = qEnvironmentVariable("NEVERD_GUI_TEST_CAPTURES");
+    if (!Captures.isEmpty()) {
+      QDir().mkpath(Captures);
+      for (auto Mode : {Theme::Mode::Dark, Theme::Mode::Light}) {
+        Theme::instance().setMode(Mode);
+        QTest::qWait(100);
+        QVERIFY(Dialog.grab().save(Captures + "/interpreter-options-" +
+                                   Theme::modeName(Mode) + ".png"));
+      }
+    }
+    Buttons->button(QDialogButtonBox::Ok)->click();
+    QCOMPARE(Dialog.result(), int(QDialog::Accepted));
+    QCOMPARE(Dialog.options().value("entry_frame_begin").toInteger(),
+             qint64(-4096));
+    QCOMPARE(Dialog.options().value("max_nodes").toInteger(), qint64(512));
+    QVERIFY(!Dialog.options().value("external_stores_disjoint_frame").toBool());
   }
 
   void sourceTransformationProfilesAreIndependentAndResetOnNavigation() {

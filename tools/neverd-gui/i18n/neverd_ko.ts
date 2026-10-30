@@ -2045,6 +2045,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>소스 코드를 새로 고칠 수 없습니다: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>인터프리터 복원 완료 · 블록 %1개</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>완전한 소스가 생성되지 않았습니다</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>인터프리터 제어 흐름 복원 중…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>복원 중지: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2111,6 +2128,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>변환 취소</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>인터프리터 복원 옵션…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>인터프리터 복원 보고서…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>인터프리터 함수 복원</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>일반 소스로 돌아가기</translation>
     </message>
 </context>
 <context>
@@ -9912,6 +9946,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>타임라인</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>외부 쓰기가 선언된 진입 프레임과 겹치지 않는다고 가정</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>빈칸 또는 0은 엔진 기본값을 유지합니다. 작업량을 늘려도 불완전한 소스를 허용하거나 메모리 가정을 추가하지 않습니다.</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>연속 전이 수</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>대상별 연속 방문 수</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>주소별 컨텍스트 수</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>제어 필드 수</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>제어 세분화 횟수</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>제어 흐름 노드 수</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>의존성 방문 수</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>동일한 대상을 다시 방문하면 연속 분석 종료</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>엔진 기본값</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>%1에 유효한 정수를 입력하세요.</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>진입 프레임의 양 끝점을 입력하거나 둘 다 비워 두세요.</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>진입 RSP 정렬</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>진입 RSP 범위 끝 (미포함)</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>진입 RSP 범위 시작</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>진입 RSP 나머지</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>평가 연산 수</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>범용 레지스터</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>범용 레지스터 및 CPU 쿼리</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>범용 레지스터, CPU 쿼리 및 XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>인터프리터 복원 보고서</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>노드 평가 횟수</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>쓰기가 반환 슬롯과 저장된 프레임 셀을 피함을 증명</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>쓰기가 선언된 진입 프레임을 피함을 증명</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>복원</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>인터프리터 함수 복원</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>도달 가능한 제어 흐름을 복원하고 명시적 x64 레지스터 상태를 가진 C 소스를 생성합니다. 소스는 고정 이미지 매핑에서 오류 없는 정상 실행을 설명합니다. 아래 메모리 가정은 입력한 경우에만 적용됩니다.</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>진입 RSP에 대한 부호 있는 오프셋입니다. 이 범위를 선언하면 주소 연산이 순환하지 않는다고 가정하지만 접근 가능성이나 비중첩을 증명하지는 않습니다.</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>솔버 쿼리 수</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>소스 상태</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>상태 및 메모리</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>기호식 노드 수</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>지정되지 않음</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>작업량 제한</translation>
     </message>
 </context>
 </TS>
