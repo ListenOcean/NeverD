@@ -696,6 +696,8 @@ The C++ raw-region API can select `SpecializationUndefinedModel::FreshScalarV1`.
 
 This opt-in currently requires explicit x64 machine-region exits and complete scalar instruction evidence. It rejects unsupported effects or exhausted budgets. The existing region C adapter, ordinary emitters and native proof interfaces refuse this model until an explicit runtime choice environment is supplied; no processor-specific values or ordinary ABI are inferred.
 
+An exactly audited disabled-CET RDSSP projection preserves its destination without a new production; its general missing sidecar remains missing. Authenticated traps remain unexecuted boundaries.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Pending trap exits

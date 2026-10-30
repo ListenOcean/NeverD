@@ -239,3 +239,105 @@ TEST_F(InterpreterMachineRegionSourceTest,
     EXPECT_FALSE(Bad.RawEnvironment);
   }
 }
+
+TEST_F(InterpreterMachineRegionSourceTest,
+       ArchitecturalChoicesReuseExactDisabledCetPreservation) {
+  // RDSSPD EAX and RDSSPQ RAX both preserve the full pre-existing RAX when
+  // shadow stacks are explicitly disabled; the 32-bit form is not an EAX
+  // write that clears its upper half. The following comparison observes it.
+  for (const std::vector<uint8_t> Read :
+       {std::vector<uint8_t>{0xf3, 0x0f, 0x1e, 0xc8},
+        std::vector<uint8_t>{0xf3, 0x48, 0x0f, 0x1e, 0xc8}}) {
+    std::vector<uint8_t> Code{
+        0x48, 0xb8, 1, 2,    3,    4,   5,
+        6,    7,    8, 0x48, 0x89, 0xc2}; // MOVABS RAX; MOV RDX,RAX
+    Code.insert(Code.end(), Read.begin(), Read.end());
+    const size_t Compare = Code.size();
+    const uint8_t Tail[]{0x48, 0x39, 0xd0, 0x75, 6, 0xb8, 1, 0,   0,
+                         0,    0xc3, 0xb8, 2,    0, 0,    0, 0xc3};
+    Code.insert(Code.end(), std::begin(Tail), std::end(Tail));
+    auto Image = loadRegion(Code);
+    ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+    auto Options = regionOptions(Entry + Compare + 10, ExitKind::Return);
+    Options.X64MachineExits.push_back(
+        {1, Entry + Compare + 16, ExitKind::Return});
+    Options.UndefinedModel = SpecializationUndefinedModel::FreshScalarV1;
+    const auto Result = specializeBinaryInterpreter(*Image, Entry, Options);
+    ASSERT_TRUE(Result.complete()) << Result.Diagnostic;
+    ASSERT_EQ(Result.ExternalExits.size(), 1U);
+    EXPECT_EQ(Result.ExternalExits.front().Original.Origin.Address,
+              Entry + Compare + 10);
+    for (const auto &Block : Result.Residual.Blocks)
+      for (const auto &Op : Block.Ops)
+        EXPECT_FALSE(isLowArchitecturalValue(Op));
+    Options.X64CetDisabled = false;
+    const auto Unsupported =
+        specializeBinaryInterpreter(*Image, Entry, Options);
+    EXPECT_FALSE(Unsupported.complete());
+    EXPECT_TRUE(Unsupported.Residual.Blocks.empty());
+  }
+}
+
+TEST_F(InterpreterMachineRegionSourceTest,
+       ArchitecturalChoicesRefuseForgedDisabledCetProjection) {
+  auto Image = loadRegion({0xc3});
+  ASSERT_TRUE(bool(Image)) << llvm::toString(Image.takeError());
+  auto Options = regionOptions(Entry, ExitKind::Return);
+  Options.UndefinedModel = SpecializationUndefinedModel::FreshScalarV1;
+  const auto Exit = specializeBinaryInterpreter(*Image, Entry, Options);
+  ASSERT_TRUE(Exit.complete()) << Exit.Diagnostic;
+  ASSERT_TRUE(Exit.RawEnvironment);
+  ASSERT_EQ(Exit.ExternalExits.size(), 1U);
+  ArchitecturalChoiceProvider Provider;
+  Provider.Domain = Exit.RawEnvironment->Domain;
+  Provider.Code[Entry] = Exit.ExternalExits.front().Original;
+  const va_t Start = Entry - 4;
+  SpecializationInstruction Original;
+  Original.NativeBytes = {0xf3, 0x0f, 0x1e, 0xc8};
+  Original.Origin.Address = Start;
+  Original.Origin.Size = 4;
+  Original.Origin.OpCount = 1;
+  Original.Fallthrough = {Entry};
+  Original.ProfileProjection =
+      InterpreterProfileProjection::CetDisabledReadShadowStackV1;
+  Original.Ops = {LowOp{.Opcode = NdOp::NOP, .Addr = Start}};
+  Original.UndefinedEffects.Coverage = LowUndefinedCoverage::Missing;
+  Original.UndefinedEffects.OpCount = 1;
+  Original.UndefinedEffects.OperationDigest =
+      lowUndefinedOperationDigest(Original.Ops);
+  Provider.Code[Start] = Original;
+  const auto Good = specializeInterpreter(Provider, {Start}, Options);
+  ASSERT_TRUE(Good.complete()) << Good.Diagnostic;
+  for (unsigned Kind = 0; Kind != 9; ++Kind) {
+    SCOPED_TRACE(Kind);
+    auto Changed = Original;
+    if (Kind == 0)
+      Changed.NativeBytes.back() = 0x08; // A memory encoding is not RDSSP.
+    else if (Kind == 1)
+      Changed.ProfileProjection = InterpreterProfileProjection::None;
+    else if (Kind == 2)
+      Changed.UndefinedEffects.Coverage = LowUndefinedCoverage::Complete;
+    else if (Kind == 3)
+      Changed.UndefinedEffects.Effects.push_back(
+          {1, NdVar::reg(x86reg::RAX, 8), 0, 64, std::nullopt});
+    else if (Kind == 4) {
+      Changed.Ops.front() = operation(NdOp::COPY, NdVar::reg(x86reg::RAX, 8),
+                                      {NdVar::scalar(0, 8)});
+      Changed.Ops.front().Addr = Start;
+      Changed.UndefinedEffects.OperationDigest =
+          lowUndefinedOperationDigest(Changed.Ops);
+    } else if (Kind == 5)
+      Changed.UndefinedEffects.OperationDigest.clear();
+    else if (Kind == 6)
+      ++Changed.Origin.Size;
+    else if (Kind == 7)
+      ++Changed.Fallthrough.Address;
+    else
+      Changed.Fallthrough.Mode = InstructionMode::Thumb;
+    Provider.Code[Start] = Changed;
+    const auto Bad = specializeInterpreter(Provider, {Start}, Options);
+    EXPECT_FALSE(Bad.complete()) << Bad.Diagnostic;
+    EXPECT_TRUE(Bad.Residual.Blocks.empty());
+    EXPECT_FALSE(Bad.RawEnvironment);
+  }
+}

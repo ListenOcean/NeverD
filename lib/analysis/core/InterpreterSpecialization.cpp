@@ -2809,10 +2809,23 @@ bool Specializer::evaluate(int Id) {
                     "architectural-choice audit budget exhausted");
       // Pay the digest and each bounded scan before examining effect payloads.
       Result.EvaluatedOperations += Visits * (Description.Effects.size() + 1);
+      // Reuse the architecture owner's exact disabled-CET byte/effect
+      // audit. A profile-preserving RDSSP has no new arbitrary production;
+      // this does not promote its general missing sidecar to complete.
+      const bool PreservingProfile =
+          Options.X64CetDisabled &&
+          Instruction.ProfileProjection ==
+              InterpreterProfileProjection::CetDisabledReadShadowStackV1 &&
+          x64::isCetDisabledProjection(Instruction);
+      if (Instruction.ProfileProjection != InterpreterProfileProjection::None &&
+          !PreservingProfile)
+        return fail(
+            SpecializationStatus::Unsupported,
+            "architectural choices require an audited profile projection");
       // A retained trap is an authenticated unexecuted boundary. Its
       // missing post-trap effects cannot describe executed scalar work.
       if (Description.Coverage != LowUndefinedCoverage::Complete &&
-          !RetainedTerminator)
+          !RetainedTerminator && !PreservingProfile)
         return fail(SpecializationStatus::Unsupported,
                     "architectural choices require complete undefined effects");
       if (Description.OpCount != Instruction.Ops.size() ||

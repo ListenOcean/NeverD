@@ -459,6 +459,8 @@ L’API C++ des régions machine permet `SpecializationUndefinedModel::FreshScal
 
 Cette option exige des sorties de région x64 explicites et des preuves complètes pour les instructions scalaires. Les effets non pris en charge et les budgets épuisés sont refusés. L’adaptateur C actuel, les émetteurs ordinaires et les interfaces de preuve native refusent ce modèle sans environnement explicite de valeurs à l’exécution ; aucune valeur propre à un processeur ni ABI ordinaire n’est déduite.
 
+Une projection RDSSP exactement vérifiée, avec CET explicitement désactivé, préserve sa destination sans nouvelle production ; son relevé général des effets indéfinis reste manquant. Les pièges authentifiés restent des frontières non exécutées.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Sorties avant un trap

@@ -458,6 +458,8 @@ La API C++ de regiones de máquina permite elegir `SpecializationUndefinedModel:
 
 La opción exige salidas explícitas de regiones x64 y evidencia completa de instrucciones escalares. Rechaza efectos no admitidos o presupuestos agotados. El adaptador C actual, los emisores ordinarios y las interfaces de prueba nativa rechazan este modelo hasta disponer de un entorno explícito de valores en ejecución; no infieren valores de un procesador ni una ABI ordinaria.
 
+Una proyección RDSSP verificada con exactitud y CET explícitamente desactivado conserva su destino sin producir un valor nuevo; su registro general de efectos indefinidos sigue ausente. Las trampas autenticadas permanecen como límites sin ejecutar.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Salidas antes de una trampa

@@ -455,6 +455,8 @@ L’API C++ delle regioni macchina consente `SpecializationUndefinedModel::Fresh
 
 L’opzione richiede uscite esplicite di regioni x64 e prove complete per le istruzioni scalari. Effetti non supportati e budget esauriti vengono rifiutati. L’adattatore C attuale, gli emettitori ordinari e le interfacce di prova nativa rifiutano questo modello senza un ambiente esplicito di valori a runtime; non deducono valori specifici di un processore né un’ABI ordinaria.
 
+Una proiezione RDSSP verificata esattamente, con CET esplicitamente disabilitato, preserva la destinazione senza una nuova produzione; il suo registro generale degli effetti indefiniti resta assente. Le trap autenticate rimangono confini non eseguiti.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Uscite prima di un trap

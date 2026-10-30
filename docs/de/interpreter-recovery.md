@@ -461,6 +461,8 @@ Die C++-API für rohe Maschinenregionen unterstützt `SpecializationUndefinedMod
 
 Die Option erfordert explizite x64-Regionsausgänge und vollständige skalare Instruktionsnachweise. Nicht unterstützte Effekte und erschöpfte Budgets werden abgelehnt. Der bisherige C-Adapter, gewöhnliche Emitter und native Beweisschnittstellen lehnen dieses Modell ohne explizite Laufzeitumgebung für die Werte ab. Es werden weder prozessorspezifische Werte noch eine gewöhnliche ABI abgeleitet.
 
+Eine exakt geprüfte RDSSP-Projektion bei ausdrücklich deaktiviertem CET bewahrt ihr Ziel ohne neue Werterzeugung; ihr allgemeiner Nachweis undefinierter Effekte bleibt fehlend. Authentifizierte Traps bleiben unausgeführte Grenzen.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Ausgänge vor einem Trap
