@@ -1248,6 +1248,177 @@ TEST(BinaryDiff, ShortLayoutEditsRetainCandidatesBeyondRunSketches) {
   }
 }
 
+TEST(BinaryDiff, EntryGuardsRetainReviewableCandidatesAcrossBodyEdits) {
+  Fn Before;
+  Before.Name = "write_header";
+  Before.Source = NameSource::Generated;
+  Before.Blocks = {{{"endbr64", ""},
+                    {"test", "rdi, rdi"},
+                    {"je", "exit", InstructionFlow::Branch}},
+                   {{"mov", "eax, dword ptr [rdi]"},
+                    {"test", "eax, eax"},
+                    {"jne", "write", InstructionFlow::Branch}},
+                   {{"xor", "eax, eax"}, {"ret", "", InstructionFlow::Return}},
+                   {{"nop", "word ptr [rax]"}},
+                   {{"mov", "dword ptr [rsi], eax"},
+                    {"xor", "eax, eax"},
+                    {"ret", "", InstructionFlow::Return}}};
+  Before.Edges = {{0, 2, EdgeKind::Taken},
+                  {0, 1, EdgeKind::NotTaken},
+                  {1, 4, EdgeKind::Taken},
+                  {1, 2, EdgeKind::NotTaken},
+                  {3, 4, EdgeKind::Fallthrough}};
+  Fn After = Before;
+  After.Blocks[1].back() = {"je", "exit", InstructionFlow::Branch};
+  After.Blocks[2] = {{"push", "rdx"},
+                     {"mov", "rdi, rsi"},
+                     {"mov", "esi, eax"},
+                     {"call", "writer", InstructionFlow::IndirectCall},
+                     {"xor", "eax, eax"},
+                     {"pop", "rcx"},
+                     {"ret", "", InstructionFlow::Return}};
+  After.Blocks[3] = Before.Blocks[2];
+  After.Blocks.resize(4);
+  After.Edges = {{0, 3, EdgeKind::Taken},
+                 {0, 1, EdgeKind::NotTaken},
+                 {1, 3, EdgeKind::Taken},
+                 {1, 2, EdgeKind::NotTaken}};
+  Fn Decoy;
+  Decoy.Name = "unrelated_graph";
+  Decoy.Source = NameSource::Generated;
+  Decoy.Blocks = {
+      {{"endbr64", ""},
+       {"push", "rbx"},
+       {"test", "rdi, rdi"},
+       {"je", "exit", InstructionFlow::Branch}},
+      {{"mov", "rbx, rdi"},
+       {"cmp", "byte ptr [rdi], 0"},
+       {"je", "exit", InstructionFlow::Branch}},
+      {{"mov", "rdi, rbx"}, {"call", "copy", InstructionFlow::IndirectCall}},
+      {{"pop", "rbx"}, {"ret", "", InstructionFlow::Return}}};
+  Decoy.Edges = After.Edges;
+  std::vector<Fn> Left{Before, Decoy}, Right{After};
+  for (unsigned I = 0; I != 260; ++I) {
+    Fn F;
+    F.Name = "background_" + std::to_string(I);
+    F.Source = NameSource::Generated;
+    F.Blocks = {{{"div", "r8, r9"},
+                 {"neg", "r10"},
+                 {"ret", "", InstructionFlow::Return}}};
+    Left.push_back(F);
+    Right.push_back(F);
+  }
+  std::vector<size_t> Layout;
+  for (size_t I = Right.size(); I != 0; --I)
+    Layout.push_back(I - 1);
+  const auto A = build(Left, 0x400000), B = build(Right, 0x800000, Layout);
+  const auto HasCandidate = [](const ComparisonResult &R, uint32_t P,
+                               uint32_t S) {
+    return llvm::any_of(R.Ambiguities, [&](const Ambiguity &Group) {
+      return llvm::is_contained(Group.Primary, P) &&
+             llvm::is_contained(Group.Secondary, S);
+    });
+  };
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
+    const auto R = compare(P, S, {});
+    const auto PI = indexOf(P, "write_header"), SI = indexOf(S, "write_header");
+    // A complete guard retrieves the stronger body before a misleading graph
+    // match consumes it, but the guard alone cannot establish its identity.
+    EXPECT_TRUE(R.Matches.empty());
+    EXPECT_TRUE(HasCandidate(R, PI, SI));
+
+    std::string Error;
+    const auto Read = readComparison(saved(R, P, S), Error);
+    ASSERT_TRUE(Read) << Error;
+    ComparisonResult Edited;
+    ASSERT_FALSE(bindComparison(*Read, P, S, Edited));
+    const auto Original = savedWithoutTimings(R, P, S);
+    EXPECT_EQ(savedWithoutTimings(Edited, P, S), Original);
+    const Override Choice{OverrideKind::Match, P.Functions[PI].Address,
+                          S.Functions[SI].Address};
+    OverrideEffect Effect;
+    ASSERT_FALSE(applyOverride(Edited, P, S, Choice, &Effect));
+    const auto *Matched = Edited.matchOfPrimary(PI);
+    ASSERT_NE(Matched, nullptr);
+    EXPECT_EQ(Matched->Secondary, SI);
+    EXPECT_EQ(Matched->Step, FunctionStep::Manual);
+    EXPECT_TRUE(Matched->Changes & ChangeInstructions);
+    EXPECT_LT(Matched->Similarity, 1.0);
+    revertOverride(Edited, P, S, Effect);
+    EXPECT_EQ(savedWithoutTimings(Edited, P, S), Original);
+    EXPECT_EQ(counterpart(compare(P, S, {}, {Choice}), P, S, "write_header"),
+              "write_header");
+
+    ComparisonSettings Exact;
+    Exact.Approximate = false;
+    const auto NoApproximate = compare(P, S, Exact);
+    EXPECT_NE(counterpart(NoApproximate, P, S, "write_header"), "write_header");
+    EXPECT_FALSE(HasCandidate(NoApproximate, PI, SI));
+    if (const auto *Prior = NoApproximate.matchOfPrimary(PI)) {
+      EXPECT_EQ(S.Functions[Prior->Secondary].Name, "unrelated_graph");
+      const Override Confirm{OverrideKind::Confirm, P.Functions[PI].Address,
+                             S.Functions[Prior->Secondary].Address};
+      const auto Confirmed = compare(P, S, {}, {Confirm});
+      EXPECT_EQ(counterpart(Confirmed, P, S, "write_header"),
+                "unrelated_graph");
+      EXPECT_TRUE(matchOf(Confirmed, P, "write_header").Confirmed);
+    }
+    Override Reject = Choice;
+    Reject.Kind = OverrideKind::Unmatch;
+    const auto Rejected = compare(P, S, {}, {Reject});
+    const auto *Match = Rejected.matchOfPrimary(PI);
+    EXPECT_TRUE(!Match || Match->Secondary != SI);
+    EXPECT_FALSE(HasCandidate(Rejected, PI, SI));
+    const auto OtherP =
+        indexOf(P, Reverse ? "write_header" : "unrelated_graph");
+    const auto OtherS =
+        indexOf(S, Reverse ? "unrelated_graph" : "write_header");
+    const Override KeepOther{OverrideKind::Match, P.Functions[OtherP].Address,
+                             S.Functions[OtherS].Address};
+    EXPECT_EQ(compare(P, S, {}, {KeepOther}).secondaryOf(OtherP), OtherS);
+  }
+  for (bool Named : {false, true}) {
+    auto SupportedLeft = Left, SupportedRight = Right;
+    if (Named) {
+      SupportedLeft[1].Source = SupportedRight[0].Source = NameSource::Symbol;
+      SupportedRight[0].Name = "unrelated_graph";
+    } else {
+      SupportedLeft[1].AddressTargets =
+          SupportedRight[0].AddressTargets = {"anchor"};
+      SupportedLeft.push_back(leaf("anchor", 197));
+      SupportedRight.push_back(leaf("anchor", 197));
+    }
+    const auto X = build(SupportedLeft, 0x400000),
+               Y = build(SupportedRight, 0x800000);
+    for (bool Reverse : {false, true}) {
+      const auto &P = Reverse ? Y : X, &S = Reverse ? X : Y;
+      const auto R = compare(P, S, {});
+      const std::string Primary =
+          Reverse && !Named ? "write_header" : "unrelated_graph";
+      const std::string Secondary =
+          !Reverse && !Named ? "write_header" : "unrelated_graph";
+      EXPECT_EQ(counterpart(R, P, S, Primary), Secondary);
+    }
+  }
+  Fn Duplicate = After;
+  Duplicate.Name = "duplicate_header";
+  Right.push_back(std::move(Duplicate));
+  const auto Duplicated = build(Right, 0x900000);
+  for (bool Reverse : {false, true}) {
+    const auto &P = Reverse ? Duplicated : A, &S = Reverse ? A : Duplicated;
+    const auto R = compare(P, S, {});
+    EXPECT_EQ(R.matchOfPrimary(indexOf(P, "write_header")), nullptr);
+    EXPECT_TRUE(R.Matches.empty());
+    EXPECT_TRUE(HasCandidate(R, indexOf(P, "write_header"),
+                             indexOf(S, "write_header")));
+    EXPECT_TRUE(HasCandidate(
+        R, indexOf(P, Reverse ? "duplicate_header" : "write_header"),
+        indexOf(S, Reverse ? "write_header" : "duplicate_header")));
+  }
+}
+
 TEST(BinaryDiff, PartialInstructionPairsDoNotIdentifyUnrelatedBodies) {
   Fn Before;
   Before.Name = "original";
@@ -1277,21 +1448,64 @@ TEST(BinaryDiff, PartialInstructionPairsDoNotIdentifyUnrelatedBodies) {
   // The initial pair and much of the instruction inventory survive, but no
   // complete run shingle, mnemonic sequence or multiset identifies this body.
   // Merely adding rare partial seeds would turn a similar CFG into an identity.
-  std::vector<Fn> Left{Before}, Right{After};
-  for (unsigned I = 0; I != 260; ++I) {
-    Fn F;
-    F.Name = "background_" + std::to_string(I);
-    F.Source = NameSource::Generated;
-    F.Blocks = {{{"div", "r8, r9"},
-                 {"neg", "r10"},
-                 {"ret", "", InstructionFlow::Return}}};
-    Left.push_back(F);
-    Right.push_back(F);
-  }
-  const auto A = build(Left, 0x400000), B = build(Right, 0x800000);
-  for (bool Reverse : {false, true}) {
-    const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
-    EXPECT_TRUE(compare(P, S, {}).Matches.empty());
+  enum class Layout { Whole, Split, Guard, CallGuard };
+  for (const auto Kind :
+       {Layout::Whole, Layout::Split, Layout::Guard, Layout::CallGuard}) {
+    Fn First = Before, Second = After;
+    if (Kind == Layout::Split)
+      for (Fn *F : {&First, &Second}) {
+        const auto Cut = F->Blocks[0].begin() + 8;
+        std::vector<Op> Tail(Cut, F->Blocks[0].end());
+        F->Blocks[0].erase(Cut, F->Blocks[0].end());
+        F->Blocks.push_back(std::move(Tail));
+        F->Edges = {{0, 1, EdgeKind::Fallthrough}};
+      }
+    if (Kind == Layout::Guard || Kind == Layout::CallGuard) {
+      std::swap(Second.Blocks[0][0], Second.Blocks[0][1]);
+      for (Fn *F : {&First, &Second}) {
+        std::vector<Op> Guard = {{"test", "r12, r12"},
+                                 {"jne", "body", InstructionFlow::Branch}};
+        if (Kind == Layout::CallGuard)
+          Guard.insert(Guard.begin(),
+                       {"call", "rax", InstructionFlow::IndirectCall});
+        F->Blocks.insert(F->Blocks.begin(), std::move(Guard));
+        F->Blocks.push_back(
+            {{"xor", "eax, eax"}, {"ret", "", InstructionFlow::Return}});
+        F->Edges = {{0, 1, EdgeKind::Taken}, {0, 2, EdgeKind::NotTaken}};
+      }
+      // A common guard does not distinguish same-CFG families. Shared
+      // initialization calls are not intrinsic guards, even after CFG edits.
+      if (Kind == Layout::CallGuard) {
+        First.Blocks.push_back({{"nop", "word ptr [rax]"}});
+        First.Edges.emplace_back(3, 2, EdgeKind::Fallthrough);
+      }
+    }
+    std::vector<Fn> Left{First}, Right{Second};
+    for (unsigned I = 0; I != 260; ++I) {
+      Fn F;
+      F.Name = "background_" + std::to_string(I);
+      F.Source = NameSource::Generated;
+      F.Blocks = {{{"div", "r8, r9"},
+                   {"neg", "r10"},
+                   {"ret", "", InstructionFlow::Return}}};
+      if (Kind == Layout::Guard || Kind == Layout::CallGuard) {
+        F.Blocks[0].back() = {"jne", "exit", InstructionFlow::Branch};
+        F.Blocks.push_back({{"ret", "", InstructionFlow::Return}});
+        F.Blocks.push_back({{"ret", "", InstructionFlow::Return}});
+        F.Edges = {{0, 1, EdgeKind::Taken}, {0, 2, EdgeKind::NotTaken}};
+      }
+      Right.push_back(F);
+      if (Kind == Layout::CallGuard) {
+        F.Blocks.push_back({{"nop", "word ptr [rax]"}});
+        F.Edges.emplace_back(3, 2, EdgeKind::Fallthrough);
+      }
+      Left.push_back(F);
+    }
+    const auto A = build(Left, 0x400000), B = build(Right, 0x800000);
+    for (bool Reverse : {false, true}) {
+      const auto &P = Reverse ? B : A, &S = Reverse ? A : B;
+      EXPECT_TRUE(compare(P, S, {}).Matches.empty());
+    }
   }
 }
 

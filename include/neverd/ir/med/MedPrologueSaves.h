@@ -127,7 +127,12 @@ void replaceKnownSourceCallArguments(MedFunc &Func,
 /// noncapturing use proof of the frame finds no reads of their surviving
 /// bytes on any path. Explicit partial overwrites kill only their bytes. Direct
 /// callees contribute their actual bounded pointer reads, including negative
-/// displacements. Unknown callees, escapes and unsupported uses keep stores.
+/// displacements, through bounded acyclic scalar-register call chains. Each
+/// level proves its implicit GPR inputs and native call home-area bounds.
+/// Unrecovered memo bodies require complete bound native operands. Unknown
+/// callees, pointer arguments in stack slots, escapes and exceptional observers
+/// keep stores. The current body indexes and summaries expire with this
+/// invocation.
 void markUnobservedBorrowedFrameStores(
     MedFunc &Func, Arch Architecture, BinaryFormat Format,
     const std::map<va_t, const MedFunc *> &Callees);

@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -3343,7 +3344,7 @@ TEST(SourceCallReturnReads, NarrowTargetsReturnTheSecondIntegerRegister) {
 }
 
 TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {
-  for (unsigned Case = 0; Case != 22; ++Case) {
+  for (unsigned Case = 0; Case != 52; ++Case) {
     SCOPED_TRACE(Case);
     MedFunc Caller;
     Caller.Entry = 0x1000;
@@ -3465,13 +3466,124 @@ TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {
     if (Case == 12)
       Callee.SourceParametersBound = true;
     Callee.Blocks.push_back(std::move(Body));
-    const std::map<va_t, const MedFunc *> Callees{{Callee.Entry, &Callee}};
+    std::vector<MedFunc> Relays;
+    std::map<va_t, const MedFunc *> Callees;
+    if (Case >= 22) {
+      const unsigned Depth =
+          Case >= 50 ? limits::ir::kSourceFrameBorrowCallDepth + (Case - 50)
+                     : (Case == 24 ? 3 : 2);
+      Relays.reserve(Depth - 1);
+      for (unsigned I = 0; I + 1 < Depth; ++I) {
+        auto &Relay = Relays.emplace_back();
+        Relay.Entry = 0x2000 + I * 0x100;
+        Relay.CC = CallingConv::Win64;
+        Relay.Params = {rcx(0)};
+        Relay.FrameSize = 0x28;
+        MedBlock Forward;
+        Forward.Id = 0;
+        Forward.StartAddr = Relay.Entry;
+        Forward.Ops = {
+            op(NdOp::COPY, sp(0), {sp(0)}),
+            op(NdOp::COPY, rcx(0), {rcx(0)}),
+            op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(0x28, 8)}),
+            op(NdOp::CALL, Word,
+               {MedVar::makeConst(Relay.Entry + 0x100, 8), rcx(0)}),
+            op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(0x28, 8)}),
+            op(NdOp::RETURN, none(), {Word})};
+        Forward.Ops[3].CalleeRegisterArgs = 1;
+        Forward.Ops[3].CalleeStackArgs = 0;
+        Forward.Ops[3].CalleeVectorArgs = 0;
+        MedCallInfo Next;
+        Next.BlockId = 0;
+        Next.OpIdx = 3;
+        Next.TargetAddr = Relay.Entry + 0x100;
+        Next.Args = {rcx(0)};
+        Relay.CallInfos = {Next};
+        Relay.Blocks = {Forward};
+      }
+      Callee.Entry = 0x2000 + (Depth - 1) * 0x100;
+      Callee.Blocks[0].StartAddr = Callee.Entry;
+      auto &Leaf = Callee.Blocks[0];
+      auto &First = Relays.front();
+      if (Case == 23) {
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::INT_SUB, temp(30), {rcx(0), MedVar::makeConst(4, 8)}));
+        Leaf.Ops[2].Inputs[0] = temp(30);
+      }
+      if (Case == 25 || Case == 47)
+        Leaf.Ops[1].Inputs[0] =
+            reg(30, Case == 25 ? x86reg::RAX : x86reg::RDX, 0);
+      if (Case == 26) {
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::INT_ADD, temp(30), {sp(0), MedVar::makeConst(0x28, 8)}));
+        Leaf.Ops[2].Inputs[0] = temp(30);
+      }
+      if (Case == 27 || Case == 28) {
+        const va_t Target = Case == 27 ? 0x4000 : First.Entry;
+        First.Blocks[0].Ops[3].Inputs[0] = MedVar::makeConst(Target, 8);
+        First.CallInfos[0].TargetAddr = Target;
+      }
+      if (Case == 29)
+        First.CallInfos[0].TargetAddr += 0x100;
+      if (Case == 30 || Case == 42) {
+        ExceptionFunction EH;
+        EH.ParseStatus = ExceptionParseStatus::Complete;
+        EH.Personality = Case == 30 ? ExceptionPersonality::GSHandlerCheck
+                                    : ExceptionPersonality::None;
+        Callee.ExceptionMetadata = EH;
+      }
+      if (Case == 31)
+        First.Blocks[0].Ops[2].Inputs[0] = rcx(0);
+      if (Case == 32)
+        Callee.Blocks.clear();
+      if (Case == 33)
+        Callee.IsVariadic = true;
+      if (Case == 34)
+        Callee.IntegerArgumentRegisters = {x86reg::RDX};
+      if (Case == 35)
+        Callee.SourceParametersBound = true;
+      if (Case == 36 || Case == 37) {
+        First.CallInfos.clear();
+        if (Case == 37)
+          First.Blocks[0].Ops[3].NumInputs = 1;
+      }
+      if (Case == 38)
+        Callee.Params.resize(5);
+      if (Case == 39)
+        First.CallInfos[0].OpIdx = 99;
+      if (Case == 40)
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::STORE, none(), {MedVar::makeConst(0x4000, 8), rcx(0)}));
+      if (Case == 41)
+        Leaf.ExceptionalPreds.emplace_back();
+      if (Case == 43)
+        First.Blocks[0].Ops[3].IsTailCall = true;
+      if (Case == 44)
+        First.Blocks[0].Ops[3].CalleeVectorArgs = 1;
+      if (Case == 45)
+        First.CallInfos[0].OpIdx = 2;
+      if (Case == 46)
+        First.Blocks[0].Ops.back().Inputs[0] = rcx(0);
+      if (Case == 48)
+        Caller.Blocks[0].Ops[6].Opcode = NdOp::INDIR_CALL;
+      if (Case == 49)
+        Callee.Entry += 0x100;
+      for (const auto &Relay : Relays)
+        Callees.emplace(Relay.Entry, &Relay);
+    }
+    Callees.emplace(Callee.Entry, &Callee);
     markUnobservedBorrowedFrameStores(Caller, Arch::X64, BinaryFormat::COFF,
                                       Callees);
-    EXPECT_EQ(Caller.Blocks[0].Ops[4].PrologueSave, Case == 0 || Case == 13);
+    EXPECT_EQ(Caller.Blocks[0].Ops[4].PrologueSave,
+              Case == 0 || Case == 13 || Case == 22 || Case == 24 ||
+                  Case == 36 || Case == 42 || Case == 50);
     EXPECT_FALSE(Caller.Blocks[0].Ops[5].PrologueSave);
     EXPECT_EQ(Caller.Blocks[0].Ops[6].Opcode,
-              Case >= 20 ? NdOp::INDIR_CALL : NdOp::CALL);
+              Case == 20 || Case == 21 || Case == 48 ? NdOp::INDIR_CALL
+                                                     : NdOp::CALL);
   }
 }
 

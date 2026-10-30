@@ -173,6 +173,21 @@ unordered-sketch and partial-pair experiments that regressed these inputs were
 rejected, and their results are retained. These are development regressions,
 not fresh qualification: the original XZ and zstd/OpenSSL gates still fail.
 
+Matcher version 12 adds a final review of bounded complete-entry candidates.
+It retains stronger omitted bodies as alternatives and defers unsupported weak
+pairs without automatically accepting a shared-entry identity. Across all nine
+consumed release cases and six XZ directions, every previously correct labelled
+pair remains and no new wrong pair appears. The combined PGO/LTO cases each
+remove one wrong pair, in opposite directions; automatic correct-pair counts
+are unchanged. These two observations concern one correlated source-body pair,
+not two independent discoveries. Earlier experiments that admitted entry
+candidates during propagation regressed existing matches and were rejected.
+The final design preserves names, exact bodies, analyst decisions and independent
+mapped-neighbor support. Authored controls cover large candidate pools, direction,
+duplicates, names/references, confirmation, rejection, persistence and undo.
+The original numeric gates remain unchanged and failed; this is development
+regression evidence, not fresh optimization-profile qualification.
+
 The DWARF adapter now follows an LTO concrete body's abstract-origin chain to
 its original definition unit. A specification declaration supplies its own
 file metadata without replacing that definition unit. Multi-unit local names,

@@ -336,6 +336,7 @@ private:
                                            const Adjacency &Graph, uint32_t Of,
                                            uint32_t Side) const;
   void collectAmbiguities();
+  void retainEntryAlternatives();
   void finish();
 };
 
@@ -1057,6 +1058,140 @@ unsigned Matcher::approximate() {
   return Paired;
 }
 
+void Matcher::retainEntryAlternatives() {
+  if (!Settings.Approximate || stopNow())
+    return;
+  // Review against one settled correspondence. New guard candidates must not
+  // change propagation order or establish identities from a shared prefix.
+  std::vector<uint32_t> WeakA(P.Functions.size(), NoIndex),
+      WeakB(S.Functions.size(), NoIndex);
+  for (uint32_t I = 0; I < Order.size(); ++I) {
+    const auto &F = Order[I];
+    if (F.Step == FunctionStep::Manual || F.Step == FunctionStep::ImportName ||
+        F.Step == FunctionStep::SymbolName ||
+        F.Step == FunctionStep::ExactBytes ||
+        F.Step == FunctionStep::NormalizedBody || F.FromContext ||
+        Confirmed.contains(pairKey(F.Primary, F.Secondary)) ||
+        contextAgreement(F.Primary, F.Secondary) > 0)
+      continue;
+    WeakA[F.Primary] = WeakB[F.Secondary] = I;
+  }
+  struct Entry {
+    uint64_t Key;
+    uint8_t Side;
+    uint32_t Function;
+  };
+  std::vector<Entry> Entries;
+  Entries.reserve(P.Functions.size() + S.Functions.size());
+  for (bool Secondary : {false, true}) {
+    const auto &Features = Secondary ? SF : PF;
+    const auto &Map = Secondary ? SMatch : PMatch;
+    const auto &Weak = Secondary ? WeakB : WeakA;
+    for (uint32_t I = 0; I < Features.Functions.size(); ++I)
+      if ((Map[I] == NoIndex || Weak[I] != NoIndex) &&
+          Features.Functions[I].EntryBody)
+        Entries.push_back({Features.Functions[I].EntryBody, Secondary, I});
+  }
+  llvm::sort(Entries, [](const Entry &A, const Entry &B) {
+    return std::tie(A.Key, A.Side, A.Function) <
+           std::tie(B.Key, B.Side, B.Function);
+  });
+  struct Candidate {
+    uint32_t A, B, Prior;
+    double Quick, Exact = -1;
+  };
+  std::vector<Candidate> Candidates;
+  for (size_t I = 0; I < Entries.size();) {
+    if (stopNow())
+      return;
+    size_t J = I + 1;
+    while (J < Entries.size() && Entries[J].Key == Entries[I].Key)
+      ++J;
+    if (J - I <= limits::kMaxSketchBucket)
+      for (size_t X = I; X < J; ++X)
+        for (size_t Y = I; Y < J; ++Y) {
+          if (Entries[X].Side != 0 || Entries[Y].Side != 1)
+            continue;
+          const uint32_t A = Entries[X].Function, B = Entries[Y].Function;
+          if ((PMatch[A] != NoIndex && SMatch[B] != NoIndex) ||
+              Rejected.contains(pairKey(A, B)) || namesConflict(A, B))
+            continue;
+          const auto &AF = PF.Functions[A], &BF = SF.Functions[B];
+          if (AF.BodyWithPadding == BF.BodyWithPadding ||
+              std::tie(AF.Blocks, AF.Edges, AF.GraphTopDown,
+                       AF.GraphBottomUp) == std::tie(BF.Blocks, BF.Edges,
+                                                     BF.GraphTopDown,
+                                                     BF.GraphBottomUp))
+            continue;
+          Candidates.push_back({A, B,
+                                PMatch[A] == NoIndex ? WeakB[B] : WeakA[A],
+                                quickScore(A, B)});
+        }
+    I = J;
+  }
+  llvm::sort(Candidates, [](const Candidate &A, const Candidate &B) {
+    return std::make_tuple(-A.Quick, A.A, A.B) <
+           std::make_tuple(-B.Quick, B.A, B.B);
+  });
+  llvm::DenseMap<uint32_t, unsigned> CountA, CountB;
+  std::vector<uint32_t> ToMeasure, Priors;
+  for (uint32_t I = 0; I < Candidates.size(); ++I) {
+    const auto &C = Candidates[I];
+    const unsigned A = CountA[C.A]++, B = CountB[C.B]++;
+    if (A >= Settings.MaxCandidates && B >= Settings.MaxCandidates)
+      continue;
+    ToMeasure.push_back(I);
+    if (C.Prior != NoIndex)
+      Priors.push_back(C.Prior);
+  }
+  llvm::sort(Priors);
+  Priors.erase(std::unique(Priors.begin(), Priors.end()), Priors.end());
+  std::vector<double> PriorScores(Order.size(), -1);
+  parallelForEach(ToMeasure.size() + Priors.size(),
+                  [&](auto Claim, size_t Total) {
+                    for (size_t I = Claim(); I < Total; I = Claim()) {
+                      if (Control.stop())
+                        return;
+                      if (I < ToMeasure.size()) {
+                        auto &C = Candidates[ToMeasure[I]];
+                        const auto D = delta(C.A, C.B);
+                        if (D.ComputationComplete)
+                          C.Exact = D.Similarity;
+                      } else {
+                        const uint32_t Prior = Priors[I - ToMeasure.size()];
+                        const auto &F = Order[Prior];
+                        const auto D = delta(F.Primary, F.Secondary);
+                        if (D.ComputationComplete)
+                          PriorScores[Prior] = D.Similarity;
+                      }
+                    }
+                  });
+  if (stopNow())
+    return;
+  std::vector<uint8_t> Deferred(Order.size(), 0);
+  for (uint32_t I : ToMeasure) {
+    const auto &C = Candidates[I];
+    if (C.Exact < Settings.MinimumSimilarity)
+      continue;
+    if (C.Prior != NoIndex) {
+      const double Prior = PriorScores[C.Prior];
+      if (Prior < 0 || C.Exact <= Prior ||
+          C.Exact - Prior < Settings.AmbiguityMargin)
+        continue;
+      Deferred[C.Prior] = 1;
+    }
+    NearTies.push_back({FunctionStep::Similarity, {C.A}, {C.B}});
+  }
+  for (uint32_t I = 0; I < Order.size(); ++I)
+    if (Deferred[I]) {
+      const auto &F = Order[I];
+      PMatch[F.Primary] = SMatch[F.Secondary] = NoIndex;
+      NearTies.push_back({F.Step, {F.Primary}, {F.Secondary}});
+    }
+  llvm::erase_if(Order,
+                 [&](const Formed &F) { return PMatch[F.Primary] == NoIndex; });
+}
+
 void Matcher::collectAmbiguities() {
   std::vector<uint32_t> InPrimary(P.Functions.size(), NoIndex),
       InSecondary(S.Functions.size(), NoIndex);
@@ -1319,6 +1454,7 @@ void Matcher::run(llvm::ArrayRef<Override> Overrides) {
     settle(Before);
   }
   beginPhase("ambiguities");
+  retainEntryAlternatives();
   collectAmbiguities();
   endPhase();
   finish();
