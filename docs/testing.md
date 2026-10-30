@@ -3938,6 +3938,14 @@ snapshots and expired borrowed records before reading their detail.
 Raw classifiers and BL targets still work without detail, while operand queries
 and expired records remain conservative. These are decode/lift lifecycle checks,
 not qualification of native PAC/CPA execution or additional ISA families.
+`BinaryDiff.CallPositionDistinguishesOnlyEqualOrWeakerNearTies` covers stronger,
+equal and weaker alternatives in both directions and reordered layouts, with
+approximation enabled and disabled. `BinaryDiffSDK.NoReturnCallsDoNotAcquireLayoutDependentFallthrough`
+checks guarded x64/AArch64 calls, returning overrides and exact saved-report
+restoration. The session discovery owner checks sized and unsized direct/import
+slot calls; `InstructionFlow.ConditionalCallsKeepTheUnexecutedArm` checks ARM
+predication and patched-target refusal. Run these with `NeverDNoReturnTests`
+when changing the shared target contract.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw
@@ -15071,6 +15079,14 @@ identity.
 match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
 and its table among the code; the cases stay labels only because the
 instruction reading the table, not the table's slots, names them.
+`DataSegmentDispatchKeepsIndependentCallbacks` relocates that dispatch table
+into ordinary read-only data: cases stay labels while an ordinary pointer read
+and a separate callback slot retain independent function-entry evidence.
+The operand-entry, exhausted-verification-budget and FDE-extent discovery
+tests also cover relocation-backed entries outside a proven dispatch.
+The LLVM interior-pointer, runtime-callable fallback and unmaterializable
+table-target boundaries reject unresolved or masked code owners rather than
+emitting their original numeric addresses as presumed padding.
 `PrologueMatchesInsideAFunctionAreItsCode` falls into an aligned `push esi;
 push edi` and branches back to an aligned loop head, both prologue matches the
 entry owns, while a padded function and a tail jump's target stay entries;
@@ -16314,7 +16330,8 @@ remain unknown; unused register positions stay padding on repeated recovery.
 `AReintroducedRegisterInputStillReachesImplicitCalls` rejects a restore of the
 original SSA value after an independent register overwrite.
 `UnusedIncomingStackSlotsDoNotRequireValues` executes original straight-line,
-branching and looping Win64 wrappers and both C routes at O0/O2 with UBSan:
+branching and looping Win64 wrappers, using SP directly or a physical GPR
+frame alias, and both C routes at O0/O2 with UBSan:
 two later stack arguments remain live while an earlier unwritten slot is never
 read. Selected and omitted queries and source optimization on/off retain that
 distinction; SDK replay also checks the branching body.
@@ -16326,6 +16343,13 @@ order, stable/changing loops, stack joins, late flag taint across calls, incompl
 or overlapping CFGs, unreachable cycles, PHI/call/clobber observations, partial
 temporary reads/writes and exact/short budgets. Unknown pointer aliases remain
 barriers; these tests grant no general nested-call or native-entry contract.
+`StackParameterHolesTrackPhysicalFrameAliases` covers affine copies, agreeing
+and disagreeing joins, stable and changing loops, partial physical definitions,
+explicit zero-extension and independent byte destruction. Live aliases require
+current native unread receipts at calls; stale identities, unknown observers,
+return-register aliases and may-write-only destruction remain rejected.
+Stores, return escapes, ordered memory, signed offset overflow and exact/short
+work budgets keep their negative controls.
 `RegisterSuffixesNeedCurrentSourceCalleeProofs` rejects
 observed high bytes, changed call bindings, other physical registers, exceptional
 observers, independent roots and exhausted work. `ConstantPrefixesNeverEvaluateUnavailableNeighbors`

@@ -14,6 +14,7 @@
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
+#include "neverd/ir/low/LowArchitecturalValue.h"
 #include "neverd/ir/low/LowRawEnvironment.h"
 #include "neverd/lift/X86/X86Regs.h"
 
@@ -784,6 +785,11 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   if (hasLowRawEnvironmentRequirement(Residual) && !Region)
     return invalid(
         "raw environment requirement has no machine-source contract");
+  for (const auto &Block : Residual.Blocks)
+    for (const auto &Op : Block.Ops)
+      if (isLowArchitecturalValue(Op))
+        return invalid(
+            "architectural values require a choice-source environment");
   if (Layout != InterpreterMachineStateLayout::InlineReturns &&
       Layout != InterpreterMachineStateLayout::SharedGPRExit)
     return invalid("unsupported interpreter machine-state layout");
@@ -1193,6 +1199,7 @@ wrapInterpreterMachineRegionSourceX64(
     const InterpreterMachineRegionSourceOptions &SourceOptions,
     BinaryFormat SourceFormat) {
   if (Expected.X64MachineExits.empty() ||
+      Expected.UndefinedModel != SpecializationUndefinedModel::SelectedLowIR ||
       Expected.X64FlagsProfile !=
           InterpreterMachineStateProfile::UserX64NoFaultV1 ||
       Expected.X64SegmentedReads || Expected.X64SegmentedWrites ||
