@@ -2045,6 +2045,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>ソースコードを更新できませんでした: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>インタープリターを復元済み · %1 ブロック</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>完全なソースは生成されませんでした</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>インタープリターの制御フローを復元中…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>復元停止: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2111,6 +2128,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>変換をキャンセル</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>インタープリター復元オプション…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>インタープリター復元レポート…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>インタープリター関数を復元</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>通常のソースに戻る</translation>
     </message>
 </context>
 <context>
@@ -9912,6 +9946,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>タイムライン</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>外部書き込みが宣言した入口フレームと重ならないと仮定</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>空欄またはゼロでエンジンの既定値を使います。処理量を増やしても、不完全なソースを許可したりメモリの仮定を追加したりしません。</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>連続する遷移数</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>遷移先ごとの連続訪問数</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>アドレスごとのコンテキスト数</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>制御フィールド数</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>制御の絞り込み回数</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>制御フローノード数</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>依存関係の訪問数</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>同じ遷移先を再訪したら連続解析を終了</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>エンジンの既定値</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>%1 に有効な整数を入力してください。</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>入口フレームの両端を入力するか、両方を空欄にしてください。</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>入口 RSP のアラインメント</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>入口 RSP 範囲の終端（含まない）</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>入口 RSP 範囲の始端</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>入口 RSP の剰余</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>評価する演算数</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>汎用レジスター</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>汎用レジスターと CPU クエリ</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>汎用レジスター、CPU クエリ、XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>インタープリター復元レポート</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>ノード評価回数</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>書き込みがリターンスロットと保存済みフレームセルを避けることを証明</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>書き込みが宣言した入口フレームを避けることを証明</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>復元</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>インタープリター関数を復元</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>到達可能な制御フローを復元し、明示的な x64 レジスター状態を持つ C ソースを生成します。ソースは固定イメージマッピング下で障害のない通常実行を記述します。以下のメモリの仮定は入力した場合にのみ適用されます。</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>入口 RSP からの符号付きオフセットです。この範囲の宣言はアドレス演算が折り返さないと仮定しますが、アクセス可能性や非重複を証明するものではありません。</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>ソルバーのクエリ数</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>ソースの状態</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>状態とメモリ</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>シンボリック式のノード数</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>未指定</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>処理量の上限</translation>
     </message>
 </context>
 </TS>

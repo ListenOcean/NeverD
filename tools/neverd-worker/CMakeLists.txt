@@ -148,6 +148,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/source_cache_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
     set_tests_properties(NeverDWorkerSourceCache PROPERTIES TIMEOUT 40)
+    add_test(NAME NeverDWorkerInterpreterRecovery
+      COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter_recovery_test.py"
+              "$<TARGET_FILE:neverd-worker-test-server>")
+    set_tests_properties(NeverDWorkerInterpreterRecovery PROPERTIES TIMEOUT 40)
     add_test(NAME NeverDWorkerLocalNameCache
       COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/local_name_cache_test.py"
               "$<TARGET_FILE:neverd-worker-test-server>")
@@ -382,6 +386,10 @@ if(BUILD_TESTING OR NEVERD_BUILD_TESTS)
       # Each fixture compiles and executes every CLI/worker source variant at
       # O0 and O2. Allow the expanded corpus to finish on shared CI runners.
       set_tests_properties(NeverDWorkerSourceSynthesis PROPERTIES TIMEOUT 360)
+      add_test(NAME NeverDWorkerInterpreterRecoveryReal
+        COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interpreter_recovery_test.py"
+                "$<TARGET_FILE:neverd-worker>" --real ${_neverd_source_synthesis_args})
+      set_tests_properties(NeverDWorkerInterpreterRecoveryReal PROPERTIES TIMEOUT 120)
       if(_neverd_worker_test_cli)
         add_test(NAME NeverDWorkerCLIPEFunctionParts
           COMMAND "${Python3_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/pe_function_parts_test.py"

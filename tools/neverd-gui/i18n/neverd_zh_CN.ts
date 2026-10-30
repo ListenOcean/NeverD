@@ -2045,6 +2045,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>无法刷新源代码：%1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>解释器恢复完成 · %1 个块</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>未生成完整源码</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>正在恢复解释器控制流…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>恢复已停止：%1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2111,6 +2128,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>取消转换</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>解释器恢复选项…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>解释器恢复报告…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>恢复解释器函数</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>返回普通源码</translation>
     </message>
 </context>
 <context>
@@ -9912,6 +9946,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>时间线</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>假定外部写入不与声明的入口栈帧重叠</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>留空或填零保留引擎默认值。增加工作量不会允许不完整源码，也不会添加内存假设。</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>连续转移次数</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>每个目标的连续访问次数</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>每个地址的上下文数</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>控制字段数</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>控制细化次数</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>控制流节点数</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>依赖访问次数</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>遇到重复目标时结束连续分析</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>引擎默认值</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>请为 %1 输入有效整数。</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>请输入入口栈帧的两个端点，或将两者均留空。</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>入口 RSP 对齐</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>入口 RSP 范围终点（不含）</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>入口 RSP 范围起点</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>入口 RSP 余数</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>求值操作数</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>通用寄存器</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>通用寄存器和 CPU 查询</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>通用寄存器、CPU 查询和 XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>解释器恢复报告</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>节点求值次数</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>证明写入避开返回地址槽和已保存的栈帧单元</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>证明写入避开声明的入口栈帧</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>恢复</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>恢复解释器函数</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>恢复可达控制流并生成带显式 x64 寄存器状态的 C 源码。源码描述固定映像映射下无故障的正常执行。下方内存假设仅在您填写后生效。</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>相对于入口 RSP 的有符号偏移。声明此范围表示假定地址运算不会回绕，并不证明内存可访问或互不重叠。</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>求解器查询次数</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>源码状态</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>状态与内存</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>符号表达式节点数</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>未指定</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>工作量限制</translation>
     </message>
 </context>
 </TS>

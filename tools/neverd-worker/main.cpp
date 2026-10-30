@@ -394,6 +394,8 @@ Json hello() {
     result["capabilities"].push_back(unwind_query::kOperation);
   if (Engine::reportsX87Capabilities())
     result["capabilities"].push_back("x87_capabilities");
+  if (Engine::recoversInterpreterSource())
+    result["capabilities"].push_back("interpreter_recovery");
   result["web"] = WebEngine::capabilities();
   return result;
 }

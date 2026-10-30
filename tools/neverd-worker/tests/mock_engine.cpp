@@ -4,6 +4,7 @@
 #include "Protocol.h"
 
 #include "neverd/sdk/NeverDCAPIBytePatch.h"
+#include "neverd/sdk/NeverDCAPIDevirtualize.h"
 #include "neverd/sdk/NeverDCAPIDisasm.h"
 #include "neverd/sdk/NeverDCAPILocalTypes.h"
 #include "neverd/sdk/NeverDCAPIPersist.h"
@@ -139,6 +140,7 @@ struct MockSession {
   /// and refuse graph/IR reads against a different restricted pipeline.
   std::uint64_t preparedEntry = 0;
   unsigned sourcePrepares = 0, sourcePages = 0, sourceRenders = 0;
+  unsigned RecoveryCalls = 0;
   /// The functions the current neverd_warm_functions_json pass prepared.
   int warmed = 0;
   std::string preparedView;
@@ -2237,6 +2239,53 @@ std::string spelledPage(neverd_session_t s, neverd_va_t address,
       .dump();
 }
 } // namespace
+
+const char *neverd_devirtualize_machine_source_v10(
+    neverd_session_t S, neverd_va_t Entry,
+    const neverd_devirtualize_options_v10 *Options, const char **Report) {
+  auto *Session = session(S);
+  ++Session->RecoveryCalls;
+  const auto &Proof = Options->base;
+  const auto &Work = Proof.base.base;
+  const auto &Alignment = Work.base.base;
+  const auto &Frame = Alignment.base;
+  const auto &Base = Frame.base.base.base;
+  if (Session->path.ends_with("recovery-slow.bin")) {
+    std::fprintf(stderr, "fixture interpreter recovery started\n");
+    std::fflush(stderr);
+    std::this_thread::sleep_for(std::chrono::seconds(30));
+  }
+  const bool Complete = !Session->path.ends_with("recovery-refused.bin");
+  Json Evidence{{"complete", Complete},
+                {"residualBlocks", 3},
+                {"sourceABI", "x64-machine-query-state-v2"},
+                {"fixture_calls", Session->RecoveryCalls},
+                {"fixture_prepares", Session->sourcePrepares},
+                {"fixture_entry", hexAddress(Entry)},
+                {"fixture_options",
+                 {{"size", Base.struct_size},
+                  {"abi", Options->machine_source_abi},
+                  {"llvm", Base.use_llvm},
+                  {"max_nodes", Base.max_nodes},
+                  {"max_operations", Base.max_operations},
+                  {"frame_begin", Frame.entry_frame_begin},
+                  {"frame_end", Frame.entry_frame_end},
+                  {"frame_flags", Frame.flags},
+                  {"alignment", Alignment.entry_frame_alignment},
+                  {"residue", Alignment.entry_frame_residue},
+                  {"separation_flags", Work.base.flags},
+                  {"proof_flags", Proof.flags}}}};
+  if (!Complete)
+    Evidence["error"] = "fixture unresolved indirect branch";
+  if (Report)
+    *Report = copy(Evidence.dump());
+  return Complete ? copy("/* recovered explicit state */\n"
+                         "unsigned recovered_fixture(void *state) {\n"
+                         "  (void)state;\n"
+                         "  return 0;\n"
+                         "}\n")
+                  : nullptr;
+}
 
 const char *neverd_ir_view_ex_json(neverd_session_t s, neverd_va_t address,
                                    const char *representation,
