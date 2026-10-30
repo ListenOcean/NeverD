@@ -1711,6 +1711,18 @@ add_neverd_unittest(NeverDWin64CallContractTests
 target_include_directories(NeverDWin64CallContractTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
 
+add_neverd_unittest(NeverDX64DispatchFrameSourceTests
+  x86_64/X64DispatchFrameSourceTests.cpp
+  LINK_COMPONENTS BackendC BackendLLVM Pipeline
+)
+target_include_directories(NeverDX64DispatchFrameSourceTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS}
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDX64DispatchFrameSourceTests PRIVATE
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_TEST_CLANG="${NEVERD_TEST_CLANG_EXECUTABLE}"
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}")
+
 add_neverd_unittest(NeverDSourceEntryBindingTests
   core/IncomingHomeSourceTests.cpp
   core/LowScalarConstantTests.cpp
