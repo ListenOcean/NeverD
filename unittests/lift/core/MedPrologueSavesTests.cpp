@@ -1308,6 +1308,217 @@ TEST(SourceStackSpills, StackParameterHolesRequireEveryOriginalPath) {
   }
 }
 
+TEST(SourceStackSpills, StackParameterHolesTrackPhysicalFrameAliases) {
+  for (unsigned Mode = 0; Mode != 31; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(7);
+    for (unsigned P = 4; P < Func.Params.size(); ++P) {
+      auto &Parameter = Func.Params[P];
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = P;
+      Parameter.RegOff = kNoParamReg;
+      Parameter.Size = 8;
+      Parameter.TheArch = Arch::X64;
+    }
+    Func.Blocks.resize(4);
+    std::vector<LowBlock> Original(4);
+    for (unsigned I = 0; I != 4; ++I) {
+      Func.Blocks[I].Id = Original[I].Id = I;
+      Func.Blocks[I].StartAddr = Original[I].StartAddr = 0x1000 + 16 * I;
+      Original[I].EndAddr = 0x1010 + 16 * I;
+    }
+    Original[0].Succs = {1, 2};
+    Original[1].Preds = Original[2].Preds = {0};
+    Original[1].Succs = Original[2].Succs = {3};
+    Original[3].Preds = {1, 2};
+    for (unsigned I = 0; I != 4; ++I) {
+      Func.Blocks[I].Preds = Original[I].Preds;
+      Func.Blocks[I].Succs = Original[I].Succs;
+    }
+    Func.Blocks[1].Ops = {op(NdOp::COPY, temp(11), {Func.Params[5]})};
+    Func.Blocks[2].Ops = {op(NdOp::COPY, temp(12), {Func.Params[6]})};
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto Alias = NdVar::reg(Mode == 25 ? x86reg::RAX : x86reg::R11, 8);
+    const auto Address = NdVar::tmp(0x10000, 8);
+    const auto Low = [](va_t PC, NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Result;
+      Result.Addr = PC;
+      Result.Opcode = Opcode;
+      Result.Output = Output;
+      for (const auto &V : Inputs)
+        Result.addInput(V);
+      return Result;
+    };
+    Original[0].Ops = {
+        Low(0x1000, NdOp::COPY, Alias, {SP}),
+        Low(0x1003, NdOp::INT_SUB, SP, {SP, NdVar::scalar(40, 8)}),
+        Low(0x1007, NdOp::COND_BR, {}, {NdVar::cst(0x1020, 8), RCX})};
+    for (unsigned I : {1u, 2u}) {
+      const va_t PC = Original[I].StartAddr;
+      Original[I].Ops = {
+          Low(PC, NdOp::INT_ADD, Alias, {Alias, NdVar::scalar(8, 8)}),
+          Low(PC + 4, NdOp::BRANCH, {}, {NdVar::cst(0x1030, 8)})};
+    }
+    Original[3].Ops = {
+        Low(0x1034, NdOp::INT_ADD, Address, {Alias, NdVar::scalar(40, 8)}),
+        Low(0x1034, NdOp::LOAD, RAX, {Address}),
+        Low(0x1038, NdOp::COPY, Alias, {NdVar::scalar(0, 8)}),
+        Low(0x103A, NdOp::INT_ADD, SP, {SP, NdVar::scalar(40, 8)}),
+        Low(0x103E, NdOp::RETURN, {}, {RAX})};
+    Original[3].StartAddr = Func.Blocks[3].StartAddr = 0x1030;
+    // The first original operation must also own the join's start address.
+    Original[3].Ops.insert(Original[3].Ops.begin(),
+                           Low(0x1030, NdOp::COPY, RCX, {NdVar::scalar(0, 8)}));
+    if (Mode == 1)
+      Original[3].Ops[1].Inputs[1].Offset = 32;
+    if (Mode == 2) {
+      Original[3].Ops[1].Inputs[1].Offset = 31;
+      Original[3].Ops[2].Output.Size = 2;
+    }
+    if (Mode == 3)
+      Original[2].Ops[0].Inputs[1].Offset = 16;
+    if (Mode == 4)
+      Original[2].Ops[0] =
+          Low(0x1020, NdOp::COPY, Alias, {NdVar::scalar(0, 8)});
+    if (Mode == 5)
+      Original[2].Ops.insert(Original[2].Ops.begin() + 1,
+                             Low(0x1023, NdOp::STORE, {}, {SP, Alias}));
+    if (Mode == 6)
+      Original[3].Ops[3] = Low(0x1038, NdOp::COPY, RAX, {Alias});
+    if (Mode == 7)
+      Original[3].Ops[3] = Low(0x1038, NdOp::COPY, RCX, {Alias});
+    if (Mode == 6 || Mode == 7)
+      Original[3].Ops.insert(
+          Original[3].Ops.begin() + 4,
+          Low(0x1039, NdOp::COPY, Alias, {NdVar::scalar(0, 8)}));
+    if (Mode == 8) {
+      Original[2].Ops[0].Opcode = NdOp::INT_SUB;
+      Original[1].Ops[0].Opcode = NdOp::INT_SUB;
+      Original[3].Ops[1].Inputs[1].Offset = 56;
+    }
+    if (Mode == 9)
+      std::swap(Original[1], Original[2]);
+    if (Mode == 10 || Mode == 11 || Mode == 12) {
+      auto Narrow = Alias;
+      Narrow.Size = Mode == 12 ? 1 : 4;
+      if (Mode == 12)
+        ++Narrow.Offset;
+      Original[3].Ops.insert(
+          Original[3].Ops.begin() + 1,
+          Low(0x1031, NdOp::COPY, Narrow, {NdVar::scalar(0, Narrow.Size)}));
+      if (Mode == 11)
+        Original[3].Ops.insert(Original[3].Ops.begin() + 2,
+                               Low(0x1032, NdOp::COPY, Alias, {SP}));
+      if (Mode == 11)
+        Original[3].Ops[3].Inputs[1].Offset = 88;
+    }
+    if (Mode == 13 || Mode == 14) {
+      auto Narrow = Alias;
+      Narrow.Size = 4;
+      Original[3].Ops[3] =
+          Low(0x1038, NdOp::COPY, Narrow, {NdVar::scalar(0, 4)});
+      if (Mode == 14)
+        Original[3].Ops.insert(Original[3].Ops.begin() + 4,
+                               Low(0x1038, NdOp::INT_ZEXT, Alias, {Narrow}));
+    }
+    if (Mode == 15) {
+      Original[2].Ops[0] = Low(0x1020, NdOp::COPY, RCX, {NdVar::scalar(0, 8)});
+      Original[2].Ops.back() =
+          Low(0x1024, NdOp::COND_BR, {}, {NdVar::cst(0x1020, 8), RCX});
+      Original[2].Succs = {2, 3};
+      Original[2].Preds.push_back(2);
+      Original[1].Ops[0].Inputs[1].Offset = 0;
+      Original[3].Ops[1].Inputs[1].Offset = 48;
+    }
+    if (Mode == 16) {
+      Original[2].Ops.back() =
+          Low(0x1024, NdOp::COND_BR, {}, {NdVar::cst(0x1020, 8), RCX});
+      Original[2].Succs = {2, 3};
+      Original[2].Preds.push_back(2);
+    }
+    if (Mode >= 17 && Mode <= 26) {
+      Original[3].Ops[0] =
+          Low(0x1030, NdOp::CALL, RAX, {NdVar::cst(0x3000, 8)});
+      auto Call = op(NdOp::CALL, temp(10), {MedVar::makeConst(0x3000, 8)});
+      Call.Addr = 0x1030;
+      Call.OriginSeq = 0;
+      Call.CallSiteId = 1;
+      Call.CalleeRegisterArgs = Call.CalleeVectorArgs = Call.CalleeStackArgs =
+          0;
+      Call.CallPreservedGPRs = GPRFamilyMask{1}
+                               << *gprFamilyOf(Arch::X64, Alias.Offset);
+      MedCallUnreadRegisters Proof;
+      Proof.Target = 0x3000;
+      Proof.Instruction = Call.Addr;
+      Proof.OriginSeq = Call.OriginSeq;
+      Proof.Families = Call.CallPreservedGPRs;
+      if (Mode == 18)
+        Proof.Families = 0;
+      if (Mode == 19)
+        Proof.Target += 8;
+      if (Mode == 20)
+        ++Proof.Instruction;
+      if (Mode == 21)
+        ++Proof.OriginSeq;
+      if (Mode == 22)
+        Call.CallSiteId = 0;
+      if (Mode == 23 || Mode == 24)
+        Call.CallPreservedGPRs = 0;
+      if (Mode == 24) {
+        Original[3].Ops[1].Inputs[0] = SP;
+        Original[3].Ops[1].Inputs[1].Offset = 88;
+      }
+      if (Mode == 25) {
+        Original[3].Ops[0].Output = Alias;
+        Original[3].Ops[1].Inputs[0] = SP;
+        Original[3].Ops[1].Inputs[1].Offset = 88;
+        Call.CallPreservedGPRs = 0;
+      }
+      Func.Blocks[3].Ops = {Call};
+      if (Mode != 26)
+        Func.CallUnreadRegisters.emplace(1, Proof);
+    }
+    if (Mode == 27)
+      Original[3].Ops[2].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 28)
+      Original[3].Ops[1].Inputs[1].Offset = INT64_MAX;
+    if (Mode == 29) {
+      Original[3].Ops.erase(Original[3].Ops.begin() + 3);
+      for (unsigned I = 0; I < 8; ++I)
+        Original[3].Ops.insert(Original[3].Ops.begin() + 3 + I,
+                               Low(0x1038, NdOp::COPY,
+                                   NdVar::reg(Alias.Offset + I, 1),
+                                   {NdVar::scalar(0, 1)}));
+    }
+    size_t Budget = Mode == 30 ? 1 : 8192;
+    const auto Expected = Mode == 0 || Mode == 8 || Mode == 9 || Mode == 11 ||
+                                  Mode == 14 || Mode == 15 || Mode == 17 ||
+                                  Mode == 24 || Mode == 29
+                              ? std::set<unsigned>{4}
+                              : std::set<unsigned>{};
+    EXPECT_EQ(unobservedSourceStackParameters(Func, Original, {0x3000}, Budget),
+              Expected);
+    if (Mode == 0) {
+      const size_t Used = 8192 - Budget;
+      Budget = Used;
+      EXPECT_EQ(
+          unobservedSourceStackParameters(Func, Original, {0x3000}, Budget),
+          Expected);
+      EXPECT_EQ(Budget, 0u);
+      Budget = Used - 1;
+      EXPECT_TRUE(
+          unobservedSourceStackParameters(Func, Original, {0x3000}, Budget)
+              .empty());
+    }
+  }
+}
+
 TEST(SourceStackSpills, AReintroducedRegisterInputStillReachesImplicitCalls) {
   MedFunc Func;
   Func.Entry = 0x1000;

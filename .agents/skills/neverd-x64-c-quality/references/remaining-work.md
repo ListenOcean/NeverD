@@ -282,9 +282,14 @@ Complete original Win64 CFGs now prove unused positional stack slots through
 branches and stable loops, with matching original edges, joined stack offsets
 and conservative flag taint. Both C routes and SDK replay reuse the proof.
 Partial temporary-address reads retain taint, and partial writes cannot preserve
-an old exact pointer. This closes the straight-line-only proof restriction;
-arbitrary pointer aliases, nested opaque effects and stack-pointer escapes still
-prevent a complete unused-slot proof.
+an old exact pointer. Physical GPR aliases now carry exact affine frame offsets
+across agreeing joins and stable loops. Byte taint survives partial definitions
+and lost coordinates, and every alias needs explicit destruction before return.
+Bound native unread receipts admit an alias across a call; possible clobbers
+lose its coordinate without proving destruction. Stores, arbitrary pointers,
+nested opaque effects and stack-pointer escapes still prevent a complete
+unused-slot proof. The public Win64 fixture executes direct and GPR-addressed
+straight-line, branching and looping bodies against their original machine code.
 
 Unknown incoming stack-pointer
 escapes still prevent a complete stack-argument bound: do not cap calls
@@ -400,11 +405,11 @@ but provenance, overlapping writes and opaque effects invalidate it.
 Win64 call assembly also preserves a later recovered stack parameter when the
 earlier summary lists only its used register prefix. Unused positional gaps
 stay padding; required missing values retain their unknown state.
-Complete straight-line Win64 wrappers now have a separate proof for unused
-positional stack slots. Original byte reads, exact nonescaping SP offsets and
-fixed nested-call home/argument ranges must all exclude the slot. Selected,
-omitted and SDK queries share the result; general CFGs, exceptional observers,
-escaped frame addresses and unbounded calls still require independent proofs.
+Complete original Win64 CFGs have a separate proof for unused positional stack
+slots. Original byte reads, exact nonescaping frame offsets and fixed nested-call
+home/argument ranges must all exclude the slot. Selected, omitted and SDK queries
+share the result; exceptional observers, escaped frame addresses and unbounded
+calls still require independent proofs.
 These source facts do not rewrite the native ABI or compact its argument slots.
 Late debug symbols now refresh cached unknown Windows personalities. Language
 decode provenance permits replacing stale classification diagnostics while
