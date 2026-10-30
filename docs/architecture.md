@@ -134,8 +134,15 @@ stack provenance. Native configuration APIs carry control bit `0x100` when the
 SDK advertises it. Older SDKs use an owned `[RBP + (offset - RBP)]` access,
 preserving the compiler's RBP and declaring the arithmetic scratch/flags.
 Data-address fallbacks use AX, and row strides use CX, under the shared scalar
-carrier authority. Tile row-memory with default-stack addr64 remains refused:
-its architectural stride occupies the index needed by the configuration plan.
+carrier authority. Default-stack addr64 tile rows instead use an isolated
+leaf: BP carries the full base, CX the independent stride, and the compiler
+owns an RSP-based frame with normal register saves and unwind metadata.
+Native builtins advertise `__NEVERC_X86_AMX_STACK_MEMORY__`; the LLVM SDK
+advertises `LLVM_X86_AMX_STACK_MEMORY`. Older SDKs emit an internal
+`preserve_allcc` leaf with the exact owned assembly marker. Its C reader
+authenticates the complete leaf body and frame attributes, including after IPO
+specializes constant arguments. Both C routes require the native capability
+for these forms; they never place BP-borrowing assembly in the caller.
 Legacy version-1 FS/GS, address32 and non-memory forms remain readable, including
 their exact old assembly contracts. Unsegmented version-1 addr64 memory must be
 lifted again from the original bytes because it lost default-stack provenance.
