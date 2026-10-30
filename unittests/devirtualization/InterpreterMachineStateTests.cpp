@@ -1567,5 +1567,6 @@ int main(void) {
 }
 
 #include "InterpreterMachineRegionSourceTests.inc"
+#include "InterpreterMachineRegionTrapTests.inc"
 
 } // namespace

@@ -452,3 +452,11 @@ Die ausdrücklich gewählte C++-Schnittstelle `wrapInterpreterMachineRegionSourc
 Zugelassen sind nur das fehlerfreie Benutzerprofil und vorhandene Skalar-/Abfrage-/XMM-Operationen. Traps, zusätzliche Architekturzustände, Einstiegsobjekte und zusätzliche Code-/Importdeklarationen werden auch unbenutzt abgelehnt. Gastspeicher muss über Bytekopien oder Alias-Typen mit Ausrichtung 1 ausgegeben werden. Alle Speicher-/Frame-Annahmen bleiben erforderlich; zur Laufzeit wird nur die Ausrichtung geprüft. Keine Aufrufzusammenfassung, Zusammensetzung, gewöhnliche ABI oder Zertifizierung der vollständigen Funktion/nativen Äquivalenz. `InterpreterMachineRegionSourceTest.*` prüft beide C-Backends unter O0/O2 auf vollständigen Zustand, Stack-Byte-Aliase, mehrere Ausgänge, Abfrage-/Ausrichtungsstopps und veränderte oder nicht unterstützte Deklarationen.
 
 Architektonisch undefinierte Ausgaben behalten die von LowIR gewählten Implementierungswerte. Die Übereinstimmung mit Prozessorentscheidungen oder deren Irrelevanz für native Beobachtungen erfordert eine unabhängige Umgebung oder einen Nichtinterferenzbeweis; dieser Quellnachweis liefert beides nicht.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Ausgänge vor einem Trap
+
+Die Überladung mit `InterpreterMachineRegionSourceOptions` erlaubt ausdrücklich `StopBeforeTraps = true`. Sie behält das 432-Byte-Layout bei und liefert `TrapPending` (4), wobei `PC` die ursprüngliche Trap-Adresse und der unterstützte Zustand den Stand unmittelbar vor dieser Instruktion enthält. Frühere Speichereffekte bleiben erhalten; Trap-Ausführung, Ausnahme-Stackframe, Handler und Fortsetzung werden nicht ausgeführt. Die Standardüberladung lehnt weiterhin auch unbenutzte Trap-Deklarationen ab. Die genaue Trap-Identität und Audit-Metadaten werden weiterhin vom Eigentümer der Rohregion authentifiziert; diese Option liefert keine neuen Architekturbelege. Abfrage- und Ausrichtungsstopps behalten ihre bisherigen Statuscodes und Zustandsverträge.
+
+Validierte Regionen behalten außerdem kanonische dynamische `RequireAligned`-Operationen bei. Beide C-Backends erhalten die Prüfungen mit sofortigem Abbruch; bei verletzter Instruktionsausrichtung gibt es weder einen zugesicherten übernommenen Zustand noch eine Ausnahmefortsetzung. Gewöhnliche Maschinenzustands-Wrapper behalten ihre bisherigen Einschränkungen.
