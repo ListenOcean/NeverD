@@ -250,6 +250,54 @@ int main(void) {
     }
 }
 
+TEST(LLVMCSourcePointers, PointerSpellingRetainsSourceABIDepthBoundary) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("pointer-attribute-depth", Context);
+  Module.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> Builder(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(Builder.getVoidTy(), {Builder.getPtrTy()}, false),
+      llvm::GlobalValue::ExternalLinkage, "depth_boundary", Module);
+  auto &Argument = *Function->getArg(0);
+  for (bool Record : {false, true})
+    for (unsigned Depth : {16u, 17u, 18u}) {
+      SCOPED_TRACE(Record);
+      SCOPED_TRACE(Depth);
+      auto Type = Record ? NdType::makeNamedRecord("DepthPayload", 0)
+                         : NdType::makeInt(2, false);
+      std::string Text = "[";
+      for (unsigned I = 0; I < Depth; ++I) {
+        Type = NdType::makePtr(Type);
+        Text += "[\"ptr\",8,false,\"\"],";
+      }
+      Text += Record ? "[\"record\",0,false,\"DepthPayload\"]]"
+                     : "[\"int\",2,false,\"\"]]";
+      // The record leaf is checked at its pointer's depth; scalar leaves
+      // consume another recursion level. Keep these expectations independent
+      // of the implementation's limit expression.
+      const bool Accepted = Depth == 16 || (Record && Depth == 17);
+      writeLLVMSourcePointerParameter(Argument, Type);
+      const auto Restored = readLLVMSourcePointerParameter(Argument);
+      ASSERT_EQ(bool(Restored), Accepted);
+      if (Restored) {
+        auto Leaf = Restored;
+        for (unsigned I = 0; I < Depth; ++I) {
+          ASSERT_EQ(Leaf->Kind, NdTypeKind::Ptr);
+          Leaf = Leaf->Pointee;
+          ASSERT_TRUE(Leaf);
+        }
+        EXPECT_EQ(Leaf->Kind, Record ? NdTypeKind::Struct : NdTypeKind::Int);
+        if (Record)
+          EXPECT_EQ(Leaf->SourceName, "DepthPayload");
+      }
+      // Direct attributes must retain the semantic limit too, rather than
+      // relying on the writer to reject an unsupported chain first.
+      Argument.addAttr(
+          llvm::Attribute::get(Context, LLVMSourcePointerParameter, Text));
+      EXPECT_EQ(bool(readLLVMSourcePointerParameter(Argument)), Accepted);
+    }
+}
+
 TEST(LLVMCSourcePointers, MalformedOrChangedPointerCarriersIgnoreSpelling) {
   llvm::LLVMContext Context;
   llvm::Module Module("pointer-attribute-boundary", Context);
