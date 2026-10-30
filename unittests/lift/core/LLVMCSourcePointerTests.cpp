@@ -335,4 +335,3 @@ TEST(LLVMCSourcePointers, MalformedOrChangedPointerCarriersIgnoreSpelling) {
   }
 }
 } // namespace
-
