@@ -1499,15 +1499,24 @@ original machine bytes. Malformed LowIR, MedIR, HighIR and native assembly
 cannot drop bank, memory or feature effects. Concrete tests retain arithmetic,
 row conversion and partial-progress oracles.
 `NeverDX86AMXAddressTests` independently checks default-stack provenance across
-all decoder routes, rejects unqualified stack row strides before LowIR effects,
-and covers versioned/native/legacy-assembly source admission. Set
+all decoder routes, retains independent stack row bases and strides, and
+covers versioned/native/legacy-assembly source admission. Isolated stack leaves
+are checked before and after IPO specialization; forged frame ownership is
+refused. Set
 `NEVERD_TEST_AMX_ADDRESS_EXPORT` to export its HighC and LLVMC memory wrappers.
 `scripts/verify_x86_amx_addresses.py --exports DIR --clang CLANG --compiler NEVERC
 --llc LLC --keep RESULTS` compiles those exports in realigned dynamic frames
 through Clang, NeverC fallback, NeverC native and NeverC-to-fork routes at O0/O2
 for ELF/COFF/Mach-O. It independently reads the native VEX/EVEX address fields
 and uses controlled completions to check address/stride transport, stack canaries
-and saved registers. This does not qualify physical AMX faults or tile restart.
+and saved registers. Stack-row C expressions require the new native compiler
+capability and have no ordinary inline-assembly fallback. Same-section ELF,
+COFF and Mach-O call relocations are resolved before controlled execution of
+the compiler-owned leaves. The exported complete `stack-leaf-*.c/.ll` modules
+also compile and execute through native LLVM, NeverC bitcode import, NeverC C
+and the C-to-fork bridge. These retain prototypes before target-attributed
+definitions and IPO-specialized constant operands. This does not qualify
+physical AMX faults or tile restart.
 `RowSelectorsIgnoreHighBitsAndZeroOutOfRangeRows` covers all six operations,
 both selector forms, ignored high bits and an independent exact-value oracle.
 It follows ISE 062 rather than the superseded row-chunk exception rules.
