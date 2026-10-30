@@ -5568,6 +5568,9 @@ check published names after overwriting the caller's input, plus exact error
 text and macro invocation positions. `NeverDTypeParseTests` runs the same
 parser cases without loader/call-model dependencies, for focused ASan/UBSan
 checks of this storage boundary; these are not additional distinct cases.
+Macro chains at and beyond the expansion budget, plus cycles, retain their
+invocation diagnostics when ordinary identifiers bypass recursive expansion.
+Punctuation matching keeps its original longest-first order and literal lengths.
 
 `DWARFTypeImportGo.ReadsGosStructuresAndFuncValues` builds a real Go program
 with the selected `NEVERD_TEST_GO` compiler (or `go` on PATH). It checks both

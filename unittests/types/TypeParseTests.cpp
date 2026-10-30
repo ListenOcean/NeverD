@@ -6,6 +6,7 @@
 
 #include "TypeShape.h"
 
+#include "neverd/types/Limits.h"
 #include "neverd/types/PDBTypeImport.h"
 #include "neverd/types/TypeParse.h"
 #include "neverd/types/TypeRender.h"
@@ -203,6 +204,39 @@ struct RECORD { char Lead; WORD MEMBER; };
     EXPECT_EQ(Function->Params[0].Name, "Argument");
     EXPECT_EQ(Function->Convention, CallingConvention::Stdcall);
   }
+}
+
+TEST(TypeParse, MacroExpansionKeepsItsDepthBoundaryAndInvocationPosition) {
+  const unsigned Limit = neverd::limits::types::kCTypeParserExpandDepthLimit;
+  const auto Chain = [](unsigned Last) {
+    std::string Source;
+    for (unsigned Index = 0; Index <= Last; ++Index)
+      Source +=
+          "#define M" + std::to_string(Index) + " " +
+          (Index == Last ? "unsigned int" : "M" + std::to_string(Index + 1)) +
+          "\n";
+    return Source + "typedef M0 Expanded;\n";
+  };
+  TypeLibrary Library;
+  const auto Allowed = parseCTypes(Chain(Limit), Library);
+  ASSERT_TRUE(Allowed.ok());
+  ASSERT_NE(Library.find("Expanded"), nullptr);
+
+  TypeLibrary TooDeep;
+  const auto Refused = parseCTypes(Chain(Limit + 1), TooDeep);
+  ASSERT_EQ(Refused.Problems.size(), 1u);
+  EXPECT_EQ(Refused.Problems[0].Line, Limit + 3);
+  EXPECT_EQ(Refused.Problems[0].Column, 9u);
+  EXPECT_EQ(TooDeep.find("Expanded"), nullptr);
+
+  const auto Cycle = parseCTypes("#define FIRST SECOND\n#define SECOND FIRST\n"
+                                 "typedef FIRST Cyclic;\n",
+                                 Library);
+  ASSERT_EQ(Cycle.Problems.size(), 1u);
+  EXPECT_EQ(Cycle.Problems[0].Line, 3u);
+  EXPECT_EQ(Cycle.Problems[0].Column, 9u);
+  EXPECT_EQ(Library.find("Cyclic"), nullptr);
+  EXPECT_NE(Library.find("Expanded"), nullptr);
 }
 
 TEST(TypeParse, ExpandedDiagnosticsOwnTheirTextAndInvocationPosition) {

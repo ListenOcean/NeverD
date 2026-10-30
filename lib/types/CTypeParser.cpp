@@ -77,7 +77,7 @@ bool sameLayout(const RecordDef &A, const RecordDef &B) {
   return true;
 }
 
-const char *const Punctuators[] = {
+constexpr llvm::StringLiteral Punctuators[] = {
     "...", "::", "<<", ">>", "<=", ">=", "==", "!=", "&&", "||", "->", "{",
     "}",   "(",  ")",  "[",  "]",  ";",  ",",  "*",  "&",  ":",  "=",  "<",
     ">",   "+",  "-",  "~",  "!",  "/",  "%",  "^",  "|",  "?",  ".",  "#"};
@@ -124,10 +124,11 @@ public:
       }
       LineStart = false;
       Token Next = token();
-      if (Next.Kind == TokenKind::Word) {
-        expand(std::move(Next), Tokens, 0);
-        continue;
-      }
+      if (Next.Kind == TokenKind::Word)
+        if (auto Found = Macros.find(Next.Text); Found != Macros.end()) {
+          expand(std::move(Next), Found->second, Tokens, 0);
+          continue;
+        }
       if (Next.Kind != TokenKind::End)
         Tokens.push_back(std::move(Next));
     }
@@ -244,9 +245,9 @@ private:
       quoted(Result);
       return Result;
     }
-    for (const char *Punct : Punctuators)
-      if (Source.substr(At).starts_with(Punct)) {
-        advance(strlen(Punct));
+    for (const llvm::StringRef Punct : Punctuators)
+      if (C == Punct.front() && Source.substr(At).starts_with(Punct)) {
+        advance(Punct.size());
         Result.Kind = TokenKind::Punct;
         Result.Text = Punct;
         return Result;
@@ -287,21 +288,22 @@ private:
     Result.Text = Spellings.save(Text);
   }
 
-  /// A word, or the tokens of the macro it names.
-  void expand(Token Word, std::vector<Token> &Tokens, unsigned Depth) {
-    auto Found = Macros.find(Word.Text);
-    if (Found == Macros.end() ||
-        Depth > ::neverd::limits::types::kCTypeParserExpandDepthLimit) {
+  /// Expand a known macro. Ordinary identifiers stay on the token append path.
+  void expand(Token Word, const std::vector<Token> &Replacements,
+              std::vector<Token> &Tokens, unsigned Depth) {
+    if (Depth > ::neverd::limits::types::kCTypeParserExpandDepthLimit) {
       Tokens.push_back(std::move(Word));
       return;
     }
-    for (Token Replacement : Found->second) {
+    for (Token Replacement : Replacements) {
       Replacement.Line = Word.Line;
       Replacement.Column = Word.Column;
       if (Replacement.Kind == TokenKind::Word)
-        expand(std::move(Replacement), Tokens, Depth + 1);
-      else
-        Tokens.push_back(std::move(Replacement));
+        if (auto Found = Macros.find(Replacement.Text); Found != Macros.end()) {
+          expand(std::move(Replacement), Found->second, Tokens, Depth + 1);
+          continue;
+        }
+      Tokens.push_back(std::move(Replacement));
     }
   }
 
