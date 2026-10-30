@@ -54,6 +54,10 @@ inline constexpr unsigned kLLVMCFuncWriterLLVMCWriterUsersAreDeadCopiesWork =
 /// Exhaustion retains its explicit assignments and loads.
 inline constexpr unsigned kLLVMCFieldDefaultShapeWork = 256;
 inline constexpr unsigned kLLVMCFieldDefaultQueryWork = 4096;
+/// Optional storage forwarding retains explicit loads/stores on exhaustion.
+inline constexpr unsigned kLLVMCStorageUseQueryWork = 512;
+/// Optional branch-chain recognition retains the original CFG on exhaustion.
+inline constexpr unsigned kLLVMCBranchFeedQueryWork = 4096;
 
 // lib/backend/c/LLVMC/LLVMCMemoryUpdates.cpp
 inline constexpr unsigned kLLVMCMemoryUpdateAddressWork = 128;

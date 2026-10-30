@@ -2596,7 +2596,7 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   CrossBlockLoadValues.clear();
   KilledEntryZeroCache.clear();
   AllocaAddressTakenCache.clear();
-  AllocaHasLoadCache.clear();
+  AllocaUses.clear();
   FieldStoreCandidates.clear();
   UniqueImmediateUsers.clear();
   AllocaLastValues.clear();
@@ -6239,10 +6239,11 @@ bool LLVMCWriter::blockOnlyFeedsBranch(const llvm::BasicBlock *BB) {
   if (!BB || !BB->getTerminator())
     return false;
   const llvm::Instruction *Term = BB->getTerminator();
+  llvm::SmallPtrSet<const llvm::Instruction *, 16> Seen;
+  unsigned Remaining = limits::backend::kLLVMCBranchFeedQueryWork;
   for (const llvm::Instruction &Inst : *BB) {
     if (&Inst == Term || llvm::isa<llvm::AllocaInst>(Inst))
       continue;
-    llvm::SmallPtrSet<const llvm::Instruction *, 16> Seen;
     std::function<bool(const llvm::Instruction *)> Feeds =
         [&](const llvm::Instruction *I) -> bool {
       if (!I || I == Term)
@@ -6251,9 +6252,15 @@ bool LLVMCWriter::blockOnlyFeedsBranch(const llvm::BasicBlock *BB) {
         return false;
       if (!Seen.insert(I).second)
         return true;
+      if (!Remaining)
+        return false;
+      --Remaining;
       if (I->use_empty())
         return !instructionIsPrinted(*I);
       for (const llvm::User *U : I->users()) {
+        if (!Remaining)
+          return false;
+        --Remaining;
         const auto *UI = llvm::dyn_cast<llvm::Instruction>(U);
         if (!UI || !Feeds(UI))
           return false;
@@ -9051,10 +9058,12 @@ void LLVMCWriter::writeGoto(const llvm::BasicBlock *From,
 bool LLVMCWriter::allocaHasPrintedLoad(const llvm::AllocaInst *Slot) {
   if (!Slot)
     return false;
-  for (const llvm::User *U : Slot->users()) {
-    const auto *LI = llvm::dyn_cast<llvm::LoadInst>(U);
-    if (!LI)
-      continue;
+  const auto &Uses = allocaUseFacts(Slot);
+  // An over-budget presence query retains storage rather than proving every
+  // observation redundant. This is not a cached print-state decision.
+  if (Uses.Loads.size() > limits::backend::kLLVMCStorageUseQueryWork)
+    return true;
+  for (const auto *LI : Uses.Loads) {
     if (Analysis.DeadFrameStores.count(LI) || Analysis.Inlinable.count(LI) ||
         isImportCalleeOnlyLoad(LI) || computedAllocaLoadIsForwarded(LI) ||
         typedLoadAccess(*LI) || typedIndexAccess(LI->getPointerOperand()) ||

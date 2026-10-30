@@ -487,19 +487,25 @@ bool LLVMCWriter::isTypedRecordCursorValue(const llvm::Value *V) const {
   return false;
 }
 
-bool LLVMCWriter::allocaHasLoad(const llvm::AllocaInst *Slot) const {
-  if (!Slot)
-    return false;
-  if (auto It = AllocaHasLoadCache.find(Slot); It != AllocaHasLoadCache.end())
-    return It->second;
-  bool HasLoad = false;
-  for (const llvm::User *U : Slot->users())
-    if (llvm::isa<llvm::LoadInst>(U)) {
-      HasLoad = true;
-      break;
+const LLVMCWriter::AllocaUseFacts &
+LLVMCWriter::allocaUseFacts(const llvm::AllocaInst *Slot) const {
+  assert(Slot);
+  auto [It, Added] = AllocaUses.try_emplace(Slot);
+  if (Added)
+    for (const llvm::User *User : Slot->users()) {
+      if (const auto *Load = llvm::dyn_cast<llvm::LoadInst>(User)) {
+        It->second.Loads.push_back(Load);
+        continue;
+      }
+      const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User);
+      if (!Store || Store->getPointerOperand() != Slot)
+        It->second.OnlyDirectMemoryUsers = false;
     }
-  AllocaHasLoadCache.insert({Slot, HasLoad});
-  return HasLoad;
+  return It->second;
+}
+
+bool LLVMCWriter::allocaHasLoad(const llvm::AllocaInst *Slot) const {
+  return Slot && !allocaUseFacts(Slot).Loads.empty();
 }
 
 bool LLVMCWriter::cursorSlotIsObserved(const llvm::AllocaInst *Slot) const {

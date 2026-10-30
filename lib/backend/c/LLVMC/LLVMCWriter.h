@@ -985,7 +985,13 @@ public:
   /// address-escape classification until setupFunction selects another one.
   mutable llvm::DenseMap<const llvm::AllocaInst *, bool>
       AllocaAddressTakenCache;
-  mutable llvm::DenseMap<const llvm::AllocaInst *, bool> AllocaHasLoadCache;
+  struct AllocaUseFacts {
+    llvm::SmallVector<const llvm::LoadInst *, 4> Loads;
+    bool OnlyDirectMemoryUsers = true;
+  };
+  const AllocaUseFacts &allocaUseFacts(const llvm::AllocaInst *Slot) const;
+  // Stable storage permits nested queries for other homes while iterating.
+  mutable std::map<const llvm::AllocaInst *, AllocaUseFacts> AllocaUses;
   /// A field/default join needs a store of a load (possibly cast or frozen).
   /// This necessary shape depends only on immutable function IR, not on
   /// current immediate, record, or variable-name projections.
