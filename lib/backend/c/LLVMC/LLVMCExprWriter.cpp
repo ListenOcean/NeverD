@@ -388,7 +388,7 @@ LLVMCWriter::codeSectionAddressText(const llvm::ConstantInt &CI) const {
 
 std::optional<va_t>
 LLVMCWriter::uniqueAllocaImageImmediate(const llvm::AllocaInst *Slot) const {
-  if (!Slot)
+  if (!Img || !Slot)
     return std::nullopt;
   std::optional<va_t> Found;
   for (const llvm::User *U : Slot->users()) {
@@ -520,7 +520,9 @@ std::string LLVMCWriter::imageObjectSymbolLine(llvm::StringRef Name) const {
 }
 
 std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
-  if (!V)
+  // Numeric addresses need an image; named carriers need a module global.
+  // Without either root, recursive local-storage walks cannot find one.
+  if (!V || (!Img && CurMod && CurMod->global_empty()))
     return std::nullopt;
   V = V->stripPointerCasts();
   // A home may copy a load from another home that eventually copies this
@@ -641,7 +643,7 @@ std::optional<va_t> LLVMCWriter::imageDataVA(const llvm::Value *V) const {
 std::optional<std::pair<const llvm::GlobalVariable *, uint64_t>>
 LLVMCWriter::imageByteArrayBacking(const llvm::Value *V,
                                    uint64_t AccessSize) const {
-  if (!CurMod || AccessSize == 0)
+  if (!CurMod || CurMod->global_empty() || AccessSize == 0)
     return std::nullopt;
   const auto Addr = imageDataVA(V);
   if (!Addr)
