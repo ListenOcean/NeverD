@@ -688,6 +688,16 @@ The adapter admits only the user nonfaulting profile and existing scalar/query/X
 
 Architectural undefined outputs retain LowIR's selected implementation values. Matching a processor's choices, or proving those choices irrelevant to native observations, requires an independent environment or noninterference proof; this source receipt supplies neither.
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## Architectural scalar choices
+
+The C++ raw-region API can select `SpecializationUndefinedModel::FreshScalarV1`. Complete architecture-owned scalar undefined-effect records then create a fresh production on every dynamic instruction visit, before branch and target proofs. Copies share one production, while repeated visits remain independent. The residual retains each guarded bit update, including productions with false guards, and the raw receipt binds the selected model.
+
+This opt-in currently requires explicit x64 machine-region exits and complete scalar instruction evidence. It rejects unsupported effects or exhausted budgets. The existing region C adapter, ordinary emitters and native proof interfaces refuse this model until an explicit runtime choice environment is supplied; no processor-specific values or ordinary ABI are inferred.
+
+An exactly audited disabled-CET RDSSP projection preserves its destination without a new production; its general missing sidecar remains missing. Authenticated traps remain unexecuted boundaries.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Pending trap exits
