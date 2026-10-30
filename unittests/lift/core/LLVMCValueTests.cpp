@@ -5239,6 +5239,53 @@ int main(void) {
     compileAndRun(Source, Optimization, {}, true);
 }
 
+TEST(LLVMCValues, FrameFreeCarrierGraphsKeepEveryExternalMemoryUpdate) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("frame-free-carriers", Context);
+  Module.setDataLayout("e-p:64:64");
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  auto *Function = llvm::Function::Create(
+      llvm::FunctionType::get(
+          Word, {llvm::PointerType::getUnqual(Context), Word}, false),
+      llvm::GlobalValue::ExternalLinkage, "carrier_updates", Module);
+  llvm::IRBuilder<llvm::NoFolder> B(
+      llvm::BasicBlock::Create(Context, "entry", Function));
+  auto *Home = B.CreateAlloca(Word);
+  B.CreateStore(B.CreatePtrToInt(Function->getArg(0), Word), Home);
+  constexpr unsigned Rounds = 256;
+  for (unsigned I = 0; I < Rounds; ++I) {
+    auto *Address = B.CreateIntToPtr(B.CreateLoad(Word, Home), B.getPtrTy());
+    auto *Before = B.CreateLoad(Word, Address);
+    auto *Next = B.CreateXor(B.CreateAdd(Before, B.getInt64(I + 1)),
+                             Function->getArg(1));
+    B.CreateStore(Next, Address);
+    B.CreateStore(B.CreateAdd(B.CreateLoad(Word, Home), B.getInt64(0)), Home);
+  }
+  B.CreateRet(B.CreateLoad(Word, Function->getArg(0)));
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, Options));
+  Source += "\n#define CARRIER_ROUNDS " + std::to_string(Rounds) + R"(
+int main(void) {
+  const uint64_t values[]={0,9,UINT64_MAX,UINT64_C(0xfedcba9876543210)};
+  const uint64_t masks[]={0,1,UINT64_MAX,UINT64_C(0x8000000000000000)};
+  for(unsigned v=0;v<sizeof(values)/sizeof(*values);++v)
+    for(unsigned m=0;m<sizeof(masks)/sizeof(*masks);++m) {
+      uint64_t words[]={19,values[v],23}, expected=values[v];
+      for(unsigned i=0;i<CARRIER_ROUNDS;++i) expected=(expected+i+1)^masks[m];
+      if(carrier_updates(words+1,masks[m])!=expected) return 1;
+      if(words[0]!=19 || words[1]!=expected || words[2]!=23) return 2;
+    }
+  return 0;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
 TEST(LLVMCValues, PreservedIndirectCallsKeepSignatureAndABI) {
   for (auto Convention : {llvm::CallingConv::C, llvm::CallingConv::Win64,
                           llvm::CallingConv::X86_64_SysV}) {
