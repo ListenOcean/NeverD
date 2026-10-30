@@ -407,6 +407,13 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       Img.Arch == Arch::X64 && !Img.IsRelocatable &&
       (Img.Format == BinaryFormat::COFF || Img.Format == BinaryFormat::ELF);
   std::set<va_t> RelocationCodeTargets;
+  // Targets promoted directly because a CALL reads their table: they must
+  // still pass decode verification before publication, so the emitter's
+  // entry checks (VerifiedFunctionEntries) accept them.
+  std::set<va_t> CallDispatchPromoted;
+  // Targets the code-named label analysis promoted to entries; they verify
+  // below for the same reason.
+  std::set<va_t> CodeNamedTargets;
   // What code names, as (naming address, code named): decided below, once the
   // entries that bound each naming function are known.
   std::vector<std::pair<va_t, va_t>> CodeNamedByCode;
@@ -427,7 +434,32 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       if (Img.DataInCode.count(Target) ||
           !Img.isFunctionEntryCandidateAt(Target) || IsMachOLocalLabel(Target))
         continue;
-      if (IsX86LinkedCOFF && Img.hasExecutableCodeOwnerAt(Slot)) {
+      // Every linked-x86-COFF code-pointer slot goes through the
+      // code-named label analysis, not only slots inside executable
+      // sections.  Linkers other than MSVC's place jump tables in .rdata:
+      // promoting those targets directly made every switch case a function
+      // candidate, and each candidate then paid a full CFG build.  A table
+      // an instruction reads as a dispatch (a jmpl) contributes labels; a
+      // table nothing reads keeps promoting its targets, as callbacks are.
+      if (IsX86LinkedCOFF) {
+        // A table a CALL reads through (`call [base+idx*s]`, recorded in
+        // CallDispatchTableBases) holds callable entries — a callback or
+        // constructor dispatch, MinGW's CRT list among the code — not
+        // another function's case labels. Promote its targets directly.
+        if (!Img.CallDispatchTableBases.empty()) {
+          auto CallTable = Img.CallDispatchTableBases.upper_bound(Slot);
+          if (CallTable != Img.CallDispatchTableBases.begin() &&
+              Slot - *std::prev(CallTable) <= 8 * PointerSize) {
+            Entries.insert(Target);
+            RelocationCodeTargets.insert(Target);
+            CallDispatchPromoted.insert(Target);
+            continue;
+          }
+        }
+        // Still a relocation-proven target for the relocated-entry verifier
+        // (RelocatedCandidates below); only the direct candidacy moves to
+        // the label analysis.
+        RelocationCodeTargets.insert(Target);
         CodeNamedByCode.emplace_back(Slot, Target);
         continue;
       }
@@ -571,7 +603,6 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   // callback stored into an object; `push offset filter`, a handler) names a
   // function the code only takes the address of.  The bounded decoder below
   // still decides whether a target is an entry.
-  std::set<va_t> CodeNamedTargets;
   if ((IsX86LinkedCOFF || IsX64LinkedCodeAddresses) && Img.Entry != 0) {
     const size_t TableNames = IsX86LinkedCOFF ? CodeNamedByCode.size() : 0;
     if (IsX86LinkedCOFF && !RelocationsOnly)
@@ -751,7 +782,9 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
           Img.VerifiedFunctionEntries.count(
               normalizeCodeAddress(Addr, Img.Arch, Img.Mode)) ||
           Trusted.count(Addr) || UnsymbolizedX86Entries.count(Addr) ||
-          (!RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr)))
+          (!RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr) &&
+           !CallDispatchPromoted.count(Addr) &&
+           !CodeNamedTargets.count(Addr)))
         Keep[I] = 1;
       else if ((RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr)) ||
                UntypedCOFFExports.count(Addr) ||

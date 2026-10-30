@@ -76,6 +76,7 @@ complete instruction support or semantic test coverage.
 | WRSSD/Q, WRUSSD/Q, ENQCMD and ENQCMDS native output | The shared system contract emits the real instruction in LLVM, HighC and LLVM-to-C. Memory stays inside the instruction, enqueue returns its actual ZF, and FS/GS qualifies only the explicit memory operand. |
 | MOVDIRI and long-mode MOVDIR64B native output | The shared system contract retains real direct stores, their widths, memory effects and source/destination address roles. Native output no longer substitutes ordinary or masked stores. |
 | MFENCE, LFENCE and SFENCE native output | LLVM emits the hardware barrier and a compiler memory effect. Generic LLVM acquire/release fences can disappear on x86 and cannot order direct/non-temporal stores. |
+| Native control-return compiler interfaces | LLVM and NeverC expose 18 native SYSRET/SYSEXIT, SYSENTER, IRET/RETF, RSM and FRED/UIRET APIs. Explicit operands, terminal control and compiler-frame ownership are qualified below. These interfaces do not establish an original-image full register/vector continuation. |
 
 `X86SystemState.def` and `X86SystemState.h` own the system-instruction inventory
 and operand/completion shapes. LowIR, Low-to-Med conversion, Med verification,
@@ -267,10 +268,9 @@ test resumes through a coupled SS/RSP switch and uses the new stack.
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
-| ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
+| ERETS, ERETU, UIRET | Native compiler interfaces and exact object encodings are available. NeverD return-frame and nonlocal control-transfer ownership remains missing: FRED returns explicitly fail decoding instead of aliasing CLAC, and UIRET is not decoded. Successful CPU transitions remain unqualified. |
 | RETF/RETFQ, IRET/IRETD/IRETQ | Ordinary source still lacks complete frame, privilege, segment and flag restoration. The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile owns successful IRETQ and canonical RETFQ (with or without imm16) to long-mode CPL0..3, including hidden caches, descriptor accesses and outer-return segment invalidation. Its live CS.L/CS.D guard owns the absence of arbitrary GPR high halves; these instructions have no unconditional empty undefined-output audit. RETFQ preserves NMI blocking and applies unsigned parameter cleanup to both stacks; IRETQ unblocks NMIs. Faulting execution, compatibility returns, CET/FRED and the other forms remain unqualified. |
 | SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Ordinary source still lacks complete register, privilege, segment and SMM continuation state. The separate explicit x64 continuation V5/V6 profiles own canonical SYSRET/SYSRETQ with live STAR and CS/SS caches, flags and compatibility/64-bit target state. SYSRET explicitly consumes eight arbitrary values for the legacy GPR high halves; all defined bits are preserved or assigned as specified. Other forms and faulting transitions remain unqualified; SYSENTER and RSM remain refused. |
-| Native control-return interfaces in LLVM/NeverC | The fork's assembler encodes SYSENTER, SYSEXIT, SYSRET, IRET, RETF, RSM and FRED/UIRET, but these transfers still have no matching `llvm.x86.*` intrinsic and NeverC builtin. NeverD's ordinary LLVM route records some transfers as named no-return declarations; those are not native instruction implementations. The explicit state-C contracts above also do not perform host CPU transfers. Native APIs need explicit register/stack inputs, non-returning control and compiler-frame ownership before frontend exposure. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
@@ -674,6 +674,8 @@ tests. These are development checkpoints, not a released or pinned SDK.
 | `llvm.x86.vmload`, `llvm.x86.vmsave`, `llvm.x86.invlpga` and their `32` variants | x86-64 and i386 respectively | Integer rAX VMCB physical address or linear invalidation address; INVLPGA also reads the complete ECX ASID. No compiler dereference; default address width only. |
 | `llvm.x86.{vmload,vmsave,invlpga}.addr32` and `.addr16` | x86-64 and i386 respectively | Explicit address-size override with i32 or i16 address input; the native `67` prefix, full i32 INVLPGA ASID and instruction-owned memory effects survive lowering. |
 | `llvm.x86.stgi/clgi/clac/stac/hlt`, `llvm.x86.swapgs` | i386 and x86-64; SWAPGS requires x86-64 | Ordered native GIF, AC, halt/resume and GS-base effects, preserving arithmetic flags. HLT is resumable, with neither `noreturn` nor `willreturn`. |
+| `llvm.x86.sysret32`, `llvm.x86.sysret64` | x86-64 | Explicit operand-width PC/flags and an i64 destination stack. A terminal carrier expands to adjacent MOV-to-RSP and SYSRET at final MC emission. No compiler-frame access or ABI epilogue may follow the stack switch. |
+| `llvm.x86.sysexit32`, `llvm.x86.sysexit64` | i386 and x86-64; the 64-bit form requires x86-64 | Explicit operand-width PC/stack, nonreturning control and ambient instruction-boundary flags. The native instruction installs the destination stack and MSR-selected segments. |
 | `llvm.x86.vmfunc.eptp.switch` | i386 and x86-64 | VMFUNC leaf 0, EAX=0 and complete i32 ECX EPTP index; native validation and VM exit behavior, without a fabricated VMfail status. |
 | `llvm.x86.cpuidex` | i386 and x86-64 | Leaf/subleaf inputs and four i32 output slots for EAX/EBX/ECX/EDX, retaining the caller's nonvolatile registers. |
 | `llvm.x86.readcr/readdr`, `llvm.x86.writecr/writedr` | x86-64 | Immediate register selector, full i64 values and ordered, potentially trapping accesses. CR0/2/3/4/8 and DR0..7 retain their native encodings and undefined arithmetic flags. |
@@ -3034,3 +3036,81 @@ its native calls. Those source-oracle checks are separate from the six native
 compiler qualification profiles. The [qualification ledger](evidence/x86-x87-environment-2026-10-28.json)
 records source identities, both SDK matrices, stable compiler inputs and
 rehashed artifacts, including the initial failures and their focused repair.
+
+## Native SYSRET/SYSEXIT compiler interfaces
+
+LLVM `230be9f7eaef` and NeverC `e05982e98` add `sysret32`, `sysret64`,
+`sysexit32` and `sysexit64` under the `llvm.x86.` / `__builtin_ia32_` prefixes.
+The suffix denotes operand width. SYSRET takes PC, flags and an i64 stack;
+SYSEXIT takes PC and stack, with flags ambient at the instruction boundary.
+All four terminate the compiler function and retain unknown memory effects.
+They guarantee their named inputs and abandon the old compiler frame. Other
+registers remain compiler-selected; a complete original-image context is not
+restored. SYSRET and SYSEXIT64 require x64 code; full LLVM additionally exposes
+SYSEXIT32 in protected 32-bit mode. NeverC remains an x86-64 compiler.
+
+The initial glued RSP assignment failed at O2: scheduling moved it ahead of
+local frame accesses. The terminal stack carrier now survives allocation and
+scheduling, expanding to adjacent MOV-to-RSP and SYSRET only at final MC output.
+No compiler frame access, spill, reload or ordinary epilogue can intervene.
+The regression includes fixed, dynamic and high-pressure frames, native
+encodings, attributes, malformed signatures and ELF/COFF/Mach-O output.
+
+The [qualification record](evidence/x86-native-system-returns-2026-10-29.json)
+binds 38 LLVM checks, 120 NeverC x86 checks and 71 generator/sorting checks, all
+passing without skips. Six x64 compiler/optimization profiles perform 522,240
+native KVM state/RAM comparisons; i386 SYSEXIT32 at O0/O2 adds 43,520. All eight
+corrupted operand-transfer controls fail as required. The fixture checks named
+input bits before comparing independent original-byte execution, and compares
+every GPR, PC, flags, segment/system state and all two MiB of mapped RAM.
+XSTATE is outside this comparison. Narrow unused high input bits and arbitrary
+compatibility output high halves receive no architectural preservation promise.
+
+Physical evidence is limited to the recorded Intel i9-13900H KVM environment
+with CET disabled. Faults, asynchronous unwind/events and other processors
+remain unqualified. NeverD's ordinary transfer proofs and explicit state-C
+contracts are unchanged. The additional native frame/system-return interfaces
+are qualified in the following section. The remaining state contracts in the
+table above stay open; no LLVM SDK release or production pin update is claimed.
+
+
+## Native frame, event and SMM compiler interfaces
+
+LLVM `739d6012881c` and NeverC `d85e5c9c9` add 14 native interfaces:
+`iret16/32/64`, `retf16/32/64`, their three immediate far-return variants,
+`sysenter`, `rsm`, `erets`, `eretu` and `uiret`. LLVM uses the `llvm.x86.`
+prefix and `.imm` suffix; NeverC uses `__builtin_ia32_` and `_imm`.
+The frame pointer replaces SP immediately before the CPU instruction, through
+a terminal carrier retained until final MC emission. Immediate zero keeps its
+CA encoding. SYSENTER reads ambient entry MSRs; RSM uses the SMM save image.
+These calls abandon the compiler frame and terminate the current function.
+Other registers remain compiler-selected, and the APIs cannot stand in for a
+complete original-machine context or a resumable NT/task-return continuation.
+
+The [qualification record](evidence/x86-native-frame-returns-2026-10-29.json)
+binds 39 LLVM checks, 123 NeverC x86/header checks and 75 generator/sorting
+checks, all passing without skips. Twelve C compiler/format/optimization
+profiles verify 168 exact native opcode encodings, including FRED/UIRET,
+across ELF, COFF and Mach-O. The frontend registry owns builtin registration
+and emission; the backend registry owns frame operation identities and the
+pruned intrinsic schema. Existing opcode IDs remain stable.
+
+Six x64 compiler profiles perform 46,080 IRET/RETF/SYSENTER state comparisons;
+two LLVM i386 profiles add 10,752. They exercise 16/32/64-bit operands,
+CPL0/CPL3 transitions, canonical high and unaligned frame addresses, immediate
+cleanup, and plain/fixed/dynamic/pressure compiler frames. RSM adds 2,304
+comparisons through KVM-mediated SMM: SMI creates the save image, the fixture
+establishes code64 inside SMM, and the compiled transfer is compared with an
+independent original-byte vCPU and the saved pre-SMI registers. Both normal
+and SMM memory spaces are compared in full. This is not bare-metal firmware
+qualification.
+
+The shared KVM setup was extracted into `KvmTransferFixture.h`; the previous
+SYSRET/SYSEXIT matrix was rerun, adding 565,760 state pairs. The complete run
+therefore compares 624,896 represented state pairs and rejects all 22 negative
+controls. Comparisons include GPRs, PC, flags, segment/system state and all
+mapped RAM; the new frame/SMM fixtures also compare KVM event state. XSTATE
+is excluded. CET, faults, asynchronous events/unwinding, other processors and
+successful FRED/UIRET transitions remain unqualified. NeverD decoding and
+lifting admission are unchanged by this compiler-interface work. The global
+goal, SDK release and production pin update remain incomplete.

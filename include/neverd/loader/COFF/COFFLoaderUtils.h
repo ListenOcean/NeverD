@@ -179,6 +179,12 @@ void recordConstantCodeSlots(BinaryImage &Img);
 /// jump table so, after its function.
 void recordRelocatedPointerRunsInCode(BinaryImage &Img);
 
+/// Reclassify the relocation-covered words of tables the code reads through a
+/// runtime-indexed fixed-base memory operand in an executable section: those
+/// words are data the linker placed among the code, never instruction
+/// operands.
+void recordIndexedTableBasesInCode(BinaryImage &Img);
+
 /// Parse one delay-import descriptor from the already mapped image.  Supports
 /// current RVA descriptors and legacy VA descriptors, returning the number of
 /// imports appended.  Exposed separately for bounded synthetic-image tests.
