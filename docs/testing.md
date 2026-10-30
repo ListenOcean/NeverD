@@ -3938,6 +3938,14 @@ snapshots and expired borrowed records before reading their detail.
 Raw classifiers and BL targets still work without detail, while operand queries
 and expired records remain conservative. These are decode/lift lifecycle checks,
 not qualification of native PAC/CPA execution or additional ISA families.
+`BinaryDiff.CallPositionDistinguishesOnlyEqualOrWeakerNearTies` covers stronger,
+equal and weaker alternatives in both directions and reordered layouts, with
+approximation enabled and disabled. `BinaryDiffSDK.NoReturnCallsDoNotAcquireLayoutDependentFallthrough`
+checks guarded x64/AArch64 calls, returning overrides and exact saved-report
+restoration. The session discovery owner checks sized and unsized direct/import
+slot calls; `InstructionFlow.ConditionalCallsKeepTheUnexecutedArm` checks ARM
+predication and patched-target refusal. Run these with `NeverDNoReturnTests`
+when changing the shared target contract.
 Dataflow checks cover SSA renaming, PHI edge changes, control/data slices,
 parameter/clobber identity, unobserved effects and bounded neighborhoods.
 Call-argument projection checks backward/forward dependencies missing from raw

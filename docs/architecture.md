@@ -1740,8 +1740,9 @@ after link-order changes; a producer's literal numeric suffix remains intact.
 The SDK adapter separately owns presentation names under the extraction memory
 allowance. Bounded function projections use them for display, search and sort;
 the matcher, snapshot hash and saved evidence consume only the original name.
-The `sdk-native-decode-v4`
-extraction identity distinguishes this evidence contract from older snapshots;
+The `sdk-native-decode-v5`
+extraction identity includes this evidence contract and known no-return call
+termination, distinguishing them from older snapshots;
 saved historical reports remain readable without rewriting their evidence.
 
 Native operand profile v3 retains address-reference occurrences in `Program` by
@@ -1777,9 +1778,10 @@ acceptance retains feature-backed competition and uncertainty, rather than
 accepting a moved string set before measuring a competing original body. Wide
 matched neighborhoods use the existing informative-bucket admission bound before
 materializing pairs; explicit feature proposals remain measured outside the
-quick-score allowance. Consistent call positions distinguish equally measured
-bodies, but cannot override stronger body evidence or another positional
-proposal. Their mapped-context agreement is checked again at admission.
+quick-score allowance. Matcher version 14 lets consistent call positions
+distinguish equally or less similar alternatives, but cannot override stronger
+body evidence or another positional proposal. Their mapped-context agreement is
+checked again at admission.
 Call and address-reference neighbors share the growing propagation worklist,
 so an anchored address chain does not require one global pass per link.
 
@@ -2234,6 +2236,14 @@ supplies validated, bounded records; comparison does not duplicate admission.
 Data outside the selected function inventory still changes identity, and
 removing every addition restores the historical analysis identity.
 Incomplete decoding and unresolved control flow remain explicit coverage gaps.
+The shared instruction summary consumes `libc::NoReturnTargetIndex` and the
+loaded-target owner for unconditional calls. Sized CFGs and unsized traversal
+therefore agree about known call termination, independent of where a later
+return block is placed. Conditional calls keep their unexecuted arm. Returning
+overrides, patched targets and unknown calls retain the owners' existing rules.
+Each multi-page capture shares one image index; listing-only summaries omit
+unused termination lookups. This is a control-flow fact, not a memory or call
+effect equivalence proof.
 Profile selection and ISA/bitness admission belong to this adapter, with the
 default in `diff/Limits.h`; consumers do not guess an input's architecture.
 The AArch64 reader consumes its own typed operand details and ordinary lifted
