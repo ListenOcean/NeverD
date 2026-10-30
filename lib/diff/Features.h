@@ -54,6 +54,9 @@ struct FunctionFeatures {
   /// The same stream including padding, to require an actual layout edit
   /// before the additional candidate key broadens the existing search.
   uint64_t BodyWithPadding = 0;
+  /// Complete call-free conditional entry without padding/landing markers.
+  /// Proposes candidates across CFG edits; it never establishes identity.
+  uint64_t EntryBody = 0;
   uint64_t Mnemonics = 0;
   uint64_t Prime = 0;
   uint64_t GraphTopDown = 0;

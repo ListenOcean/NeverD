@@ -1837,6 +1837,13 @@ measured near-best candidates of one endpoint. Combining both endpoints' rivals
 into a Cartesian group would invent pairs; removing an already-grouped endpoint
 would lose other candidates. Exact groups cover only their own edges. The
 legacy single-group lookup remains a coverage marker, not a candidate iterator.
+After propagation settles, bounded complete-entry buckets can retain omitted
+alternatives and defer a weaker uncorroborated pair. Every review measurement
+uses that same settled correspondence; removals are published together and do
+not restart propagation. Both the original weak pair and its stronger alternative
+remain separate candidate edges. Names, exact bodies, analyst decisions and
+positive mapped-neighbor support protect established identities. Entry keys
+never establish correspondence on their own.
 The C API's `functions_json` inventory projects the same accepted mappings and
 retained ambiguity groups. `ambiguous_with` binds an opposite-side function to
 the union of its groups' target-side members, with ordinary search/sort/paging;

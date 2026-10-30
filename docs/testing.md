@@ -3482,7 +3482,14 @@ ambiguous, explicit Unmatch decisions remain effective, and disabling
 approximation does not accept the layout-body proposal as an exact identity.
 `PartialInstructionPairsDoNotIdentifyUnrelatedBodies` retains an unrelated
 reordered body as unmatched even though it shares an initial instruction pair,
-much of the instruction inventory and the same one-block CFG.
+much of the instruction inventory and the same one-block CFG. Multi-block,
+same-CFG conditional guards and call-containing entry controls remain unmatched.
+`EntryGuardsRetainReviewableCandidatesAcrossBodyEdits` places a complete shared
+entry before a changed multi-block body, beyond exhaustive candidate admission.
+Final review must preserve the omitted candidate and defer a weaker graph match
+without automatically pairing the shared prefix. Both directions, duplicate
+alternatives, names, mapped references, confirmation, manual choice, rejection,
+approximation off, exact save/reopen and undo are covered.
 
 Saved-decision regressions reject an accepted pair that contradicts the final
 effective Unmatch in all historical completion states. A reverse-history oracle
