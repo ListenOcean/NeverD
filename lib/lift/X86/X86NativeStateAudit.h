@@ -77,17 +77,19 @@ inline bool legacyMsrForm(const cs_insn *Insn, Arch Target) {
          !X.eflags;
 }
 
-inline bool sysretqForm(const cs_insn *Insn, Arch Target) {
+inline bool sysretForm(const cs_insn *Insn, Arch Target) {
   if (!Insn || !Insn->detail || Target != Arch::X64 ||
-      Insn->id != X86_INS_SYSRETQ || Insn->size != 3 ||
-      Insn->bytes[0] != 0x48 || Insn->bytes[1] != 0x0f ||
-      Insn->bytes[2] != 0x07)
+      (Insn->id != X86_INS_SYSRETQ && Insn->id != X86_INS_SYSRET))
+    return false;
+  const bool Wide = Insn->id == X86_INS_SYSRETQ;
+  if (Insn->size != (Wide ? 3 : 2) || (Wide && Insn->bytes[0] != 0x48) ||
+      Insn->bytes[Wide ? 1 : 0] != 0x0f || Insn->bytes[Wide ? 2 : 1] != 0x07)
     return false;
   const auto &X = Insn->detail->x86;
   return !X.prefix[0] && !X.prefix[1] && !X.prefix[2] && !X.prefix[3] &&
          X.opcode[0] == 0x0f && X.opcode[1] == 0x07 && !X.opcode[2] &&
-         !X.opcode[3] && X.rex == 0x48 && X.addr_size == 8 && !X.modrm &&
-         !X.sib && !X.disp && !X.encoding.modrm_offset &&
+         !X.opcode[3] && X.rex == (Wide ? 0x48 : 0) && X.addr_size == 8 &&
+         !X.modrm && !X.sib && !X.disp && !X.encoding.modrm_offset &&
          !X.encoding.disp_offset && !X.encoding.disp_size &&
          !X.encoding.imm_offset && !X.encoding.imm_size && !X.op_count &&
          !X.avx_sae && X.avx_rm == X86_AVX_RM_INVALID &&
@@ -271,7 +273,7 @@ inline bool form(const cs_insn *Insn, Arch Target) {
         Insn->id == X86_INS_XOR)
       return lockedlogicaudit::form(Insn, Target);
   }
-  if (sysretqForm(Insn, Target) || longModeEventForm(Insn, Target) ||
+  if (sysretForm(Insn, Target) || longModeEventForm(Insn, Target) ||
       farReturnForm(Insn, Target))
     return true;
   if (descriptorqueryaudit::form(Insn, Target))

@@ -2494,6 +2494,26 @@ TEST(OriginalBinaryUndefinedIndependence,
 #include "KernelInterruptFlagTests.inc"
 
 TEST(OriginalBinaryUndefinedIndependence,
+     SysretCompatibilityKeepsOrdinarySourceAndCertificatesRefused) {
+  for (bool Branch : {false, true})
+    for (bool Kernel : {false, true})
+      for (bool Retain : {false, true}) {
+        Program P({});
+        if (Branch)
+          P.append(
+              {0x85, 0xc9, 0x74, 1, 0xc3}); // test ecx,ecx; jz sysret; ret.
+        P.append({0x0f, 0x07});
+        P.flagsProfile(Kernel
+                           ? InterpreterMachineStateProfile::KernelX64NoFaultV1
+                           : InterpreterMachineStateProfile::UserX64NoFaultV1);
+        P.Contract.RetainUnauditedNativeBoundaries = Retain;
+        expectRefusal(P, Status::Unsupported);
+        P.Contract.NativePreservedState.emplace();
+        expectRefusal(P, Status::Unsupported);
+      }
+}
+
+TEST(OriginalBinaryUndefinedIndependence,
      FrameExclusionsRequireMatchingProofDomain) {
   Program P({0xb8, 17, 0, 0, 0, 0xc3});
   P.Options.EntryFrameBounds = SpecializationEntryFrameBounds{-32, 8};

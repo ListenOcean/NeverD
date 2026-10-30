@@ -95,6 +95,24 @@ does not push a hardware exception's error code or acquire NMI blocking for
 vector 2. These transfers stop before the target executes. Status 5 is not
 emulated fault delivery. Other prefixed encodings remain native requests.
 
+Canonical SYSRET (`0F 07`) and SYSRETQ (`48 0F 07`) install user CS/SS caches
+from the live STAR field without reading descriptors. SYSRET selects a 32-bit
+compatibility context and takes EIP from ECX; SYSRETQ selects a 64-bit context
+and checks the full RCX against the declared canonical width. Both derive flags
+from R11 and stop with status 6 before user code executes, even if its address
+is selected. A returned context cannot reenter this CPL0 64-bit profile.
+
+SYSRET preserves ESP and the low halves of the other seven legacy GPRs. Their
+high halves are architecturally undefined on this mode switch; `Undefined[0..7]`
+supplies their new 32-bit values in RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI order.
+Only the low 32 bits of each slot are used. R8–R15 remain fully preserved.
+SYSRETQ preserves all GPRs. The manifest records all eight SYSRET arbitrary
+effects and their exact register ranges. This follows
+[Intel SDM Volume 1, section 3.4.1.1](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf);
+a particular CPU's high-half results are witnesses, not a preservation guarantee.
+Successful execution requires SYSCALL/SYSRET enabled and the profile's existing
+CET/FRED-disabled environment. Ordinary source and proof admission stay closed.
+
 RETFQ reads RIP/CS alone for a same-privilege return and retains SS. For a
 return to an outer privilege level, its unsigned imm16 skips parameter bytes
 before saved RSP/SS and also adjusts the restored RSP. The transition preserves
@@ -225,6 +243,14 @@ sequence execute under ASan/UBSan; hardware qualifies the clearing policy on
 the measured Intel CPU. A public driver test switches SS/RSP, resumes a stack
 load and returns using the new physical stack. Fault delivery remains outside
 these successful-completion contracts.
+
+The [SYSRET32 qualification record](evidence/x86-sysret32-continuation-2026-10-29.json)
+records 14,040 complete native state comparisons and 468,000 portable state
+comparisons with independent arbitrary-value choices. It checks selector wrap,
+every R11 bit, noncanonical RCX high halves, both paging widths and V5/V6.
+The native breakpoint stops before compatibility code; the SDK manifest and
+driver retain all eight high-half choices and the privilege-return boundary.
+All 1,009 continuation, export, audit and proof regressions passed without skips.
 
 `X64ContinuationIntegerTest` compares complete state and memory with original
 native instructions for audited legacy vector transfers, XOR and byte shifts,

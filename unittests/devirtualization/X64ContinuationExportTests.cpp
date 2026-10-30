@@ -343,6 +343,53 @@ int main(void) {
     }
 }
 
+TEST_F(X64ContinuationExportTest, SysretCompatibilityStopsBeforeUserCode) {
+  load({0x0f, 0x07, 0x90});
+  const auto Request = request(R"("instructions":[4096,4098])");
+  for (bool LLVM : {false, true}) {
+    auto [Source, Manifest] = source(Request, LLVM);
+    auto Parsed = llvm::json::parse(Manifest);
+    ASSERT_TRUE(bool(Parsed));
+    EXPECT_EQ(Parsed->getAsObject()->getInteger("native_requests"), 0);
+    const auto *Units = Parsed->getAsObject()->getArray("units");
+    ASSERT_NE(Units, nullptr);
+    ASSERT_EQ(Units->size(), 2u);
+    const auto *Effects =
+        Units->front().getAsObject()->getArray("arbitrary_effects");
+    ASSERT_NE(Effects, nullptr);
+    ASSERT_EQ(Effects->size(), 8u);
+    for (unsigned I = 0; I != Effects->size(); ++I) {
+      const auto *E = (*Effects)[I].getAsObject();
+      ASSERT_NE(E, nullptr);
+      EXPECT_EQ(E->getInteger("slot"), I);
+      EXPECT_EQ(E->getInteger("after_operation"), 1);
+      EXPECT_EQ(E->getString("output_offset"),
+                "0x" + llvm::utohexstr(I * 8, true));
+      EXPECT_EQ(E->getInteger("output_bytes"), 8);
+      EXPECT_EQ(E->getInteger("bit_offset"), 32);
+      EXPECT_EQ(E->getInteger("bit_count"), 32);
+      EXPECT_EQ(E->getBoolean("conditional"), false);
+    }
+    execute(Source, std::string(Seed) + R"C(
+int main(void) {
+  neverd_x64_state_v6 s=seed();s.GPR[1]=0x800000001002ULL;s.GPR[11]=0x246;
+  s.GPR[4]=0x876543210abcdef0ULL;s.STAR=0xffff123456789abcULL;
+  s.SS.Selector=0;s.FS.Selector=1;s.GS.Selector=3;s.LDTR.Selector=0;
+  s.Unusable=0x72;s.GDTR.Base=UINT64_MAX;
+  for(unsigned i=0;i<8;++i)s.Undefined[i]=0xfedcba9876543210ULL+i;
+  neverd_x64_state_v6 want=s;want.PC=0x1002;want.RFlags=0x246;
+  for(unsigned i=0;i<8;++i)want.GPR[i]=(uint32_t)s.GPR[i]|(s.Undefined[i]<<32);
+  want.CS=(neverd_x64_segment){0,0xffffffff,0xffff,0xc0fb};
+  want.SS=(neverd_x64_segment){0,0xffffffff,7,0xc0f3};want.Unusable&=~3;
+  uint64_t budget=4;CHECK(neverd_x64_continue_v6(&s,&budget)==6 && budget==3);
+  CHECK(!memcmp(&s,&want,sizeof(s)));
+  CHECK(neverd_x64_continue_v6(&s,&budget)==5 && budget==3 && !memcmp(&s,&want,sizeof(s)));
+  return 0;
+}
+)C");
+  }
+}
+
 TEST_F(X64ContinuationExportTest, DriverRetainsPhysicalCallsPivotsAndReentry) {
   load({0x48, 0x89, 0x4c, 0x24, 0x08,         // mov [rsp+8],rcx
         0xe8, 0x06, 0x00, 0x00, 0x00,         // call 1010

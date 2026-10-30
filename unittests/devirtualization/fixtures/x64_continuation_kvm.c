@@ -83,12 +83,13 @@ static struct segment_state segment(struct kvm_segment s) {
                                     s.db << 14 | s.g << 15};
 }
 
-/// Execute an independent original SYSRETQ on a separate CPU. The candidate
-/// source never runs this instruction: the I/O request only supplies its test
-/// inputs and receives the hardware result, including hidden segment caches.
+/// Execute an independent original SYSRET/SYSRETQ on a separate CPU. The
+/// candidate source never runs this instruction: the I/O request only supplies
+/// its test inputs and receives the hardware result, including hidden segment
+/// caches.
 static int sysret_query(int cpu, struct kvm_run *run, uint8_t *memory,
                         const struct kvm_sregs *initial,
-                        struct return_query *query) {
+                        struct return_query *query, int wide) {
   struct kvm_sregs before = *initial;
   before.efer |= 1;
   REQUIRE(ioctl(cpu, KVM_SET_SREGS, &before) == 0);
@@ -105,15 +106,15 @@ static int sysret_query(int cpu, struct kvm_run *run, uint8_t *memory,
   struct kvm_regs registers = {.rip = 0x1000, .rflags = query->flags};
   for (unsigned i = 0; i < 16; ++i)
     *gpr(&registers, i) = query->gpr[i];
-  REQUIRE(registers.rcx == 0x1800);
+  REQUIRE((wide ? registers.rcx : (uint32_t)registers.rcx) == 0x1800);
   REQUIRE(ioctl(cpu, KVM_SET_REGS, &registers) == 0);
   struct kvm_guest_debug debug = {.control = KVM_GUESTDBG_ENABLE |
                                              KVM_GUESTDBG_USE_HW_BP};
-  debug.arch.debugreg[0] = registers.rcx;
+  debug.arch.debugreg[0] = 0x1800;
   debug.arch.debugreg[7] = 0x401;
   REQUIRE(ioctl(cpu, KVM_SET_GUEST_DEBUG, &debug) == 0);
-  memory[0x1000] = 0x48;
-  memory[0x1001] = 0x0f;
+  memory[0x1000] = wide ? 0x48 : 0x0f;
+  memory[0x1001] = wide ? 0x0f : 0x07;
   memory[0x1002] = 0x07;
   memory[0x1800] = 0x90;
   REQUIRE(ioctl(cpu, KVM_RUN, 0) == 0);
@@ -360,11 +361,11 @@ int main(int argc, char **argv) {
     REQUIRE(run->io.direction == KVM_EXIT_IO_OUT && run->io.port == 0xe9 &&
             run->io.size == 1 && run->io.count == 1);
     const unsigned kind = *((uint8_t *)run + run->io.data_offset);
-    REQUIRE(kind >= 1 && kind <= 7);
+    REQUIRE(kind >= 1 && kind <= 8);
     REQUIRE(kind != 4 || registers.rsi <= UINT8_MAX);
     REQUIRE(kind != 6 || registers.rsi <= UINT16_MAX);
     REQUIRE(kind != 7 || registers.rsi <= memory_size - 16);
-    REQUIRE(registers.rdi <= memory_size - (kind == 1
+    REQUIRE(registers.rdi <= memory_size - (kind == 1 || kind == 8
                                                 ? sizeof(struct return_query)
                                                 : sizeof(event_state_t)));
     if (oracle < 0) {
@@ -375,10 +376,11 @@ int main(int argc, char **argv) {
           mmap(NULL, run_size, PROT_READ | PROT_WRITE, MAP_SHARED, oracle, 0);
       REQUIRE(oracle_run != MAP_FAILED);
     }
-    if (kind == 1) {
+    if (kind == 1 || kind == 8) {
       struct return_query query;
       memcpy(&query, memory + registers.rdi, sizeof(query));
-      REQUIRE(sysret_query(oracle, oracle_run, memory, &special, &query) == 0);
+      REQUIRE(sysret_query(oracle, oracle_run, memory, &special, &query,
+                           kind == 1) == 0);
       memcpy(memory + registers.rdi, &query, sizeof(query));
     } else {
       event_state_t query;

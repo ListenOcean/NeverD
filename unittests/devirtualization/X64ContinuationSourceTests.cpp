@@ -905,10 +905,11 @@ TEST_F(X64ContinuationSourceTest, SysretKeepsEarlierLayoutsUnsupported) {
   auto V4 = smapOptions();
   V4.Profile = X64ContinuationProfile::KernelFaultAddressNoFaultV4;
   for (auto O : {options(), controlsOptions(), smapOptions(), V4}) {
-    auto Units =
-        buildX64ContinuationSource(image({0x48, 0x0f, 0x07}), {0x1000}, O);
-    ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
-    EXPECT_TRUE(Units->front().RequiresNativeExecution);
+    for (auto Bytes : {std::vector<uint8_t>{0x48, 0x0f, 0x07}, {0x0f, 0x07}}) {
+      auto Units = buildX64ContinuationSource(image(Bytes), {0x1000}, O);
+      ASSERT_TRUE(bool(Units)) << llvm::toString(Units.takeError());
+      EXPECT_TRUE(Units->front().RequiresNativeExecution);
+    }
   }
 }
 
@@ -2090,5 +2091,6 @@ TEST(X64ContinuationSource, RequiresExplicitDomainAndBoundedDistinctAddresses) {
 }
 
 #include "X64FarPointerContinuationTests.inc"
+#include "X64SysretContinuationTests.inc"
 
 } // namespace
