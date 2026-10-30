@@ -651,3 +651,11 @@ With control-state discovery enabled, a nonconstant runtime validity predicate c
 `wrapInterpreterMachineQueryStateX64()` is an opt-in C++ source interface. Its 160-byte state keeps the original 136-byte machine prefix, then three 64-bit fields: query-array address, count and cursor. Each 24-byte record contains six 32-bit words: leaf, subleaf, EAX, EBX, ECX and EDX. Canonical CPUID instructions consume one matching record in order and zero-extend all four results; repeated selectors may have different answers. No host CPU instruction provides answers.
 
 Exhaustion returns status 3 and selector mismatch returns 4. Both stop before that query, commit the current machine state, retain earlier guest memory effects and leave the cursor unchanged. Entry-alignment rejection still returns 2 without writes. The caller must provide an accessible, immutable, nonwrapping array disjoint from state and guest memory; zero count permits a null address. Existing machine-state and flag-profile contracts still apply. This interface adds no CLI, C SDK, GUI, native-equivalence or hardware-serialization support. Existing wrappers still refuse CPU queries, and other unsupported intrinsics and raw environments remain rejected.
+
+<!-- i18n-section: xmm-query-source -->
+
+## Explicit XMM source state
+
+`wrapInterpreterMachineQueryStateX64V2()` uses a separate 416-byte layout: the unchanged 160-byte query-state prefix followed by XMM0–XMM15, each stored as low and high 64-bit words. Eight-byte state alignment suffices. Every XMM byte is loaded at entry and committed at ordinary returns and query-failure exits. Query and entry-alignment statuses retain their earlier meanings.
+
+This C++ interface admits whole 128-bit XMM operands and reconstructs instruction-local temporary reads from their current byte definitions, preserving partial overwrites. Missing bytes and function-temporary aliases fail explicitly. Only exact constant-address alignment checks proved by the architecture owner can be removed; dynamic or malformed checks remain refused. Partial XMM operands, wider vector banks and floating-point environments remain unsupported. This adds no CLI, C SDK, GUI or native-equivalence support; earlier wrappers retain their layouts and restrictions.

@@ -6,6 +6,7 @@
 
 #include "neverd/analysis/arch/x86_64/InterpreterMachineState.h"
 
+#include "X64ControlTransitions.h"
 #include "X64MachineFlags.h"
 #include "X64Recovery.h"
 
@@ -38,6 +39,7 @@ constexpr uint64_t QueryIndex = GuestBase + 280;
 constexpr uint64_t QueryAddress = GuestBase + 288;
 constexpr uint64_t QueryLeaf = GuestBase + 296;
 constexpr uint64_t QuerySubleaf = GuestBase + 304;
+constexpr uint64_t GuestVectorBase = GuestBase + 512;
 constexpr uint64_t ScratchBase = uint64_t{1} << 61;
 constexpr uint64_t ScratchEnd = uint64_t{1} << 62;
 using FlagProfile = detail::X64MachineFlags;
@@ -66,8 +68,16 @@ bool nativeRegister(const NdVar &Value) {
   return false;
 }
 
-llvm::Error validateSourceTemporary(NdVar Value) {
-  if (Value.Size > 8 || !Value.Size ||
+std::optional<unsigned> xmmIndex(NdVar Value) {
+  if (!Value.isReg() || Value.Size != 16 || Value.Offset < x86reg::XMM0 ||
+      Value.Offset > x86reg::XMM15 ||
+      (Value.Offset - x86reg::VectorBase) % x86reg::VectorRegStride)
+    return std::nullopt;
+  return (Value.Offset - x86reg::VectorBase) / x86reg::VectorRegStride;
+}
+
+llvm::Error validateSourceTemporary(NdVar Value, bool VectorState = false) {
+  if (Value.Size > (VectorState ? 16 : 8) || !Value.Size ||
       Value.Offset > InvalidVA - (Value.Size - 1))
     return invalid("machine source has an invalid temporary range");
   if (Value.Offset < ScratchEnd && Value.Offset + Value.Size - 1 >= ScratchBase)
@@ -79,11 +89,12 @@ struct InstructionWriter {
   std::vector<LowOp> &Ops;
   va_t Address;
   bool StateRegisters = false;
+  bool VectorState = false;
   uint64_t NextTemporary = ScratchBase;
 
   NdVar temporary(uint16_t Bytes = 8) {
     const auto Value = NdVar::tmp(NextTemporary, Bytes);
-    NextTemporary += 8;
+    NextTemporary += std::max<uint16_t>(Bytes, 8);
     return Value;
   }
 
@@ -137,6 +148,16 @@ struct InstructionWriter {
            {NdVar::reg(ParameterRegister, 8)});
     for (uint64_t Index = 0; Index != 16; ++Index)
       load(NdVar::reg(GuestBase + Index * 8, 8), Index * 8);
+    if (VectorState)
+      for (unsigned Index = 0; Index != 16; ++Index) {
+        const auto Low = temporary(), High = temporary();
+        const auto Offset =
+            offsetof(InterpreterMachineQueryStateX64V2, XMM) + Index * 16;
+        load(Low, Offset);
+        load(High, Offset + 8);
+        emit(NdOp::CONCAT, NdVar::reg(GuestVectorBase + Index * 16, 16),
+             {High, Low});
+      }
     const NdVar Packed = temporary();
     load(Packed, offsetof(InterpreterMachineStateX64V1, RFlags));
     const NdVar UnsupportedBits = temporary();
@@ -166,6 +187,17 @@ struct InstructionWriter {
   void leave(bool IncludeFlags = true) {
     for (uint64_t Index = 0; Index != 16; ++Index)
       store(Index * 8, NdVar::reg(GuestBase + Index * 8, 8));
+    if (VectorState)
+      for (unsigned Index = 0; Index != 16; ++Index)
+        for (unsigned Half = 0; Half != 2; ++Half) {
+          const auto Value = temporary();
+          emit(NdOp::SUBBYTES, Value,
+               {NdVar::reg(GuestVectorBase + Index * 16, 16),
+                scalar(Half * 8, 4)});
+          store(offsetof(InterpreterMachineQueryStateX64V2, XMM) + Index * 16 +
+                    Half * 8,
+                Value);
+        }
     if (IncludeFlags)
       store(offsetof(InterpreterMachineStateX64V1, RFlags), packedFlags());
     if (StateRegisters) {
@@ -180,6 +212,9 @@ struct InstructionWriter {
   }
 
   llvm::Expected<NdVar> readRegister(NdVar Value) {
+    if (VectorState)
+      if (const auto Index = xmmIndex(Value))
+        return NdVar::reg(GuestVectorBase + *Index * 16, 16);
     if (Value.Offset >= 128 || Value.Size == 8) {
       Value.Offset += GuestBase;
       return Value;
@@ -218,6 +253,62 @@ struct InstructionWriter {
     emit(NdOp::INT_LEFT, Shifted, {Extended, scalar(Offset * 8)});
     emit(NdOp::INT_OR, Full, {Kept, Shifted});
     return llvm::Error::success();
+  }
+};
+
+/// Instruction-local temporary offsets denote byte storage. Capture each
+/// producer in fresh scalar storage before spelling differently sized reads;
+/// later overlapping writes must not change an earlier producer's value.
+struct InstructionTemporaryBytes {
+  struct Byte {
+    NdVar Value;
+    uint16_t Index;
+  };
+  std::map<uint64_t, Byte> Bytes;
+
+  void write(NdVar Destination, NdVar Value) {
+    for (uint16_t I = 0; I != Destination.Size; ++I)
+      Bytes[Destination.Offset + I] = {Value, I};
+  }
+
+  llvm::Expected<NdVar> read(NdVar Source, InstructionWriter &Writer) const {
+    std::vector<Byte> Parts;
+    for (uint16_t I = 0; I != Source.Size; ++I) {
+      const auto Found = Bytes.find(Source.Offset + I);
+      if (Found == Bytes.end())
+        return invalid(
+            "machine source has an unbound instruction temporary byte");
+      Parts.push_back(Found->second);
+    }
+    NdVar Result;
+    for (uint16_t Begin = 0; Begin != Source.Size;) {
+      const auto &Part = Parts[Begin];
+      uint16_t End = Begin + 1;
+      while (End != Source.Size && Parts[End].Value == Part.Value &&
+             Parts[End].Index == Part.Index + End - Begin)
+        ++End;
+      const uint16_t Size = End - Begin;
+      auto Value = Part.Value;
+      if (Part.Index || Size != Value.Size) {
+        Value = Writer.temporary(Size);
+        Writer.emit(NdOp::SUBBYTES, Value, {Part.Value, scalar(Part.Index, 4)});
+      }
+      if (Size != Source.Size) {
+        const auto Extended = Writer.temporary(Source.Size);
+        Writer.emit(NdOp::INT_ZEXT, Extended, {Value});
+        Value = Extended;
+      }
+      if (Begin) {
+        const auto Shifted = Writer.temporary(Source.Size);
+        Writer.emit(NdOp::INT_LEFT, Shifted, {Value, scalar(Begin * 8)});
+        const auto Joined = Writer.temporary(Source.Size);
+        Writer.emit(NdOp::INT_OR, Joined, {Result, Shifted});
+        Result = Joined;
+      } else
+        Result = Value;
+      Begin = End;
+    }
+    return Result;
   }
 };
 
@@ -519,11 +610,10 @@ void finishQuerySourceBlock(LowBlock &Block, LowInstructionControl Control,
   }
 }
 
-llvm::Error emitCPUQuerySource(LowBlock &Guard,
-                               const SpecializationScalarQuery &Query,
-                               CPUQuerySourcePlan &Plan,
-                               std::vector<LowBlock> &Additional,
-                               uint64_t Parameter, bool &Seeded) {
+llvm::Error
+emitCPUQuerySource(LowBlock &Guard, const SpecializationScalarQuery &Query,
+                   CPUQuerySourcePlan &Plan, std::vector<LowBlock> &Additional,
+                   uint64_t Parameter, bool &Seeded, bool VectorState) {
   auto Match = Plan.block();
   if (!Match)
     return Match.takeError();
@@ -540,7 +630,7 @@ llvm::Error emitCPUQuerySource(LowBlock &Guard,
   Guard.Succs = {Exhausted->Id, Match->Id};
   Match->Succs = {Mismatch->Id, Commit->Id};
   Guard.Ops.clear();
-  InstructionWriter Check{Guard.Ops, Guard.StartAddr};
+  InstructionWriter Check{Guard.Ops, Guard.StartAddr, false, VectorState};
   if (!Seeded) {
     Check.entry(Parameter);
     Seeded = true;
@@ -626,8 +716,8 @@ llvm::Error emitCPUQuerySource(LowBlock &Guard,
   // A single-successor block needs no new native branch instruction. Its
   // synthetic boundary explicitly describes the ordinary source fallthrough.
   finishQuerySourceBlock(*Commit, LowInstructionControl::None);
-  const auto Reject = [](LowBlock &Block, uint64_t Status) {
-    InstructionWriter Writer{Block.Ops, Block.StartAddr};
+  const auto Reject = [VectorState](LowBlock &Block, uint64_t Status) {
+    InstructionWriter Writer{Block.Ops, Block.StartAddr, false, VectorState};
     Writer.emit(NdOp::COPY, NdVar::reg(ProfileStatus, 8), {scalar(Status)});
     Writer.leave();
     finishQuerySourceBlock(Block, LowInstructionControl::Return);
@@ -656,7 +746,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                    InterpreterMachineStateProfile Profile, bool StateRegisters,
                    std::optional<InterpreterEntryAlignment> EntryAlignment,
                    InterpreterMachineStateLayout Layout,
-                   bool CPUQueryTape = false) {
+                   bool CPUQueryTape = false, bool VectorState = false) {
   if (hasLowRawEnvironmentRequirement(Residual))
     return invalid(
         "raw environment requirement has no machine-source contract");
@@ -736,7 +826,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         Query != Queries.Queries.end()) {
       if (auto Error =
               emitCPUQuerySource(Block, Query->second, Queries, QueryBlocks,
-                                 ParameterRegister, Seeded))
+                                 ParameterRegister, Seeded, VectorState))
         return std::move(Error);
       continue;
     }
@@ -744,7 +834,9 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
     Block.Ops.clear();
     for (LowInstructionBoundary &Boundary : Block.InstructionBoundaries) {
       const size_t First = Block.Ops.size();
-      InstructionWriter Writer{Block.Ops, Boundary.Address, StateRegisters};
+      InstructionWriter Writer{Block.Ops, Boundary.Address, StateRegisters,
+                               VectorState};
+      InstructionTemporaryBytes TemporaryBytes;
       if (!Seeded) {
         Writer.entry(ParameterRegister);
         Seeded = true;
@@ -757,6 +849,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           return invalid(
               "machine source cannot wrap ordered or special memory");
         const NdVar NativeOutput = Op.Output;
+        bool CaptureTemporary = false;
         const bool PartialGPROutput =
             NativeOutput.isReg() && NativeOutput.Offset < 128 &&
             NativeOutput.Size && NativeOutput.Size < 8;
@@ -773,7 +866,8 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           if (!Value.Size)
             return llvm::Error::success();
           if (Value.isReg()) {
-            if (!nativeRegister(Value))
+            const auto Vector = VectorState ? xmmIndex(Value) : std::nullopt;
+            if (!nativeRegister(Value) && !Vector)
               return invalid(
                   "machine source encountered an unsupported register");
             if (Input) {
@@ -783,12 +877,15 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
               Value = *Read;
             } else if (PartialGPROutput) {
               Value = Writer.temporary(Value.Size);
+            } else if (Vector) {
+              Value.Offset = GuestVectorBase + *Vector * 16;
             } else {
               Value.Offset += GuestBase;
             }
           } else if (Value.isTemp()) {
-            if (auto Error = validateSourceTemporary(Value))
+            if (auto Error = validateSourceTemporary(Value, VectorState))
               return Error;
+            bool FunctionTemporary = false;
             if (!StateRegisters) {
               // Low-to-Med names temporary scalars by (offset, width). Byte
               // aliases have exact semantics in the raw-state proof model,
@@ -804,6 +901,19 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                   (Value.Offset != It->Offset || Value.Size != It->Bytes))
                 return invalid("machine source requires exact function "
                                "temporary operands, without byte aliases");
+              FunctionTemporary =
+                  It != Ranges.end() && Value.Offset == It->Offset;
+            }
+            if (VectorState && !FunctionTemporary) {
+              if (Input) {
+                auto Read = TemporaryBytes.read(Value, Writer);
+                if (!Read)
+                  return Read.takeError();
+                Value = *Read;
+              } else {
+                Value = Writer.temporary(Value.Size);
+                CaptureTemporary = true;
+              }
             }
           } else if (!Value.isConst()) {
             return invalid("machine source requires scalar LowIR operands");
@@ -857,6 +967,18 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           HasReturn = true;
           break;
         case NdOp::INTRINSIC: {
+          if (VectorState) {
+            SpecializationOptions Options;
+            Options.ExplicitMachineState = true;
+            Options.NormalNonfaultingExecution = true;
+            if (const auto Valid =
+                    x64::alignment::constantValidity(Op, Options)) {
+              if (!*Valid)
+                return invalid(
+                    "machine source constant address violates alignment");
+              break;
+            }
+          }
           auto Transition = detail::lowerX64MachineFlags(
               Op, NdVar::reg(SystemFlags, 8),
               [&](uint16_t Size) { return Writer.temporary(Size); });
@@ -890,6 +1012,8 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
           if (auto Error =
                   Writer.writeRegister(NativeOutput, Op.Output, LowSliceView))
             return std::move(Error);
+        if (CaptureTemporary)
+          TemporaryBytes.write(NativeOutput, Op.Output);
       }
       Boundary.FirstOp = First;
       Boundary.OpCount = Block.Ops.size() - First;
@@ -901,7 +1025,7 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
     return invalid("machine source has no ordinary return boundary");
   if (SharedReturn) {
     InstructionWriter Writer{SharedReturn->Ops, SharedReturn->StartAddr,
-                             StateRegisters};
+                             StateRegisters, VectorState};
     Writer.leave(false);
     LowInstructionBoundary Boundary;
     Boundary.Address = SharedReturn->StartAddr;
@@ -936,7 +1060,9 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
   ABI.ReturnLocation = {SourceABICarrierKind::IntegerRegister, x86reg::RAX, 0,
                         8};
   SourceParameterTypeHint Parameter;
-  Parameter.Name = CPUQueryTape ? "machine_query_state" : "machine_state";
+  Parameter.Name = VectorState    ? "machine_query_vector_state"
+                   : CPUQueryTape ? "machine_query_state"
+                                  : "machine_state";
   Parameter.Type = NdType::makePtr(NdType::makeInt(1, false));
   Parameter.Location = {SourceABICarrierKind::IntegerRegister,
                         ParameterRegister, 0, 8};
@@ -988,6 +1114,15 @@ llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineQueryStateX64(
     InterpreterMachineStateLayout Layout) {
   return buildMachineSource(Residual, SourceFormat, Profile, false,
                             EntryAlignment, Layout, true);
+}
+
+llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineQueryStateX64V2(
+    const LowFunc &Residual, BinaryFormat SourceFormat,
+    InterpreterMachineStateProfile Profile,
+    std::optional<InterpreterEntryAlignment> EntryAlignment,
+    InterpreterMachineStateLayout Layout) {
+  return buildMachineSource(Residual, SourceFormat, Profile, false,
+                            EntryAlignment, Layout, true, true);
 }
 
 llvm::Expected<InterpreterMachineStateModel> modelInterpreterMachineStateX64(
