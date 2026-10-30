@@ -418,6 +418,31 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   // entries that bound each naming function are known.
   std::vector<std::pair<va_t, va_t>> CodeNamedByCode;
   const uint32_t PointerSize = Img.getPointerSize();
+  std::vector<std::pair<va_t, va_t>> CodeImmediates;
+  std::map<va_t, std::vector<va_t>> JumpReaders, JumpSlotReaders;
+  if (IsX86LinkedCOFF && Img.Entry != 0 && !RelocationsOnly)
+    func_detect_detail::scanCodeAddressImmediatesX86(Img, Dec, CodeImmediates,
+                                                     JumpReaders, Cancellation);
+  // A table in ordinary data is owned by its decoded dispatch, never by the
+  // last function preceding the data segment. Reuse the relocation run and
+  // next loader anchor as its bounds; independent pointer slots still supply
+  // callable evidence, even when another table names the same target.
+  for (const auto &[Base, Readers] : JumpReaders) {
+    const auto NextAnchor = Img.RelCodeTableAnchors.upper_bound(Base);
+    va_t Expected = Base;
+    for (auto Slot = Img.CodePtrRelocSlots.find(Base);
+         Slot != Img.CodePtrRelocSlots.end() && *Slot == Expected &&
+         (NextAnchor == Img.RelCodeTableAnchors.end() || *Slot < *NextAnchor) &&
+         Img.getSegmentFor(*Slot) == Img.getSegmentFor(Base) &&
+         Img.getSectionFor(*Slot) == Img.getSectionFor(Base);
+         ++Slot) {
+      func_detect_detail::checkCancellation(Cancellation);
+      JumpSlotReaders[*Slot] = Readers;
+      if (Expected > InvalidVA - PointerSize)
+        break;
+      Expected += PointerSize;
+    }
+  }
   if (PointerSize != 0)
     for (va_t Slot : Img.CodePtrRelocSlots) {
       func_detect_detail::checkCancellation(Cancellation);
@@ -434,14 +459,16 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
       if (Img.DataInCode.count(Target) ||
           !Img.isFunctionEntryCandidateAt(Target) || IsMachOLocalLabel(Target))
         continue;
-      // Every linked-x86-COFF code-pointer slot goes through the
-      // code-named label analysis, not only slots inside executable
-      // sections.  Linkers other than MSVC's place jump tables in .rdata:
-      // promoting those targets directly made every switch case a function
-      // candidate, and each candidate then paid a full CFG build.  A table
-      // an instruction reads as a dispatch (a jmpl) contributes labels; a
-      // table nothing reads keeps promoting its targets, as callbacks are.
       if (IsX86LinkedCOFF) {
+        if (const auto Reader = JumpSlotReaders.find(Slot);
+            Reader != JumpSlotReaders.end()) {
+          RelocationCodeTargets.insert(Target);
+          for (va_t Instruction : Reader->second)
+            CodeNamedByCode.emplace_back(Instruction, Target);
+          continue;
+        }
+      }
+      if (IsX86LinkedCOFF && Img.hasExecutableCodeOwnerAt(Slot)) {
         // A table a CALL reads through (`call [base+idx*s]`, recorded in
         // CallDispatchTableBases) holds callable entries — a callback or
         // constructor dispatch, MinGW's CRT list among the code — not
@@ -605,9 +632,8 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
   // still decides whether a target is an entry.
   if ((IsX86LinkedCOFF || IsX64LinkedCodeAddresses) && Img.Entry != 0) {
     const size_t TableNames = IsX86LinkedCOFF ? CodeNamedByCode.size() : 0;
-    if (IsX86LinkedCOFF && !RelocationsOnly)
-      func_detect_detail::scanCodeAddressImmediatesX86(
-          Img, Dec, CodeNamedByCode, Cancellation);
+    CodeNamedByCode.insert(CodeNamedByCode.end(), CodeImmediates.begin(),
+                           CodeImmediates.end());
     // A padding/data guess cannot end the namer's body and turn its own
     // address-taken label into independently evidenced callable code.
     std::vector<va_t> Starts;
@@ -783,8 +809,7 @@ FuncDetector::detectImpl(const BinaryImage &Img, Decoder &Dec,
               normalizeCodeAddress(Addr, Img.Arch, Img.Mode)) ||
           Trusted.count(Addr) || UnsymbolizedX86Entries.count(Addr) ||
           (!RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr) &&
-           !CallDispatchPromoted.count(Addr) &&
-           !CodeNamedTargets.count(Addr)))
+           !CallDispatchPromoted.count(Addr) && !CodeNamedTargets.count(Addr)))
         Keep[I] = 1;
       else if ((RelocationsOnly && IsX86LinkedCallOrRelocTarget(Addr)) ||
                UntypedCOFFExports.count(Addr) ||

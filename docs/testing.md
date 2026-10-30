@@ -15079,6 +15079,14 @@ identity.
 match in dead code between a switch's seven-byte `mov eax, N; jmp tail` cases
 and its table among the code; the cases stay labels only because the
 instruction reading the table, not the table's slots, names them.
+`DataSegmentDispatchKeepsIndependentCallbacks` relocates that dispatch table
+into ordinary read-only data: cases stay labels while an ordinary pointer read
+and a separate callback slot retain independent function-entry evidence.
+The operand-entry, exhausted-verification-budget and FDE-extent discovery
+tests also cover relocation-backed entries outside a proven dispatch.
+The LLVM interior-pointer, runtime-callable fallback and unmaterializable
+table-target boundaries reject unresolved or masked code owners rather than
+emitting their original numeric addresses as presumed padding.
 `PrologueMatchesInsideAFunctionAreItsCode` falls into an aligned `push esi;
 push edi` and branches back to an aligned loop head, both prologue matches the
 entry owns, while a padded function and a tail jump's target stay entries;

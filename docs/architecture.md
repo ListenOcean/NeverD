@@ -3187,7 +3187,13 @@ the instruction reading the table as that function's label, which the
 jump-table resolver reads; a target outside it is an entry. The reader, whose
 operand names the run, decides rather than the table's own slots: an entry
 between the cases and the table (a prologue match in dead code before it)
-bounds neither the dispatcher nor its cases. A function it takes the address of with a
+bounds neither the dispatcher nor its cases. For linked i386 PE tables in
+ordinary data, only a decoded fixed-base indexed jump transfers the table's
+relocated targets into that reader's label analysis. The relocated run ends
+at its next loader anchor or owning section boundary. An ordinary data read
+does not supply dispatch ownership, and an independent callback slot retains
+its entry evidence even when a jump table also names the target.
+A function it takes the address of with a
 relocated immediate (`mov [obj+off], offset cb`, a callback stored into an
 object; `push offset filter`, a handler) is likewise a function
 (`scanCodeAddressImmediatesX86`): the base relocation makes the immediate an
@@ -6320,6 +6326,10 @@ becoming the mirror's relocatable fields and its bytes copied from the
 segment; the read GEPs into it at the slot's offset. A segment within the
 limit keeps its whole-segment mirror, and every code pointer in the run must
 still resolve to a lifted owner or the emission fails closed.
+Missing or masked emitted code does not establish that an unresolved target
+is padding or data. Even runtime-replaceable code-pointer storage requires an
+authenticated static fallback; data materialization needs the loader's separate
+data-pointer role.
 An exact import veneer the loader registered (`jmp [IAT]` with a named
 import) stands for its import where code names it directly: a pointer-mirror
 slot and an instruction operand of code-address provenance, such as a
