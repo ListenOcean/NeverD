@@ -719,6 +719,142 @@ void recordConstantCodeSlots(BinaryImage &Img) {
       Img.ConstantCodeSlots.emplace(Slot, Target);
 }
 
+void recordIndexedTableBasesInCode(BinaryImage &Img) {
+  if (Img.IsRelocatable || (Img.Arch != Arch::X86 && Img.Arch != Arch::X64))
+    return;
+  const uint32_t Width = Img.getPointerSize();
+  if (Width == 0)
+    return;
+  // Full-width relocated fields the current classification treats as
+  // instruction operands because they lie in an executable section.
+  std::map<va_t, RelocatedAddressField> Candidates;
+  auto Collect = [&](const std::map<va_t, RelocatedAddressField> &Operands) {
+    for (const auto &[SlotVA, Field] : Operands) {
+      const Segment *Seg = Img.getSegmentFor(SlotVA);
+      if (!Seg || !Seg->isExecutable())
+        continue;
+      if (Field.Width == Width && !Field.PCRelativeFromInstructionEnd &&
+          Field.Kind == RelocatedAddressFieldKind::Generic)
+        Candidates.emplace(SlotVA, Field);
+    }
+  };
+  Collect(Img.CodeAddressRelocOperands);
+  Collect(Img.DataAddressRelocOperands);
+  if (Candidates.empty())
+    return;
+
+  std::set<va_t> Starts;
+  auto AddStart = [&](va_t Addr) {
+    Starts.insert(normalizeCodeAddress(Addr, Img.Arch, Img.Mode));
+  };
+  if (Img.Entry)
+    AddStart(Img.Entry);
+  for (const Symbol &Sym : Img.Symbols)
+    if (Sym.IsFunc && !Sym.IsSection)
+      AddStart(Sym.Addr);
+  for (const va_t Addr : Img.RuntimeFunctionAddrs)
+    AddStart(Addr);
+  for (const auto &[Begin, End] : Img.KnownCodeRanges)
+    AddStart(Begin);
+  for (const Export &Exp : Img.Exports)
+    AddStart(Exp.Addr);
+
+  Decoder Dec;
+  if (!Dec.init(Img))
+    return;
+  // A memory operand at a fixed base with a runtime index — `[base+idx*s]` —
+  // is a table access. No immediate inside an instruction is ever read that
+  // way, so a base in an executable section names data the linker placed
+  // among the code (MinGW's CRT keeps its constructor list in .text): the
+  // relocation-covered words of that table are pointer slots, not operands.
+  std::set<va_t> TableBases;
+  const uint64_t AddressMask =
+      Img.Arch == Arch::X86 ? uint64_t{0xFFFFFFFF} : ~uint64_t{0};
+  for (const Section &Sec : Img.Sections) {
+    if (!Sec.isExecutable() || Sec.Size > InvalidVA - Sec.VA)
+      continue;
+    const va_t End = Sec.VA + Sec.Size;
+    va_t Cur = Sec.VA;
+    while (Cur < End) {
+      size_t Available = static_cast<size_t>(std::min<va_t>(16, End - Cur));
+      const uint8_t *Bytes = nullptr;
+      while (Available && !(Bytes = Img.readVA(Cur, Available)))
+        --Available;
+      DecodedInsn Insn{};
+      const int Len = Bytes && Dec.selectMode(Img, Cur)
+                          ? Dec.decodeOne(Bytes, Available, Cur, Insn)
+                          : 0;
+      if (Len <= 0 || !Insn.Raw || !Insn.Raw->detail) {
+        ++Cur;
+        continue;
+      }
+      const cs_x86 &X86 = Insn.Raw->detail->x86;
+      for (uint8_t I = 0; I < X86.op_count; ++I) {
+        const cs_x86_op &Operand = X86.operands[I];
+        if (Operand.type != X86_OP_MEM ||
+            Operand.mem.index == X86_REG_INVALID)
+          continue;
+        std::optional<va_t> Base;
+        if (Operand.mem.base == X86_REG_RIP)
+          Base = Insn.Addr + Insn.Size +
+                 static_cast<uint64_t>(Operand.mem.disp);
+        else if (Operand.mem.base == X86_REG_INVALID)
+          Base = static_cast<uint64_t>(Operand.mem.disp) & AddressMask;
+        if (!Base || (*Base & (Width - 1)) != 0)
+          continue;
+        const Segment *Seg = Img.getSegmentFor(*Base);
+        if (Seg && Seg->isExecutable()) {
+          const va_t BaseVA = static_cast<va_t>(*Base & AddressMask);
+          TableBases.insert(BaseVA);
+          // A table a CALL reads through holds callable entries, not another
+          // function's case labels: its slots promote as callbacks.
+          if (Insn.Id == X86_INS_CALL)
+            Img.CallDispatchTableBases.insert(BaseVA);
+        }
+      }
+      va_t After = Cur + static_cast<va_t>(Len);
+      if (auto Inside = Starts.upper_bound(Cur);
+          Inside != Starts.end() && *Inside < After)
+        After = *Inside;
+      Cur = After;
+    }
+  }
+  if (TableBases.empty())
+    return;
+
+  // A relocated field within a bounded window after a table base belongs to
+  // the table. Re-decide it as the slot it would have been had the section
+  // kept data only.
+  std::vector<AbsolutePointerRelocationEffect> Slots;
+  std::vector<va_t> DataStarts;
+  for (const auto &[SlotVA, Field] : Candidates) {
+    auto It = TableBases.upper_bound(SlotVA);
+    if (It == TableBases.begin())
+      continue;
+    const va_t Base = *std::prev(It);
+    if (SlotVA - Base > 8 * Width)
+      continue;
+    Slots.push_back(decideAbsolutePointerRelocation(
+        Img, SlotVA, Field.TargetVA, Field.TargetOwnerVA, [&](va_t Addr) {
+          PointerRelocationAddressClass Class =
+              classifyPointerRelocationAddress(Img, Addr);
+          if (Addr == SlotVA)
+            Class.Executable = false;
+          return Class;
+        }));
+  }
+  for (const AbsolutePointerRelocationEffect &Slot : Slots)
+    if (Slot.What != AbsolutePointerRelocationEffect::Kind::None) {
+      Img.CodeAddressRelocOperands.erase(Slot.SlotVA);
+      Img.DataAddressRelocOperands.erase(Slot.SlotVA);
+      applyAbsolutePointerRelocation(Img, Slot);
+    }
+  // Name the tables as data among the code so later passes treat them as
+  // objects, not instruction bytes.
+  DataStarts.assign(TableBases.begin(), TableBases.end());
+  recordDataInCode(Img, DataStarts);
+}
+
 void recordRelocatedPointerRunsInCode(BinaryImage &Img) {
   if (Img.IsRelocatable)
     return;

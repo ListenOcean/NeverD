@@ -1089,6 +1089,7 @@ COFFLoader::loadBuffer(llvm::MemoryBufferRef Buffer) {
   coff_loader::recordSymbolTableDataInCode(Img);
   Progress.report("parse", 0, 1, "PE/COFF code literals");
   coff_loader::recordRelocatedPointerRunsInCode(Img);
+  coff_loader::recordIndexedTableBasesInCode(Img);
   coff_loader::recordConstantCodeSlots(Img);
   Progress.report("parse", 0, 1, "language runtime");
   // Classified before any table is read.  A PE is the format where schema and
