@@ -438,3 +438,15 @@ Les API C v10 `neverd_devirtualize_source_v10()` et `neverd_devirtualize_machine
 Dans une vue C, choisissez **Reconstituer la fonction interprétée**. Les options choisissent le stockage d’état, les limites de travail et les prémisses explicites du cadre d’entrée ; les valeurs par défaut n’ajoutent aucune hypothèse de cadre, d’alignement ou de séparation. Le rapport conserve les diagnostics. Une annulation ou un résultat incomplet garde le source précédent ; **Revenir au code source ordinaire** rétablit la vue normale.
 
 Le worker accepte `source_options.interpreter_recovery` comme seule option de source et appelle le SDK C v10. Il met en cache et pagine le C complet sans modification, sans éditions de variables ordinaires ni correspondances d’instructions inventées. Le rapport complet figure sur la première page ; `source_available` distingue le source généré d’une reconstitution arrêtée. Aucune équivalence native n’est certifiée.
+
+<!-- i18n-section: machine-region-source -->
+
+## Source vérifiée pour les régions machine
+
+L’interface C++ explicite `wrapInterpreterMachineRegionSourceX64()`, dans `neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h`, reçoit un résultat complet et des options attendues fournies indépendamment. Elle valide tout le graphe brut, l’environnement et les sorties physiques avant la conversion, puis conserve le reçu original. Les wrappers ordinaires refusent toujours les domaines bruts. Cette interface n’est pas exposée par la CLI, le SDK C ou la GUI.
+
+`InterpreterMachineRegionStateX64V1` possède un format distinct de 432 octets : préfixe requêtes/XMM de 416 octets, `PC` à 416, `ExitKind` à 424. L’entrée est fixe ; ces champs sont des sorties. CALL/JMP/RET conservent la cible réelle et les effets physiques sur la pile, enregistrent tout l’état pris en charge et s’arrêtent avant la cible. Les types de sortie valent 1/2/3. Les statuts 3/4 arrêtent avant une requête épuisée/incompatible avec son PC original et le type 0 ; les effets précédents restent acquis. Le statut 2 refuse l’alignement sans modifier l’état. Le statut 1 ne fournit aucune continuation valide.
+
+Seuls le profil utilisateur sans faute et les opérations scalaires/requêtes/XMM existantes sont admis. Pièges, états architecturaux supplémentaires, objets d’entrée et déclarations de code/imports supplémentaires sont refusés même inutilisés. Émettre la mémoire invitée par copies d’octets ou types alias alignés sur 1. Conserver toutes les prémisses mémoire/cadre ; seul l’alignement est vérifié à l’exécution. Aucun résumé d’appelé, composition, ABI ordinaire ou certificat d’équivalence native/fonction complète n’est fourni. `InterpreterMachineRegionSourceTest.*` vérifie les deux backends C en O0/O2 : état complet, alias de pile, sorties multiples, arrêts de requête/alignement et déclarations altérées ou non prises en charge.
+
+Les sorties architecturalement indéfinies gardent les valeurs choisies par LowIR. Reproduire les choix d’un processeur ou prouver leur absence d’effet sur les observations natives exige un environnement indépendant ou une preuve de non-interférence ; ce reçu source ne fournit ni l’un ni l’autre.

@@ -167,6 +167,13 @@ extent proof. Portable declaration qualifiers, function-pointer signatures,
 general local wrapper-chain propagation, missing runtime state and native
 Windows execution remain separate work.
 
+Local MedIR address inference and direct-caller pointer propagation now share
+the actual entry-value check. First definitions and call clobbers can have SSA
+version zero; they must not retype an unrelated incoming register or propagate
+that false pointer to outer callers. Cross-architecture controls retain entry
+self-copies and independent narrow writes. This fixes type contamination,
+without resolving a VM's incoming register bank or general wrapper pointees.
+
 Captured HFA callees retain their checked source record signature, matching
 argument reassembly and result unpacking. The saved function pointer remains
 the call target, including when the current import slot can no longer name it.

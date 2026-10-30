@@ -675,3 +675,15 @@ The v10 C APIs `neverd_devirtualize_source_v10()` and `neverd_devirtualize_machi
 In a C source view, use **Recover interpreter function**. **Interpreter recovery options…** selects state storage, work limits and explicit entry-frame premises; defaults add no frame, alignment or separation assumption. **Interpreter recovery report…** retains the engine diagnostics. Cancellation or an incomplete result keeps the preceding source. **Return to ordinary source** restores the normal view.
 
 The worker accepts `source_options.interpreter_recovery` as the only source option and calls C SDK v10. It caches and pages the completed C unchanged, without ordinary-source variable edits or invented instruction mappings. The full report appears on the first page; `source_available` distinguishes generated source from a stopped recovery. This does not certify native equivalence.
+
+<!-- i18n-section: machine-region-source -->
+
+## Checked machine-region source
+
+The opt-in C++ `wrapInterpreterMachineRegionSourceX64()` in `neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h` accepts a complete recovery result and independently expected options. It validates the entire raw graph, environment and physical exits before source lowering, and retains the original receipt. Ordinary wrappers still refuse raw domains. This adapter is not exposed through the CLI, C SDK or GUI.
+
+`InterpreterMachineRegionStateX64V1` is a separate 432-byte layout: the 416-byte query/XMM prefix, `PC` at 416 and `ExitKind` at 424. The function fixes its entry; these fields are outputs. Successful CALL/JMP/RET exits retain the actual target and physical stack effects, commit all supported state and stop before executing the target. Exit kinds are 1/2/3. Status 3/4 stops before an exhausted/mismatched query, with its original PC and kind 0; earlier effects remain. Status 2 leaves all state unchanged on alignment rejection. Status 1 provides no valid continuation.
+
+The adapter admits only the user nonfaulting profile and existing scalar/query/XMM operations. Traps, extra architectural banks, entry objects and supplemental code/import declarations are refused even when unused. Guest memory needs byte-copy or alignment-1 alias emission. Retain all caller memory/frame premises; only alignment is checked at runtime. The interface provides neither callee summaries, continuation composition, ordinary ABI recovery nor whole-function/native-equivalence certification. `InterpreterMachineRegionSourceTest.*` checks both C backends at O0/O2, full state and aliased stack bytes, multiple exits, query/alignment stops, and mutated or unsupported declarations.
+
+Architectural undefined outputs retain LowIR's selected implementation values. Matching a processor's choices, or proving those choices irrelevant to native observations, requires an independent environment or noninterference proof; this source receipt supplies neither.

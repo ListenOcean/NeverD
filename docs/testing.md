@@ -17339,6 +17339,15 @@ Synthetic LLVM C stack slots retain the complete 128-bit integer store before a 
 
 ## Forwarded source pointee types
 
+`NeverDMedParameterEntryTests` exercises local address uses and direct-call
+forwarding on x86, x64, ARM32 and ARM64, with reversed function order and an
+outer caller to detect transitive contamination. Call clobbers, local and PHI
+definitions at version zero, narrowed values, mismatched parameter identities
+and ambiguous register slots cannot create entry pointer types. Actual entry
+values, self-copies and unrelated narrow definitions remain positive controls.
+Run it with `NeverDSourceEntryBindingTests` and the architecture call-contract
+suites; these identity checks do not supply missing runtime state.
+
 `NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
 generic, named-record, scalar and nested pointer parameters across x64/ARM64,
 COFF/ELF/Mach-O and both C routes, with explicit integer prototypes remaining

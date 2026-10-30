@@ -1190,55 +1190,84 @@ bool visitOriginalMemoryPointerInputs(
   return true;
 }
 
-static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
-  std::map<std::pair<int, int>, const MedOp *> DefMap;
-  for (const auto &Blk : Func.Blocks)
-    for (const auto &Op : Blk.Ops)
-      if (Op.Output.Id >= 0 && Op.Output.Size > 0)
-        DefMap[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
+namespace {
+// A zero SSA version is not by itself a live-in: a call, local definition or
+// PHI can own that version. Reuse this identity index for local address uses
+// and interprocedural forwarding, without rebuilding it for each call edge.
+class EntryParameterValues {
+  using Key = std::tuple<MedVar::VarKind, int, int>;
+  const MedFunc &Function;
+  unsigned PointerBytes;
+  std::set<Key> Defined;
 
-  // A parameter register is a pointer only when its INCOMING value (SSA version
-  // 0, the live-in) is used as a memory address / indirect target.  A register
-  // that merely shares its number with a parameter but holds a later, unrelated
-  // pointer (e.g. `x0 := &local_buffer` set up for an outgoing call argument, a
-  // redefinition at SSA version > 0) must NOT taint the parameter: typing an
-  // integer parameter as a pointer makes the caller pass
-  // `inttoptr(smallconst)`, which the rewrite backend materialises as a bogus
-  // PC-relative address rather than the literal value (an integer argument `10`
-  // became `0x20000000a`).
-  auto isLiveInReg = [](const MedVar &V) {
-    return V.Kind == MedVar::Reg && V.Id >= 0 && V.SSAVer == 0;
-  };
-  // Stack Params all use kNoParamReg, so that sentinel cannot own a role.
-  // Match the recovered slot identity instead; a narrow lane is not an address
-  // carrier. Version-zero register matching retains the existing live-in rule.
-  auto parameterIndex = [&](const MedVar &V) -> std::optional<size_t> {
-    if (!isLiveInReg(V) && V.Kind != MedVar::Param)
+  static Key key(const MedVar &Value) {
+    return {Value.Kind, Value.Id, Value.SSAVer};
+  }
+
+public:
+  EntryParameterValues(const MedFunc &Function, unsigned PointerBytes)
+      : Function(Function), PointerBytes(PointerBytes) {
+    auto Define = [&](const MedVar &Value) {
+      if ((Value.Kind == MedVar::Reg || Value.Kind == MedVar::Param) &&
+          Value.SSAVer == 0 && Value.Size >= PointerBytes)
+        Defined.insert(key(Value));
+    };
+    for (const auto &Clobber : Function.CallClobbers)
+      Define(Clobber.Value);
+    for (const auto &Block : Function.Blocks) {
+      for (const auto &Phi : Block.Phis)
+        Define(Phi.Output);
+      for (const auto &Op : Block.Ops) {
+        // The converter's entry self-copy declares a live-in; it does not
+        // replace its bits. Independently defined narrow views also do not
+        // redefine the complete pointer carrier.
+        if (Op.Opcode == NdOp::COPY && Op.NumInputs == 1 &&
+            Op.Output == Op.Inputs[0] && Op.Output.Size == Op.Inputs[0].Size)
+          continue;
+        Define(Op.Output);
+      }
+    }
+  }
+
+  std::optional<size_t> parameterIndex(const MedVar &Value) const {
+    if ((Value.Kind != MedVar::Reg && Value.Kind != MedVar::Param) ||
+        (Value.Kind == MedVar::Reg && Value.Id < 0) || Value.SSAVer != 0 ||
+        Value.Size != PointerBytes || Defined.count(key(Value)))
       return std::nullopt;
     std::optional<size_t> Index;
-    for (size_t I = 0; I < Func.Params.size(); ++I) {
-      const auto &P = Func.Params[I];
-      bool Matches = P.RegOff != kNoParamReg
-                         ? P.RegOff == V.RegOff
-                         : V.Kind == MedVar::Param && V.RegOff == kNoParamReg &&
-                               P.Id == V.Id && V.Size == TRI.PointerSize &&
-                               P.Size == TRI.PointerSize;
-      if (!Matches)
+    for (size_t I = 0; I < Function.Params.size(); ++I) {
+      const auto &Parameter = Function.Params[I];
+      if (Parameter.Size != PointerBytes || Parameter.RegOff != Value.RegOff ||
+          (Value.Kind == MedVar::Param &&
+           (Parameter.Kind != MedVar::Param || Parameter.Id != Value.Id ||
+            Parameter.SSAVer != Value.SSAVer)) ||
+          (Value.Kind == MedVar::Reg && Parameter.RegOff == kNoParamReg))
         continue;
       if (Index)
         return std::nullopt;
       Index = I;
     }
     return Index;
-  };
+  }
+};
+} // namespace
+
+static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI,
+                            const EntryParameterValues &EntryValues) {
+  std::map<std::pair<int, int>, const MedOp *> DefMap;
+  for (const auto &Blk : Func.Blocks)
+    for (const auto &Op : Blk.Ops)
+      if (Op.Output.Id >= 0 && Op.Output.Size > 0)
+        DefMap[{Op.Output.Id, Op.Output.SSAVer}] = &Op;
+
   std::set<size_t> PtrParameters;
   std::set<size_t> RawAddressParameters;
   for (const auto &Value : x86PhysicalAddressInputValues(Func))
-    if (auto Index = parameterIndex(Value))
+    if (auto Index = EntryValues.parameterIndex(Value))
       RawAddressParameters.insert(*Index);
   auto recordAddressLiveIns = [&](const MedVar &AddrVar,
                                   std::set<size_t> &Roles) {
-    if (auto Index = parameterIndex(AddrVar))
+    if (auto Index = EntryValues.parameterIndex(AddrVar))
       Roles.insert(*Index);
     if (AddrVar.Kind != MedVar::Temp || AddrVar.Id < 0)
       return;
@@ -1247,7 +1276,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
         Dit->second->NumInputs < 2)
       return;
     for (uint8_t I = 0; I < Dit->second->NumInputs; ++I)
-      if (auto Index = parameterIndex(Dit->second->Inputs[I]))
+      if (auto Index = EntryValues.parameterIndex(Dit->second->Inputs[I]))
         Roles.insert(*Index);
   };
   for (const auto &Blk : Func.Blocks) {
@@ -1258,7 +1287,7 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
         continue;
       if (Op.Opcode == NdOp::INDIR_BR || Op.Opcode == NdOp::INDIR_CALL) {
         if (Op.NumInputs >= 1)
-          if (auto Index = parameterIndex(Op.Inputs[0]))
+          if (auto Index = EntryValues.parameterIndex(Op.Inputs[0]))
             PtrParameters.insert(*Index);
       }
       const MedVar *MemoryAddress = nullptr;
@@ -1268,11 +1297,11 @@ static void inferParamTypes(MedFunc &Func, const TargetRegInfo &TRI) {
           Op.NumInputs >= 1)
         MemoryAddress = &Op.Inputs[0];
       else if (Op.Opcode == NdOp::INTRINSIC && Op.NumInputs >= 2 &&
-                 Op.Inputs[0].isConst() &&
-                 intrinsicSupportsMemoryAddressSpace(
-                     static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
-                 !isX86StringIntrinsic(
-                     static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
+               Op.Inputs[0].isConst() &&
+               intrinsicSupportsMemoryAddressSpace(
+                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal)) &&
+               !isX86StringIntrinsic(
+                   static_cast<Intrinsic>(Op.Inputs[0].ConstVal)))
         MemoryAddress = &Op.Inputs[1];
       if (MemoryAddress) {
         recordAddressLiveIns(*MemoryAddress,
@@ -1551,7 +1580,7 @@ void inferMedTypes(MedFunc &Func, Arch TheArch,
       inferReturnType(Func, TRI, TheArch, ReturnViaX87, Func.DefinedReturnBytes,
                       CalleeFloatReturns);
   Func.FPReturnViaX87 = ReturnViaX87;
-  inferParamTypes(Func, TRI);
+  inferParamTypes(Func, TRI, EntryParameterValues(Func, TRI.PointerSize));
   inferLocalTypes(Func);
 
   if (!Func.SourceTypeHint)
@@ -1849,12 +1878,15 @@ void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,
                                      Arch TheArch) {
   const auto &TRI = getTargetRegInfo(TheArch);
   std::map<va_t, size_t> ByEntry;
+  std::vector<EntryParameterValues> EntryValues;
+  EntryValues.reserve(Funcs.size());
   for (size_t I = 0; I < Funcs.size(); ++I) {
     ByEntry.emplace(Funcs[I].Entry, I);
+    EntryValues.emplace_back(Funcs[I], TRI.PointerSize);
     // Call-ABI recovery may add a parameter after the local type pass. Keep
     // source declarations authoritative, and refresh only inferred signatures.
     if (!Funcs[I].SourceTypeHint)
-      inferParamTypes(Funcs[I], TRI);
+      inferParamTypes(Funcs[I], TRI, EntryValues[I]);
   }
 
   std::map<va_t, std::vector<size_t>> DirectCallers;
@@ -1894,27 +1926,14 @@ void propagateForwardedPointerParams(std::vector<MedFunc> &Funcs,
           if (!Type || Type->Kind != NdTypeKind::Ptr)
             continue;
           const MedVar &Arg = Call.Args[ArgIndex];
-          if (Arg.SSAVer != 0 || Arg.Size != TRI.PointerSize)
+          const auto ParamIndex = EntryValues[CallerIndex].parameterIndex(Arg);
+          if (!ParamIndex)
             continue;
-          for (size_t ParamIndex = 0; ParamIndex < Caller.Params.size();
-               ++ParamIndex) {
-            const MedVar &Param = Caller.Params[ParamIndex];
-            const bool SameEntryRegister =
-                Param.RegOff != kNoParamReg && Arg.RegOff == Param.RegOff &&
-                (Arg.Kind == MedVar::Reg ||
-                 (Arg.Kind == MedVar::Param && Param.Kind == MedVar::Param &&
-                  Arg.Id == Param.Id));
-            const bool SameEntryStackSlot =
-                Arg.Kind == MedVar::Param && Param.Kind == MedVar::Param &&
-                Arg.Id == Param.Id && Arg.RegOff == kNoParamReg &&
-                Param.RegOff == kNoParamReg;
-            if ((!SameEntryRegister && !SameEntryStackSlot) ||
-                (Caller.TypedParams[ParamIndex].Type &&
-                 Caller.TypedParams[ParamIndex].Type->Kind == NdTypeKind::Ptr))
-              continue;
-            Caller.TypedParams[ParamIndex].Type = NdType::makePtr();
-            Changed = true;
-          }
+          if (Caller.TypedParams[*ParamIndex].Type &&
+              Caller.TypedParams[*ParamIndex].Type->Kind == NdTypeKind::Ptr)
+            continue;
+          Caller.TypedParams[*ParamIndex].Type = NdType::makePtr();
+          Changed = true;
         }
       }
       if (Changed && !Queued[CallerIndex]) {
