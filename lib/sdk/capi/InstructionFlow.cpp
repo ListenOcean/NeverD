@@ -487,7 +487,9 @@ bool decodeExtents(
     Chunks[Chunk.Function].push_back(Chunk.Range);
   std::atomic<bool> DecoderFailed{false};
   std::optional<libc::NoReturnTargetIndex> LocalNoReturnTargets;
-  if (!NoReturnTargets) {
+  if (!NoReturnTargets && llvm::any_of(Extents, [](const auto &Extent) {
+        return !Extent.second;
+      })) {
     LocalNoReturnTargets.emplace(Img);
     NoReturnTargets = &*LocalNoReturnTargets;
   }
@@ -574,7 +576,9 @@ collectDataAccessWidths(const BinaryImage &Img,
                         llvm::ArrayRef<FuncInfo> Functions) {
   std::vector<std::pair<va_t, unsigned>> Accesses;
   const auto Ordered = orderedFunctions(Functions);
-  const libc::NoReturnTargetIndex NoReturnTargets(Img);
+  std::optional<libc::NoReturnTargetIndex> NoReturnTargets;
+  if (llvm::any_of(Ordered, [](const FuncInfo *F) { return !F->Size; }))
+    NoReturnTargets.emplace(Img);
   for (std::optional<va_t> Cursor = va_t{0}; Cursor;) {
     const FunctionPage Page =
         pageFunctions(Ordered, *Cursor, FunctionPage::MaxFunctionsPerPage);
@@ -589,7 +593,7 @@ collectDataAccessWidths(const BinaryImage &Img,
             if (isDataAccess(Ref))
               Slots[Index].emplace_back(Ref.To, Ref.Bytes);
         },
-        {}, nullptr, &NoReturnTargets);
+        {}, nullptr, NoReturnTargets ? &*NoReturnTargets : nullptr);
     if (!Decoded)
       return std::nullopt;
     for (const auto &Slot : Slots)

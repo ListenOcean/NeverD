@@ -232,7 +232,10 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
   Entries.reserve(Ordered.size());
   for (const FuncInfo *F : Ordered)
     Entries.push_back(F->Entry);
-  const libc::NoReturnTargetIndex NoReturnTargets(Img);
+  std::optional<libc::NoReturnTargetIndex> NoReturnTargets;
+  if (std::any_of(Bodies.begin(), Bodies.end(),
+                  [](const FuncInfo *F) { return !F->Size; }))
+    NoReturnTargets.emplace(Img);
   for (size_t First = 0; First < Bodies.size();
        First += FunctionPage::MaxFunctionsPerPage) {
     FunctionPage Page;
@@ -246,7 +249,7 @@ std::shared_ptr<const CallReferenceGraph> buildGraph(Session &S) {
                 InstructionFlowScratch &Scratch) {
               Collect(First + Index, Dec, DI, Scratch);
             },
-            {}, nullptr, &NoReturnTargets)) {
+            {}, nullptr, NoReturnTargets ? &*NoReturnTargets : nullptr)) {
       S.setError("failed to initialize a decoder for the image");
       return nullptr;
     }
