@@ -1942,6 +1942,17 @@ Call-argument metadata binds to an exact MedIR block/operation, with duplicate
 or stale owners rejected. Its arguments remain a distinct span of node inputs,
 separate from raw call operands and preserved clobber prefixes. Missing argument
 metadata stays unknown. This v2 observation does not assert ABI formal bindings.
+`FlowArgumentAccess` derives caller-side address observations from that immutable
+MedIR projection. It memoizes width-preserving affine definitions once per graph,
+then joins ordered call arguments to indexed ordinary LOAD/STORE operands.
+Roots are local SSA definitions or parameters, never equality of unknown inputs,
+separate memory reads or a call node's multiple clobbers. Iterative dependency
+walks refuse cyclic affine roots. COPY/PHI paths to RETURN operands preserve widths and do
+not infer ABI results, path feasibility, temporal ordering or callee writes. This observer
+retains the original gaps and does not feed the function matcher or rewrite
+SSA. The C API caches one graph's bounded index across selected calls and pages;
+restore invalidates it. CLI, Python, worker and Qt consume the same observations.
+
 The comparison adapter requests `PipelineOptions::MedAnalysisOnly`: the existing
 machine ABI preparation, including omitted-callee summaries, ends after final
 MedIR verification and before LLVM emission. `usesMachineMedIR()` keeps source

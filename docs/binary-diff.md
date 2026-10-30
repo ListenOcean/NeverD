@@ -400,6 +400,39 @@ observations with inferred calling conventions, not qualified machine-state or
 whole-program equivalence. The internal finite-neighborhood fingerprints expose
 open data frontiers; hash equality never marks code unchanged.
 
+Select a recovered call in **Dependency evidence**, then choose **Argument
+accesses** to review caller-side reads and writes using the same SSA address
+expression as an argument. Argument positions are one-based in the table and
+zero-based in JSON. Activate a row to select its SSA operation and trace its
+inputs or uses. The RETURN-input column records a same-width copy/PHI path to a
+RETURN operand, without deciding which path executes. Depending on the native
+projection, that operand can be a return control target; this observation does
+not infer an ABI result binding. This distinguishes local slot
+roles when compiler frame layouts change; it does not attribute writes to a
+callee or change automatic function correspondence.
+
+The C/Python/CLI dataflow query accepts
+`{"kind":"accesses","side":"primary","address":"0x1000","call":12}`.
+`call` is a node ID from the function's node page. The CLI equivalent is
+`--flow-function 0x1000 --argument-access-call 12`, with ordinary side, paging,
+reopen and timeout options. The
+`med-ssa-argument-accesses-v1` observation requires `med-ssa-v2`. It indexes
+same-width copies and scalar constant addition/subtraction over a shared local
+SSA definition or parameter. Separate unknown inputs, pointer loads and call
+clobbers do not acquire a common identity. Segmented/ordered memory operations,
+literal addresses and other expression equivalences are outside this observation.
+The original graph, memory/call gaps and native bytes remain unchanged. Missing
+observations do not rule out aliases, and execution order remains unassessed.
+
+Pages include `inspection_complete`, `state`, `work`, `gaps` and the original
+call. Rows retain the access node/native origin, zero-based `argument`,
+`access` (`read`/`write`), `access_bytes` and `return_operand_path`. Optional
+`max_records`/`max_work` bound the complete function index; `offset`/`limit` page
+one call's retained observations. Calls and pages share one index. Cooperative
+cancellation and `timeout_ms` preserve completed observations; `refresh:true`
+recomputes a stopped request. These derived pages are reconstructed from the
+same authenticated graph after reopening a report.
+
 Saved dependency graphs stream into the shared document. Reopen reconstructs
 the bounded native projection and checks the recipe, coverage, origins and every
 dependency fact before publishing it. A saved stopped collection may retain a
