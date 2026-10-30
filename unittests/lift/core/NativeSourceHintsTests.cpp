@@ -13,6 +13,8 @@
 #include "SwiftConsumedInputFixture.h"
 #include "gtest/gtest.h"
 
+#include "neverd/backend/c/HighC/HighCEmitter.h"
+#include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/ir/SourceABI.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/high/HighSourceFlow.h"
@@ -40,6 +42,8 @@
 #include <array>
 #include <functional>
 #include <iterator>
+#include <map>
+#include <vector>
 
 using namespace neverd;
 
@@ -10266,6 +10270,213 @@ TEST(NativeSourceHints, ConflictingOrPartialUsesCannotInventPointerParameters) {
   }
 }
 
+TEST(NativeSourceHints, CallClobbersDoNotBecomeIncomingPointerEvidence) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    addPointerCall(Fixture);
+    // The first implicit definition of a register can still have version zero.
+    // Passing that unavailable result to a pointer consumer says nothing about
+    // the original entry value in the same physical register.
+    MedCallClobber Clobber;
+    Clobber.Value = Fixture.Med.Blocks[0].Ops[0].Inputs[1];
+    Fixture.Med.CallClobbers.push_back(Clobber);
+    const auto Pointers = inferMedSourcePointerParameters(Fixture.Med);
+    ASSERT_EQ(Pointers.size(), 2U);
+    EXPECT_FALSE(Pointers[0]);
+    EXPECT_TRUE(Pointers[1]);
+  }
+}
+
+TEST(NativeSourceHints, ImportedPointerForwardersShareBothSourceSignatures) {
+  class Header : public NullDebugContext {
+  public:
+    bool ExplicitEntry = false;
+    TypeRef PointerType = NdType::makePtr(NdType::makeVoid());
+    std::optional<FunctionSym>
+    resolvePrototype(llvm::StringRef Name) const override {
+      if (Name != "consume_pointer")
+        return std::nullopt;
+      FunctionSym Function;
+      Function.Name = Name.str();
+      Function.ReturnType = NdType::makeVoid();
+      Function.Params = {{"object", PointerType},
+                         {"tag", NdType::makeInt(4, false)}};
+      Function.PrototypeFromHeader = true;
+      Function.PrototypeLibrary = "test-header";
+      return Function;
+    }
+    std::optional<FunctionSym> resolveFunction(va_t Address) const override {
+      if (Address == 0x1000 && ExplicitEntry) {
+        FunctionSym Entry;
+        Entry.Addr = Address;
+        Entry.Name = "forward_pointer";
+        Entry.ReturnType = NdType::makeVoid();
+        Entry.Params = {{"arg0", NdType::makeInt(8)}};
+        Entry.PrototypeFromHeader = true;
+        Entry.PrototypeLibrary = "test-header";
+        return Entry;
+      }
+      auto Function = Address == 0x2000 ? resolvePrototype("consume_pointer")
+                                        : std::nullopt;
+      if (Function)
+        Function->Addr = Address;
+      return Function;
+    }
+  } Debug;
+  for (auto Architecture : {Arch::X64, Arch::AArch64})
+    for (auto Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO}) {
+      SCOPED_TRACE(unsigned(Architecture));
+      SCOPED_TRACE(unsigned(Format));
+      BinaryImage Image;
+      Image.Arch = Architecture;
+      Image.Format = Format;
+      Image.Bits = Bitness::Bits64;
+      Image.Entry = Image.Base = 0x1000;
+      Segment Text;
+      Text.VA = Image.Entry;
+      Text.Flags = SegmentFlags::Readable | SegmentFlags::Executable;
+      if (Architecture == Arch::X64) {
+        // mov edx/esi,42; jmp [0x2000]. This wrapper supplies one argument;
+        // it is not an import veneer with an interchangeable source identity.
+        Text.Data = {uint8_t(Format == BinaryFormat::COFF ? 0xba : 0xbe),
+                     42,
+                     0,
+                     0,
+                     0,
+                     0xff,
+                     0x25,
+                     0xf5,
+                     0x0f,
+                     0,
+                     0};
+      } else {
+        // mov x1,42; adrp x16,0x2000; ldr x16,[x16]; br x16
+        Text.Data = {0x41, 5, 0x80, 0xd2, 0x10, 0, 0,    0xb0,
+                     0x10, 2, 0x40, 0xf9, 0,    2, 0x1f, 0xd6};
+      }
+      Text.Size = Text.FileSz = Text.Data.size();
+      Image.Segments.push_back(std::move(Text));
+      Segment Slot;
+      Slot.VA = 0x2000;
+      Slot.Size = Slot.FileSz = 8;
+      Slot.Data.resize(8);
+      Slot.Flags = SegmentFlags::Readable;
+      Image.Segments.push_back(std::move(Slot));
+      Import Import;
+      Import.Name = "consume_pointer";
+      Import.Module = "fixture";
+      Import.IATAddr = 0x2000;
+      Image.Imports.push_back(std::move(Import));
+      ASSERT_TRUE(Image.recordImportStorageSlot(
+          0x2000, "consume_pointer", 0, ImportStorageEvidence::LoaderBind));
+      auto FunctionSymbol = Symbol::makeFunc(0x1000);
+      FunctionSymbol.Name = "forward_pointer";
+      Image.Symbols.push_back(std::move(FunctionSymbol));
+      for (unsigned Pointee = 0; Pointee != 5; ++Pointee)
+        for (bool Explicit : {false, true})
+          for (bool LLVM : {false, true}) {
+            Debug.ExplicitEntry = Explicit;
+            auto Type = Pointee == 2 ? NdType::makeInt(2, false)
+                        : Pointee
+                            ? NdType::makeNamedRecord("ForwardedObject", 0)
+                            : NdType::makeVoid();
+            if (Pointee == 3)
+              Type = NdType::makePtr(Type);
+            Debug.PointerType = NdType::makePtr(Type);
+            if (Pointee == 4) {
+              Debug.PointerType->TypedefName = "PFORWARDED_OBJECT";
+              Type->Size = 16;
+              Type->FieldDisplayNames = {"value"};
+              Type->FieldDisplayOffsets = {0};
+              Type->FieldDisplayTypes = {NdType::makeInt(4)};
+            }
+            SCOPED_TRACE(Pointee);
+            SCOPED_TRACE(Explicit);
+            SCOPED_TRACE(LLVM);
+            llvm::LLVMContext Context;
+            PipelineOptions Options;
+            Options.EmitDumpOutput = false;
+            Options.OnlyFunctionEntries = {0x1000};
+            Options.LiftMode = Options.SourceProjection = LLVM;
+            auto Result = Pipeline().run(Image, Context, Options, &Debug);
+            ASSERT_TRUE(Result.Success) << Result.Error;
+            ASSERT_EQ(Result.MedFuncs.size(), 1U);
+            ASSERT_EQ(Result.MedFuncs[0].TypedParams.size(), 1U);
+            EXPECT_EQ(Result.MedFuncs[0].TypedParams[0].Type->Kind,
+                      Explicit ? NdTypeKind::Int : NdTypeKind::Ptr);
+            CEmitterOptions COptions;
+            COptions.TheArch = Architecture;
+            COptions.Format = Format;
+            COptions.Image = &Image;
+            COptions.RecordDefinitions =
+                [&](const std::vector<TypeRef> &Types) {
+                  CRecordDefinitions Definitions;
+                  for (const auto &Requested : Types) {
+                    auto Leaf = Requested;
+                    while (Leaf && Leaf->Kind == NdTypeKind::Ptr)
+                      Leaf = Leaf->Pointee;
+                    if (Leaf && Leaf->SourceName == "ForwardedObject") {
+                      EXPECT_EQ(Requested->Kind, NdTypeKind::Ptr);
+                      Definitions.Tags[Leaf->SourceName] = false;
+                    }
+                    EXPECT_NE(Leaf->SourceName, "PFORWARDED_OBJECT");
+                  }
+                  return Definitions;
+                };
+            std::string Source;
+            llvm::raw_string_ostream Out(Source);
+            if (LLVM) {
+              ASSERT_TRUE(Result.LlvmModule);
+              ASSERT_TRUE(LLVMCEmitter().emit(*Result.LlvmModule, Out, COptions,
+                                              &Debug, &Image));
+            } else {
+              ASSERT_TRUE(
+                  HighCEmitter().emit(Result.HighFuncs, Out, COptions, &Debug));
+            }
+            EXPECT_EQ(
+                Source.find(std::string("forward_pointer(") +
+                            (Pointee == 0                   ? "void*"
+                             : Pointee == 1 || Pointee == 4 ? "ForwardedObject*"
+                             : Pointee == 2 ? "uint16_t*"
+                                            : "ForwardedObject**") +
+                            " arg0)") != std::string::npos,
+                !Explicit)
+                << Source;
+          }
+    }
+}
+
+TEST(NativeSourceHints, BoundCallsRetainTheirPointeeCandidates) {
+  for (auto Architecture : {Arch::AArch64, Arch::X64}) {
+    NativeFixture Fixture(Architecture);
+    addPointerCall(Fixture);
+    auto &Call = Fixture.Med.Blocks.front().Ops.front();
+    auto Hint = std::make_shared<SourceCallTypeHint>(*Call.SourceCallHint);
+    const auto Object =
+        NdType::makePtr(NdType::makeNamedRecord("ForwardedObject", 0));
+    Object->TypedefName = "PFORWARDED_OBJECT";
+    Object->Pointee->Size = 64;
+    const auto Text = NdType::makePtr(NdType::makeInt(2, false));
+    Hint->Signature.Parameters[0].Type = Object;
+    Hint->Signature.Parameters[1].Type = Text;
+    Call.SourceCallHint = std::move(Hint);
+    std::string Error;
+    const auto Inferred = Fixture.infer(Error);
+    ASSERT_TRUE(Inferred) << Error;
+    ASSERT_EQ(Inferred->Parameters.size(), 2U);
+    EXPECT_TRUE(Inferred->Parameters[0].Type->TypedefName.empty());
+    ASSERT_TRUE(Inferred->Parameters[0].Type->Pointee);
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->SourceName,
+              "ForwardedObject");
+    EXPECT_EQ(Inferred->Parameters[0].Type->Pointee->Size, 0u);
+    EXPECT_EQ(Object->Pointee->Size, 64u);
+    EXPECT_TRUE(equalSourceTypes(Inferred->Parameters[1].Type, Text));
+    EXPECT_EQ(Fixture.Med.TypedParams[0].Type->Kind, NdTypeKind::Int);
+    EXPECT_EQ(Fixture.Med.TypedParams[1].Type->Kind, NdTypeKind::Int);
+  }
+}
+
 TEST(NativeSourceHints, AmbiguousValuesAndUnboundCallsDoNotSupplyPointerFacts) {
   for (unsigned Mutation = 0; Mutation < 5; ++Mutation) {
     NativeFixture Fixture;
@@ -11830,4 +12041,238 @@ TEST(NativeSourceHints,
                                      {Caller});
     EXPECT_FALSE(Unbound.SourceTypeHints.count(Caller)) << Mutation;
   }
+}
+
+TEST(NativeSourceHints, RecoveredCallPointerUsesKeepWidthsAndEntryIdentity) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::ARM, Arch::AArch64})
+    for (unsigned Mutation = 0; Mutation != 10; ++Mutation) {
+      SCOPED_TRACE(unsigned(Architecture));
+      SCOPED_TRACE(Mutation);
+      const auto &Registers = getTargetRegInfo(Architecture);
+      const auto Bytes = Registers.PointerSize;
+      MedFunc Function;
+      Function.Entry = 0x1000;
+      Function.Blocks.resize(1);
+      auto &Block = Function.Blocks.front();
+      Block.Id = 0;
+      std::vector<MedVar> Inputs;
+      for (unsigned I = 0; I != 2; ++I) {
+        MedVar Parameter;
+        Parameter.Kind = MedVar::Param;
+        Parameter.Id = I;
+        Parameter.Size = Bytes;
+        Parameter.RegOff = Registers.IntParamRegs[I];
+        Parameter.TheArch = Architecture;
+        Function.Params.push_back(Parameter);
+        auto Input = Parameter;
+        Input.Kind = MedVar::Reg;
+        Input.Id += 100;
+        Inputs.push_back(Input);
+      }
+      MedOp Call;
+      Call.Opcode = NdOp::CALL;
+      Call.addInput(MedVar::makeConst(0x3000, Bytes));
+      Block.Ops.push_back(Call);
+      MedCallInfo Info;
+      Info.BlockId = 0;
+      Info.OpIdx = 0;
+      Info.TargetAddr = 0x3000;
+      Info.Args = Inputs;
+      auto Pointer = NdType::makePtr(NdType::makeVoid());
+      Pointer->Size = Bytes;
+      std::map<va_t, std::vector<TypeRef>> Parameters{
+          {0x3000, {Pointer, Pointer}}};
+      if (Mutation == 1) {
+        Parameters[0x3000].pop_back();
+      } else if (Mutation == 2) {
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 200;
+        Copy.Output.Size = Bytes / 2;
+        Copy.addInput(Inputs[0]);
+        Block.Ops.push_back(Copy);
+      } else if (Mutation == 3) {
+        ++Info.Args[0].SSAVer;
+      } else if (Mutation == 4) {
+        MedCallClobber Clobber;
+        Clobber.Value = Inputs[0];
+        Function.CallClobbers.push_back(Clobber);
+      } else if (Mutation == 5) {
+        auto Opaque = Info;
+        Opaque.TargetAddr = 0x4000;
+        Opaque.OpIdx = 1;
+        Opaque.Args.resize(1);
+        Function.CallInfos.push_back(Opaque);
+        auto Operation = Call;
+        Operation.Inputs[0] = MedVar::makeConst(0x4000, Bytes);
+        Block.Ops.push_back(Operation);
+      } else if (Mutation == 6) {
+        Block.Ops[0].addInput(MedVar::makeConst(7, Bytes));
+        Block.Ops[0].addInput(Inputs[1]);
+      } else if (Mutation == 7) {
+        // Reverse block order and carry the full pointer through a loop PHI.
+        MedBlock Producer;
+        Producer.Id = 1;
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 200;
+        Copy.Output.Size = Bytes;
+        Copy.addInput(Inputs[0]);
+        Producer.Ops.push_back(Copy);
+        PhiNode Phi;
+        Phi.Output = Copy.Output;
+        ++Phi.Output.Id;
+        Phi.Args = {{1, Copy.Output}, {0, Phi.Output}};
+        Block.Phis.push_back(Phi);
+        Info.Args[0] = Phi.Output;
+        Function.Blocks.push_back(std::move(Producer));
+      }
+      if (Mutation == 8) {
+        // A later W0/EAX write has its own SSA identity. It does not redefine
+        // the full entry pointer merely because the physical offsets coincide.
+        MedOp Narrow;
+        Narrow.Opcode = NdOp::COPY;
+        Narrow.Output = Inputs[0];
+        Narrow.Output.Id += 300;
+        Narrow.Output.Size = Bytes / 2;
+        Narrow.addInput(MedVar::makeConst(7, Bytes / 2));
+        Block.Ops.push_back(Narrow);
+      }
+      if (Mutation == 9) {
+        // The same admitted call can retain all arguments as explicit operands.
+        Block.Ops[0].addInput(Inputs[0]);
+        Block.Ops[0].addInput(Inputs[1]);
+      } else {
+        Function.CallInfos.push_back(Info);
+      }
+      const auto Pointers =
+          inferMedSourcePointerParameters(Function, Architecture, Parameters);
+      ASSERT_EQ(Pointers.size(), 2U);
+      EXPECT_EQ(Pointers[0], Mutation == 0 || Mutation >= 7);
+      EXPECT_EQ(Pointers[1], Mutation != 1 && Mutation != 6);
+    }
+}
+
+TEST(NativeSourceHints, PointeeConflictsConvergeThroughSharedPhiUses) {
+  for (auto Architecture : {Arch::X64, Arch::AArch64})
+    for (bool Reverse : {false, true})
+      for (unsigned Mutation = 0; Mutation != 12; ++Mutation) {
+        SCOPED_TRACE(unsigned(Architecture));
+        SCOPED_TRACE(Reverse);
+        SCOPED_TRACE(Mutation);
+        MedFunc Function;
+        const auto &Registers = getTargetRegInfo(Architecture);
+        for (unsigned I = 0; I != 2; ++I) {
+          MedVar P;
+          P.Kind = MedVar::Param;
+          P.Id = I;
+          P.Size = 8;
+          P.RegOff = Registers.IntParamRegs[I];
+          Function.Params.push_back(P);
+        }
+        MedOp Copy;
+        Copy.Opcode = NdOp::COPY;
+        Copy.Output.Kind = MedVar::Temp;
+        Copy.Output.Id = 10;
+        Copy.Output.Size = 8;
+        Copy.addInput(Function.Params[0]);
+        PhiNode Phi;
+        Phi.Output = Copy.Output;
+        ++Phi.Output.Id;
+        Phi.Args = {{1, Copy.Output}, {2, Phi.Output}};
+        MedBlock Uses, Producer, Loop;
+        Uses.Id = 0;
+        Producer.Id = 1;
+        Loop.Id = 2;
+        Producer.Ops.push_back(Copy);
+        Loop.Phis.push_back(Phi);
+        const auto Object = [] {
+          return NdType::makePtr(NdType::makeNamedRecord("ForwardedObject", 0));
+        };
+        const auto Text = [] {
+          return NdType::makePtr(NdType::makeInt(2, false));
+        };
+        std::map<va_t, std::vector<TypeRef>> Declared{
+            {0x3000, {Object(), Text()}}, {0x4000, {Object(), Text()}}};
+        auto &Second = Declared[0x4000];
+        if (Mutation == 1)
+          Second[0] =
+              NdType::makePtr(NdType::makeNamedRecord("OtherObject", 0));
+        else if (Mutation == 2)
+          Second[0] = NdType::makePtr(NdType::makeVoid());
+        else if (Mutation == 3)
+          Second[0] = NdType::makePtr(Object());
+        else if (Mutation == 4)
+          Second[0] = NdType::makeInt(8);
+        else if (Mutation == 5)
+          Second[1] = NdType::makePtr(NdType::makeInt(4, false));
+        else if (Mutation == 6) {
+          // Same ABI layout cannot choose between C's distinct nominal tags.
+          auto FirstRecord = NdType::makeStruct({NdType::makeInt(8)});
+          auto SecondRecord = NdType::makeStruct({NdType::makeInt(8)});
+          FirstRecord->SourceName = "FirstRecord";
+          SecondRecord->SourceName = "SecondRecord";
+          Declared[0x3000][0] = NdType::makePtr(FirstRecord);
+          Second[0] = NdType::makePtr(SecondRecord);
+        } else if (Mutation == 7) {
+          Second[0]->Pointee->TypedefName = "OtherAlias";
+        } else if (Mutation == 8) {
+          Declared.erase(0x4000);
+        } else if (Mutation == 9) {
+          auto Callback = std::make_shared<NdType>();
+          Callback->Kind = NdTypeKind::Func;
+          Callback->RetType = NdType::makeVoid();
+          Callback->ParamTypes = {NdType::makeInt(4)};
+          Declared[0x3000][0] = NdType::makePtr(Callback);
+          Second[0] = NdType::makePtr(Callback);
+        } else if (Mutation == 10 || Mutation == 11) {
+          // Array extents and enum definitions are not nominal object tags.
+          auto Pointee = Mutation == 10
+                             ? NdType::makeArray(NdType::makeInt(4), 3, 12)
+                             : NdType::makeStruct({NdType::makeInt(4)});
+          if (Mutation == 11) {
+            Pointee->SourceName = "ForwardedEnum";
+            Pointee->IsEnum = true;
+          }
+          Declared[0x3000][0] = NdType::makePtr(Pointee);
+          Second[0] = NdType::makePtr(Pointee);
+        }
+        const std::array<va_t, 2> Targets =
+            Reverse ? std::array<va_t, 2>{0x4000, 0x3000}
+                    : std::array<va_t, 2>{0x3000, 0x4000};
+        for (const auto Target : Targets) {
+          MedCallInfo Call;
+          Call.BlockId = Uses.Id;
+          Call.OpIdx = Uses.Ops.size();
+          Call.TargetAddr = Target;
+          Call.Args = {Phi.Output, Function.Params[1]};
+          Function.CallInfos.push_back(Call);
+          MedOp Op;
+          Op.Opcode = NdOp::CALL;
+          Op.addInput(MedVar::makeConst(Target, 8));
+          Uses.Ops.push_back(Op);
+        }
+        Function.Blocks = {Uses, Producer, Loop};
+        if (Reverse)
+          std::reverse(Function.Blocks.begin(), Function.Blocks.end());
+        const auto Types = inferMedSourcePointerParameterTypes(
+            Function, Architecture, Declared);
+        ASSERT_EQ(Types.size(), 2U);
+        TypeRef FirstExpected, SecondExpected;
+        if (Mutation != 4 && Mutation != 8)
+          FirstExpected = Mutation == 0 || Mutation == 5
+                              ? Object()
+                              : NdType::makePtr(NdType::makeVoid());
+        if (Mutation != 8)
+          SecondExpected =
+              Mutation == 5 ? NdType::makePtr(NdType::makeVoid()) : Text();
+        EXPECT_EQ(bool(Types[0]), bool(FirstExpected));
+        EXPECT_EQ(bool(Types[1]), bool(SecondExpected));
+        if (Types[0] && FirstExpected)
+          EXPECT_TRUE(equalSourceTypes(Types[0], FirstExpected));
+        if (Types[1] && SecondExpected)
+          EXPECT_TRUE(equalSourceTypes(Types[1], SecondExpected));
+      }
 }

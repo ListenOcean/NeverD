@@ -428,7 +428,7 @@ TEST(ConstantBranch, ScalarIdentitiesSpanDirectPredecessors) {
     }
 }
 
-TEST(ConstantBranch, EveryPredecessorMustProveTheSameTarget) {
+TEST(ConstantBranch, EveryPredecessorMustProveACompleteTargetCover) {
   for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
     for (auto Format :
          {BinaryFormat::ELF, BinaryFormat::COFF, BinaryFormat::MachO})
@@ -468,7 +468,13 @@ TEST(ConstantBranch, EveryPredecessorMustProveTheSameTarget) {
           Bytes[0x30] = Bytes[0x40] = 0xc3;
         }
         const auto Function = build(std::move(Bytes), Architecture, Format);
-        EXPECT_EQ(addresses(Function).count(0x1030), Alternative == 0);
+        EXPECT_EQ(addresses(Function).count(0x1030), Alternative != 1);
+        if (Alternative == 2) {
+          ASSERT_EQ(Function.JumpTables.size(), 1u);
+          EXPECT_EQ(Function.JumpTables.front().Targets,
+                    (std::vector<va_t>{0x1030, 0x1040}));
+        } else
+          EXPECT_TRUE(Function.JumpTables.empty());
       }
 }
 

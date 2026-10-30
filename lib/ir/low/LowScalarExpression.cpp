@@ -23,9 +23,9 @@
 
 namespace neverd {
 
-std::optional<uint64_t> constantScalarExpression(
-    llvm::ArrayRef<LowOp> Operations, const NdVar &Value, va_t QueryInstruction,
-    size_t &RemainingWork,
+symbolic::SymRef symbolicScalarExpression(
+    symbolic::SymContext &Ctx, llvm::ArrayRef<LowOp> Operations,
+    const NdVar &Value, va_t QueryInstruction, size_t &RemainingWork,
     llvm::function_ref<std::optional<uint64_t>(const LowOp &, uint64_t)>
         ReadImage) {
   const auto Scalar = [](const NdVar &V) {
@@ -44,7 +44,6 @@ std::optional<uint64_t> constantScalarExpression(
   };
   if (!Spend(Operations.size()))
     return {};
-  symbolic::SymContext Ctx;
   symbolic::SymState State(Ctx);
   std::map<uint64_t, std::pair<uint16_t, symbolic::SymRef>> Temps;
   va_t Instruction = InvalidVA;
@@ -133,6 +132,19 @@ std::optional<uint64_t> constantScalarExpression(
   if (!Spend(1 + Value.Size + Ctx.numNodes() - BeforeQuery) ||
       Ctx.numNodes() > limits::kMaxScalarBranchSymbolicNodes)
     return {};
+  return Expression;
+}
+
+std::optional<uint64_t> constantScalarExpression(
+    llvm::ArrayRef<LowOp> Operations, const NdVar &Value, va_t QueryInstruction,
+    size_t &RemainingWork,
+    llvm::function_ref<std::optional<uint64_t>(const LowOp &, uint64_t)>
+        ReadImage) {
+  symbolic::SymContext Ctx;
+  const auto Expression = symbolicScalarExpression(
+      Ctx, Operations, Value, QueryInstruction, RemainingWork, ReadImage);
+  if (!Expression)
+    return {};
   if (const auto Constant = Ctx.asConst(Expression))
     return Constant->getZExtValue();
   symbolic::MBAOptions Options;
@@ -144,8 +156,10 @@ std::optional<uint64_t> constantScalarExpression(
       std::min(RemainingWork, limits::kMaxScalarBranchSymbolicRewriteWork);
   Options.MaxTableBytes = limits::kMaxScalarBranchSymbolicTableBytes;
   const auto Simplified = symbolic::simplifyMBADeep(Ctx, Expression, Options);
-  if (!Spend(Simplified.Work) ||
-      Simplified.Evidence != symbolic::MBAEvidence::Derivation ||
+  if (Simplified.Work > RemainingWork)
+    return {};
+  RemainingWork -= Simplified.Work;
+  if (Simplified.Evidence != symbolic::MBAEvidence::Derivation ||
       Simplified.Outcome == symbolic::MBAOutcome::BudgetExhausted)
     return {};
   const auto Constant = Ctx.asConst(Simplified.Expr);

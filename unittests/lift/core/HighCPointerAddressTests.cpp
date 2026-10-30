@@ -39877,7 +39877,7 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
       << Source;
 }
 
-TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
+TEST(LLVMCPointerAddresses, PackedSiblingPreservesFullSnapshot) {
   auto Aux = NdType::makeNamedRecord("CAuxData", 64);
   Aux->FieldDisplayNames = {"m_type"};
   Aux->FieldDisplayOffsets = {24};
@@ -39997,11 +39997,16 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   Builder.CreateCondBr(Cmp, Miss, Then);
 
   llvm::IRBuilder<> ThenBuilder(Then);
-  llvm::Value *UnkHome = ThenBuilder.CreateAlloca(I64, nullptr, "unk_home");
-  ThenBuilder.CreateStore(llvm::UndefValue::get(I64), UnkHome);
+  // The branch's call result does not supply these bytes. Snapshot all
+  // sixteen initialized bytes, then overwrite the source before the second
+  // copy. Both destinations must retain the same complete snapshot.
+  auto *Payload = ThenBuilder.CreateLoad(I128, Function->getArg(0), "payload");
+  Payload->setAlignment(llvm::Align(1));
+  ThenBuilder.CreateStore(Payload, AuxP);
   llvm::Value *Wide = ThenBuilder.CreateLoad(I128, AuxP, "wide");
   ThenBuilder.CreateStore(Wide, Home);
-  ThenBuilder.CreateStore(ThenBuilder.CreateLoad(I64, UnkHome, "unk_ld"), AuxP);
+  ThenBuilder.CreateStore(llvm::ConstantInt::get(I64, 0x9876543210abcdef),
+                          AuxP);
   ThenBuilder.CreateStore(Wide, Sib);
   ThenBuilder.CreateStore(llvm::ConstantInt::get(I64, 43), Pack);
   ThenBuilder.CreateStore(Home, Vals);
@@ -40028,14 +40033,45 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
             std::string::npos)
       << Source;
-  // The packed sibling takes the call result.
-  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
-            std::string::npos)
-      << Source;
+  // The preceding call controls the branch only. It cannot replace a
+  // word of either sixteen-byte copy.
+  EXPECT_EQ(Source.find("= period;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_memcpy"), std::string::npos) << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
       << Source;
   EXPECT_EQ(Source.find("pAuxData._Ptr = 0"), std::string::npos) << Source;
+  compileAndRunCallOrdering("#include <stdint.h>\n#include <string.h>\n" +
+                                Source + R"c(
+static unsigned period_calls, lookup_calls, bad_bytes;
+uint32_t GetPeriodID(void *input) {
+  ++period_calls;
+  return (uint32_t)(*(const uint8_t *)input) + 1;
+}
+void *LookupTextW(void *input, void *key, void *args) {
+  const uint8_t *record = (const uint8_t *)args;
+  uint64_t types;
+  void *values;
+  memcpy(&types, record, 8);
+  memcpy(&values, record + 8, sizeof(values));
+  ++lookup_calls;
+  if (key || types != 43 ||
+      memcmp(values, input, 16) ||
+      memcmp((const uint8_t *)values + 16, input, 16))
+    ++bad_bytes;
+  return input;
+}
+int main(void) {
+  uint8_t input[16];
+  for (unsigned seed = 0; seed != 256; ++seed) {
+    for (unsigned i = 0; i != sizeof(input); ++i)
+      input[i] = (uint8_t)(seed * 37 + i * 19);
+    leftover_eax(input);
+  }
+  return bad_bytes || period_calls != 256 || lookup_calls != 256;
+}
+)c",
+                            /*TrapUndefined=*/true);
 }
 
 TEST(LLVMCPointerAddresses, LeftoverEaxNarrowStoreThenWideCopyTakesCallResult) {
@@ -40332,8 +40368,7 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
   EXPECT_EQ(Calls, 1u) << Source;
 }
 
-TEST(LLVMCPointerAddresses,
-     LeftoverEaxPackedSiblingTakesCallResultThroughInvoke) {
+TEST(LLVMCPointerAddresses, PackedSiblingPreservesFullSnapshotThroughInvoke) {
   auto Aux = NdType::makeNamedRecord("CAuxData", 64);
   Aux->FieldDisplayNames = {"m_type"};
   Aux->FieldDisplayOffsets = {24};
@@ -40466,11 +40501,16 @@ TEST(LLVMCPointerAddresses,
        llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(Ptr))});
 
   llvm::IRBuilder<> ThenBuilder(Then);
-  llvm::Value *UnkHome = ThenBuilder.CreateAlloca(I64, nullptr, "unk_home");
-  ThenBuilder.CreateStore(llvm::UndefValue::get(I64), UnkHome);
+  // The branch's call result does not supply these bytes. Snapshot all
+  // sixteen initialized bytes, then overwrite the source before the second
+  // copy. Both destinations must retain the same complete snapshot.
+  auto *Payload = ThenBuilder.CreateLoad(I128, Function->getArg(0), "payload");
+  Payload->setAlignment(llvm::Align(1));
+  ThenBuilder.CreateStore(Payload, AuxP);
   llvm::Value *Wide = ThenBuilder.CreateLoad(I128, AuxP, "wide");
   ThenBuilder.CreateStore(Wide, Home);
-  ThenBuilder.CreateStore(ThenBuilder.CreateLoad(I64, UnkHome, "unk_ld"), AuxP);
+  ThenBuilder.CreateStore(llvm::ConstantInt::get(I64, 0x9876543210abcdef),
+                          AuxP);
   ThenBuilder.CreateStore(Wide, Sib);
   ThenBuilder.CreateStore(llvm::ConstantInt::get(I64, 43), Pack);
   ThenBuilder.CreateStore(Home, Vals);
@@ -40503,10 +40543,10 @@ TEST(LLVMCPointerAddresses,
   EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
             std::string::npos)
       << Source;
-  // The packed sibling takes the call result.
-  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
-            std::string::npos)
-      << Source;
+  // The preceding call controls the branch only. It cannot replace a
+  // word of either sixteen-byte copy.
+  EXPECT_EQ(Source.find("= period;"), std::string::npos) << Source;
+  EXPECT_NE(Source.find("__builtin_memcpy"), std::string::npos) << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("var_m18 = pAuxData"), std::string::npos) << Source;
   EXPECT_EQ(Source.find("pAuxData.types_ = 0 /* unknown */"), std::string::npos)
@@ -41959,13 +41999,15 @@ TEST(LLVMCPointerAddresses, CorpusFuncLoadSehProbeHasSingleWin64Arg) {
   EXPECT_EQ(Source.find("*(uint64_t*)0"), std::string::npos) << Source;
 }
 
-// A load certified immutable by MedIR can fold to its exact exception code.
+// A load certified immutable by MedIR can fold to its exact exception code,
+// including the signed decimal spelling converted by the uint32_t parameter.
 // Otherwise the LLVM projection must preserve its captured volatile value.
 void expectCapturedSehExceptionCode(const std::string &Source) {
   const auto Folded = lastCallArguments(
       sourceLineContaining(Source, "    RaiseException("), "RaiseException");
   if (Folded && Folded->size() == 4 &&
-      ((*Folded)[0] == "3762425857" || (*Folded)[0] == "0xE0421001")) {
+      ((*Folded)[0] == "3762425857" || (*Folded)[0] == "0xE0421001" ||
+       (*Folded)[0] == "-532541439")) {
     for (size_t I = 1; I < Folded->size(); ++I)
       EXPECT_EQ(llvm::StringRef((*Folded)[I]).trim(), "0") << Source;
     return;

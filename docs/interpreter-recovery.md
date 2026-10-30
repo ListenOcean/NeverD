@@ -621,3 +621,77 @@ An incomplete address domain or unavailable immutable span retains the whole run
 ## Internal transfers after changing the stack
 
 Explicit raw machine regions can follow internal near CALL and RET instructions when the current stack pointer is no longer an entry-relative value. The architecture adapter retains the physical target capture, push, return-word read and pop. Every internal return still requires an exhaustive finite target proof from the actual stack word. Only proved entry-relative return cells enter the frame projection and preservation inventory; losing an unrelated stack relation at a graph boundary can still cause recovery to refuse. Ordinary function recovery retains its restored-frame requirements. This capability supplies a raw region result; whole-function composition and source or native equivalence remain separate obligations.
+
+<!-- i18n-section: store-separation-proofs -->
+
+## Optional store separation proofs
+
+`--vm-prove-store-return-separation` proves that each complete write misses retained return cells, saved frame pointers and current scalar frame cells before preserving them. `--vm-prove-store-frame-separation` also checks the declared frame and current absolute cells; it requires `--vm-machine-state` and `--vm-entry-frame`. Both require `--devirtualize`, default to disabled, share existing proof/work budgets and add no nonalias premise. Unproved writes keep ordinary invalidation; incomplete recovery publishes no source. Combine them with existing chain controls when a loop should remain a loop.
+
+The v9 APIs `neverd_devirtualize_source_v9` and `neverd_devirtualize_machine_source_v9` accept `neverd_devirtualize_options_v9`. Zero-initialize it and set the v1 prefix’s `struct_size` to the complete size. The flags are `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION` and `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`; `reserved` must be zero. Older entry points ignore this tail. Python exposes `NeverDDevirtualizeOptionsV9` and `DevirtualizeFlagsV9`. Reports include `proveStoreReturnSlotSeparation` and `proveStoreFrameSeparation`. The source regression runs an indexed local-array loop through both C routes at O0/O2 with ASan/UBSan and checks the entire supplied stack storage.
+
+With either proof strategy enabled, recovery also retains exhaustively proved finite register offsets from the entry frame across control-flow nodes. Joins take the union of incoming offsets; missing facts or a union exceeding the existing control-tuple limit become unknown. This retains no cross-register correlation and adds no aliasing premise.
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## Finite indexed frame reads
+
+An ordinary `LOAD` with an exhaustively proved finite set of entry-frame offsets reads the current frame bytes at every candidate and retains a conditional symbolic value. The runtime read stays in the residual, with its full width and byte order. External origin requires that provenance for every byte at every candidate. Unknown bytes and invalidated values remain unknown; incomplete enumeration keeps ordinary symbolic memory behavior. Existing control-tuple, solver, node and operation budgets apply. This creates no immutable-read witness or new nonalias contract.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Runtime validity across graph boundaries
+
+With control-state discovery enabled, a nonconstant runtime validity predicate can request the producer bits lost at a graph boundary. Recovery then retries under the existing shared budgets and must prove validity for every reachable incoming state. This preserves established alignment and masked control-register values across nodes and loops; it does not assume that rejected states are impossible or remove the original runtime operation.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Ordered CPU queries in C++ source recovery
+
+`wrapInterpreterMachineQueryStateX64()` is an opt-in C++ source interface. Its 160-byte state keeps the original 136-byte machine prefix, then three 64-bit fields: query-array address, count and cursor. Each 24-byte record contains six 32-bit words: leaf, subleaf, EAX, EBX, ECX and EDX. Canonical CPUID instructions consume one matching record in order and zero-extend all four results; repeated selectors may have different answers. No host CPU instruction provides answers.
+
+Exhaustion returns status 3 and selector mismatch returns 4. Both stop before that query, commit the current machine state, retain earlier guest memory effects and leave the cursor unchanged. Entry-alignment rejection still returns 2 without writes. The caller must provide an accessible, immutable, nonwrapping array disjoint from state and guest memory; zero count permits a null address. Existing machine-state and flag-profile contracts still apply. This interface adds no native-equivalence or hardware-serialization support. Existing wrappers still refuse CPU queries, and other unsupported intrinsics and raw environments remain rejected.
+
+<!-- i18n-section: xmm-query-source -->
+
+## Explicit XMM source state
+
+`wrapInterpreterMachineQueryStateX64V2()` uses a separate 416-byte layout: the unchanged 160-byte query-state prefix followed by XMM0–XMM15, each stored as low and high 64-bit words. Eight-byte state alignment suffices. Every XMM byte is loaded at entry and committed at ordinary returns and query-failure exits. Query and entry-alignment statuses retain their earlier meanings.
+
+This C++ interface admits whole 128-bit XMM operands and reconstructs instruction-local temporary reads from their current byte definitions, preserving partial overwrites. Missing bytes and function-temporary aliases fail explicitly. Only exact constant-address alignment checks proved by the architecture owner can be removed; dynamic or malformed checks remain refused. Partial XMM operands, wider vector banks and floating-point environments remain unsupported. This adds no native-equivalence support; earlier wrappers retain their layouts and restrictions.
+
+<!-- i18n-section: source-abi-v10 -->
+
+## Selecting the source layout through CLI and SDK
+
+Use `--vm-source-abi=scalar|queries|xmm` with `--devirtualize --vm-machine-state`. The default `scalar` retains 136 bytes; `queries` selects the 160-byte ordered-query state; `xmm` selects the 416-byte query and XMM state described above. Reports identify `sourceABI` and `sourceStateBytes`, and generated C describes the matching storage contract.
+
+The v10 C APIs `neverd_devirtualize_source_v10()` and `neverd_devirtualize_machine_source_v10()` accept `neverd_devirtualize_options_v10`. Zero-initialize it, set the v1 prefix’s `struct_size` to the full size and select `machine_source_abi` using `NEVERD_DEVIRTUALIZE_MACHINE_SCALAR_V1`, `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_V1` or `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_XMM_V2`. Unknown selectors, nonzero reserved fields and extended layouts with ordinary source reject. Older APIs ignore the new tail; v10 ignores future tails. Null options retain scalar defaults. Python exposes `NeverDDevirtualizeOptionsV10` and `DevirtualizeMachineSourceABI`. Native certification is unchanged.
+
+<!-- i18n-section: gui-interpreter-recovery -->
+
+## Interpreter recovery in the desktop
+
+In a C source view, use **Recover interpreter function**. **Interpreter recovery options…** selects state storage, work limits and explicit entry-frame premises; defaults add no frame, alignment or separation assumption. **Interpreter recovery report…** retains the engine diagnostics. Cancellation or an incomplete result keeps the preceding source. **Return to ordinary source** restores the normal view.
+
+The worker accepts `source_options.interpreter_recovery` as the only source option and calls C SDK v10. It caches and pages the completed C unchanged, without ordinary-source variable edits or invented instruction mappings. The full report appears on the first page; `source_available` distinguishes generated source from a stopped recovery. This does not certify native equivalence.
+
+<!-- i18n-section: machine-region-source -->
+
+## Checked machine-region source
+
+The opt-in C++ `wrapInterpreterMachineRegionSourceX64()` in `neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h` accepts a complete recovery result and independently expected options. It validates the entire raw graph, environment and physical exits before source lowering, and retains the original receipt. Ordinary wrappers still refuse raw domains. This adapter is not exposed through the CLI, C SDK or GUI.
+
+`InterpreterMachineRegionStateX64V1` is a separate 432-byte layout: the 416-byte query/XMM prefix, `PC` at 416 and `ExitKind` at 424. The function fixes its entry; these fields are outputs. Successful CALL/JMP/RET exits retain the actual target and physical stack effects, commit all supported state and stop before executing the target. Exit kinds are 1/2/3. Status 3/4 stops before an exhausted/mismatched query, with its original PC and kind 0; earlier effects remain. Status 2 leaves all state unchanged on alignment rejection. Status 1 provides no valid continuation.
+
+The adapter admits only the user nonfaulting profile and existing scalar/query/XMM operations. Traps, extra architectural banks, entry objects and supplemental code/import declarations are refused even when unused. Guest memory needs byte-copy or alignment-1 alias emission. Retain all caller memory/frame premises; only alignment is checked at runtime. The interface provides neither callee summaries, continuation composition, ordinary ABI recovery nor whole-function/native-equivalence certification. `InterpreterMachineRegionSourceTest.*` checks both C backends at O0/O2, full state and aliased stack bytes, multiple exits, query/alignment stops, and mutated or unsupported declarations.
+
+Architectural undefined outputs retain LowIR's selected implementation values. Matching a processor's choices, or proving those choices irrelevant to native observations, requires an independent environment or noninterference proof; this source receipt supplies neither.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Pending trap exits
+
+The overload taking `InterpreterMachineRegionSourceOptions` permits `StopBeforeTraps = true`. It retains the same 432-byte layout and emits `TrapPending` (4), with `PC` naming the original trap and all supported state immediately before that instruction. Earlier guest effects remain; the trap itself, exception-frame creation, handler execution and resumption are not performed. The default overload still refuses trap declarations, including unused ones. Exact trap identity and audit metadata remain authenticated by the raw-region owner; this option supplies no new architectural evidence. Query and alignment stops keep their existing statuses and state contracts.
+
+Validated regions also retain canonical dynamic `RequireAligned` operations. Both C backends keep their fail-fast guards; a violated instruction-alignment requirement supplies neither committed state nor exception continuation. Ordinary machine wrappers keep their existing restrictions.

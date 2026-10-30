@@ -98,8 +98,11 @@ bool incomingArgumentReachesCall(const AbiCallContext &C, int ArgIndex) {
   return ReachedEntry;
 }
 
-std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
-  using Stores = std::map<int64_t, MedVar>;
+std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C,
+                                               CallSetupStackJoins *Joins) {
+  using Stores = std::map<int64_t, CallSetupStackValue>;
+  if (Joins)
+    *Joins = {};
   const int64_t Word = C.Layout.SlotBytes;
   const int64_t Base = C.Layout.CallStackBase;
   if (Word <= 0 || C.MaxArgs <= 0 || Base < 0)
@@ -114,7 +117,18 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
   if (!Blocks.unique())
     return {};
   std::set<int> Active;
-  auto same = [](const MedVar &A, const MedVar &B) {
+  const auto bytes = [&](const CallSetupStackValue &Value) {
+    if (const auto *Scalar = std::get_if<MedVar>(&Value))
+      return Scalar->Size;
+    return Joins->Nodes[std::get<size_t>(Value)].Bytes;
+  };
+  auto same = [](const CallSetupStackValue &Left,
+                 const CallSetupStackValue &Right) {
+    if (Left.index() != Right.index())
+      return false;
+    if (const auto *Node = std::get_if<size_t>(&Left))
+      return *Node == std::get<size_t>(Right);
+    const auto &A = std::get<MedVar>(Left), &B = std::get<MedVar>(Right);
     return A.Kind == B.Kind && A.Id == B.Id && A.SSAVer == B.SSAVer &&
            A.Size == B.Size && A.RegOff == B.RegOff && A.TheArch == B.TheArch &&
            A.Provenance == B.Provenance &&
@@ -174,6 +188,9 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
       }
     }
     Stores Common;
+    std::map<int64_t, std::vector<std::pair<int, CallSetupStackValue>>>
+        IncomingJoins;
+    const bool JoinHere = Joins && B.Preds.size() > 1;
     if (Inherit && !Independent && B.ExceptionalPreds.empty() &&
         !B.Preds.empty() && B.StartAddr != C.Func.Entry) {
       bool First = true;
@@ -183,11 +200,19 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
         if (!Remaining || !Preds.insert(Id).second || !P ||
             std::count(P->Succs.begin(), P->Succs.end(), B.Id) != 1) {
           Common.clear();
+          IncomingJoins.clear();
           break;
         }
         --Remaining;
         Stores Incoming = Visit(*P, P->Ops.size(), Depth + 1);
         if (First) {
+          if (JoinHere)
+            for (const auto &[Offset, Value] : Incoming) {
+              if (!Remaining)
+                return {};
+              --Remaining;
+              IncomingJoins[Offset].emplace_back(Id, Value);
+            }
           Common = std::move(Incoming);
           First = false;
         } else {
@@ -195,19 +220,59 @@ std::map<int64_t, MedVar> callSetupStackStores(const AbiCallContext &C) {
             const auto Other = Incoming.find(Item.first);
             return Other == Incoming.end() || !same(Item.second, Other->second);
           });
+          for (auto It = IncomingJoins.begin(); It != IncomingJoins.end();) {
+            if (!Remaining)
+              return {};
+            --Remaining;
+            const auto Other = Incoming.find(It->first);
+            const auto &FirstValue = It->second.front().second;
+            if (Other == Incoming.end() ||
+                bytes(FirstValue) != bytes(Other->second)) {
+              It = IncomingJoins.erase(It);
+            } else {
+              It->second.emplace_back(Id, Other->second);
+              ++It;
+            }
+          }
         }
-        if (Common.empty())
+        if (Common.empty() && IncomingJoins.empty())
           break;
       }
     }
-    for (int64_t Slot : Overwritten)
+    for (int64_t Slot : Overwritten) {
       Common.erase(Slot);
+      IncomingJoins.erase(Slot);
+    }
     Common.insert(Local.begin(), Local.end());
+    if (JoinHere) {
+      for (const auto &[Offset, Value] : Common)
+        IncomingJoins.erase(Offset);
+      for (auto &[Offset, Args] : IncomingJoins) {
+        if (!Remaining)
+          return {};
+        --Remaining;
+        const size_t Index = Joins->Nodes.size();
+        const uint16_t Bytes = bytes(Args.front().second);
+        Joins->Nodes.push_back({B.Id, Bytes, std::move(Args)});
+        Common.emplace(Offset, Index);
+      }
+    }
     Active.erase(B.Id);
     return Common;
   };
-  Stores Result = Visit(C.Blk, C.CallIdx, 0);
-  return Remaining ? Result : Stores{};
+  const Stores Reaching = Visit(C.Blk, C.CallIdx, 0);
+  if (!Remaining) {
+    if (Joins)
+      *Joins = {};
+    return {};
+  }
+  std::map<int64_t, MedVar> Result;
+  for (const auto &[Offset, Value] : Reaching)
+    if (const auto *Scalar = std::get_if<MedVar>(&Value))
+      Result.emplace(Offset, *Scalar);
+    else
+      Joins->Slots.emplace(Offset, std::get<size_t>(Value));
+  return Result;
 }
 
 // Address = Base + Offset modulo the original address width. Offset owns the

@@ -808,6 +808,16 @@ cl::opt<bool>
     LlvmRoute("llvm", cl::desc("Emit LLVM-to-C (goto-style) instead of HighC"),
               cl::sub(DecompileCmd), cl::sub(ExportCmd));
 
+cl::opt<std::string> X64Continuation(
+    "x64-continuation",
+    cl::desc("Export explicit x64 state C using a declared request JSON"),
+    cl::value_desc("path"), cl::sub(DecompileCmd));
+cl::opt<std::string>
+    ContinuationReport("continuation-report",
+                       cl::desc("Write the exact instruction and state "
+                                "manifest for --x64-continuation"),
+                       cl::value_desc("path"), cl::sub(DecompileCmd));
+
 cl::opt<bool> Devirtualize(
     "devirtualize",
     cl::desc("Recover an x64 interpreter (experimental; requires --func)"),
@@ -846,6 +856,11 @@ cl::opt<bool> VMMachineState(
     cl::desc(
         "Explicit x64 state ABI; normal nonfaulting CPL3 execution, CET off"),
     cl::sub(DecompileCmd));
+cl::opt<std::string> VMMachineSourceABI(
+    "vm-source-abi",
+    cl::desc("Machine source storage: scalar, queries or xmm (requires "
+             "--vm-machine-state)"),
+    cl::init("scalar"), cl::sub(DecompileCmd));
 cl::list<std::string> VMControlRegisters(
     "vm-control",
     cl::desc("Full GPR used to separate interpreter contexts (repeatable)"),
@@ -918,6 +933,14 @@ cl::opt<bool> VMNoControlDiscovery(
     "vm-no-control-discovery",
     cl::desc("Disable automatic recovery control-state discovery"),
     cl::init(false), cl::sub(DecompileCmd));
+cl::opt<bool> VMProveStoreReturnSeparation(
+    "vm-prove-store-return-separation",
+    cl::desc("Prove each store avoids return and retained frame cells"),
+    cl::sub(DecompileCmd));
+cl::opt<bool> VMProveStoreFrameSeparation(
+    "vm-prove-store-frame-separation",
+    cl::desc("Prove store separation from declared frame and absolute cells"),
+    cl::sub(DecompileCmd));
 cl::opt<uint64_t>
     VMMaxOperations("vm-max-operations", cl::desc("Recovery operation budget"),
                     cl::init(::neverd::limits::cli::kDefaultVMMaxOperations),

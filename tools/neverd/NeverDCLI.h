@@ -291,6 +291,8 @@ extern llvm::cl::opt<std::string> VMChainTransfers;
 extern llvm::cl::opt<std::string> VMChainVisits;
 extern llvm::cl::opt<bool> VMChainStopAtRepeat;
 extern llvm::cl::opt<std::string> VMEntryFrame;
+extern llvm::cl::opt<bool> VMProveStoreReturnSeparation;
+extern llvm::cl::opt<bool> VMProveStoreFrameSeparation;
 extern llvm::cl::opt<std::string> VMEntryAlignment;
 extern llvm::cl::opt<bool> VMExternalStoresDisjointFrame;
 extern llvm::cl::opt<std::string> VMMaxSymbolicNodes;
@@ -298,6 +300,7 @@ extern llvm::cl::opt<bool> VMNoControlDiscovery;
 extern llvm::cl::opt<uint64_t> VMMaxOperations;
 extern llvm::cl::opt<std::string> VMRecoveryReport;
 extern llvm::cl::opt<bool> VMMachineState;
+extern llvm::cl::opt<std::string> VMMachineSourceABI;
 
 int runMobile(const char *Argv0);
 extern llvm::cl::opt<std::string> MobilePlatform;
@@ -365,6 +368,8 @@ extern llvm::cl::opt<bool> DumpHigh;
 
 // Decompile.
 extern llvm::cl::opt<bool> LlvmRoute;
+extern llvm::cl::opt<std::string> X64Continuation;
+extern llvm::cl::opt<std::string> ContinuationReport;
 extern llvm::cl::opt<bool> SourceSymbolic;
 extern llvm::cl::opt<bool> StackFrameInfo;
 extern llvm::cl::opt<std::string> StackFrameFile;
@@ -829,6 +834,7 @@ bool configureAnalysisSession(neverd_session_t Sess);
 int runPlugins(const char *Argv0);
 int runLift(neverd_session_t Sess);
 int runDecompile(neverd_session_t Sess);
+int runX64Continuation(neverd_session_t Sess);
 int runPatch(neverd_session_t Sess);
 
 } // namespace neverd::cli

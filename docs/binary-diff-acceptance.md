@@ -93,6 +93,31 @@ coordinate-level adjudication; it is not relabelled as an identical result.
 The subsequent nine-report delivery replay is identical outside timings.
 The existing source-identity truth, exclusions and numeric gates are unchanged.
 
+The later integration of neutral locked logical operations (`52d4c2a59c`)
+changes 383 distinct SQLite function inventories. Every original native row is
+unchanged; 522 removed block boundaries and six restored fallthrough edges occur
+immediately after `LOCK OR memory,0`. The upstream implementation retains the
+atomic transaction and logical flags. These are coverage changes, separate from
+function-matching quality. In the consumed zstd assembly input, an additional
+unmatched, incomplete candidate lies inside a hand-written `NOTYPE` assembly
+routine, and an existing interior candidate's recovered extent changes. These
+unlabelled function boundaries remain unqualified. All nine prior report pairs
+retain exactly the same accepted associations and labelled scores; full report
+equality is not claimed across these analysis changes.
+
+The subsequent shared discovery fix recovers all four addressed hand-written
+assembly bodies in the two consumed zstd inputs. Their original instruction
+bytes and complete CFGs are checked independently of the partial source-body
+truth, and both assembly routines pair with their corresponding release
+versions. Reachable code refutes the interior padding/data guesses; independent
+symbols, calls and relocations remain separate entry evidence. A referenced
+ENDBR64 keeps long bodies available for formal analysis without relaxing that
+analysis's unsupported-instruction handling. The SDK retains the complete
+function body, and changed native snapshots refuse stale live restoration
+without replacing the current comparison. This closes the identified zstd
+assembly boundary defect; it does not relabel the original failed release
+qualification or establish coverage of all native discovery cases.
+
 Matcher version 9 adds bounded mnemonic/CFG candidate groups when instruction
 sketches are too common. Direction/layout controls above the exhaustive-pair
 limit recover distinct bodies while retaining true duplicates as ambiguous.
@@ -110,6 +135,80 @@ The scope is x64 ELF, GCC/Clang O2 and partial unique source-body correspondence
 Git's GNU C11 compatibility amendment preceded truth preparation and comparison.
 Unlabelled mappings remain unscored. This does not close the failed original
 cohort or qualify other advanced areas, common-input fairness or superiority.
+
+The subsequent XZ Utils 5.4.6 optimization cohort failed its frozen precision,
+recall and macro-F1 gates. GCC 15.2 O2 was compared with LTO, PGO and combined
+PGO/LTO in both directions using the frozen `ab55f7f3cb57` native runtime.
+All six mapping runs and their independent score replay completed; the six
+cases are correlated builds/directions of one project, not independent cohorts.
+Each built program passed six compression/decompression roundtrips. Profile-use
+builds reject missing profiles and coverage mismatches; unused static-archive
+units have explicitly registered zero counts, which do not establish execution
+coverage. The original failed qualification remains retained, and these inputs
+are now development data. These results leave compiler-optimization matching
+quality open.
+
+Matcher version 10 retains a helper and its tail caller as separate identity
+candidates when the changed helper body also contains the caller's complete
+straight-line prelude. Independent instruction contribution and reference-aware
+alignment constrain the deferral; it does not assert source ancestry. Authored
+core/native controls cover direction, layout, multiple inlining destinations,
+negative examples, analyst choices, persistence and thread-count consistency.
+The consumed XZ replay removes the helper-as-caller misassociation in all four
+LTO-containing directions without losing a correct labelled pair. Pure PGO
+results are unchanged. The original numeric gates still fail, and the original
+failed cohort remains retained.
+
+Matcher version 11 adds a bounded candidate key for complete instruction bodies
+that differ in NOP padding, an entry ENDBR marker or address layout. It retains
+scalar operands and measures original instructions and references before any
+pair is accepted. Authored scale controls cover missed short bodies, misleading
+partial instruction pairs, duplicate candidates, direction, layout and analyst
+rejections. The six consumed XZ directions recover four additional labelled
+pairs and remove four wrong pairs without losing a correct pair. The nine
+other consumed release cases preserve every previously correct labelled pair
+and add no wrong pair. The added key is used only when the full instruction
+streams differ, so unchanged-layout duplicates do not expand the search. The broader
+unordered-sketch and partial-pair experiments that regressed these inputs were
+rejected, and their results are retained. These are development regressions,
+not fresh qualification: the original XZ and zstd/OpenSSL gates still fail.
+
+Matcher version 12 adds a final review of bounded complete-entry candidates.
+It retains stronger omitted bodies as alternatives and defers unsupported weak
+pairs without automatically accepting a shared-entry identity. Across all nine
+consumed release cases and six XZ directions, every previously correct labelled
+pair remains and no new wrong pair appears. The combined PGO/LTO cases each
+remove one wrong pair, in opposite directions; automatic correct-pair counts
+are unchanged. These two observations concern one correlated source-body pair,
+not two independent discoveries. Earlier experiments that admitted entry
+candidates during propagation regressed existing matches and were rejected.
+The final design preserves names, exact bodies, analyst decisions and independent
+mapped-neighbor support. Authored controls cover large candidate pools, direction,
+duplicates, names/references, confirmation, rejection, persistence and undo.
+The original numeric gates remain unchanged and failed; this is development
+regression evidence, not fresh optimization-profile qualification.
+
+Matcher version 13 repairs displaced unique single-call blocks after the
+ordinary block alignment, rather than globally changing call/graph precedence.
+A consumed XZ O2/PGO+LTO pair reproduces an unchanged stack-check failure call
+misaligned with its preceding check in both directions. The native regression
+now aligns that call, retains the branch inversion and modeled fallthrough
+difference, and preserves manual pairing, original rows and exact saved undo/
+redo/reopen. All fifteen consumed cases retain every prior correct labelled
+pair and introduce no new wrong pair; automatic pair counts are unchanged.
+Broader call-priority and neighbor-consistency experiments regressed existing
+pairs and were rejected. The sibling query's swapped stack slots remain a
+separate unresolved ranking problem, and the original XZ/zstd/OpenSSL numeric
+gates remain failed. This is a structural-alignment correction, not new
+optimization-profile qualification or semantic equivalence evidence.
+
+The DWARF adapter now follows an LTO concrete body's abstract-origin chain to
+its original definition unit. A specification declaration supplies its own
+file metadata without replacing that definition unit. Multi-unit local names,
+aliases and origin cycles are covered separately. Eligible source-body labels
+for the previous zstd, OpenSSL, Git, libarchive and FFmpeg inputs are unchanged;
+older FFmpeg exclusion records differ only by subsequently added end bounds.
+The original full-inventory equality failure and its adjudication are both kept.
 
 Retained SQLite, curl and FFmpeg reports also exercise a seven-snapshot offline
 collection: all association edges are checked against their source reports,

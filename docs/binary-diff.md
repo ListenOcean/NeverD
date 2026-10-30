@@ -64,6 +64,56 @@ otherwise identical wrappers after layout changes. Their original bytes remain
 inspectable; separate normalized features, names and call context can still
 establish correspondence, while indistinguishable candidates remain ambiguous.
 
+Matcher version 10 also defers a similar helper body when its changed entry
+contains the complete straight-line prelude of an unmatched direct tail caller,
+with at least two caller instructions beyond the helper's aligned body. Both
+the helper and caller remain candidates under `inlined_tail_call`, in either
+comparison direction. Unknown address identities can support this ambiguity;
+they do not establish identity or equivalence. This check reuses reference-aware
+instruction alignment and respects stated names and analyst decisions. It
+recognizes this boundary pattern, not arbitrary compiler inlining or outlining.
+Saved comparisons reject this candidate-only step on an accepted match. Failed
+restoration preserves the current comparison and its undo/redo history.
+
+Matcher version 11 also proposes candidates whose complete instruction streams
+agree after excluding NOP padding and an entry ENDBR marker. These layout edits
+can break every shared three-instruction sketch band and whole-function graph
+key in a short function. The added channel requires different original
+instruction streams, so it does not expand unchanged-layout duplicate groups.
+The additional key retains scalar operands and
+abstracts address identities only for candidate retrieval. Reference-aware
+measurement, ambiguity decisions, analyst rejections and the existing
+candidate/bucket limits still govern acceptance. Original bytes, landing
+instructions and padding remain in the reported delta. This is structural
+matching evidence, not a proof of semantic equivalence or unchanged protection.
+
+Matcher version 12 reviews remaining alternatives after correspondence has
+settled. A complete call-free conditional entry can retrieve a changed body
+whose whole-function graph and instruction sketch no longer agree. The entry
+key retains scalar operands and excludes only NOP padding and an entry ENDBR
+marker. The existing bucket and per-function candidate limits bound this review.
+Original instructions and references determine the similarity.
+
+An entry-only alternative remains available for review; it never automatically
+establishes identity. If it clearly exceeds a weak accepted pair by the existing
+ambiguity margin, that pair becomes ambiguous and both choices remain available.
+Names, exact bodies, analyst choices/confirmations and pairs supported by mapped
+neighbors are preserved. Reviewing against a settled map keeps this additional
+retrieval channel from changing the order of matching propagation. Approximation
+must be enabled; rejected choices stay excluded. Save/reopen and the counterpart
+picker retain the alternatives, and manual choice and undo use the same core
+correspondence editor.
+
+Matcher version 13 repairs block alignment when a removed guard or reordered
+failure path displaces a known single-call block. The call must be unique among
+the function's complete resolved call sequences and lie at an exit on at least
+one side. The affected alignment is rebuilt around that call, preserving
+uncertain or retargeted calls and duplicate-call alternatives. This avoids
+reporting an unchanged call as deleted or replaced by a neighboring check.
+Original branch inversions, inserted/deleted instructions and modeled
+fallthrough differences remain visible. This structural alignment repair does
+not establish function identity or infer that a call cannot return.
+
 ## Command line
 
 ```sh

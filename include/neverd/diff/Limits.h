@@ -53,23 +53,25 @@ inline constexpr uint32_t kMinConstantSetSize = 2;
 /// Fewest distinct imports a function calls before that set may propose
 /// it.
 inline constexpr uint32_t kMinImportCallSetSize = 2;
-/// Fewest instructions before a function's normalized body alone may pair
-/// it.  Below this a body such as `ret` or a jump to an import is shared by
-/// many functions and only context tells them apart.
+/// Fewest instructions before a function's normalized body may pair it or its
+/// body without layout padding may propose it. Below this a body such as `ret`
+/// or a jump to an import is shared by many functions and only context tells
+/// them apart.
 inline constexpr uint32_t kMinShapeInstructions = 3;
 /// Largest group of functions sharing one feature that a drill-down splits by
 /// the next features.  Larger groups stay unresolved for context to split.
 inline constexpr size_t kMaxDrillDownGroup = 4096;
-/// Best quick-scored candidates each unmatched function proposes for exact
-/// measurement. Proposals from both directions are measured together.
+/// Best quick-scored candidates each function proposes for approximate
+/// matching or entry review. Both directions share exact measurements.
 inline constexpr unsigned kDefaultMaxCandidates = 16;
 /// Ceiling a caller may raise kDefaultMaxCandidates to.
 inline constexpr unsigned kMaxCandidates = 256;
 /// Most unmatched pairs the approximate stage scores all of; beyond it,
 /// only informative feature buckets and neighbors propose candidates.
 inline constexpr size_t kMaxExhaustiveCandidatePairs = 1u << 16;
-/// Most functions one sketch/mnemonic-CFG bucket or matched neighborhood may
-/// hold before it is dropped as uninformative (a feature most functions share).
+/// Most functions one sketch/entry/mnemonic-CFG bucket or matched neighborhood
+/// may hold before it is dropped as uninformative (a feature most functions
+/// share).
 inline constexpr size_t kMaxSketchBucket = 64;
 /// Least similarity an approximate pairing needs by default.
 inline constexpr double kDefaultMinimumSimilarity = 0.55;
@@ -80,6 +82,10 @@ inline constexpr double kDefaultMinimumContextSimilarity = 0.35;
 /// pairing is accepted; closer candidates without decisive call-position
 /// evidence stay ambiguous.
 inline constexpr double kDefaultAmbiguityMargin = 0.02;
+/// A tail caller must contribute more than a lone shared instruction to a
+/// changed helper body before a possible inlining defers whole-function
+/// identity.
+inline constexpr unsigned kMinTailPreludeContribution = 2;
 /// Rounds of global refinement; call and address chains use a growing worklist.
 inline constexpr unsigned kMaxPropagationRounds = 64;
 /// Dense storage threshold for call-sequence anchor alignment. Larger ranges
@@ -91,7 +97,8 @@ inline constexpr uint64_t kMaxCallAlignmentCells = 1u << 20;
 //===----------------------------------------------------------------------===//
 
 /// Fewest instructions a basic block needs before its byte-exact or
-/// normalized body alone may pair it in the global block passes.
+/// normalized body alone may pair it in the global block passes or its entry
+/// block may propose a changed function candidate.
 inline constexpr uint32_t kMinBlockHashInstructions = 2;
 /// Most cells retained in a dense instruction-alignment table. Larger ranges
 /// use exact weighted divide-and-conquer with linear score frontiers.

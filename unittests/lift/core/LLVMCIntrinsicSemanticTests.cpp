@@ -1678,6 +1678,61 @@ TEST(LLVMCIntrinsicSemantics, RepMovsRejectsUnprovedContracts) {
 }
 
 TEST(LLVMCIntrinsicSemantics,
+     TimestampPairRetainsUnusedReadsAndChecksContracts) {
+  for (bool Live : {false, true})
+    for (unsigned Mutation = 0; Mutation != 5; ++Mutation) {
+      llvm::LLVMContext C;
+      llvm::Module M("rdtscp", C);
+      M.setDataLayout("e-p:64:64-i64:64");
+      llvm::IRBuilder<> B(C);
+      auto *Fn = llvm::Function::Create(
+          llvm::FunctionType::get(B.getVoidTy(), false),
+          llvm::GlobalValue::ExternalLinkage, "sample", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+      auto *Native = llvm::Intrinsic::getOrInsertDeclaration(
+          &M, llvm::Intrinsic::x86_rdtscp);
+      auto *Call = B.CreateCall(Native);
+      B.CreateRetVoid();
+      switch (Mutation) {
+      case 1:
+        Call->setMemoryEffects(llvm::MemoryEffects::none());
+        break;
+      case 2:
+        Call->setCallingConv(llvm::CallingConv::Fast);
+        break;
+      case 3:
+        Call->addFnAttr(llvm::Attribute::Speculatable);
+        break;
+      case 4:
+        Call->addFnAttr(llvm::Attribute::NoReturn);
+        break;
+      }
+      if (Mutation) {
+        EXPECT_THROW(renderX86TimestampCall(Arch::X64, *Call, "answer", Live),
+                     std::invalid_argument);
+        continue;
+      }
+      const auto Rendered =
+          renderX86TimestampCall(Arch::X64, *Call, "answer", Live);
+      ASSERT_TRUE(Rendered);
+      EXPECT_NE(Rendered->Code.find("__rdtscp(&"), std::string::npos);
+      EXPECT_EQ(Rendered->Code.find("llvm_x86_rdtscp"), std::string::npos);
+      EXPECT_THROW(renderX86TimestampCall(Arch::AArch64, *Call, "answer", Live),
+                   std::invalid_argument);
+      if (Live) {
+        EXPECT_NE(Rendered->Code.find("answer.field_0"), std::string::npos);
+        EXPECT_NE(Rendered->Code.find("answer.field_1"), std::string::npos);
+      } else {
+        const auto Source = emit(M);
+        EXPECT_NE(Source.find("__rdtscp(&"), std::string::npos);
+        compileAndCheck("#include <stdint.h>\n#include <x86intrin.h>\n" +
+                            Source + "\nint main(void) { sample(); return 0; }",
+                        false, {}, "-O2");
+      }
+    }
+}
+
+TEST(LLVMCIntrinsicSemantics,
      LocalAddressKeepsTargetIntrinsicAndInitializesResult) {
   llvm::LLVMContext C;
   llvm::Module M("localaddress", C);
@@ -1697,6 +1752,81 @@ TEST(LLVMCIntrinsicSemantics,
   EXPECT_NE(Text.find("__asm__(\"llvm.localaddress\")"), std::string::npos)
       << Text;
   compileAndCheck(Text, true);
+}
+
+TEST(LLVMCIntrinsicSemantics, ReturnSlotAddressTracksTheCompiledFrame) {
+#if !defined(__x86_64__) && !defined(_M_X64)
+  GTEST_SKIP() << "the return-slot execution control requires x64";
+#endif
+  llvm::LLVMContext C;
+  llvm::Module M("return_slot", C);
+  M.setDataLayout("e-p:64:64");
+  llvm::IRBuilder<> B(C);
+  auto *Fn = llvm::Function::Create(
+      llvm::FunctionType::get(B.getInt64Ty(), {B.getInt64Ty()}, false),
+      llvm::GlobalValue::ExternalLinkage, "slot_matches", M);
+  B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+  auto *Storage = B.CreateAlloca(B.getInt8Ty(), Fn->getArg(0));
+  Storage->setAlignment(llvm::Align(64));
+  B.CreateStore(B.getInt8(37), Storage)->setVolatile(true);
+  auto *Last = B.CreateGEP(B.getInt8Ty(), Storage,
+                           B.CreateSub(Fn->getArg(0), B.getInt64(1)));
+  B.CreateStore(B.getInt8(37), Last)->setVolatile(true);
+  auto *Address = B.CreateIntrinsic(llvm::Intrinsic::addressofreturnaddress,
+                                    {B.getPtrTy()}, {});
+  auto *Expected = B.CreateIntrinsic(llvm::Intrinsic::returnaddress,
+                                     {B.getPtrTy()}, {B.getInt32(0)});
+  auto *Actual = B.CreateLoad(B.getInt64Ty(), Address);
+  auto *Marker = B.CreateLoad(B.getInt8Ty(), Last);
+  Marker->setVolatile(true);
+  B.CreateRet(B.CreateZExt(
+      B.CreateAnd(
+          B.CreateICmpEQ(Actual, B.CreatePtrToInt(Expected, B.getInt64Ty())),
+          B.CreateICmpEQ(Marker, B.getInt8(37))),
+      B.getInt64Ty()));
+  ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+  const auto Text = "#include <stdint.h>\n" + emit(M) + R"C(
+int main(void) {
+  for (unsigned n = 1; n <= 96; ++n)
+    if (!slot_matches(n)) return 1;
+  return 0;
+}
+)C";
+  for (auto Optimization : {"-O0", "-O2"})
+    for (auto Frame : {"-fomit-frame-pointer", "-fno-omit-frame-pointer"})
+      compileAndCheck(Text, false, {}, Optimization, true, {}, {Frame});
+}
+
+TEST(LLVMCIntrinsicSemantics, ReturnSlotAddressRejectsUnrepresentedTargets) {
+  for (auto Architecture : {Arch::X86, Arch::X64, Arch::AArch64})
+    for (unsigned Space : {0u, 1u}) {
+      SCOPED_TRACE(testing::Message()
+                   << unsigned(Architecture) << '/' << Space);
+      llvm::LLVMContext C;
+      llvm::Module M("return_slot", C);
+      M.setDataLayout(Architecture == Arch::X86 ? "e-p:32:32" : "e-p:64:64");
+      llvm::IRBuilder<> B(C);
+      auto *Pointer = B.getPtrTy(Space);
+      auto *Fn = llvm::Function::Create(llvm::FunctionType::get(Pointer, false),
+                                        llvm::GlobalValue::ExternalLinkage,
+                                        "get_slot", M);
+      B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Fn));
+      B.CreateRet(B.CreateIntrinsic(llvm::Intrinsic::addressofreturnaddress,
+                                    {Pointer}, {}));
+      ASSERT_FALSE(llvm::verifyModule(M, &llvm::errs()));
+      CEmitterOptions Options;
+      Options.TheArch = Architecture;
+      std::string Text;
+      llvm::raw_string_ostream Output(Text);
+      if (Space || Architecture == Arch::AArch64)
+        EXPECT_THROW(LLVMCEmitter().emit(M, Output, Options),
+                     std::invalid_argument);
+      else {
+        ASSERT_TRUE(LLVMCEmitter().emit(M, Output, Options));
+        EXPECT_NE(Text.find("llvm.addressofreturnaddress.p0"),
+                  std::string::npos);
+      }
+    }
 }
 
 TEST(LLVMCIntrinsicSemantics, IntegerAddressAdditionUsesIntegerArithmetic) {

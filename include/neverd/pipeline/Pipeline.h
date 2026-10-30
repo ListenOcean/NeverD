@@ -15,6 +15,7 @@
 #define NEVERD_PIPELINE_PIPELINE_H
 
 #include "neverd/analysis/InterpreterSpecialization.h"
+#include "neverd/analysis/arch/x86_64/InterpreterMachineSourceABI.h"
 #include "neverd/debug/DebugContext.h"
 #include "neverd/evm/EVMIR.h"
 #include "neverd/ir/FloatingCallArguments.h"
@@ -127,6 +128,9 @@ struct PipelineOptions {
   /// Experimental source recovery of one interpreter entry. Requires exactly
   /// one OnlyFunctionEntries element; never authorizes binary patching.
   std::optional<analysis::SpecializationOptions> InterpreterSpecialization;
+  /// Source storage only. Extended layouts require explicit machine recovery.
+  analysis::InterpreterMachineSourceABIKind InterpreterMachineABI =
+      analysis::InterpreterMachineSourceABIKind::ScalarV1;
   bool DumpLow = false;
   bool DumpMed = false;
   bool DumpHigh = false;
@@ -296,6 +300,12 @@ struct PipelineFunctionAudit {
   /// ownership; see LowFunc::UnprovenReturnAddresses.
   std::vector<va_t> UnprovenReturns;
   std::vector<va_t> TruncatedPaths;
+  /// Final CFG instruction starts and unsupported original-instruction sites,
+  /// collected only for a DeferMedIR view. Rejected functions retain this
+  /// metadata; it grants neither LowIR admission nor executable instruction
+  /// semantics. A state-source consumer must independently relift the selected
+  /// bytes.
+  std::vector<va_t> NativeInstructionAddresses;
   bool HasLowIR = false;
   bool HasMedIR = false;
   bool MedIRVerified = false;
@@ -316,6 +326,13 @@ struct OmittedCalleeBodies {
   /// Include direct callees whose arity is known but whose source types are
   /// not.
   bool IncludesSourceDeclarations = false;
+  /// Include bounded callees needed to distinguish an observed low register
+  /// prefix from obsolete full-width spill inputs in source projections.
+  bool IncludesSourceParameterReads = false;
+  /// Original blocks for source input-use/destruction proofs. Shared with
+  /// bounded conversions; optimized MedIR cannot certify physical exit state.
+  std::map<va_t, std::shared_ptr<const std::vector<LowBlock>>>
+      SourceOriginalBlocks;
 };
 
 struct PipelineResult {

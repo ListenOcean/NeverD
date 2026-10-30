@@ -9,6 +9,7 @@
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCBitTests.h"
 #include "../../../lib/backend/c/pass/LLVMC/LLVMCCommonBranches.h"
 #include "../../../lib/backend/c/render/X86/X86Virtualization.h"
+#include "SourceCallExecution.h"
 #include "WindowsQualifiedFixture.h"
 #include "gtest/gtest.h"
 
@@ -276,9 +277,8 @@ TEST(LLVMCValues, AtomicStoresKeepTheirOrder) {
   Module.setDataLayout("e-p:64:64");
   llvm::IRBuilder<> B(Context);
   auto *F = llvm::Function::Create(
-      llvm::FunctionType::get(B.getInt32Ty(),
-                              {B.getPtrTy(), B.getPtrTy(), B.getInt32Ty()},
-                              false),
+      llvm::FunctionType::get(
+          B.getInt32Ty(), {B.getPtrTy(), B.getPtrTy(), B.getInt32Ty()}, false),
       llvm::GlobalValue::ExternalLinkage, "publish", Module);
   B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", F));
   auto Store = [&](llvm::Value *Value, llvm::Value *Address,
@@ -1458,6 +1458,106 @@ static int check_fault(void (*operation)(uint64_t,uint64_t,uint64_t,void*),
 #endif
 }
 
+TEST(LLVMCValues, NativeAssemblyKeepsOperandSnapshotsAcrossBranches) {
+#if !defined(__linux__) || !defined(__x86_64__)
+  GTEST_SKIP() << "requires native Linux i386/x64 execution";
+#else
+  for (bool NativeI386 : {false, true}) {
+    llvm::LLVMContext Context;
+    llvm::Module Module("native-operand-snapshot", Context);
+    Module.setTargetTriple(
+        llvm::Triple(NativeI386 ? "i386-linux-gnu" : "x86_64-linux-gnu"));
+    Module.setDataLayout(NativeI386 ? "e-p:32:32" : "e-p:64:64-i128:128");
+    llvm::IRBuilder<> Builder(Context);
+    std::string Prototypes, Body;
+    for (unsigned Bits : {32U, 64U}) {
+      if (NativeI386 && Bits == 64)
+        continue;
+      auto *Word = Builder.getIntNTy(Bits);
+      auto *Wide = Builder.getIntNTy(Bits * 2);
+      const uint64_t Mask = Bits == 32 ? UINT32_MAX : UINT64_MAX;
+      for (bool Signed : {false, true}) {
+        const std::string Name =
+            "snapshot_" + std::to_string(Bits) + "_" + std::to_string(Signed);
+        auto *Function = llvm::Function::Create(
+            llvm::FunctionType::get(Builder.getInt64Ty(),
+                                    {Builder.getPtrTy(), Builder.getInt1Ty()},
+                                    false),
+            llvm::GlobalValue::ExternalLinkage, Name, Module);
+        auto *Entry = llvm::BasicBlock::Create(Context, "entry", Function);
+        auto *Left = llvm::BasicBlock::Create(Context, "left", Function);
+        auto *Right = llvm::BasicBlock::Create(Context, "right", Function);
+        auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+        Builder.SetInsertPoint(Entry);
+        auto *Slot = Builder.CreateAlloca(Wide);
+        auto *Source =
+            Builder.CreateLoad(Builder.getInt64Ty(), Function->getArg(0));
+        auto *Divisor = Builder.CreateZExtOrTrunc(Source, Wide);
+        Builder.CreateStore(Divisor, Slot);
+        // The source is overwritten after the snapshot. Re-reading guest
+        // memory at the asm call would divide by zero instead of by Source.
+        Builder.CreateStore(Builder.getInt64(0), Function->getArg(0));
+        Builder.CreateCondBr(Function->getArg(1), Left, Right);
+        for (auto *Block : {Left, Right}) {
+          Builder.SetInsertPoint(Block);
+          auto *Marker = Builder.CreateConstGEP1_64(Builder.getInt64Ty(),
+                                                    Function->getArg(0), 1);
+          Builder
+              .CreateStore(Builder.getInt64(Block == Left ? 71 : 73), Marker)
+              ->setVolatile(true);
+          Builder.CreateBr(Join);
+        }
+        Builder.SetInsertPoint(Join);
+        auto *Pair = llvm::StructType::get(Context, {Word, Word});
+        auto *Assembly = llvm::InlineAsm::get(
+            llvm::FunctionType::get(Pair, {Word, Word, Word}, false),
+            neverd::x86DivRemAssembly({Bits, Signed}),
+            neverd::X86DivRemAsmConstraints, true);
+        auto *Result = Builder.CreateCall(
+            Assembly,
+            {llvm::ConstantInt::get(Word, Signed ? uint64_t(-43) : 43),
+             llvm::ConstantInt::get(Word, Signed ? Mask : 0),
+             Builder.CreateTrunc(Builder.CreateLoad(Wide, Slot), Word)});
+        auto *Quotient = Builder.CreateZExtOrTrunc(
+            Builder.CreateExtractValue(Result, 0), Builder.getInt64Ty());
+        auto *Remainder = Builder.CreateZExtOrTrunc(
+            Builder.CreateExtractValue(Result, 1), Builder.getInt64Ty());
+        Builder.CreateRet(Builder.CreateXor(
+            Quotient, Builder.CreateShl(Remainder, Builder.getInt64(8))));
+        Prototypes += "extern uint64_t ref_" + Name + "(void*, uint8_t);\n";
+        Body += "for(unsigned choose=0;choose<2;++choose) {\n"
+                "uint64_t actual[2]={6,0}, expected[2]={6,0};\n"
+                "uint64_t a=" +
+                Name + "(actual,choose), b=ref_" + Name +
+                "(expected,choose);\nif(a!=b || a!=" +
+                std::to_string(((Signed ? uint64_t(-7) : 7) & Mask) ^
+                               (((Signed ? UINT64_MAX : 1) & Mask) << 8)) +
+                "ULL || actual[0]!=0 || expected[0]!=0 || "
+                "actual[1]!=(choose?71:73) || expected[1]!=actual[1]) return "
+                "1;\n}\n";
+      }
+    }
+    ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+    neverd::CEmitterOptions Options;
+    Options.TheArch = NativeI386 ? neverd::Arch::X86 : neverd::Arch::X64;
+    Options.PreserveLLVMFunctionTypes = true;
+    std::string Source;
+    llvm::raw_string_ostream Out(Source);
+    ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, Options));
+    for (auto &Function : Module)
+      Function.setName("ref_" + Function.getName());
+    std::string Reference;
+    llvm::raw_string_ostream ReferenceOut(Reference);
+    Module.print(ReferenceOut, nullptr);
+    const std::string Main =
+        Prototypes + "\nint main(void) {\n" + Body + "return 0;\n}\n";
+    for (const char *Optimization : {"-O0", "-O2"})
+      compileAndRun(Source + Main, Optimization, Reference,
+                    /*CheckUndefinedBehavior=*/true, NativeI386);
+  }
+#endif
+}
+
 TEST(LLVMCValues, RepeatedParameterFieldAddressesPreserveMemoryObservations) {
   const char *IR = R"ir(
 target datalayout = "e-p:64:64"
@@ -1664,6 +1764,44 @@ int main(void) {
     for (StringRef Level : {"-O0", "-O2"})
       compileAndRun(Source + Driver, Level, Reference, true);
   }
+}
+
+TEST(LLVMCValues, AbsoluteGuestStoresDoNotInventHostObjectBounds) {
+  llvm::LLVMContext Context;
+  llvm::SMDiagnostic Diagnostic;
+  auto Module = llvm::parseAssemblyString(R"(
+target datalayout = "e-p:64:64"
+define i32 @guest_store(i1 %enabled, i32 %value) {
+entry:
+  br i1 %enabled, label %write, label %done
+write:
+  store i32 %value, ptr inttoptr (i64 -140737488351232 to ptr), align 1
+  br label %done
+done:
+  ret i32 %value
+}
+)",
+                                          Diagnostic, Context);
+  ASSERT_TRUE(Module);
+  Module->setTargetTriple(llvm::Triple(llvm::sys::getDefaultTargetTriple()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  Options.UseUnalignedPointers = false;
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(*Module, Out, Options));
+  // The guest mapping belongs to its invocation environment. The host test
+  // only executes the disabled path; its compiler must retain the write
+  // without claiming the numeric address names a zero-sized host object.
+  const std::string Driver = R"(
+int main(void) {
+  return guest_store(0, 731) != 731;
+}
+)";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun("#pragma clang diagnostic error \"-Wfortify-source\"\n" +
+                      Source + Driver,
+                  Optimization, {}, true);
 }
 
 TEST(LLVMCValues, RawMemoryUpdatesRetainObserversAliasesAndOrderedAccesses) {
@@ -6095,6 +6233,63 @@ int main(void) {
 )c";
   for (llvm::StringRef Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, WideFrameStoreRetainsBothRuntimeSelectedWords) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("wide-frame-storage", Context);
+  Module.setDataLayout("e-p:64:64-i128:128");
+  llvm::IRBuilder<> B(Context);
+  for (bool UseOr : {false, true}) {
+    auto *Word = B.getInt64Ty();
+    auto *Wide = B.getInt128Ty();
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(Word, {Word, Word, Word}, false),
+        llvm::GlobalValue::ExternalLinkage,
+        UseOr ? "select_frame_or" : "select_frame_add", Module);
+    B.SetInsertPoint(llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Frame = B.CreateAlloca(llvm::ArrayType::get(B.getInt8Ty(), 96),
+                                 nullptr, "frame");
+    Frame->setAlignment(llvm::Align(16));
+    auto *End = B.CreateGEP(B.getInt8Ty(), Frame, B.getInt64(72), "frame_end");
+    auto *Base = B.CreatePtrToInt(End, Word, "rsp_init");
+    auto *Address = B.CreateAdd(Base, B.getInt64(-24));
+    auto *Pair =
+        B.CreateOr(B.CreateZExt(Function->getArg(0), Wide),
+                   B.CreateShl(B.CreateZExt(Function->getArg(1), Wide), 64));
+    B.CreateAlignedStore(Pair, B.CreateIntToPtr(Address, B.getPtrTy()),
+                         llvm::Align(16));
+    auto *Offset = B.CreateShl(B.CreateAnd(Function->getArg(2), 1), 3);
+    auto *Selected =
+        UseOr ? B.CreateOr(Address, Offset) : B.CreateAdd(Address, Offset);
+    B.CreateRet(B.CreateAlignedLoad(
+        Word, B.CreateIntToPtr(Selected, B.getPtrTy()), llvm::Align(8)));
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  std::string Source;
+  llvm::raw_string_ostream Out(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, Out, {}));
+  Source += R"c(
+int main(void) {
+  const uint64_t values[] = {0, 1, UINT64_MAX, UINT64_C(0x123456789abcdef0),
+                            UINT64_C(0xfedcba9876543210)};
+  const uint64_t indices[] = {0, 1, 2, 3, 255, 256, UINT64_MAX};
+  for (unsigned a = 0; a < sizeof(values) / sizeof(values[0]); ++a)
+    for (unsigned b = 0; b < sizeof(values) / sizeof(values[0]); ++b)
+      for (unsigned i = 0; i < sizeof(indices) / sizeof(indices[0]); ++i) {
+        uint64_t expected = indices[i] & 1 ? values[b] : values[a];
+        if (select_frame_add(values[a], values[b], indices[i]) != expected)
+          return 1;
+        if (select_frame_or(values[a], values[b], indices[i]) != expected)
+          return 2;
+      }
+  return 0;
+}
+)c";
+  for (llvm::StringRef Optimization : {"-O0", "-O2"})
+    source_call_execution_test::compileAndRun(
+        Source, {Optimization, "-fsanitize=address,undefined",
+                 "-fno-sanitize-recover=all"});
 }
 
 TEST(LLVMCValues, BulkFrameMemoryKeepsContiguousBackingStorage) {

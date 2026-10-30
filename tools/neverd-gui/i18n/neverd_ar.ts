@@ -2070,6 +2070,23 @@ Double-click to go to the declaration.</source>
         <source>Could not refresh source: %1</source>
         <translation>تعذّر تحديث الشيفرة المصدرية: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>تمت استعادة المفسّر · %1 كتل</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>لم يتم إنتاج شفرة مصدر كاملة</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>جارٍ استعادة تدفق تحكم المفسّر…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>توقفت الاستعادة: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2136,6 +2153,23 @@ Double-click to go to the declaration.</source>
     <message>
         <source>Cancel transformation</source>
         <translation>إلغاء التحويل</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>خيارات استعادة المفسّر…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>تقرير استعادة المفسّر…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>استعادة دالة المفسّر</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>العودة إلى المصدر العادي</translation>
     </message>
 </context>
 <context>
@@ -10092,6 +10126,150 @@ Your previous graph is still available.</source>
     <message>
         <source>Timeline</source>
         <translation>المخطط الزمني</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>افتراض أن الكتابات الخارجية لا تتداخل مع إطار الدخول المعلن</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>ترك الحقل فارغًا أو ضبطه على صفر يبقي القيمة الافتراضية للمحرك. زيادة العمل لا تسمح بمصدر غير مكتمل ولا تضيف افتراضات عن الذاكرة.</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>الانتقالات المتسلسلة</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>الزيارات المتسلسلة لكل وجهة</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>السياقات لكل عنوان</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>حقول التحكم</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>تنقيحات التحكم</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>عقد تدفق التحكم</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>زيارات التبعيات</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>إنهاء السلسلة عند تكرار الوجهة</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>القيمة الافتراضية للمحرك</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>أدخل عددًا صحيحًا صالحًا لـ %1.</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>أدخل حدي إطار الدخول أو اتركهما فارغين.</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>محاذاة RSP عند الدخول</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>نهاية نطاق RSP عند الدخول (غير مشمولة)</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>بداية نطاق RSP عند الدخول</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>باقي RSP عند الدخول</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>العمليات التي يتم تقييمها</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>السجلات العامة</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>السجلات العامة واستعلامات CPU</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>السجلات العامة واستعلامات CPU وXMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>تقرير استعادة المفسّر</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>تقييمات العقد</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>إثبات أن الكتابات تتجنب خانات العودة وخلايا الإطار المحفوظة</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>إثبات أن الكتابات تتجنب إطار الدخول المعلن</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>استعادة</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>استعادة دالة المفسّر</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>استعادة تدفق التحكم القابل للوصول وتوليد C بحالة صريحة لسجلات x64. يصف المصدر تنفيذًا عاديًا دون أخطاء مع تعيينات ثابتة للصورة. لا تنطبق افتراضات الذاكرة أدناه إلا عند إدخالها.</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>إزاحات موقّعة من RSP عند الدخول. إعلان هذا النطاق يفترض عدم التفاف حساب العناوين؛ ولا يثبت إمكانية الوصول أو عدم التداخل.</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>استعلامات المحلّل</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>حالة المصدر</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>الحالة والذاكرة</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>عقد التعبيرات الرمزية</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>غير محدد</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>حدود العمل</translation>
     </message>
 </context>
 </TS>

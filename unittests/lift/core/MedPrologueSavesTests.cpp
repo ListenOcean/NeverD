@@ -7,6 +7,7 @@
 #include "gtest/gtest.h"
 
 #include "neverd/Common.h"
+#include "neverd/ir/Limits.h"
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/intrinsics/Intrinsics.h"
 #include "neverd/ir/low/CallRegisterEffects.h"
@@ -266,6 +267,1147 @@ TEST(SourceStackSpills, OverwrittenValuesNeedNotComeFromTheEntry) {
         EXPECT_TRUE(Func.Blocks[0].Ops[2].PrologueSave);
         EXPECT_EQ(Func.Blocks[0].Ops.size(), 5u);
       }
+}
+
+TEST(SourceStackSpills, OnlyCompleteImageReadsCanCrossACompleteOverwrite) {
+  for (unsigned Mode = 0; Mode < 11; ++Mode) {
+    SCOPED_TRACE(Mode);
+    BinaryImage Image;
+    Image.Arch = Arch::X64;
+    Image.Format = BinaryFormat::COFF;
+    Image.Bits = Bitness::Bits64;
+    Segment Storage;
+    Storage.VA = 0x2000;
+    Storage.Size = Storage.FileSz = 8;
+    Storage.Data.resize(8);
+    Storage.Flags = SegmentFlags::Readable | SegmentFlags::Writable;
+    Image.Segments.push_back(std::move(Storage));
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    const auto Home = temp(10);
+    auto ImageAddress = MedVar::makeConst(
+        Mode == 1 ? 0x2001 : 0x2000, 8,
+        Mode == 2   ? ConstantAddressProvenance::Unknown
+        : Mode == 3 ? ConstantAddressProvenance::AddressFragment
+        : Mode == 4 ? ConstantAddressProvenance::CodeAddress
+                    : ConstantAddressProvenance::Address);
+    if (Mode == 5)
+      ImageAddress = rcx(0);
+    if (Mode == 10)
+      ImageAddress.AddressOwnerVA = 0x3000;
+    auto Read = op(NdOp::LOAD, temp(11), {ImageAddress});
+    if (Mode == 6)
+      Read.MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 7)
+      Read.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+    if (Mode == 8)
+      Read = op(NdOp::STORE, none(), {ImageAddress, Home});
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {
+        op(NdOp::COPY, sp(0), {sp(0)}), op(NdOp::COPY, rcx(0), {rcx(0)}),
+        op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+        op(NdOp::STORE, none(), {Home, rcx(0)}), Read,
+        op(NdOp::STORE, none(),
+           {Home, MedVar::makeConst(19, Mode == 9 ? 4 : 8)}),
+        // Once all original bytes are overwritten, a later opaque borrow
+        // may inspect them without making the discarded incoming value live.
+        op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8), Home}),
+        op(NdOp::RETURN, none(), {temp(11)})};
+    Func.Blocks.push_back(std::move(Block));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                            StackEntryKind::Call, &Image);
+    EXPECT_EQ(Func.Blocks.front().Ops[3].PrologueSave, Mode == 0);
+    EXPECT_EQ(Func.Blocks.front().Ops[4].Opcode, Read.Opcode);
+    EXPECT_EQ(Func.Blocks.front().Ops[4].MemoryOrdering, Read.MemoryOrdering);
+    EXPECT_EQ(Func.Blocks.front().Ops.size(), 8U);
+  }
+}
+
+TEST(SourceStackSpills, DiscardedSpillInputsStillNeedImplicitCallProofs) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    Func.Params = {rcx(0)};
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    const auto Home = temp(10);
+    Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+                 op(NdOp::COPY, rcx(0), {rcx(0)}),
+                 op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+                 op(NdOp::STORE, none(), {Home, rcx(0)}),
+                 op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)})};
+    if (Mode == 3)
+      Block.Ops.push_back(op(NdOp::COPY, reg(4, x86reg::RDX, 1), {rcx(0)}));
+    if (Mode == 7)
+      Block.Ops.push_back(op(NdOp::COPY, temp(11), {rcx(0)}));
+    if (Mode != 2 && Mode < 8) {
+      auto Overwrite = rcx(1);
+      Overwrite.Size = Mode == 1 ? 1 : 8;
+      Block.Ops.push_back(
+          op(NdOp::COPY, Overwrite,
+             {Mode == 7 ? temp(11) : MedVar::makeConst(42, Overwrite.Size)}));
+    }
+    auto Call = op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8)});
+    Call.Addr = 0x1010;
+    Call.OriginSeq = 7;
+    Call.CallSiteId = 1;
+    if (Mode >= 8) {
+      auto &Proof = Func.CallUnreadRegisters[1];
+      Proof.Instruction = Call.Addr;
+      Proof.OriginSeq = Call.OriginSeq;
+      Proof.Target = Mode == 9 ? 0x4000 : 0x3000;
+      Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+    }
+    if (Mode == 4) {
+      MedCallInfo Info;
+      Info.BlockId = 0;
+      Info.OpIdx = Block.Ops.size();
+      Info.TargetAddr = 0x3000;
+      Info.Args = {rcx(0)};
+      Func.CallInfos.push_back(Info);
+    }
+    if (Mode == 5)
+      Block.ExceptionalSuccs.resize(1);
+    if (Mode >= 10) {
+      Func.ExceptionMetadata.emplace();
+      Func.ExceptionMetadata->ParseStatus =
+          Mode == 12 ? ExceptionParseStatus::Partial
+                     : ExceptionParseStatus::Complete;
+      Func.ExceptionMetadata->Personality = Mode == 11
+                                                ? ExceptionPersonality::Unknown
+                                                : ExceptionPersonality::None;
+    }
+    Block.Ops.push_back(Call);
+    Block.Ops.push_back(op(NdOp::RETURN, none(),
+                           {Mode == 6 ? rcx(0) : MedVar::makeConst(0, 8)}));
+    Func.Blocks.push_back(std::move(Block));
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_EQ(unobservedSourceSpillParameters(Func),
+              Mode == 0 || Mode == 8 || Mode == 10 ? std::set<unsigned>{0}
+                                                   : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, RegisterSuffixesNeedCurrentSourceCalleeProofs) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedVar Low = reg(4, x86reg::RCX, 0);
+    Low.Size = 1;
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}), op(NdOp::COPY, Low, {Low})};
+    auto Call = op(NdOp::CALL, temp(10),
+                   {MedVar::makeConst(Mode == 2 ? 0x4000 : 0x3000, 8), rcx(0)});
+    Call.Addr = 0x1010;
+    Call.OriginSeq = 7;
+    Call.CallSiteId = 1;
+    MedCallInfo Info;
+    Info.BlockId = 0;
+    Info.OpIdx = Block.Ops.size();
+    Info.TargetAddr = 0x3000;
+    Info.Args = {rcx(0)};
+    Info.IsIndirect = Mode == 3;
+    if (Mode != 9)
+      Func.CallInfos.push_back(Info);
+    Block.Ops.push_back(Call);
+    if (Mode == 5)
+      Block.Ops.push_back(op(NdOp::COPY, reg(5, x86reg::RDX, 1), {rcx(0)}));
+    if (Mode == 6) {
+      auto High = temp(11);
+      High.Size = 1;
+      Block.Ops.push_back(
+          op(NdOp::SUBBYTES, High, {rcx(0), MedVar::makeConst(1, 1)}));
+      Block.Ops.push_back(op(NdOp::RETURN, none(), {High}));
+    } else {
+      Block.Ops.push_back(op(NdOp::RETURN, none(), {Mode == 4 ? rcx(0) : Low}));
+    }
+    if (Mode == 7)
+      Block.ExceptionalSuccs.resize(1);
+    if (Mode == 8)
+      Func.SourceParametersBound = true;
+    if (Mode == 12)
+      Func.ModuleAnalysisRoots = {Func.Entry, 0x1010};
+    Func.Blocks.push_back(std::move(Block));
+    SourceCalleeParameterReads Callees;
+    if (Mode != 1)
+      Callees[0x3000][0] = Mode == 10 ? 4 : 0;
+    size_t Budget = Mode == 11 ? 1 : 4096;
+    const auto Reads = sourceRegisterParameterReads(Func, Callees, Budget);
+    const SourceRegisterParameterReads Expected =
+        Mode == 0 || Mode == 9 ? SourceRegisterParameterReads{{0, 1}}
+        : Mode == 10           ? SourceRegisterParameterReads{{0, 4}}
+                               : SourceRegisterParameterReads{};
+    EXPECT_EQ(Reads, Expected);
+  }
+}
+
+TEST(SourceStackSpills, GSInputDestructionKeepsExceptionalFrameObservers) {
+  for (unsigned Case = 0; Case != 25; ++Case) {
+    SCOPED_TRACE(Case);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    auto Call =
+        op(NdOp::CALL, temp(20), {MedVar::makeConst(0x3000, 8), rcx(0)});
+    Call.Addr = 0x1004;
+    Call.OriginSeq = 0;
+    Block.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}), Call,
+                 op(NdOp::RETURN, none(), {temp(20)})};
+    Func.Blocks.push_back(std::move(Block));
+    ExceptionFunction EH;
+    EH.CodeRange = {Func.Entry, 0x1020};
+    EH.Encoding = Case == 1 ? ExceptionEncoding::X64UnwindV2
+                            : ExceptionEncoding::X64UnwindV1;
+    EH.UnwindVersion = Case == 1 ? 2 : 1;
+    EH.UnwindFlags = 3;
+    EH.Personality = ExceptionPersonality::GSHandlerCheck;
+    EH.PersonalityVA = 0x4000;
+    EH.HandlerDataVA = 0x5000;
+    EH.GSCookie.emplace();
+    auto &Cookie = *EH.GSCookie;
+    Cookie.ParseStatus = ExceptionParseStatus::Complete;
+    Cookie.CookieOffset = Case == 2 ? 24 : (Case == 21 ? 32 : 40);
+    Cookie.Payload = {uint8_t(Cookie.CookieOffset), 0, 0, 0};
+    if (Case == 3)
+      Cookie.HasAlignment = true;
+    if (Case == 4)
+      EH.FrameRegister = 5;
+    if (Case == 5)
+      Cookie.Payload.pop_back();
+    if (Case == 6)
+      Cookie.Payload[0] ^= 8;
+    if (Case == 7)
+      EH.ParseStatus = ExceptionParseStatus::Partial;
+    if (Case == 8)
+      Cookie.ParseStatus = ExceptionParseStatus::Malformed;
+    if (Case == 9)
+      EH.Personality = ExceptionPersonality::GSHandlerCheckSEH;
+    if (Case == 14)
+      Cookie.HasUnwindHandler = true;
+    if (Case == 15) {
+      EH.DecodeProvenance.emplace();
+      EH.DecodeProvenance->Structural.ParseStatus =
+          ExceptionParseStatus::Partial;
+    }
+    if (Case == 18)
+      Func.EntryKind = StackEntryKind::ProcessEntry;
+    if (Case == 22) {
+      UnwindOperation Machine;
+      Machine.Kind = UnwindOperationKind::PushMachineFrame;
+      EH.UnwindOperations.push_back(Machine);
+    }
+    if (Case == 23)
+      EH.GSCookie.reset();
+    if (Case == 24) {
+      UnwindOperation Allocation;
+      Allocation.Kind = UnwindOperationKind::AllocateSmall;
+      EH.UnwindOperations.assign(64, Allocation);
+    }
+    Func.ExceptionMetadata = std::move(EH);
+    const auto Low = [](va_t PC, NdOp Code, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Op;
+      Op.Addr = PC;
+      Op.Opcode = Code;
+      Op.Output = Output;
+      for (const auto &Input : Inputs)
+        Op.addInput(Input);
+      return Op;
+    };
+    LowBlock Original;
+    Original.Id = 0;
+    Original.StartAddr = Func.Entry;
+    Original.EndAddr = 0x1010;
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto Input = NdVar::reg(x86reg::RCX, 8);
+    Original.Ops = {
+        Low(Func.Entry, NdOp::INT_SUB, SP, {SP, NdVar::cst(56, 8)}),
+        Low(Case == 16 ? 0x2000 : Call.Addr, NdOp::CALL,
+            NdVar::reg(x86reg::RAX, 8),
+            {NdVar::cst(Case == 19 ? 0x3001 : 0x3000, 8)}),
+        Low(0x1009, NdOp::INT_ADD, SP, {SP, NdVar::cst(56, 8)}),
+        Low(0x100D, NdOp::RETURN, {}, {NdVar::reg(x86reg::RAX, 8)})};
+    std::set<const MedOp *> Overwritten;
+    if (Case == 11 || Case == 12) {
+      // Even a transient store removed from MedIR may be the cookie's value
+      // during an exception. A source-dead store cannot authorize this input.
+      Original.Ops.insert(Original.Ops.begin() + 1,
+                          Low(0x1002, NdOp::STORE, {}, {SP, Input}));
+      if (Case == 12) {
+        auto Save = op(NdOp::STORE, none(), {sp(0), rcx(0)});
+        Save.Addr = 0x1002;
+        Save.OriginSeq = 0;
+        Save.PrologueSave = true;
+        auto &Ops = Func.Blocks.front().Ops;
+        Ops.insert(Ops.begin() + 1, Save);
+        Overwritten.insert(&Ops[1]);
+      }
+    }
+    if (Case == 13)
+      Original.Ops.insert(
+          Original.Ops.begin() + 1,
+          Low(0x1002, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Input}));
+    SourceCalleeParameterOverwrites Callees;
+    if (Case != 10 && Case != 20)
+      Callees[0x3000].insert(0);
+    size_t Budget = Case == 17 ? 1 : (Case == 24 ? 32 : 4096);
+    EXPECT_EQ(sourceRegisterInputOverwrites(Func, {Original}, {}, Callees,
+                                            Overwritten, Budget),
+              Case == 0 || Case == 1 || Case == 21 ? std::set<unsigned>{0}
+                                                   : std::set<unsigned>{});
+    // The ordinary MedIR spill proof alone never grants this GS fact.
+    Budget = 4096;
+    EXPECT_TRUE(sourceRegisterParameterReads(Func, {{0x3000, {{0, 0}}}}, Budget)
+                    .empty());
+  }
+}
+
+TEST(SourceStackSpills,
+     InputDestructionNeedsOriginalEntryAndCompleteOverwrites) {
+  for (unsigned Mode = 0; Mode < 29; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.FrameSize = 40;
+    Func.Params = {rcx(0)};
+    const auto Home = temp(10);
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+                 op(NdOp::COPY, rcx(0), {rcx(0)}),
+                 op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+                 op(NdOp::STORE, none(), {Home, rcx(0)}),
+                 op(NdOp::STORE, none(),
+                    {Home, MedVar::makeConst(0, Mode == 6 ? 4 : 8)}),
+                 op(NdOp::COPY, rcx(1), {MedVar::makeConst(42, 8)}),
+                 op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    Block.Ops[3].Addr = 0x1004;
+    Block.Ops[3].OriginSeq = 0;
+    if (Mode == 20)
+      Block.Ops[4].Dead = true;
+    if (Mode == 21)
+      Block.Ops[3].Dead = true;
+    if (Mode == 3 || Mode == 22 || Mode == 23) {
+      auto Hidden =
+          Mode == 23 ? op(NdOp::CALL, temp(11), {MedVar::makeConst(0x3000, 8)})
+                     : op(NdOp::LOAD, temp(11), {Home});
+      Hidden.Dead = Mode >= 22;
+      Block.Ops.insert(Block.Ops.begin() + 4, Hidden);
+    }
+    Func.Blocks.push_back(std::move(Block));
+    if (Mode == 8)
+      Func.ModuleAnalysisRoots = {Func.Entry, 0x1004};
+    std::set<const MedOp *> Overwritten;
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                            StackEntryKind::Call, nullptr, &Overwritten);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto Address = NdVar::tmp(Mode == 28 ? 10 : TmpBase, 8);
+    auto Low = [&](va_t PC, NdOp Code, NdVar Out,
+                   std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    std::vector<LowOp> Original = {
+        Low(Func.Entry, NdOp::INT_ADD, Address,
+            {NdVar::reg(x86reg::RSP, 8), NdVar::cst(8, 8)}),
+        Low(0x1004, NdOp::STORE, {}, {Address, RCX}),
+        Low(0x1008, NdOp::STORE, {}, {Address, NdVar::cst(0, 8)}),
+        Low(0x100C, NdOp::COPY,
+            NdVar::reg(x86reg::RCX, Mode == 1    ? 1
+                                    : Mode == 13 ? 4
+                                                 : 8),
+            {NdVar::cst(42, 8)})};
+    SourceCalleeParameterOverwrites Callees;
+    if (Mode == 2 || Mode == 12)
+      Original.insert(
+          Original.begin() + 2,
+          Low(0x1006, NdOp::COPY,
+              Mode == 2 ? NdVar::reg(x86reg::RDX, 8) : NdVar::tmp(11, 8),
+              {RCX}));
+    if (Mode == 4)
+      Original[1].Seq = 1;
+    if (Mode == 7)
+      Original.front().Addr += 1;
+    if (Mode == 5 || Mode == 11) {
+      auto Call = op(NdOp::CALL, temp(12), {MedVar::makeConst(0x3000, 8)});
+      Call.Addr = 0x100A;
+      Call.OriginSeq = 0;
+      Func.Blocks.front().Ops.insert(Func.Blocks.front().Ops.end() - 1, Call);
+      Original.back() = Low(0x100A, NdOp::CALL, {},
+                            {NdVar::cst(Mode == 5 ? 0x4000 : 0x3000, 8)});
+      Callees[0x3000].insert(0);
+      // Vector insertion changes operation addresses: obtain current receipts.
+      markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF,
+                              StackEntryKind::Call, nullptr, &Overwritten);
+    }
+    if (Mode == 10)
+      Original.insert(Original.begin() + 2,
+                      Low(0x1006, NdOp::BRANCH, {}, {NdVar::cst(0x2000, 8)}));
+    if ((Mode >= 14 && Mode < 20) || Mode == 28) {
+      auto Read = Low(0x1006, NdOp::LOAD, NdVar::tmp(12, 8), {Address});
+      auto Mask = Low(0x1006, NdOp::INT_AND, NdVar::tmp(13, 8),
+                      {Read.Output, NdVar::scalar(Mode == 16 ? 1 : 0, 8)});
+      Mask.Seq = 1;
+      auto Save = Low(0x1006, NdOp::STORE, {}, {Address, Mask.Output});
+      Save.Seq = 2;
+      if (Mode == 15)
+        Mask =
+            Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Read.Output});
+      if (Mode == 17)
+        Read.MemoryOrdering = NdMemoryOrdering::Acquire;
+      if (Mode == 18) {
+        Mask = Low(0x1006, NdOp::COPY, NdVar::tmp(13, 8), {Read.Output});
+        Save = Low(0x1006, NdOp::INT_AND, NdVar::tmp(13, 8),
+                   {Mask.Output, NdVar::scalar(0, 8)});
+      }
+      if (Mode == 19) {
+        Mask =
+            Low(0x1006, NdOp::COPY, NdVar::tmp(12, 1), {NdVar::scalar(0, 1)});
+        Save =
+            Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 8), {Read.Output});
+      }
+      Original.insert(Original.begin() + 2, {Read, Mask, Save});
+    }
+    if (Mode >= 24 && Mode < 28) {
+      auto Read = Low(0x1006, NdOp::LOAD, NdVar::tmp(32, 8), {Address});
+      auto Reset =
+          Low(0x1006, NdOp::COPY, NdVar::tmp(34, 2), {NdVar::scalar(0, 2)});
+      Reset.Seq = 1;
+      // The middle bytes were reset; either side still carries the load.
+      auto Observe = Low(0x1006, NdOp::COPY, NdVar::reg(x86reg::RDX, 1),
+                         {NdVar::tmp(Mode == 24   ? 33
+                                     : Mode == 25 ? 36
+                                                  : 34,
+                                     1)});
+      Observe.Seq = 2;
+      if (Mode == 27) {
+        Reset.Output = NdVar::tmp(48, 2);
+        Reset.Inputs[0] = NdVar::tmp(33, 2);
+        Observe.Inputs[0] = NdVar::tmp(49, 1);
+      }
+      Original.insert(Original.begin() + 2, {Read, Reset, Observe});
+    }
+    size_t Budget = Mode == 9 ? 1 : 4096;
+    LowBlock OriginalBlock;
+    OriginalBlock.Id = 0;
+    OriginalBlock.StartAddr = Func.Entry;
+    OriginalBlock.Ops = std::move(Original);
+    const auto Killed = sourceRegisterInputOverwrites(
+        Func, {OriginalBlock}, {{0, 0}}, Callees, Overwritten, Budget);
+    EXPECT_EQ(Killed, Mode == 0 || Mode == 11 || Mode == 13 || Mode == 14 ||
+                              Mode == 18 || Mode == 26
+                          ? std::set<unsigned>{0}
+                          : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, InputDestructionCoversEveryOriginalBranch) {
+  for (unsigned Mode = 0; Mode < 25; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params = {rcx(0)};
+    MedBlock Current;
+    Current.Id = 0;
+    Current.StartAddr = Func.Entry;
+    Current.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                   op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    const auto Low = [](va_t PC, NdOp Code, NdVar Out,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    std::vector<LowBlock> Original(4);
+    for (size_t I = 0; I < Original.size(); ++I) {
+      Original[I].Id = I;
+      Original[I].StartAddr = Func.Entry + I * 0x10;
+      Original[I].EndAddr = Original[I].StartAddr + 8;
+    }
+    Original[0].EndAddr = Original[1].StartAddr;
+    Original[0].Succs = {1, 2};
+    Original[0].Ops = {Low(0x1000, NdOp::COND_BR, {},
+                           {NdVar::cst(0x1020, 8), NdVar::reg(x86reg::ZF, 1)})};
+    for (size_t I : {1u, 2u}) {
+      auto &Block = Original[I];
+      Block.Preds = {0};
+      Block.Succs = {3};
+      Block.Ops = {
+          Low(Block.StartAddr, NdOp::COPY,
+              NdVar::reg(x86reg::RCX, I == 1 ? 8 : 4), {NdVar::cst(I, 8)}),
+          Low(Block.StartAddr + 4, NdOp::BRANCH, {}, {NdVar::cst(0x1030, 8)})};
+    }
+    Original[3].Preds = {1, 2};
+    Original[3].Ops = {Low(0x1030, NdOp::RETURN, {}, {RAX})};
+    if (Mode == 1 || Mode == 7)
+      Original[1].Ops.front() = Low(0x1010, NdOp::RETURN, {}, {RAX});
+    if (Mode == 2)
+      Original[1].Ops.front().Output.Size = 2;
+    if (Mode == 3)
+      Original[1].Ops.front() = Low(0x1010, NdOp::COPY, RAX, {RCX});
+    if (Mode == 4) {
+      Original[1].Ops = {
+          Low(0x1010, NdOp::BRANCH, {}, {NdVar::cst(0x1010, 8)})};
+      Original[1].Succs = {1};
+      Original[1].Preds.push_back(1);
+    }
+    if (Mode == 5)
+      Original[0].Ops.back().Inputs[0] = NdVar::cst(0x2000, 8);
+    if (Mode == 6)
+      Original[0].EndAddr = 0x1011;
+    if (Mode == 7)
+      Original[0].Ops.front().Opcode = NdOp::RETURN;
+    if (Mode == 8)
+      Original[1].Ops.front() = Low(0x1010, NdOp::LOAD, RAX, {RCX});
+    if (Mode == 9)
+      Original[0].Ops.front().Opcode = NdOp::INDIR_BR;
+    if (Mode == 11)
+      Original[1].ExceptionalSuccs.resize(1);
+    if (Mode == 12)
+      Original[0].Preds = {1};
+    if (Mode == 13) {
+      // Control flow after destruction cannot revive an earlier input that
+      // left no copy in a register or live storage.
+      Original[1].Ops.back().Inputs[0] = NdVar::cst(0x1010, 8);
+      Original[1].Succs = {1};
+      Original[1].Preds.push_back(1);
+    }
+    if (Mode == 14) {
+      Original[1].Ops.front().Output = RAX;
+      Original[2].Ops.front().Output = RAX;
+      Original[3].Ops.insert(Original[3].Ops.begin(),
+                             Low(0x1030, NdOp::COPY, RCX, {NdVar::cst(0, 8)}));
+    }
+    if (Mode == 15) {
+      Original[0].Ops.front() =
+          Low(0x1000, NdOp::COPY, RAX, {NdVar::cst(0, 8)});
+      Original[0].Succs = {1};
+    }
+    if (Mode == 16)
+      Original[0].Succs.push_back(3);
+    SourceCalleeParameterOverwrites Callees;
+    if ((Mode >= 17 && Mode <= 20) || Mode == 22) {
+      const auto Call = Low(0x1010, NdOp::CALL, RAX, {NdVar::cst(0x3000, 8)});
+      if (Mode == 19)
+        Original[1].Ops.insert(Original[1].Ops.begin(), Call);
+      else
+        Original[1].Ops.front() = Call;
+      auto Bound = op(NdOp::CALL, temp(10),
+                      {MedVar::makeConst(Mode == 18 ? 0x4000 : 0x3000, 8)});
+      Bound.Addr = 0x1010;
+      Bound.OriginSeq = Mode == 22 ? 1 : 0;
+      Bound.CallSiteId = 1;
+      Current.Ops.insert(Current.Ops.begin() + 1, Bound);
+      if (Mode == 19) {
+        auto &Proof = Func.CallUnreadRegisters[1];
+        Proof.Instruction = 0x1010;
+        Proof.OriginSeq = 0;
+        Proof.Target = 0x3000;
+        Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+      } else if (Mode != 20)
+        Callees[0x3000].insert(0);
+    }
+    if (Mode == 21)
+      Original[0].Ops.front().Inputs[1] = RCX;
+    if (Mode == 23)
+      Original[1].Ops.clear();
+    if (Mode == 24)
+      Original[2].StartAddr = Original[1].StartAddr;
+    Func.Blocks.push_back(std::move(Current));
+    size_t Budget = Mode == 10 ? 1 : 4096;
+    const auto Killed = sourceRegisterInputOverwrites(Func, Original, {{0, 0}},
+                                                      Callees, {}, Budget);
+    EXPECT_EQ(Killed, Mode == 0 || Mode == 13 || Mode == 14 || Mode == 15 ||
+                              Mode == 17 || Mode == 19
+                          ? std::set<unsigned>{0}
+                          : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, InputDestructionChecksPromotedStackReads) {
+  for (unsigned Mode = 0; Mode < 13; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(5);
+    Func.Params[0] = rcx(0);
+    auto &Parameter = Func.Params[4];
+    Parameter.Kind = MedVar::Param;
+    Parameter.Id = 4;
+    Parameter.Size = 8;
+    Parameter.RegOff = kNoParamReg;
+    MedBlock Current;
+    Current.Id = 0;
+    Current.StartAddr = Func.Entry;
+    Current.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                   op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+    const auto Low = [](va_t PC, NdOp Code, NdVar Out,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp O;
+      O.Addr = PC;
+      O.Opcode = Code;
+      O.Output = Out;
+      for (const auto &V : Inputs)
+        O.addInput(V);
+      return O;
+    };
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto FP = NdVar::reg(x86reg::RBP, 8);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto Address = NdVar::tmp(TmpBase, 8);
+    const auto Value = NdVar::tmp(TmpBase + 8, 8);
+    LowBlock Original;
+    Original.Id = 0;
+    Original.StartAddr = Func.Entry;
+    Original.Ops = {
+        Low(0x1000, NdOp::COPY, FP, {SP}),
+        Low(0x1004, NdOp::INT_ADD, Address,
+            {FP, NdVar::scalar(Mode == 1 ? 32 : 40, 8)}),
+        Low(0x1004, NdOp::LOAD, Value, {Address}),
+        Low(0x1004, NdOp::COPY, NdVar::reg(x86reg::RAX, 8), {Value}),
+        Low(0x1008, NdOp::COPY, RCX, {NdVar::scalar(0, 8)}),
+        Low(0x100C, NdOp::RETURN, {}, {})};
+    Original.Ops[2].Seq = 1;
+    Original.Ops[3].Seq = 2;
+    if (Mode == 2)
+      Original.Ops[0].Output.Size = 4;
+    if (Mode == 3)
+      Original.Ops[2].Output.Size = 16;
+    if (Mode == 4)
+      Parameter.Size = 4;
+    if (Mode == 5)
+      Parameter.Id = 5;
+    if (Mode == 6) {
+      Original.Ops.insert(
+          Original.Ops.begin() + 1,
+          Low(0x1002, NdOp::CALL, {}, {NdVar::scalar(0x2000, 8)}));
+      auto Bound = op(NdOp::CALL, temp(10), {MedVar::makeConst(0x2000, 8)});
+      Bound.Addr = 0x1002;
+      Bound.OriginSeq = 0;
+      Bound.CallSiteId = 1;
+      Current.Ops.insert(Current.Ops.begin() + 1, Bound);
+      auto &Proof = Func.CallUnreadRegisters[1];
+      Proof.Instruction = Bound.Addr;
+      Proof.OriginSeq = 0;
+      Proof.Target = 0x2000;
+      Proof.Families = GPRFamilyMask{1} << (x86reg::RCX / 8);
+    }
+    if (Mode == 7)
+      Original.Ops[0].Inputs[0] = RCX;
+    if (Mode == 9)
+      Func.Params.resize(4);
+    if (Mode == 10)
+      Parameter.RegOff = x86reg::RAX;
+    if (Mode == 11)
+      Original.Ops[1].Opcode = NdOp::INT_OR;
+    if (Mode == 12)
+      Original.Ops.insert(Original.Ops.begin() + 3, Original.Ops[2]);
+    Func.Blocks.push_back(std::move(Current));
+    size_t Remaining = Mode == 8 ? 1 : 2048;
+    const auto Killed = sourceRegisterInputOverwrites(
+        Func, {Original}, {{0, 0}}, {}, {}, Remaining);
+    EXPECT_EQ(Killed, Mode == 0 ? std::set<unsigned>{0} : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, StackParameterHolesKeepOriginalReadsAndEscapes) {
+  for (unsigned Mode = 0; Mode < 29; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(7);
+    for (unsigned P = 4; P < Func.Params.size(); ++P) {
+      auto &Parameter = Func.Params[P];
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = P;
+      Parameter.RegOff = kNoParamReg;
+      Parameter.Size = 8;
+      Parameter.TheArch = Arch::X64;
+    }
+    MedBlock Block;
+    Block.Id = 0;
+    Block.StartAddr = Func.Entry;
+    auto Call = op(NdOp::CALL, temp(10), {MedVar::makeConst(0x3000, 8)});
+    Call.Addr = 0x100C;
+    Call.OriginSeq = 0;
+    Call.CalleeRegisterArgs = Call.CalleeVectorArgs = Call.CalleeStackArgs = 0;
+    Block.Ops = {Call, op(NdOp::RETURN, none(), {temp(10)})};
+    Func.Blocks.push_back(std::move(Block));
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    const auto Address = NdVar::tmp(0x10000, 8);
+    const auto Low = [](va_t PC, NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Result;
+      Result.Addr = PC;
+      Result.Opcode = Opcode;
+      Result.Output = Output;
+      for (const auto &V : Inputs)
+        Result.addInput(V);
+      return Result;
+    };
+    std::vector<LowOp> Original = {
+        Low(0x1000, NdOp::INT_SUB, SP, {SP, NdVar::cst(40, 8)}),
+        Low(0x1004, NdOp::INT_ADD, Address,
+            {SP, NdVar::cst(Mode == 1   ? 80
+                            : Mode == 2 ? 79
+                                        : 88,
+                            8)}),
+        Low(0x1004, NdOp::LOAD, NdVar::reg(x86reg::RAX, Mode == 2 ? 2 : 8),
+            {Address}),
+        Low(0x1008, NdOp::INT_ADD, Address, {SP, NdVar::cst(96, 8)}),
+        Low(0x1008, NdOp::LOAD, RAX, {Address}),
+        Low(0x100C, NdOp::CALL, RAX, {NdVar::cst(0x3000, 8)}),
+        Low(0x1010, NdOp::INT_ADD, SP, {SP, NdVar::cst(40, 8)}),
+        Low(0x1014, NdOp::RETURN, {}, {RAX})};
+    std::set<va_t> Declared{0x3000};
+    if (Mode == 3)
+      Func.Blocks[0].Ops[0].CalleeStackArgs = 15;
+    if (Mode == 4)
+      Declared.clear();
+    if (Mode == 5)
+      Func.Blocks[0].Ops[0].Inputs[0].ConstVal += 8;
+    if (Mode == 6)
+      Func.Blocks[0].Ops[0].OriginSeq = 1;
+    if (Mode == 7)
+      Original[1] = Low(0x1004, NdOp::COPY, NdVar::reg(x86reg::RCX, 8), {SP});
+    if (Mode == 8)
+      Original[2] = Low(0x1004, NdOp::STORE, {}, {Address, SP});
+    if (Mode == 9)
+      Original[1].Opcode = NdOp::INT_AND;
+    if (Mode == 10)
+      Original.insert(Original.begin() + 2,
+                      Low(0x1004, NdOp::COPY, NdVar::tmp(Address.Offset, 1),
+                          {NdVar::scalar(0, 1)}));
+    if (Mode == 12) {
+      Func.ExceptionMetadata.emplace();
+      Func.ExceptionMetadata->Personality = ExceptionPersonality::Unknown;
+    }
+    if (Mode == 13)
+      Func.Blocks.push_back(MedBlock{});
+    if (Mode == 14)
+      Original[2].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 15)
+      Original[2].Opcode = NdOp::INTRINSIC;
+    if (Mode == 16)
+      Original[0].Addr += 1;
+    if (Mode == 17)
+      Original[6].Inputs[1].Offset += 8;
+    if (Mode == 18)
+      Func.Blocks[0].Ops[1].Inputs[0] = Func.Params[4];
+    if (Mode == 19)
+      Func.Blocks[0].Ops[0].IsTailCall = true;
+    if (Mode == 20) {
+      const auto Flag = NdVar::reg(x86reg::CF, 1);
+      Original.insert(
+          Original.begin() + 1,
+          {Low(0x1002, NdOp::INT_EQUAL, Flag, {SP, NdVar::cst(0, 8)}),
+           Low(0x1003, NdOp::COPY, NdVar::reg(x86reg::RCX, 1), {Flag})});
+    }
+    if (Mode == 21)
+      Func.CC = CallingConv::SysV_AMD64;
+    if (Mode == 22)
+      Original[0].Inputs[0].Size = 4;
+    if (Mode == 23) {
+      Call.Addr += 4;
+      Func.Blocks[0].Ops.insert(Func.Blocks[0].Ops.begin(), Call);
+    }
+    if (Mode == 24)
+      Original[2].Inputs[0] = NdVar::reg(x86reg::RCX, 8);
+    if (Mode == 25)
+      Original[2].Addr += 1;
+    if (Mode == 26 || Mode == 28) {
+      const auto Flag = NdVar::reg(x86reg::CF, 1);
+      Original.insert(
+          Original.begin() + 6,
+          Low(0x100D, NdOp::COPY, NdVar::reg(x86reg::RCX, 1), {Flag}));
+      if (Mode == 28)
+        Original.insert(Original.begin() + 6,
+                        Low(0x100D, NdOp::COPY, Flag, {NdVar::scalar(0, 1)}));
+      Original.insert(Original.begin() + 1, Low(0x1002, NdOp::INT_EQUAL, Flag,
+                                                {SP, NdVar::cst(0, 8)}));
+    }
+    if (Mode == 27)
+      Func.Blocks[0].Ops[0].CalleeStackArgs = 7;
+    size_t Budget = Mode == 11 ? 1 : 4096;
+    LowBlock OriginalBlock;
+    OriginalBlock.Id = 0;
+    OriginalBlock.StartAddr = Func.Entry;
+    OriginalBlock.EndAddr = 0x1015;
+    OriginalBlock.Ops = std::move(Original);
+    EXPECT_EQ(unobservedSourceStackParameters(Func, {OriginalBlock}, Declared,
+                                              Budget),
+              Mode == 0 || Mode == 27 || Mode == 28 ? std::set<unsigned>{4}
+              : Mode == 1 || Mode == 2              ? std::set<unsigned>{5}
+                                                    : std::set<unsigned>{});
+  }
+}
+
+TEST(SourceStackSpills, StackParameterHolesRequireEveryOriginalPath) {
+  for (unsigned Mode = 0; Mode < 49; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    Func.Entry = 0x1000;
+    Func.CC = CallingConv::Win64;
+    Func.Params.resize(7);
+    for (unsigned P = 4; P < Func.Params.size(); ++P) {
+      auto &Parameter = Func.Params[P];
+      Parameter.Kind = MedVar::Param;
+      Parameter.Id = P;
+      Parameter.RegOff = kNoParamReg;
+      Parameter.Size = 8;
+      Parameter.TheArch = Arch::X64;
+    }
+    Func.Blocks.resize(4);
+    std::vector<LowBlock> Original(4);
+    for (unsigned I = 0; I < 4; ++I) {
+      Func.Blocks[I].Id = Original[I].Id = I;
+      Func.Blocks[I].StartAddr = Original[I].StartAddr = 0x1000 + 16 * I;
+      Original[I].EndAddr = 0x1010 + 16 * I;
+    }
+    Original[0].Succs = {1, 2};
+    Original[1].Preds = Original[2].Preds = {0};
+    Original[1].Succs = Original[2].Succs = {3};
+    Original[3].Preds = {1, 2};
+    for (unsigned I = 0; I < 4; ++I) {
+      Func.Blocks[I].Preds = Original[I].Preds;
+      Func.Blocks[I].Succs = Original[I].Succs;
+    }
+    auto Call = op(NdOp::CALL, temp(10), {MedVar::makeConst(0x3000, 8)});
+    Call.Addr = 0x1030;
+    Call.OriginSeq = 0;
+    Call.CalleeRegisterArgs = Call.CalleeVectorArgs = Call.CalleeStackArgs = 0;
+    Func.Blocks[1].Ops = {op(NdOp::COPY, temp(11), {Func.Params[5]})};
+    Func.Blocks[2].Ops = {op(NdOp::COPY, temp(12), {Func.Params[6]})};
+    Func.Blocks[3].Ops = {Call, op(NdOp::RETURN, none(), {temp(10)})};
+    const auto SP = NdVar::reg(x86reg::RSP, 8);
+    const auto RAX = NdVar::reg(x86reg::RAX, 8);
+    const auto RCX = NdVar::reg(x86reg::RCX, 8);
+    const auto CF = NdVar::reg(x86reg::CF, 1);
+    const auto Address = NdVar::tmp(0x10000, 8);
+    const auto Low = [](va_t PC, NdOp Opcode, NdVar Output,
+                        std::initializer_list<NdVar> Inputs) {
+      LowOp Result;
+      Result.Addr = PC;
+      Result.Opcode = Opcode;
+      Result.Output = Output;
+      for (const auto &V : Inputs)
+        Result.addInput(V);
+      return Result;
+    };
+    Original[0].Ops = {
+        Low(0x1000, NdOp::INT_SUB, SP, {SP, NdVar::cst(40, 8)}),
+        Low(0x1004, NdOp::COND_BR, {}, {NdVar::cst(0x1020, 8), RCX})};
+    for (unsigned I : {1u, 2u}) {
+      const va_t PC = Original[I].StartAddr;
+      Original[I].Ops = {
+          Low(PC, NdOp::INT_ADD, Address, {SP, NdVar::cst(80 + I * 8, 8)}),
+          Low(PC, NdOp::LOAD, RAX, {Address}),
+          Low(PC + 4, NdOp::BRANCH, {}, {NdVar::cst(0x1030, 8)})};
+    }
+    Original[3].Ops = {Low(0x1030, NdOp::CALL, RAX, {NdVar::cst(0x3000, 8)}),
+                       Low(0x1034, NdOp::INT_ADD, SP, {SP, NdVar::cst(40, 8)}),
+                       Low(0x1038, NdOp::RETURN, {}, {RAX})};
+    if (Mode == 1)
+      Original[2].Ops[0].Inputs[1].Offset = 80;
+    if (Mode == 2) {
+      Original[2].Ops[0].Inputs[1].Offset = 79;
+      Original[2].Ops[1].Output.Size = 2;
+    }
+    if (Mode == 3)
+      std::swap(Original[1], Original[2]);
+    if (Mode == 4)
+      Original[0].Succs = {1};
+    if (Mode == 5)
+      Original[2].Preds.clear();
+    if (Mode == 6)
+      Original[3].Preds.push_back(1);
+    if (Mode == 7)
+      Original[2].Id = 1;
+    if (Mode == 8)
+      Original[2].StartAddr = 0x1010;
+    if (Mode == 9)
+      Original[0].Ops.back().Inputs[0] = RCX;
+    if (Mode == 10)
+      Original[0].Ops.back().NumInputs = 1;
+    if (Mode == 11)
+      Func.Blocks[3].Ops[0].Inputs[0].ConstVal += 8;
+    if (Mode == 12)
+      Func.Blocks[3].Ops[0].OriginSeq = 1;
+    if (Mode == 13)
+      Func.Blocks[3].Ops[0].CalleeStackArgs = 15;
+    if (Mode == 14)
+      Func.Blocks[3].Ops[0].IsTailCall = true;
+    if (Mode == 15)
+      Original[1].Ops.insert(Original[1].Ops.begin(),
+                             Low(0x1010, NdOp::COPY, RCX, {SP}));
+    if (Mode == 16 || Mode == 17 || Mode == 18) {
+      // The untainted arm reaches the join first. The later predecessor must
+      // revisit it; clearing the flag on only one arm is insufficient.
+      Original[1].Ops.insert(
+          Original[1].Ops.begin(),
+          Low(0x1010, NdOp::INT_EQUAL, CF, {SP, NdVar::scalar(0, 8)}));
+      Original[2].Ops.insert(
+          Original[2].Ops.begin(),
+          Low(0x1020, NdOp::COPY, CF, {NdVar::scalar(0, 1)}));
+      if (Mode == 17)
+        Original[1].Ops.insert(
+            Original[1].Ops.begin() + 1,
+            Low(0x1010, NdOp::COPY, CF, {NdVar::scalar(0, 1)}));
+      const auto Read =
+          Low(0x1030, NdOp::COPY, NdVar::reg(x86reg::RCX, 1), {CF});
+      Original[3].Ops.insert(Original[3].Ops.begin() + (Mode == 18 ? 1 : 0),
+                             Read);
+    }
+    if (Mode == 19)
+      Original[1].Ops.insert(
+          Original[1].Ops.begin(),
+          Low(0x1010, NdOp::INT_SUB, SP, {SP, NdVar::scalar(8, 8)}));
+    if (Mode == 20 || Mode == 21) {
+      Original[2].Ops.back() =
+          Low(0x1024, NdOp::COND_BR, {}, {NdVar::cst(0x1020, 8), RCX});
+      Original[2].Succs = {2, 3};
+      Original[2].Preds.push_back(2);
+      if (Mode == 21)
+        Original[2].Ops.insert(
+            Original[2].Ops.begin(),
+            Low(0x1020, NdOp::INT_SUB, SP, {SP, NdVar::scalar(8, 8)}));
+    }
+    if (Mode == 22)
+      Func.Blocks[3].Ops[0].CalleeStackArgs = -1;
+    if (Mode == 23)
+      Original[3].Ops.pop_back();
+    if (Mode == 24)
+      Original[2].ExceptionalSuccs.resize(1);
+    if (Mode == 25)
+      Func.Blocks[2].ExceptionalPreds.resize(1);
+    if (Mode == 26) {
+      PhiNode Phi;
+      Phi.Output = temp(20);
+      Phi.Args = {{1, Func.Params[4]}, {2, Func.Params[4]}};
+      Func.Blocks[3].Phis.push_back(Phi);
+    }
+    if (Mode == 27) {
+      MedCallInfo Info;
+      Info.BlockId = 3;
+      Info.OpIdx = 0;
+      Info.Args = {Func.Params[4]};
+      Func.CallInfos.push_back(Info);
+    }
+    if (Mode == 28) {
+      MedCallClobber Clobber;
+      Clobber.PreservedInput = Func.Params[4];
+      Func.CallClobbers.push_back(Clobber);
+    }
+    if (Mode == 30)
+      Original[2].Ops[1].Inputs[0] = RCX;
+    if (Mode == 31)
+      Original[2].Ops[1] = Low(0x1020, NdOp::STORE, {}, {Address, SP});
+    if (Mode == 32)
+      Original[0].Ops[0].Output.Size = 4;
+    if (Mode == 33)
+      Func.Blocks[3].Ops.erase(Func.Blocks[3].Ops.begin());
+    if (Mode == 34)
+      Original[1].Ops.insert(Original[1].Ops.begin(),
+                             Low(0x1010, NdOp::RETURN, {}, {RAX}));
+    if (Mode == 35)
+      Original[2].Ops[1].Addr = 0x1040;
+    if (Mode == 36) {
+      auto &Unreachable = Original.emplace_back();
+      Unreachable.Id = 4;
+      Unreachable.StartAddr = 0x1040;
+      Unreachable.EndAddr = 0x1050;
+      Unreachable.Preds = Unreachable.Succs = {4};
+      Unreachable.Ops = {
+          Low(0x1040, NdOp::BRANCH, {}, {NdVar::cst(0x1040, 8)})};
+    }
+    if (Mode == 37)
+      Original[2].Ops.back().Opcode = NdOp::INDIR_BR;
+    if (Mode == 38)
+      Func.ModuleAnalysisRoots = {0x1000, 0x1020};
+    if (Mode == 39)
+      Original[2].Ops[1].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 40)
+      Original[3].Ops.insert(Original[3].Ops.begin(), Original[3].Ops.front());
+    if (Mode == 41)
+      Original[2].Ops.insert(Original[2].Ops.begin() + 1,
+                             Low(0x1020, NdOp::COPY,
+                                 NdVar::tmp(Address.Offset + 1, 1),
+                                 {NdVar::scalar(0, 1)}));
+    if (Mode == 42)
+      Original[2].Ops[1].Addr += 1;
+    if (Mode == 43)
+      Original[2].Ops.insert(Original[2].Ops.begin() + 1,
+                             Low(0x1020, NdOp::COPY, NdVar::reg(x86reg::RCX, 1),
+                                 {NdVar::tmp(Address.Offset + 1, 1)}));
+    if (Mode == 44)
+      Original[2].Ops.insert(Original[2].Ops.begin(),
+                             Low(0x1020, NdOp::COPY,
+                                 NdVar::tmp(Address.Offset + 1, 1),
+                                 {NdVar::scalar(0, 1)}));
+    if (Mode == 45)
+      Original[1].EndAddr = 0x1021;
+    if (Mode == 46)
+      Original[0].Ops.back().Inputs[0].Offset = 0x1030;
+    if (Mode == 47)
+      Original[0].EndAddr = 0x1011;
+    if (Mode == 48)
+      Func.Blocks[2].Ops[0].Inputs[0] = Func.Params[4];
+    size_t Budget = Mode == 29 ? 1 : 4096;
+    const auto Expected =
+        Mode == 0 || Mode == 3 || Mode == 17 || Mode == 20 || Mode == 44
+            ? std::set<unsigned>{4}
+            : std::set<unsigned>{};
+    EXPECT_EQ(unobservedSourceStackParameters(Func, Original, {0x3000}, Budget),
+              Expected);
+    if (Mode == 0) {
+      const size_t Used = 4096 - Budget;
+      Budget = Used;
+      EXPECT_EQ(
+          unobservedSourceStackParameters(Func, Original, {0x3000}, Budget),
+          Expected);
+      EXPECT_EQ(Budget, 0u);
+      Budget = Used - 1;
+      EXPECT_TRUE(
+          unobservedSourceStackParameters(Func, Original, {0x3000}, Budget)
+              .empty());
+    }
+  }
+}
+
+TEST(SourceStackSpills, AReintroducedRegisterInputStillReachesImplicitCalls) {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.CC = CallingConv::Win64;
+  Func.FrameSize = 40;
+  Func.Params = {rcx(0)};
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  const auto Home = temp(10);
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::COPY, rcx(0), {rcx(0)}),
+               op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+               op(NdOp::STORE, none(), {Home, rcx(0)}),
+               op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)}),
+               op(NdOp::COPY, rcx(1), {MedVar::makeConst(42, 8)}),
+               op(NdOp::COPY, rcx(2), {rcx(0)}),
+               op(NdOp::CALL, temp(11), {MedVar::makeConst(0x3000, 8)}),
+               op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+  Func.Blocks.push_back(std::move(Block));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  EXPECT_TRUE(unobservedSourceSpillParameters(Func).empty());
+}
+
+TEST(SourceStackSpills, ADiscardedSpillDoesNotEraseADynamicCallTarget) {
+  MedFunc Func;
+  Func.Entry = 0x1000;
+  Func.CC = CallingConv::Win64;
+  Func.FrameSize = 40;
+  Func.Params = {rcx(0)};
+  MedBlock Block;
+  Block.Id = 0;
+  Block.StartAddr = Func.Entry;
+  const auto Home = temp(10), Target = temp(11);
+  Block.Ops = {op(NdOp::COPY, sp(0), {sp(0)}),
+               op(NdOp::COPY, rcx(0), {rcx(0)}),
+               op(NdOp::INT_ADD, Home, {sp(0), MedVar::makeConst(8, 8)}),
+               op(NdOp::STORE, none(), {Home, rcx(0)}),
+               op(NdOp::STORE, none(), {Home, MedVar::makeConst(0, 8)}),
+               op(NdOp::COPY, Target, {rcx(0)}),
+               op(NdOp::COPY, rcx(1), {MedVar::makeConst(0, 8)}),
+               op(NdOp::CALL, temp(12), {Target}),
+               op(NdOp::RETURN, none(), {MedVar::makeConst(0, 8)})};
+  Func.Blocks.push_back(std::move(Block));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  ASSERT_TRUE(Func.Blocks[0].Ops[3].PrologueSave);
+  EXPECT_TRUE(unobservedSourceSpillParameters(Func).empty());
+}
+
+TEST(SourceStackSpills, ConstantPrefixesNeverEvaluateUnavailableNeighbors) {
+  for (unsigned Mode = 0; Mode < 10; ++Mode) {
+    SCOPED_TRACE(Mode);
+    MedFunc Func;
+    MedBlock Block;
+    Block.Id = 0;
+    MedVar High = temp(1), Low = temp(2), Joined = temp(3), Copied = temp(4);
+    High.Size = 7;
+    Low.Size = 1;
+    auto Literal = MedVar::makeConst(0x5A, 1);
+    if (Mode == 3)
+      Literal.Provenance = ConstantAddressProvenance::DataAddress;
+    // This effect remains even when its loaded bytes are not call inputs.
+    Block.Ops = {
+        op(NdOp::LOAD, High, {MedVar::makeConst(0x2000, 8)}),
+        op(NdOp::COPY, Low, {Literal}),
+        op(NdOp::CONCAT, Joined,
+           {High, Mode == 1 ? MedVar::makeUnspecified(1, Arch::X64) : Low}),
+        op(NdOp::COPY, Copied, {Joined})};
+    if (Mode == 4)
+      Block.Ops[1].MemoryOrdering = NdMemoryOrdering::Acquire;
+    if (Mode == 5)
+      Block.Ops[3].Inputs[0] = Copied;
+    auto Call = op(NdOp::CALL, temp(5),
+                   {MedVar::makeConst(Mode == 6 ? 0x4000 : 0x3000, 8), Copied});
+    MedCallInfo Info;
+    Info.BlockId = 0;
+    Info.OpIdx = Block.Ops.size();
+    Info.TargetAddr = 0x3000;
+    Info.Args = {Copied, MedVar::makeUnspecified(8, Arch::X64)};
+    Info.IsIndirect = Mode == 7;
+    Info.ArgumentsInCalleeRegisterOrder = Mode == 8;
+    if (Mode == 9)
+      Info.OpIdx = 0;
+    Func.CallInfos.push_back(Info);
+    Block.Ops.push_back(Call);
+    Func.Blocks.push_back(std::move(Block));
+    const auto Before = Func.CallInfos[0].Args;
+    replaceKnownSourceCallArguments(Func, {{0x3000, {{0, Mode == 2 ? 2 : 1}}}});
+    if (Mode == 0) {
+      ASSERT_TRUE(Func.CallInfos[0].Args[0].isConst());
+      EXPECT_EQ(Func.CallInfos[0].Args[0].ConstVal, 0x5Au);
+      EXPECT_EQ(Func.CallInfos[0].Args[0].Size, 8u);
+    } else {
+      EXPECT_EQ(Func.CallInfos[0].Args[0], Before[0]);
+    }
+    EXPECT_EQ(Func.CallInfos[0].Args.size(), 2u);
+    EXPECT_EQ(Func.CallInfos[0].Args[1], Before[1]);
+    EXPECT_EQ(Func.Blocks[0].Ops.front().Opcode, NdOp::LOAD);
+    EXPECT_EQ(Func.Blocks[0].Ops.back().Inputs[1], Copied);
+  }
 }
 
 TEST(SourceStackSpills, FlagsTransfersDoNotObserveScratchButKeepTheirEffects) {
@@ -542,6 +1684,147 @@ MedFunc readsReturnAddress() {
 
 const MedOp &read(const MedFunc &Func) { return Func.Blocks[0].Ops[1]; }
 
+MedFunc neutralReturnSlot(unsigned Width = 1, int64_t Offset = 0,
+                          Arch Architecture = Arch::X64) {
+  auto Func = readsReturnAddress();
+  const auto PointerSize = getTargetRegInfo(Architecture).PointerSize;
+  auto Stack = sp(0);
+  Stack.TheArch = Architecture;
+  Stack.Size = PointerSize;
+  auto Address = temp(21);
+  Address.TheArch = Architecture;
+  Address.Size = PointerSize;
+  auto Old = temp(20);
+  Old.TheArch = Architecture;
+  Old.Size = Width;
+  Func.Blocks[0].Ops = {
+      op(NdOp::COPY, Stack, {Stack}),
+      op(NdOp::INT_ADD, Address,
+         {Stack, MedVar::makeConst(uint64_t(Offset), PointerSize)}),
+      op(NdOp::ATOMIC_ADD, Old, {Address, MedVar::makeConst(0, Width)}),
+      op(NdOp::RETURN, none(), {MedVar::makeConst(7, PointerSize)})};
+  Func.Blocks[0].Ops[2].MemoryOrdering =
+      NdMemoryOrdering::SequentiallyConsistent;
+  return Func;
+}
+
+TEST(MedNeutralReturnSlot, OnlyCompleteUnobservedSlotTransactionsAreProjected) {
+  for (auto Architecture : {Arch::X86, Arch::X64})
+    for (auto Format :
+         {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
+      for (unsigned Width : {1u, 2u, 4u, 8u})
+        for (int64_t Offset = -1; Offset <= 8; ++Offset) {
+          SCOPED_TRACE(testing::Message()
+                       << unsigned(Architecture) << '/' << unsigned(Format)
+                       << '/' << Width << '/' << Offset);
+          auto Func = neutralReturnSlot(Width, Offset, Architecture);
+          markSourceStackAccesses(Func, Architecture, Format);
+          const auto &Atomic = Func.Blocks[0].Ops[2];
+          const int64_t End = getTargetRegInfo(Architecture).PointerSize;
+          const bool Fits =
+              Offset >= 0 && Offset < End && Width <= End - Offset;
+          EXPECT_EQ(Atomic.SourceReturnSlotOffset.has_value(), Fits);
+          if (Fits && Atomic.SourceReturnSlotOffset)
+            EXPECT_EQ(*Atomic.SourceReturnSlotOffset, Offset);
+          EXPECT_EQ(Atomic.Opcode, NdOp::ATOMIC_ADD);
+          EXPECT_FALSE(Atomic.PrologueSave);
+          EXPECT_EQ(Func.Blocks[0].Ops.size(), 4u);
+        }
+}
+
+TEST(MedNeutralReturnSlot, ChangedBodiesCannotRetainTheAddressProof) {
+  for (unsigned Case = 0; Case < 14; ++Case) {
+    SCOPED_TRACE(Case);
+    auto Func = neutralReturnSlot();
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    ASSERT_EQ(Func.Blocks[0].Ops[2].SourceReturnSlotOffset, 0);
+    auto &Ops = Func.Blocks[0].Ops;
+    auto &Atomic = Ops[2];
+    auto Entry = StackEntryKind::Call;
+    switch (Case) {
+    case 0:
+      Atomic.Inputs[1].ConstVal = 1;
+      break;
+    case 1:
+      Atomic.Opcode = NdOp::ATOMIC_XCHG;
+      break;
+    case 2:
+      Atomic.MemoryAddressSpace = NdMemoryAddressSpace::X86FS;
+      break;
+    case 3:
+      Atomic.MemoryAddressSpace = NdMemoryAddressSpace::X86GS;
+      break;
+    case 4:
+      Atomic.MemoryOrdering = NdMemoryOrdering::Relaxed;
+      break;
+    case 5:
+      Atomic.Inputs[0].Size = 4;
+      break;
+    case 6:
+      Atomic.Inputs[1].Size = 2;
+      break;
+    case 7:
+      Ops[3].Inputs[0] = Atomic.Output;
+      break;
+    case 8:
+      Ops[1].Inputs[0] = rcx(0);
+      break;
+    case 9:
+      Entry = StackEntryKind::ProcessEntry;
+      break;
+    case 10:
+      Func.Blocks[0].Preds.push_back(0);
+      break;
+    case 11:
+      Func.SkippedSSA = true;
+      break;
+    case 12:
+      Ops[1].Inputs[1].ConstVal = 8;
+      break;
+    case 13:
+      Func.AnalystStackFrame = true;
+      break;
+    }
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF, Entry);
+    EXPECT_FALSE(Atomic.SourceReturnSlotOffset);
+    EXPECT_FALSE(Atomic.PrologueSave);
+  }
+}
+
+TEST(MedNeutralReturnSlot, FlagAndPhiReadersKeepOriginalReturnSlotBytes) {
+  for (bool PhiRead : {false, true}) {
+    auto Func = neutralReturnSlot();
+    auto &Block = Func.Blocks[0];
+    const auto Old = Block.Ops[2].Output;
+    if (PhiRead) {
+      PhiNode Phi;
+      Phi.Output = temp(22);
+      Phi.Args.emplace_back(0, Old);
+      Block.Phis.push_back(std::move(Phi));
+    } else {
+      Block.Ops.insert(
+          Block.Ops.end() - 1,
+          op(NdOp::INT_EQUAL, temp(22), {Old, MedVar::makeConst(0, Old.Size)}));
+      Block.Ops.back().Inputs[0] = temp(22);
+    }
+    markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+    EXPECT_FALSE(Block.Ops[2].SourceReturnSlotOffset);
+  }
+}
+
+TEST(MedNeutralReturnSlot, AnotherEntryDoesNotInheritTheCallersSlot) {
+  auto Func = neutralReturnSlot();
+  MedBlock Other;
+  Other.Id = 1;
+  Other.StartAddr = Func.Entry + 16;
+  Other.Ops = {Func.Blocks[0].Ops[2], Func.Blocks[0].Ops.back()};
+  Other.Ops.front().Output.Id = 30;
+  Func.Blocks.push_back(std::move(Other));
+  markSourceStackAccesses(Func, Arch::X64, BinaryFormat::COFF);
+  EXPECT_FALSE(Func.Blocks[0].Ops[2].SourceReturnSlotOffset);
+  EXPECT_FALSE(Func.Blocks[1].Ops[0].SourceReturnSlotOffset);
+}
+
 TEST_P(MedPrologueSaves, ALoadOfTheEntrySlotIsTheReturnAddress) {
   MedFunc Func = readsReturnAddress();
   markStackAccesses(Func, Arch::X64, BinaryFormat::ELF);
@@ -782,6 +2065,87 @@ TEST(SourceCallReturnReads, ConstantOldContentsCannotHideTheImplicitWrite) {
     EXPECT_NE(Error.find("100D"), std::string::npos);
     EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
     EXPECT_FALSE(Func.Blocks[0].Ops[3].PrologueSave);
+  }
+}
+
+TEST(SourceCallReturnReads, MaterializesTheOriginalPCAndRevalidatesTheStore) {
+  auto Func = observedCallSlot();
+  auto Image = callSlotImage();
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  ASSERT_EQ(Func.Blocks[0].Ops.size(), 9u);
+  const auto &Write = Func.Blocks[0].Ops[5];
+  EXPECT_EQ(Write.Opcode, NdOp::STORE);
+  EXPECT_EQ(Write.Inputs[1].ConstVal, 0x100du);
+  EXPECT_EQ(Write.Inputs[1].Size, 8u);
+  EXPECT_FALSE(Write.PrologueSave);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, Image, Error)) << Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.Blocks[0].Ops.size(), 9u);
+  Func.Blocks[0].Ops[5].Inputs[1].ConstVal ^= 1;
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, Image, Error));
+  Func.Blocks[0].Ops[5].Inputs[1].ConstVal ^= 1;
+  // A changed call length cannot reuse a saved return-PC assertion.
+  Image.Segments[0].Data[8] = 0xff;
+  Image.Segments[0].Data[9] = 0xd0; // call rax: next PC is 0x100a
+  EXPECT_FALSE(validateSourceCallReturnReads(Func, Image, Error));
+}
+
+TEST(SourceCallReturnReads, MaterializationRetainsPartialOutputAndFrameExtent) {
+  auto Func = observedCallSlot();
+  Func.FrameSize = 32;
+  auto &Ops = Func.Blocks[0].Ops;
+  Ops.insert(Ops.begin() + 5,
+             op(NdOp::STORE, none(), {temp(20), MedVar::makeConst(29, 4)}));
+  auto Image = callSlotImage();
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  ASSERT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.FrameSize, 40);
+  EXPECT_EQ(Func.Blocks[0].Ops[5].Inputs[1].ConstVal, 0x100du);
+  EXPECT_EQ(Func.Blocks[0].Ops[7].Inputs[1].ConstVal, 29u);
+  EXPECT_EQ(Func.Blocks[0].Ops[7].Inputs[1].Size, 4u);
+  EXPECT_TRUE(validateSourceCallReturnReads(Func, Image, Error)) << Error;
+}
+
+TEST(SourceCallReturnReads, MaterializationNeverTurnsTailsIntoPushes) {
+  auto Func = observedCallSlot();
+  auto Image = callSlotImage(0xe9);
+  Image.Bits = Bitness::Bits64;
+  std::string Error;
+  EXPECT_TRUE(preserveSourceCallReturnWrites(Func, Image, Error)) << Error;
+  EXPECT_EQ(Func.Blocks[0].Ops.size(), 7u);
+}
+
+TEST(SourceCallReturnReads, MaterializationIsTransactionalForUnknownStacks) {
+  for (bool MissingStack : {false, true}) {
+    auto Func = observedCallSlot();
+    if (MissingStack)
+      Func.Blocks[0].Ops.insert(
+          Func.Blocks[0].Ops.begin() + 4,
+          op(NdOp::COPY, sp(2), {MedVar::makeUnspecified(8, Arch::X64)}));
+    const auto Before = Func.Blocks[0].Ops.size();
+    auto Image = callSlotImage();
+    Image.Bits = Bitness::Bits64;
+    std::string Error;
+    EXPECT_FALSE(preserveSourceCallReturnWrites(Func, Image, Error,
+                                                MissingStack ? 262144 : 0));
+    EXPECT_EQ(Func.Blocks[0].Ops.size(), Before);
+    EXPECT_EQ(Func.Blocks[0].Ops[3].Inputs[1].ConstVal, 19u);
+  }
+}
+
+TEST(SourceCallReturnReads, MaterializationRequiresAnActualCompleteNearCall) {
+  for (unsigned Size : {9u, 10u, 11u, 12u}) {
+    auto Func = observedCallSlot();
+    auto Image = callSlotImage();
+    Image.Bits = Bitness::Bits64;
+    Image.Segments[0].Size = Size;
+    Image.Segments[0].Data.resize(Size);
+    std::string Error;
+    EXPECT_FALSE(preserveSourceCallReturnWrites(Func, Image, Error));
+    EXPECT_EQ(Func.Blocks[0].Ops.size(), 7u);
   }
 }
 
@@ -1980,7 +3344,7 @@ TEST(SourceCallReturnReads, NarrowTargetsReturnTheSecondIntegerRegister) {
 }
 
 TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {
-  for (unsigned Case = 0; Case != 22; ++Case) {
+  for (unsigned Case = 0; Case != 52; ++Case) {
     SCOPED_TRACE(Case);
     MedFunc Caller;
     Caller.Entry = 0x1000;
@@ -2102,14 +3466,202 @@ TEST(SourceFrameBorrows, ReadExtentsAndEscapesBoundPrivateStoreRemoval) {
     if (Case == 12)
       Callee.SourceParametersBound = true;
     Callee.Blocks.push_back(std::move(Body));
-    const std::map<va_t, const MedFunc *> Callees{{Callee.Entry, &Callee}};
+    std::vector<MedFunc> Relays;
+    std::map<va_t, const MedFunc *> Callees;
+    if (Case >= 22) {
+      const unsigned Depth =
+          Case >= 50 ? limits::ir::kSourceFrameBorrowCallDepth + (Case - 50)
+                     : (Case == 24 ? 3 : 2);
+      Relays.reserve(Depth - 1);
+      for (unsigned I = 0; I + 1 < Depth; ++I) {
+        auto &Relay = Relays.emplace_back();
+        Relay.Entry = 0x2000 + I * 0x100;
+        Relay.CC = CallingConv::Win64;
+        Relay.Params = {rcx(0)};
+        Relay.FrameSize = 0x28;
+        MedBlock Forward;
+        Forward.Id = 0;
+        Forward.StartAddr = Relay.Entry;
+        Forward.Ops = {
+            op(NdOp::COPY, sp(0), {sp(0)}),
+            op(NdOp::COPY, rcx(0), {rcx(0)}),
+            op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(0x28, 8)}),
+            op(NdOp::CALL, Word,
+               {MedVar::makeConst(Relay.Entry + 0x100, 8), rcx(0)}),
+            op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(0x28, 8)}),
+            op(NdOp::RETURN, none(), {Word})};
+        Forward.Ops[3].CalleeRegisterArgs = 1;
+        Forward.Ops[3].CalleeStackArgs = 0;
+        Forward.Ops[3].CalleeVectorArgs = 0;
+        MedCallInfo Next;
+        Next.BlockId = 0;
+        Next.OpIdx = 3;
+        Next.TargetAddr = Relay.Entry + 0x100;
+        Next.Args = {rcx(0)};
+        Relay.CallInfos = {Next};
+        Relay.Blocks = {Forward};
+      }
+      Callee.Entry = 0x2000 + (Depth - 1) * 0x100;
+      Callee.Blocks[0].StartAddr = Callee.Entry;
+      auto &Leaf = Callee.Blocks[0];
+      auto &First = Relays.front();
+      if (Case == 23) {
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::INT_SUB, temp(30), {rcx(0), MedVar::makeConst(4, 8)}));
+        Leaf.Ops[2].Inputs[0] = temp(30);
+      }
+      if (Case == 25 || Case == 47)
+        Leaf.Ops[1].Inputs[0] =
+            reg(30, Case == 25 ? x86reg::RAX : x86reg::RDX, 0);
+      if (Case == 26) {
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::INT_ADD, temp(30), {sp(0), MedVar::makeConst(0x28, 8)}));
+        Leaf.Ops[2].Inputs[0] = temp(30);
+      }
+      if (Case == 27 || Case == 28) {
+        const va_t Target = Case == 27 ? 0x4000 : First.Entry;
+        First.Blocks[0].Ops[3].Inputs[0] = MedVar::makeConst(Target, 8);
+        First.CallInfos[0].TargetAddr = Target;
+      }
+      if (Case == 29)
+        First.CallInfos[0].TargetAddr += 0x100;
+      if (Case == 30 || Case == 42) {
+        ExceptionFunction EH;
+        EH.ParseStatus = ExceptionParseStatus::Complete;
+        EH.Personality = Case == 30 ? ExceptionPersonality::GSHandlerCheck
+                                    : ExceptionPersonality::None;
+        Callee.ExceptionMetadata = EH;
+      }
+      if (Case == 31)
+        First.Blocks[0].Ops[2].Inputs[0] = rcx(0);
+      if (Case == 32)
+        Callee.Blocks.clear();
+      if (Case == 33)
+        Callee.IsVariadic = true;
+      if (Case == 34)
+        Callee.IntegerArgumentRegisters = {x86reg::RDX};
+      if (Case == 35)
+        Callee.SourceParametersBound = true;
+      if (Case == 36 || Case == 37) {
+        First.CallInfos.clear();
+        if (Case == 37)
+          First.Blocks[0].Ops[3].NumInputs = 1;
+      }
+      if (Case == 38)
+        Callee.Params.resize(5);
+      if (Case == 39)
+        First.CallInfos[0].OpIdx = 99;
+      if (Case == 40)
+        Leaf.Ops.insert(
+            Leaf.Ops.begin() + 1,
+            op(NdOp::STORE, none(), {MedVar::makeConst(0x4000, 8), rcx(0)}));
+      if (Case == 41)
+        Leaf.ExceptionalPreds.emplace_back();
+      if (Case == 43)
+        First.Blocks[0].Ops[3].IsTailCall = true;
+      if (Case == 44)
+        First.Blocks[0].Ops[3].CalleeVectorArgs = 1;
+      if (Case == 45)
+        First.CallInfos[0].OpIdx = 2;
+      if (Case == 46)
+        First.Blocks[0].Ops.back().Inputs[0] = rcx(0);
+      if (Case == 48)
+        Caller.Blocks[0].Ops[6].Opcode = NdOp::INDIR_CALL;
+      if (Case == 49)
+        Callee.Entry += 0x100;
+      for (const auto &Relay : Relays)
+        Callees.emplace(Relay.Entry, &Relay);
+    }
+    Callees.emplace(Callee.Entry, &Callee);
     markUnobservedBorrowedFrameStores(Caller, Arch::X64, BinaryFormat::COFF,
                                       Callees);
-    EXPECT_EQ(Caller.Blocks[0].Ops[4].PrologueSave, Case == 0 || Case == 13);
+    EXPECT_EQ(Caller.Blocks[0].Ops[4].PrologueSave,
+              Case == 0 || Case == 13 || Case == 22 || Case == 24 ||
+                  Case == 36 || Case == 42 || Case == 50);
     EXPECT_FALSE(Caller.Blocks[0].Ops[5].PrologueSave);
     EXPECT_EQ(Caller.Blocks[0].Ops[6].Opcode,
-              Case >= 20 ? NdOp::INDIR_CALL : NdOp::CALL);
+              Case == 20 || Case == 21 || Case == 48 ? NdOp::INDIR_CALL
+                                                     : NdOp::CALL);
   }
+}
+
+TEST(SourceFrameBorrows, PartialOverwritesMustPrecedeEveryBorrowRead) {
+  for (bool Home : {false, true})
+    for (unsigned Case = 0; Case != 8; ++Case) {
+      SCOPED_TRACE(Home);
+      SCOPED_TRACE(Case);
+      MedFunc Caller;
+      Caller.Entry = 0x1000;
+      Caller.CC = CallingConv::Win64;
+      Caller.FrameSize = 0x38;
+      auto Byte = temp(20);
+      Byte.Size = 1;
+      const int64_t Offset = Home ? 8 : -16;
+      MedBlock Entry;
+      Entry.Id = 0;
+      Entry.StartAddr = Caller.Entry;
+      Entry.Succs = Case == 3 ? std::vector<int>{1, 2} : std::vector<int>{1};
+      Entry.Ops = {
+          op(NdOp::COPY, sp(0), {sp(0)}),
+          op(NdOp::INT_SUB, sp(1), {sp(0), MedVar::makeConst(0x38, 8)}),
+          op(NdOp::INT_ADD, temp(10),
+             {sp(0), MedVar::makeConst(uint64_t(Offset), 8)}),
+          op(NdOp::STORE, none(), {temp(10), rcx(0)})};
+      MedBlock Overwrite;
+      Overwrite.Id = 1;
+      Overwrite.StartAddr = 0x1010;
+      Overwrite.Preds = {0};
+      Overwrite.Succs = {2};
+      Overwrite.Ops = {
+          op(NdOp::STORE, none(), {temp(10), MedVar::makeConst(37, 1)})};
+      Overwrite.Ops[0].Dead = Case == 4;
+      Overwrite.Ops[0].PrologueSave = Case == 5;
+      MedBlock Read;
+      Read.Id = 2;
+      Read.StartAddr = 0x1020;
+      Read.Preds = Case == 3 ? std::vector<int>{0, 1} : std::vector<int>{1};
+      Read.Ops = {
+          op(NdOp::CALL, Byte, {MedVar::makeConst(0x2000, 8), temp(10)}),
+          op(NdOp::INT_ADD, sp(2), {sp(1), MedVar::makeConst(0x38, 8)}),
+          op(NdOp::RETURN, none(), {Byte})};
+      Read.Ops[0].CalleeRegisterArgs = 1;
+      Read.Ops[0].CalleeStackArgs = 0;
+      Read.Ops[0].CalleeVectorArgs = 0;
+      if (Case == 1) {
+        Read.Ops.insert(Read.Ops.begin() + 1, Overwrite.Ops.front());
+        Overwrite.Ops.clear();
+      }
+      Caller.Blocks = {Entry, Overwrite, Read};
+      MedCallInfo Call;
+      Call.BlockId = 2;
+      Call.OpIdx = 0;
+      Call.TargetAddr = 0x2000;
+      Call.Args = {temp(10)};
+      Call.IsIndirect = Case == 6;
+      Caller.CallInfos = {Call};
+      MedFunc Callee;
+      Callee.Entry = Call.TargetAddr;
+      Callee.CC = CallingConv::Win64;
+      Callee.Params = {rcx(0)};
+      MedBlock Body;
+      Body.Id = 0;
+      Body.StartAddr = Callee.Entry;
+      Body.Ops = {op(NdOp::COPY, rcx(0), {rcx(0)}),
+                  op(NdOp::LOAD, Byte, {rcx(0)}),
+                  op(NdOp::RETURN, none(), {Byte})};
+      if (Case == 2)
+        Body.Ops[1].Output.Size = 8;
+      if (Case == 7)
+        Body.Ops.insert(
+            Body.Ops.begin() + 1,
+            op(NdOp::STORE, none(), {MedVar::makeConst(0x3000, 8), rcx(0)}));
+      Callee.Blocks = {Body};
+      markUnobservedBorrowedFrameStores(Caller, Arch::X64, BinaryFormat::COFF,
+                                        {{Callee.Entry, &Callee}});
+      EXPECT_EQ(Caller.Blocks[0].Ops[3].PrologueSave, Case == 0);
+    }
 }
 
 } // namespace

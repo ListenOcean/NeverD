@@ -252,6 +252,11 @@ struct MedOp {
   /// Source views only: this LOAD reads the return address the call pushed,
   /// in a function that never overwrites it (markReturnAddressReads).
   bool ReturnAddressRead = false;
+  /// Source views only: a neutral atomic transaction whose unread old value
+  /// permits addressing the compiled function's real CALL return slot.
+  /// The complete access lies within that slot, at this byte offset. The
+  /// transaction stays observable; this never authorizes its removal.
+  std::optional<uint16_t> SourceReturnSlotOffset;
   bool PreservesCallerSaved = false;
   /// GPR families (see CallRegisterEffects.h) the direct callee provably
   /// never writes, so SSA keeps their pre-call values across this call.
@@ -491,6 +496,38 @@ struct MedCallInfo {
   /// -1 when recovery ended them elsewhere.
   int TargetRegisterArgIdx = -1;
   uint16_t StackArgumentSlotBytes = 0;
+};
+
+/// A same-frame Windows local unwind (`_local_unwind(EstablisherFrame, T)`)
+/// that LowToMed replaced by its effect: a call of each termination handler
+/// the unwind runs, with the abnormal-termination flag set and this frame's
+/// EstablisherFrame, innermost first, then a jump to T.  The calls keep the
+/// runtime call's instruction address, so HighIR can find them and run a
+/// handler through its filled `__finally` clause instead (SEHFinallyBodies.h).
+struct MedSEHLocalUnwindExit {
+  struct Handler {
+    /// The termination handler's entry.
+    va_t Entry = InvalidVA;
+    /// The scope it terminates, as an index of the SEH scope table.
+    uint32_t ScopeIndex = 0;
+    bool operator==(const Handler &) const = default;
+  };
+  /// The address of the runtime call this exit replaces, and its LowIR
+  /// operation sequence.
+  va_t CallAddr = InvalidVA;
+  int CallSeq = -1;
+  /// Where the unwind resumes, in this function.
+  va_t Target = InvalidVA;
+  /// The frame the call passed, relative to the entry stack pointer.
+  int64_t TargetFrame = 0;
+  /// Nothing else enters Target: no other code of the function, no handler
+  /// or funclet nested in it and no relocation names it, and every certified
+  /// call to it is an exit.  It is then no independent root: proofs over the
+  /// decoded CFG enter it from these exits (LowSEHLocalUnwindExitSource).
+  bool OwnsTarget = false;
+  /// The handlers the unwind calls, innermost first.
+  std::vector<Handler> Handlers;
+  bool operator==(const MedSEHLocalUnwindExit &) const = default;
 };
 
 /// A parent's value of one callee-saved register throughout the protected
@@ -740,6 +777,9 @@ struct MedFunc {
   /// (buildSsa). A register absent here has no such value.
   std::map<va_t, std::map<uint64_t, SEHFuncletRegisterValue>>
       SEHFuncletRegisters;
+  /// The certified same-frame local unwinds this function makes, each
+  /// already replaced by its handler calls and jump, by call address.
+  std::vector<MedSEHLocalUnwindExit> SEHLocalUnwindExits;
   std::optional<RegistrationStateAnalysis> RegistrationStates;
   /// Independent replay of expanded shared helpers. The source states above
   /// retain their original call occurrences and prologue receipt.

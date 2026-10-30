@@ -2050,6 +2050,23 @@ Double-click to go to the declaration.</translation>
         <source>Could not refresh source: %1</source>
         <translation>Could not refresh source: %1</translation>
     </message>
+
+    <message>
+        <source>Interpreter recovered · %1 blocks</source>
+        <translation>Interpreter recovered · %1 blocks</translation>
+    </message>
+    <message>
+        <source>No complete source was produced</source>
+        <translation>No complete source was produced</translation>
+    </message>
+    <message>
+        <source>Recovering interpreter control flow…</source>
+        <translation>Recovering interpreter control flow…</translation>
+    </message>
+    <message>
+        <source>Recovery stopped: %1</source>
+        <translation>Recovery stopped: %1</translation>
+    </message>
 </context>
 <context>
     <name>neverd::gui::CodeView</name>
@@ -2116,6 +2133,23 @@ Double-click to go to the declaration.</translation>
     <message>
         <source>Cancel transformation</source>
         <translation>Cancel transformation</translation>
+    </message>
+
+    <message>
+        <source>Interpreter recovery options…</source>
+        <translation>Interpreter recovery options…</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report…</source>
+        <translation>Interpreter recovery report…</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Recover interpreter function</translation>
+    </message>
+    <message>
+        <source>Return to ordinary source</source>
+        <translation>Return to ordinary source</translation>
     </message>
 </context>
 <context>
@@ -9948,6 +9982,150 @@ Your previous graph is still available.</translation>
     <message>
         <source>Timeline</source>
         <translation>Timeline</translation>
+    </message>
+</context>
+
+<context>
+    <name>neverd::gui::InterpreterRecoveryDialog</name>
+    <message>
+        <source>Assume external stores avoid the declared entry frame</source>
+        <translation>Assume external stores avoid the declared entry frame</translation>
+    </message>
+    <message>
+        <source>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</source>
+        <translation>Blank or zero keeps the engine default. More work does not permit incomplete source or add memory assumptions.</translation>
+    </message>
+    <message>
+        <source>Chained transfers</source>
+        <translation>Chained transfers</translation>
+    </message>
+    <message>
+        <source>Chained visits per destination</source>
+        <translation>Chained visits per destination</translation>
+    </message>
+    <message>
+        <source>Contexts per address</source>
+        <translation>Contexts per address</translation>
+    </message>
+    <message>
+        <source>Control fields</source>
+        <translation>Control fields</translation>
+    </message>
+    <message>
+        <source>Control refinements</source>
+        <translation>Control refinements</translation>
+    </message>
+    <message>
+        <source>Control-flow nodes</source>
+        <translation>Control-flow nodes</translation>
+    </message>
+    <message>
+        <source>Dependency visits</source>
+        <translation>Dependency visits</translation>
+    </message>
+    <message>
+        <source>End a chain at a repeated destination</source>
+        <translation>End a chain at a repeated destination</translation>
+    </message>
+    <message>
+        <source>Engine default</source>
+        <translation>Engine default</translation>
+    </message>
+    <message>
+        <source>Enter a valid integer for %1.</source>
+        <translation>Enter a valid integer for %1.</translation>
+    </message>
+    <message>
+        <source>Enter both entry-frame endpoints, or leave both blank.</source>
+        <translation>Enter both entry-frame endpoints, or leave both blank.</translation>
+    </message>
+    <message>
+        <source>Entry RSP alignment</source>
+        <translation>Entry RSP alignment</translation>
+    </message>
+    <message>
+        <source>Entry RSP range end (exclusive)</source>
+        <translation>Entry RSP range end (exclusive)</translation>
+    </message>
+    <message>
+        <source>Entry RSP range start</source>
+        <translation>Entry RSP range start</translation>
+    </message>
+    <message>
+        <source>Entry RSP residue</source>
+        <translation>Entry RSP residue</translation>
+    </message>
+    <message>
+        <source>Evaluated operations</source>
+        <translation>Evaluated operations</translation>
+    </message>
+    <message>
+        <source>General registers</source>
+        <translation>General registers</translation>
+    </message>
+    <message>
+        <source>General registers and CPU queries</source>
+        <translation>General registers and CPU queries</translation>
+    </message>
+    <message>
+        <source>General registers, CPU queries and XMM</source>
+        <translation>General registers, CPU queries and XMM</translation>
+    </message>
+    <message>
+        <source>Interpreter recovery report</source>
+        <translation>Interpreter recovery report</translation>
+    </message>
+    <message>
+        <source>Node evaluations</source>
+        <translation>Node evaluations</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid return slots and saved frame cells</source>
+        <translation>Prove stores avoid return slots and saved frame cells</translation>
+    </message>
+    <message>
+        <source>Prove stores avoid the declared entry frame</source>
+        <translation>Prove stores avoid the declared entry frame</translation>
+    </message>
+    <message>
+        <source>Recover</source>
+        <translation>Recover</translation>
+    </message>
+    <message>
+        <source>Recover interpreter function</source>
+        <translation>Recover interpreter function</translation>
+    </message>
+    <message>
+        <source>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</source>
+        <translation>Recover reachable control flow and generate C with explicit x64 register state. The source describes normal, nonfaulting execution with fixed image mappings. Memory assumptions below apply only when you enter them.</translation>
+    </message>
+    <message>
+        <source>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</source>
+        <translation>Signed offsets from entry RSP. Declaring this range assumes address arithmetic does not wrap; it does not prove accessibility or separation.</translation>
+    </message>
+    <message>
+        <source>Solver queries</source>
+        <translation>Solver queries</translation>
+    </message>
+    <message>
+        <source>Source state</source>
+        <translation>Source state</translation>
+    </message>
+    <message>
+        <source>State and memory</source>
+        <translation>State and memory</translation>
+    </message>
+    <message>
+        <source>Symbolic expression nodes</source>
+        <translation>Symbolic expression nodes</translation>
+    </message>
+    <message>
+        <source>Unspecified</source>
+        <translation>Unspecified</translation>
+    </message>
+    <message>
+        <source>Work limits</source>
+        <translation>Work limits</translation>
     </message>
 </context>
 </TS>

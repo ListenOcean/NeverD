@@ -52,6 +52,25 @@ add_neverd_unittest(NeverDCOFFExceptionModelTests
 target_include_directories(NeverDCOFFExceptionModelTests PRIVATE
   ${CMAKE_SOURCE_DIR}/lib/loader/COFF/unwind)
 
+add_neverd_unittest(NeverDCOFFExceptionParserTests
+  format/COFFFunctionListingTests.cpp
+  eh/COFFExceptionTests.cpp
+  eh/COFFExceptionARM32UnwindTests.cpp
+  eh/COFFExceptionARM64UnwindTests.cpp
+  eh/COFFExceptionDelphiTests.cpp
+  eh/COFFExceptionFH3Tests.cpp
+  eh/COFFExceptionFH4Tests.cpp
+  eh/COFFExceptionGSTests.cpp
+  eh/COFFExceptionSEHTests.cpp
+  LINK_COMPONENTS Loader Support WindowsEHMetadata)
+target_include_directories(NeverDCOFFExceptionParserTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/lib/loader/COFF/unwind
+  ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_definitions(NeverDCOFFExceptionParserTests PRIVATE
+  TEST_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+  NEVERD_BINARY="$<TARGET_FILE:neverd>"
+  NEVERD_BINARY_CORPUS_ROOT="${NEVERD_BINARY_CORPUS_ROOT}")
+
 add_neverd_unittest(NeverDDirectTailCallMetadataTests
   core/DirectTailCallMetadataTests.cpp
   LINK_COMPONENTS IRLow Lift
@@ -69,6 +88,16 @@ add_neverd_unittest(NeverDLowScalarConstantTests
 
 add_neverd_unittest(NeverDConstantBranchSourceTests
   core/ConstantBranchSourceTests.cpp
+  LINK_COMPONENTS Pipeline BackendC
+)
+
+add_neverd_unittest(NeverDFiniteScalarBranchTests
+  core/FiniteScalarBranchTests.cpp
+  LINK_COMPONENTS IRLow Lift
+)
+
+add_neverd_unittest(NeverDFiniteScalarBranchSourceTests
+  core/FiniteScalarBranchSourceTests.cpp
   LINK_COMPONENTS Pipeline BackendC
 )
 
@@ -735,6 +764,12 @@ add_neverd_unittest(NeverDX86SkinitTests
   x86/X86SkinitCallTests.cpp
   LINK_COMPONENTS Pipeline BackendC CodeGen)
 target_include_directories(NeverDX86SkinitTests PRIVATE
+  ${CMAKE_SOURCE_DIR}/unittests)
+
+add_neverd_unittest(NeverDX86LockedLogicTests
+  x86/X86LockedLogicTests.cpp
+  LINK_COMPONENTS Pipeline BackendC CodeGen)
+target_include_directories(NeverDX86LockedLogicTests PRIVATE
   ${CMAKE_SOURCE_DIR}/unittests)
 
 add_neverd_unittest(NeverDX86TBMTests
@@ -1644,6 +1679,11 @@ add_neverd_unittest(NeverDIntegerCallArgumentsTests
 )
 target_include_directories(NeverDIntegerCallArgumentsTests PRIVATE
   ${CMAKE_SOURCE_DIR}/include ${LLVM_INCLUDE_DIRS})
+
+add_neverd_unittest(NeverDMedParameterEntryTests
+  core/MedParameterEntryTests.cpp
+  LINK_COMPONENTS IR
+)
 
 add_neverd_unittest(NeverDRecordCallContractTests
   core/RecordCallContractTests.cpp

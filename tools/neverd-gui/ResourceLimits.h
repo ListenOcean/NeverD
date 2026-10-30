@@ -26,6 +26,10 @@
 #include <cstdint>
 
 namespace neverd::limits::gui {
+inline constexpr int kInterpreterRecoveryDialogWidth = 640;
+inline constexpr int kInterpreterRecoveryDialogHeight = 600;
+inline constexpr int kInterpreterRecoveryReportWidth = 760;
+inline constexpr int kInterpreterRecoveryReportHeight = 560;
 inline constexpr int kPatchPreviewDelayMs = 180;
 inline constexpr int kPatchEditorWidth = 620;
 inline constexpr int kPatchAnchorGap = 4;

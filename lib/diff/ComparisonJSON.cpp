@@ -270,10 +270,11 @@ std::optional<std::string> decisionConflict(const SavedComparison &Saved,
                                             const ComparisonControl &Control) {
   Control.report("decisions");
   const auto Rejected = rejectedPairs(Saved.Overrides, Control);
-  if (Rejected.empty())
-    return std::nullopt;
   for (const auto &M : Saved.Matches) {
     Control.check();
+    if (M.Match.Step == FunctionStep::InlinedTailCall)
+      return "inlined_tail_call can only describe ambiguous candidates: " +
+             hex(M.Primary) + " <-> " + hex(M.Secondary);
     if (std::binary_search(Rejected.begin(), Rejected.end(),
                            std::pair{M.Primary, M.Secondary}))
       return "a saved match contradicts an effective unmatch decision: " +
@@ -843,12 +844,20 @@ bindComparison(const SavedComparison &Saved, const Program &Primary,
                   std::string("the ") + Name + " input changed: SHA-256 " +
                       Now->SHA256 + ", the comparison was made from " +
                       Was->SHA256);
-    if (programAnalysisIdentity(*Was) != programAnalysisIdentity(*Now))
+    if (programAnalysisIdentity(*Was) != programAnalysisIdentity(*Now)) {
+      if (Was->Analysis == Now->Analysis)
+        return Fail(
+            BindFailure::StaleAnalysis,
+            std::string("the ") + Name +
+                " input's analyzed snapshot no longer matches the saved "
+                "comparison; run a new comparison to use the current "
+                "analysis");
       return Fail(BindFailure::StaleAnalysis,
                   std::string("the ") + Name +
                       " input was analyzed with other settings: \"" +
                       Now->Analysis + "\", the comparison used \"" +
                       Was->Analysis + "\"");
+    }
   }
   if (const auto Conflict = decisionConflict(Saved, Control))
     return Fail(BindFailure::InvalidEvidence, *Conflict);

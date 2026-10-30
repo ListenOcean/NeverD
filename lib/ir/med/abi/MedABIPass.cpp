@@ -590,8 +590,6 @@ bool hasBoundIntegerCallArguments(const MedOp &Op) {
       return false;
     HasStack |= Parameter.Kind == SourceABICarrierKind::Stack;
   }
-  if (!HasStack)
-    return false;
   return true;
 }
 
@@ -1823,8 +1821,28 @@ void recoverCallAbi(
           }
       }
       // A branch or EH boundary may split the setup from the call on any
-      // architecture. Keep only stores agreed upon by every incoming path.
-      const auto ReachingStackStores = callSetupStackStores(Ctx);
+      // architecture. Keep common stores and, for fixed Win64 scalar calls,
+      // an edge-complete plan through nested joins for differing values.
+      CallSetupStackJoins StackJoins;
+      const bool RecoverStackJoins =
+          TheArch == Arch::X64 && Fmt == BinaryFormat::COFF && !CI.IsIndirect &&
+          !CI.ArgumentsInCalleeRegisterOrder && !Op.SourceCallHint &&
+          !Op.IsTailCall && !HeaderVariadic && !OpenVariadicArity &&
+          Op.CalleeVectorArgs <= 0 && !Op.CalleeVectorSlots &&
+          CalleeArgs > int(IntParamRegs.size());
+      const auto ReachingStackStores =
+          callSetupStackStores(Ctx, RecoverStackJoins ? &StackJoins : nullptr);
+      std::erase_if(StackJoins.Slots, [&](const auto &Item) {
+        const int64_t Slot =
+            int64_t(IntParamRegs.size()) +
+            (Item.first - CallLayout.CallStackBase) / CallLayout.SlotBytes;
+        return Slot >= CalleeArgs || Slot >= MaxArgs;
+      });
+      if (!StackJoins.Slots.empty()) {
+        HasStackArg = true;
+        HasStackArgAtCallSP |=
+            StackJoins.Slots.count(CallLayout.CallStackBase) != 0;
+      }
       for (const auto &[Offset, Value] : ReachingStackStores) {
         if (UndefinedScratchSlot(Value))
           continue;
@@ -2450,6 +2468,46 @@ void recoverCallAbi(
         FoundMask[Slot] = true;
         FromStackScan[Slot] = true;
       }
+      std::vector<std::optional<MedVar>> JoinedValues(StackJoins.Nodes.size());
+      const auto Materialize = [&](auto &&Self, size_t Index) -> MedVar {
+        if (JoinedValues[Index])
+          return *JoinedValues[Index];
+        const auto &Node = StackJoins.Nodes[Index];
+        PhiNode Join;
+        // Each edge keeps its original store width; no absent byte is filled.
+        Join.Output.Kind = MedVar::Temp;
+        Join.Output.Id = FreshId++;
+        Join.Output.Size = Node.Bytes;
+        Join.Output.TheArch = TheArch;
+        for (const auto &[Predecessor, Value] : Node.Args) {
+          const auto *Scalar = std::get_if<MedVar>(&Value);
+          Join.Args.emplace_back(Predecessor,
+                                 Scalar ? *Scalar
+                                        : Self(Self, std::get<size_t>(Value)));
+        }
+        const MedVar Output = Join.Output;
+        // The proof's block index remains valid: ABI recovery changes only
+        // operations and PHIs. Children are materialized before their users.
+        const auto Owner = BlockIds.first(Node.BlockId) - Func.Blocks.data();
+        Func.Blocks[Owner].Phis.push_back(std::move(Join));
+        JoinedValues[Index] = Output;
+        return Output;
+      };
+      bool MaterializedJoin = false;
+      for (const auto &[Offset, Index] : StackJoins.Slots) {
+        const int64_t Slot =
+            ReachingStackBase +
+            (Offset - CallLayout.CallStackBase) / CallLayout.SlotBytes;
+        if (Slot < 0 || Slot >= MaxArgs || Slot >= CalleeArgs ||
+            FoundMask[Slot])
+          continue;
+        Found[Slot] = Materialize(Materialize, Index);
+        FoundMask[Slot] = true;
+        FromStackScan[Slot] = true;
+        MaterializedJoin = true;
+      }
+      if (MaterializedJoin)
+        DefSites.invalidate();
 
       // A call that takes every argument from the stack is passed nothing by
       // what a scratch register held at entry where this function takes no
@@ -3076,16 +3134,22 @@ void recoverCallAbi(
         auto FIt = CalleeFPArity->find(CI.TargetAddr);
         CalleeHasFP = FIt != CalleeFPArity->end() && FIt->second > 0;
       }
-      // A complete pre-SSA read summary already supplies the register
-      // operands, including positional padding. Setup scans may find live
-      // scratch registers, but cannot extend that authoritative prefix.
+      // A complete pre-SSA read summary owns the register values. A later
+      // recovered stack parameter can still require the unused positional
+      // slots between that prefix and the stack. Keep those slots as padding;
+      // setup scans cannot turn their scratch registers into arguments.
+      const bool SummarizedRegisterPadding =
+          PositionalSlots && NoVectorArguments && !CalleeHasFP &&
+          !CI.IsIndirect && !CI.ArgumentsInCalleeRegisterOrder &&
+          !HeaderVariadic && !OpenVariadicArity && CalleeArgs > NumIntRegArgs;
       // A variadic callee that takes its vector argument registers (System
       // V) takes every integer one before them, past its named ones too.
       const bool EveryIntegerPosition =
           !CI.IsIndirect && VectorArgumentCallees &&
           VectorArgumentCallees->count(CI.TargetAddr);
       int IntCap =
-          SummarizedIntegerOperands ? Op.CalleeRegisterArgs
+          SummarizedRegisterPadding   ? NumIntRegArgs
+          : SummarizedIntegerOperands ? Op.CalleeRegisterArgs
           : (CalleeHasFP && CalleeRegArgs >= 0 && !EveryIntegerPosition)
               ? CalleeRegArgs
               : NumIntRegArgs;
@@ -3142,10 +3206,15 @@ void recoverCallAbi(
                                    : static_cast<int>(IntParamRegs.size());
       std::vector<int64_t> StackPartOffsets;
       for (int K = 0; K < AssembleEnd; ++K) {
-        const bool Gap = !FoundMask[K];
+        const bool SummarizedPadding = SummarizedRegisterPadding &&
+                                       K >= Op.CalleeRegisterArgs &&
+                                       K < StackArgBase;
+        const bool Gap = !FoundMask[K] || SummarizedPadding;
         const bool UnreadRegisterPosition =
-            UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
-            K >= CalleeRegArgs && K < StackArgBase && CalleeArgs > StackArgBase;
+            SummarizedPadding ||
+            (UseExternalArity && PrototypeArguments && CalleeRegArgs >= 0 &&
+             K >= CalleeRegArgs && K < StackArgBase &&
+             CalleeArgs > StackArgBase);
         // A known fixed signature can consume a later stack slot even when
         // no store defines an interior slot. Keep that missing machine value
         // explicit; truncating here would also discard every later argument.

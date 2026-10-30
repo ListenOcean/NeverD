@@ -47,6 +47,16 @@ struct FunctionFeatures {
   uint64_t Import = 0;
   uint64_t Bytes = 0;
   uint64_t Shape = 0;
+  /// Complete address-independent instruction stream without NOP padding or
+  /// an entry ENDBR marker. Only a candidate key: bytes, CFG, scalar operands
+  /// and referenced identities are still measured before acceptance.
+  uint64_t BodyWithoutPadding = 0;
+  /// The same stream including padding, to require an actual layout edit
+  /// before the additional candidate key broadens the existing search.
+  uint64_t BodyWithPadding = 0;
+  /// Complete call-free conditional entry without padding/landing markers.
+  /// Proposes candidates across CFG edits; it never establishes identity.
+  uint64_t EntryBody = 0;
   uint64_t Mnemonics = 0;
   uint64_t Prime = 0;
   uint64_t GraphTopDown = 0;
@@ -61,6 +71,9 @@ struct FunctionFeatures {
   uint32_t Edges = 0;
   uint32_t Loops = 0;
   uint32_t Calls = 0;
+  /// A single-block, straight-line prelude followed by an admitted tail jump.
+  /// Thunks, recursive jumps and other control transfers are not eligible.
+  uint32_t TailCallee = NoIndex;
   struct AddressSite {
     uint32_t Target;
     uint32_t Instruction;
@@ -101,6 +114,8 @@ struct ProgramFeatures {
   Adjacency Referrers;
   /// Every call in instruction order; NoIndex retains an unresolved call.
   Adjacency CallSites;
+  /// Eligible straight-line tail callers, indexed by their direct callee.
+  Adjacency TailCallers;
   /// What each function's thunks lead to: the function itself, or for a
   /// thunk the function it passes control to.
   std::vector<uint32_t> Resolved;

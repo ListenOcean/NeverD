@@ -386,3 +386,77 @@ Ein unvollständiger Adressbereich oder fehlender unveränderlicher Abschnitt er
 ## Interne Übergänge nach einem Stackwechsel
 
 Explizite rohe Maschinenregionen können interne near CALL- und RET-Anweisungen verfolgen, wenn sich der aktuelle Stackzeiger nicht mehr relativ zum Eintrittswert ausdrücken lässt. Der Architekturadapter erhält die tatsächliche Zielerfassung, das Push, das Lesen des Rücksprungworts und das Pop. Jeder interne Rücksprung benötigt weiterhin einen vollständigen Beweis der endlichen Zielmenge aus dem tatsächlichen Stackwort. Nur nachweislich eintrittsrelative Rücksprungzellen gelangen in die Frame-Projektion und das Erhaltungsinventar; der Verlust anderer Stackbeziehungen an einer Graphgrenze kann weiterhin zur Ablehnung führen. Für gewöhnliche Funktionen gelten die Anforderungen zur Frame-Wiederherstellung weiter. Das Ergebnis beschreibt eine rohe Region; die Zusammensetzung der gesamten Funktion sowie die Quellcode- oder native Äquivalenz müssen separat bewiesen werden.
+
+<!-- i18n-section: store-separation-proofs -->
+
+## Optionale Beweise zur Schreibtrennung
+
+`--vm-prove-store-return-separation` beweist vor dem Erhalt von Rücksprungzellen, gespeicherten Frame-Zeigern und aktuellen skalaren Frame-Zellen, dass der vollständige Schreibzugriff sie nicht überlappt. `--vm-prove-store-frame-separation` prüft auch den deklarierten Frame und aktuelle absolute Zellen; es benötigt `--vm-machine-state` und `--vm-entry-frame`. Beide benötigen `--devirtualize`, sind standardmäßig aus, teilen vorhandene Beweis- und Arbeitsbudgets und setzen keine Aliasfreiheit voraus. Unbewiesene Schreibzugriffe behalten die normale Invalidierung; unvollständige Wiederherstellung veröffentlicht keinen Quelltext. Bestehende Kettensteuerungen können Schleifen erhalten.
+
+Die v9-APIs `neverd_devirtualize_source_v9`, `neverd_devirtualize_machine_source_v9` akzeptieren `neverd_devirtualize_options_v9`. Nullinitialisieren und `struct_size` im v1-Präfix auf die Gesamtgröße setzen. Die Flags sind `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_RETURN_SLOT_SEPARATION`, `NEVERD_DEVIRTUALIZE_V9_PROVE_STORE_FRAME_SEPARATION`; `reserved` muss null sein. Ältere APIs ignorieren diesen Anhang. Python stellt `NeverDDevirtualizeOptionsV9`, `DevirtualizeFlagsV9` bereit; Berichte enthalten `proveStoreReturnSlotSeparation`, `proveStoreFrameSeparation`. Der Test führt eine indizierte lokale Array-Schleife über beide C-Pfade mit O0/O2 und ASan/UBSan aus und prüft den gesamten bereitgestellten Stack-Speicher.
+
+Bei aktivierter Beweisstrategie bleiben auch vollständig bewiesene endliche Register-Offsets relativ zum Eintrittsrahmen über Kontrollflussknoten hinweg erhalten. Zusammenführungen bilden die Vereinigung eingehender Offsets; fehlende Fakten oder eine Überschreitung der bestehenden Kontrolltupelgrenze führen zu unbekannt. Korrelationen zwischen Registern und zusätzliche Alias-Annahmen werden nicht eingeführt.
+
+<!-- i18n-section: finite-indexed-frame-reads -->
+
+## Frame-Lesezugriffe mit endlichem Index
+
+Ein gewöhnliches `LOAD` mit vollständig bewiesener endlicher Menge von Offsets zum Eintrittsframe liest die aktuellen Frame-Bytes jedes Kandidaten und behält einen bedingten symbolischen Wert. Der Laufzeit-Lesezugriff bleibt mit voller Breite und Byte-Reihenfolge im Residuum. Externe Herkunft erfordert diese Eigenschaft für jedes Byte jedes Kandidaten. Unbekannte Bytes und invalidierte Werte bleiben unbekannt; unvollständige Aufzählung erhält das gewöhnliche symbolische Speicherverhalten. Es gelten die bestehenden Budgets für Kontrolltupel, Solver, Knoten und Operationen. Es entsteht weder ein Beleg für unveränderliche Lesezugriffe noch ein neuer Nicht-Alias-Vertrag.
+
+<!-- i18n-section: runtime-validity-refinement -->
+
+## Laufzeitgültigkeit über Graphgrenzen
+
+Bei aktivierter Kontrollzustandserkennung kann ein nichtkonstantes Gültigkeitsprädikat die an einer Graphgrenze verlorenen Erzeugerbits anfordern. Die Wiederherstellung versucht es innerhalb der bestehenden gemeinsamen Budgets erneut und muss die Gültigkeit für jeden erreichbaren Eingangszustand beweisen. So bleiben festgestellte Ausrichtung und maskierte Kontrollregisterwerte über Knoten und Schleifen erhalten. Abgelehnte Zustände werden weder als unmöglich angenommen noch wird die ursprüngliche Laufzeitoperation entfernt.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Geordnete CPU-Abfragen bei der C++-Quelltexterzeugung
+
+`wrapInterpreterMachineQueryStateX64()` ist eine optionale C++-Schnittstelle. Der 160-Byte-Zustand behält das bisherige 136-Byte-Maschinenpräfix und ergänzt drei 64-Bit-Felder: Arrayadresse, Anzahl und Cursor. Jeder 24-Byte-Eintrag enthält sechs 32-Bit-Wörter: leaf, subleaf, EAX, EBX, ECX und EDX. Kanonische CPUID-Befehle verbrauchen nacheinander einen passenden Eintrag und erweitern alle vier Ergebnisse mit Nullen. Gleiche Selektoren dürfen unterschiedliche Antworten haben. Kein Host-CPU-Befehl liefert die Antworten.
+
+Erschöpfung liefert Status 3, ein Selektorkonflikt Status 4. Beide stoppen vor dieser Abfrage, speichern den aktuellen Maschinenzustand, erhalten frühere Gastspeichereffekte und lassen den Cursor unverändert. Eine abgelehnte Eingangsausrichtung liefert weiterhin 2 ohne Schreibzugriffe. Das Array muss zugänglich, unveränderlich, ohne Adressüberlauf und von Zustand sowie Gastspeicher getrennt sein; Anzahl null erlaubt eine Nulladresse. Bestehende Maschinenzustands- und Flagverträge gelten weiter. Native Äquivalenzbeweise und Hardwareserialisierung werden nicht erweitert. Bisherige Wrapper lehnen CPU-Abfragen weiterhin ab; andere nicht unterstützte Intrinsics und rohe Umgebungen bleiben abgelehnt.
+
+<!-- i18n-section: xmm-query-source -->
+
+## Expliziter XMM-Quellzustand
+
+`wrapInterpreterMachineQueryStateX64V2()` verwendet ein eigenes 416-Byte-Layout: das unveränderte 160-Byte-Abfragepräfix, gefolgt von XMM0–XMM15 als jeweils niedrigem und hohem 64-Bit-Wort. Acht-Byte-Ausrichtung genügt. Alle XMM-Bytes werden am Eintritt geladen und bei normalen Rückgaben sowie fehlgeschlagenen Abfragen gespeichert. Abfrage- und Ausrichtungsstatus behalten ihre Bedeutung.
+
+Die C++-Schnittstelle erlaubt vollständige 128-Bit-XMM-Operanden und rekonstruiert befehlslokale temporäre Lesezugriffe aus den aktuellen Bytedefinitionen, einschließlich partieller Überschreibungen. Fehlende Bytes und funktionsweite temporäre Aliase führen ausdrücklich zum Fehler. Nur von der Architekturschicht bewiesene Ausrichtungsprüfungen konstanter Adressen dürfen entfallen; dynamische oder fehlerhafte Prüfungen werden abgelehnt. Partielle XMM-Operanden, breitere Vektorbanken und Gleitkommaumgebungen bleiben ausgeschlossen. Native Äquivalenzbeweise werden nicht erweitert; bisherige Wrapper behalten Layout und Einschränkungen.
+
+<!-- i18n-section: source-abi-v10 -->
+
+## Quelllayout über CLI und SDK auswählen
+
+Verwenden Sie `--vm-source-abi=scalar|queries|xmm` mit `--devirtualize --vm-machine-state`. Standardmäßig behält `scalar` 136 Bytes; `queries` wählt den beschriebenen 160-Byte-Abfragezustand, `xmm` den 416-Byte-Zustand mit XMM. Berichte nennen `sourceABI` und `sourceStateBytes`; der erzeugte C-Code beschreibt den Speichervertrag.
+
+Die C-APIs v10 `neverd_devirtualize_source_v10()` und `neverd_devirtualize_machine_source_v10()` akzeptieren `neverd_devirtualize_options_v10`. Initialisieren Sie die Struktur mit Nullen, setzen Sie `struct_size` im v1-Präfix auf die Gesamtgröße und wählen Sie `machine_source_abi` mit `NEVERD_DEVIRTUALIZE_MACHINE_SCALAR_V1`, `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_V1` oder `NEVERD_DEVIRTUALIZE_MACHINE_QUERIES_XMM_V2`. Unbekannte Werte, nichtleere reservierte Felder und erweiterte Layouts für gewöhnlichen Quellcode werden abgelehnt. Ältere APIs ignorieren den neuen Anhang, v10 künftige Anhänge. Nulloptionen behalten skalare Standardwerte. Python stellt `NeverDDevirtualizeOptionsV10` und `DevirtualizeMachineSourceABI` bereit. Native Zertifizierung bleibt unverändert.
+
+<!-- i18n-section: gui-interpreter-recovery -->
+
+## Interpreter-Rekonstruktion im Desktop
+
+Wählen Sie in einer C-Ansicht **Interpreter-Funktion rekonstruieren**. Die Optionen wählen Zustandsspeicher, Arbeitsgrenzen und explizite Eintrittsrahmen-Annahmen; Standardwerte setzen weder Rahmen noch Ausrichtung oder Überschneidungsfreiheit voraus. Der Bericht hält Engine-Diagnosen fest. Abbruch oder unvollständige Ergebnisse behalten den vorherigen Quelltext; **Zum gewöhnlichen Quelltext zurückkehren** stellt die normale Ansicht wieder her.
+
+Der Worker akzeptiert `source_options.interpreter_recovery` als einzige Quelltextoption und ruft C SDK v10 auf. Er speichert und paginiert vollständiges C unverändert, ohne gewöhnliche Variablenänderungen oder erfundene Befehlszuordnungen. Der vollständige Bericht steht auf der ersten Seite; `source_available` unterscheidet erzeugten Quelltext von angehaltener Rekonstruktion. Dies zertifiziert keine native Äquivalenz.
+
+<!-- i18n-section: machine-region-source -->
+
+## Geprüfter Quelltext für Maschinenregionen
+
+Die ausdrücklich gewählte C++-Schnittstelle `wrapInterpreterMachineRegionSourceX64()` in `neverd/analysis/arch/x86_64/InterpreterMachineRegionSource.h` erhält ein vollständiges Ergebnis und unabhängig vorgegebene erwartete Optionen. Vor der Quelltextumwandlung prüft sie den gesamten Rohgraphen, die Umgebung und die physischen Ausgänge und behält den ursprünglichen Nachweis. Gewöhnliche Wrapper lehnen Rohdomänen weiterhin ab. CLI, C-SDK und GUI bieten diese Schnittstelle noch nicht an.
+
+`InterpreterMachineRegionStateX64V1` hat ein eigenes 432-Byte-Layout: 416 Byte Abfrage-/XMM-Präfix, `PC` bei 416, `ExitKind` bei 424. Der Einstieg ist fest; beide Felder sind Ausgaben. CALL/JMP/RET behalten das tatsächliche Ziel und die physischen Stackeffekte, schreiben den unterstützten Zustand zurück und stoppen vor der Zielausführung. Ausgangsarten sind 1/2/3. Status 3/4 stoppt vor einer erschöpften/unpassenden Abfrage mit deren ursprünglichem PC und Art 0; vorherige Effekte bleiben erhalten. Status 2 lehnt die Ausrichtung ohne Zustandsänderung ab. Status 1 liefert keine gültige Fortsetzung.
+
+Zugelassen sind nur das fehlerfreie Benutzerprofil und vorhandene Skalar-/Abfrage-/XMM-Operationen. Traps, zusätzliche Architekturzustände, Einstiegsobjekte und zusätzliche Code-/Importdeklarationen werden auch unbenutzt abgelehnt. Gastspeicher muss über Bytekopien oder Alias-Typen mit Ausrichtung 1 ausgegeben werden. Alle Speicher-/Frame-Annahmen bleiben erforderlich; zur Laufzeit wird nur die Ausrichtung geprüft. Keine Aufrufzusammenfassung, Zusammensetzung, gewöhnliche ABI oder Zertifizierung der vollständigen Funktion/nativen Äquivalenz. `InterpreterMachineRegionSourceTest.*` prüft beide C-Backends unter O0/O2 auf vollständigen Zustand, Stack-Byte-Aliase, mehrere Ausgänge, Abfrage-/Ausrichtungsstopps und veränderte oder nicht unterstützte Deklarationen.
+
+Architektonisch undefinierte Ausgaben behalten die von LowIR gewählten Implementierungswerte. Die Übereinstimmung mit Prozessorentscheidungen oder deren Irrelevanz für native Beobachtungen erfordert eine unabhängige Umgebung oder einen Nichtinterferenzbeweis; dieser Quellnachweis liefert beides nicht.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Ausgänge vor einem Trap
+
+Die Überladung mit `InterpreterMachineRegionSourceOptions` erlaubt ausdrücklich `StopBeforeTraps = true`. Sie behält das 432-Byte-Layout bei und liefert `TrapPending` (4), wobei `PC` die ursprüngliche Trap-Adresse und der unterstützte Zustand den Stand unmittelbar vor dieser Instruktion enthält. Frühere Speichereffekte bleiben erhalten; Trap-Ausführung, Ausnahme-Stackframe, Handler und Fortsetzung werden nicht ausgeführt. Die Standardüberladung lehnt weiterhin auch unbenutzte Trap-Deklarationen ab. Die genaue Trap-Identität und Audit-Metadaten werden weiterhin vom Eigentümer der Rohregion authentifiziert; diese Option liefert keine neuen Architekturbelege. Abfrage- und Ausrichtungsstopps behalten ihre bisherigen Statuscodes und Zustandsverträge.
+
+Validierte Regionen behalten außerdem kanonische dynamische `RequireAligned`-Operationen bei. Beide C-Backends erhalten die Prüfungen mit sofortigem Abbruch; bei verletzter Instruktionsausrichtung gibt es weder einen zugesicherten übernommenen Zustand noch eine Ausnahmefortsetzung. Gewöhnliche Maschinenzustands-Wrapper behalten ihre bisherigen Einschränkungen.

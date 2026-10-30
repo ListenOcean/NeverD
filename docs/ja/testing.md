@@ -2238,7 +2238,7 @@ HFA インポートスロットのテストは厳密な C プロトタイプを�
 
 ## スカラー分岐の検証
 
-`NeverDConstantBranchTests` は x86/x64/ARM64 と PE、ELF、Mach-O で直接先行辺、全経路が一致する合流、不変読み取りを検証します。競合、未定義入力、呼び出しによる破壊、独立入口では動的分岐を維持します。`NeverDConstantBranchSourceTests` は最適化の有無、O0/O2、UBSan で x64/ARM64 の両 C 経路をコンパイルして実行します。整数のみの関数本体にはホスト標準ヘッダーを使い、ネイティブ ARM64 や Windows ドライバーの認証とは区別します。worker の独立した ELF x64 機械語との比較は、コールド状態の移動、参照、飛び越された E9 バイトも検証します。
+`NeverDConstantBranchTests` は x86/x64/ARM64 と PE、ELF、Mach-O で直接先行辺、全経路が一致する合流、不変読み取りを検証します。未証明の候補、未定義入力、呼び出しによる破壊、独立入口では動的分岐を維持します。`NeverDConstantBranchSourceTests` は最適化の有無、O0/O2、UBSan で x64/ARM64 の両 C 経路をコンパイルして実行します。整数のみの関数本体にはホスト標準ヘッダーを使い、ネイティブ ARM64 や Windows ドライバーの認証とは区別します。worker の独立した ELF x64 機械語との比較は、コールド状態の移動、参照、飛び越された E9 バイトも検証します。
 
 まず現在の基本ブロックだけで証明できる対象を調べ、無関係な先行経路による予算消費を避けます。長い先行経路の回帰テストでもこの境界を検証します。
 
@@ -2251,3 +2251,30 @@ MedIR の定数伝播とコピー伝播は `canPropagateConstantToOperand` を�
 `NeverDLowScalarConstantTests` と `NeverDIndirectCallValueSourceTests` はブロック間呼び出しと拒否条件を両 C 経路の実行で検証します。`NeverDLLVMCSourcePointerTests` はポインター、コールバック、別名、外部宣言を O0/O2 と UBSan で実行します。ネイティブ境界テストは公開 MinGW 例をコンパイルし、MSVCRT/UCRT の配置不一致を拒否します。カーネルや ARM64 のネイティブ実行を保証するものではありません。
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` は x64 COFF、ELF、Mach-O で両方向のコピーと同一領域の埋め込み後のコピーを検証します。両 C 経路を O0/O2 と UBSan でコンパイルして実行し、独立に計算した結果で全コピー済みバイトを確認します。x64 以外のホストでは実行検証を明示的にスキップします。
+
+`NeverDFiniteScalarBranchTests` は x86/x64/AArch64、COFF/ELF/Mach-O のテーブルなし算術分岐、疎なマスク、剰余算術、部分書き込み、破壊、テンポラリーの寿命、予算、外部入口、新しい辺を検証します。`NeverDFiniteScalarBranchSourceTests` は最適化の有無、O0/O2、UBSan で両 C 経路の全ケースを実行し、同時に保存するコードポインターの識別と SSA 省略時の拒否も確認します。
+
+`NeverDCalleeSourceCLI` は独自に符号化した x64 PE/ELF 呼び出し列を実際の CLI で確認します。アドレス・名前選択、推移的な定義、無関係な関数の除外、単一関数出力、深さ上限の境界と超過、循環、ルートと呼び出し先の拒否を検査します。閉包が失敗した場合は既存出力を保存します。三関数の完全な C 単位を O0/O2 でコンパイル・実行し、独立した期待値を確認します。再帰例は検査のみです。
+
+反復イメージアクセスの回帰は、同じ領域内の無関係な関数ポインター再配置、イメージ内の宛先、アドレスに似た整数の埋め込み値、完了後のソース変位と両レジスターを使った後続の読み取りも検査する。`ConstantAddressFactsExcludeUnprovedAndNonAddressResults` は x86/x64 で動的入力、セグメント、縮小幅、不正なインターフェース、非アドレス出力を除外する。`ZeroCountAndOffsetFormsKeepTheirNumericInputs` は入力の保持を検査し、自然幅のゼロ回数ケースだけをホストで実行する。完全範囲の検査は切り詰められたマッピングと回数のオーバーフローを拒否する。LLVM に対応するネイティブ intrinsic がない検査は明示的にスキップする。
+
+## 戻りアドレス領域の中立なアトミック操作
+
+`NeverDMedPrologueSavesTests` は幅、オフセット、生きた値、フラグ/PHI の参照、編集後の証拠失効を検査します。`NeverDPipelineOutcomeTests` は機械・パッチ要求の分離を検査します。`NeverDX86NeutralAtomicSourceTests` は独立に作成した元命令と COFF/ELF/MachO の両 C 経路を比較し、スタックポインタ変更も含め O0/O2 と UBSan で実行します。この実行比較には Linux x64 が必要です。i386 の証明テストはネイティブ実行の検証ではありません。
+
+
+## 標準のスーパーバイザー読み取り監査
+
+`InterpreterSpecialization.SupervisorRead*` は実際の厳密なリフトを使用し、`Missing` に格下げした監査を拒否します。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` は元のバイト列の復元境界を検査し、ネイティブ証明とソースラップの拒否も確認します。
+
+## OR/XOR 式の定数による包含
+
+`SymExprMask.ConstantCover*` は全四ビットマスクと入力、8–257 ビット値、有効な上位ビット、深い共有式、ワード数と項数の予算拒否を検証します。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` は求解問い合わせなしの固定変位と、入力依存の反例を検証します。`NeverDSymbolicTests` と `NeverDInterpreterSpecializationTests` を実行してください。
+
+## 進むカーソルが参照するイメージ領域
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` は COFF/ELF/Mach-O の前進/後退、途中のコピー、同幅変換、読み書きと書き込みのみの経路を O0/O2 と ASan/UBSan で実行します。`CursorStorageNeedsAnAddressPreservingMemoryPath` はスカラー定数、ロードされたポインタ、幅の縮小、メモリ利用のない算術を拒否し、`DirectBoundedTablesKeepTheirExtent` は有界な直接索引を維持します。`NeverDLiftTests` をビルドして `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4` を実行してください。
+
+LLVM C の合成スタックスロットは、実行時にどちらかの 64 ビット半分を読み出す前に、128 ビット整数の書き込み全体を保持します。`LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` は、文書化された `-fno-strict-aliasing` 契約と ASan/UBSan を使用し、O0/O2 で加算およびアラインメントに基づく OR アドレス計算を検証します。`NeverDLLVMCValueTests` と関連するフレーム、ベクトル、表示レコードのテストを実行してください。
+
+`MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` は x64/AArch64 と COFF/ELF/Mach-O の可変カーソルループを LLVM C の O0/O2 と ASan/UBSan で実行します。明示的な元イメージのソースモードでは、無関係なポインタ再配置の隣でも、確定したアドレスは共有の実行時イメージを使用します。同じ数値の整数はスカラーのままで、独立したポインタミラーの検証も維持されます。`NeverDMedLLVMDirectDataTests` とポインタ再配置境界テストを実行してください。

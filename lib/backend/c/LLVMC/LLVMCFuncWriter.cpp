@@ -32,6 +32,7 @@
 #include "neverd/backend/llvm/AArch64/LLVMAArch64ReturnProtection.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMFloatingCall.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/SourceFrameBytes.h"
 #include "neverd/backend/llvm/WindowsEHMetadata.h"
 #include "neverd/debug/UserPrototype.h"
@@ -2994,7 +2995,7 @@ LLVMCWriter::definitionPointerTypes(const llvm::Function &Fn) const {
   auto [It, Inserted] = DefinitionPointers.try_emplace(&Fn);
   auto &Types = It->second;
   if (!Inserted || Opts.PreserveLLVMFunctionTypes || Fn.isDeclaration() ||
-      (OnlyFunction && OnlyFunction != &Fn) || !Dbg)
+      (OnlyFunction && OnlyFunction != &Fn))
     return Types;
   // setupFunction admits a definition's signature only at its original entry.
   // Symbol-name fallback is for external declarations, not this projection.
@@ -3006,9 +3007,15 @@ LLVMCWriter::definitionPointerTypes(const llvm::Function &Fn) const {
   // An object's first function sits at address zero, an entry like any.
   if (!*Entry)
     return Types;
-  const auto Signature = Dbg->resolveFunction(static_cast<va_t>(**Entry));
-  if (!Signature)
+  const auto Signature =
+      Dbg ? Dbg->resolveFunction(static_cast<va_t>(**Entry)) : std::nullopt;
+  if (!Signature) {
+    Types.Parameters.resize(Fn.arg_size());
+    for (const auto &Argument : Fn.args())
+      Types.Parameters[Argument.getArgNo()].Type =
+          readLLVMSourcePointerParameter(Argument);
     return Types;
+  }
   const bool Indirect =
       isMsvcIndirectReturn(Signature->ReturnType, Opts.TheArch, Opts.Format);
   const bool Member = Indirect && !Signature->Params.empty() &&
@@ -3348,6 +3355,11 @@ bool LLVMCWriter::isResultParamValue(const llvm::Value *V) const {
 unsigned LLVMCWriter::printedCallArgLimit(const llvm::CallBase &Call,
                                           llvm::StringRef CalleeName) const {
   const unsigned Have = Call.arg_size();
+  // Inline assembly has an exact input contract, not an inferred C call ABI.
+  // A trailing input loaded from a cross-block snapshot is still required;
+  // dropping its producers leaves the assembly using an uninitialized local.
+  if (Call.isInlineAsm())
+    return Have;
   const MsvcCallee *Msvc = msvcCallee(CalleeName, Opts.Format);
   auto Clamp = [&](size_t Limit) {
     return static_cast<unsigned>(std::min(Limit, static_cast<size_t>(Have)));
@@ -9881,8 +9893,11 @@ void LLVMCWriter::renderFunctionProjection(llvm::Function &Fn) {
       if (Pointer.Type) {
         if (Arg.getType()->isIntegerTy())
           PointerParams.insert(&Arg);
-        if (Pointer.Type->Pointee->Kind == NdTypeKind::Struct)
-          (void)recordPointerSpelling(*Pointer.Type->Pointee);
+        auto Pointee = Pointer.Type->Pointee;
+        while (Pointee && Pointee->Kind == NdTypeKind::Ptr)
+          Pointee = Pointee->Pointee;
+        if (Pointee && Pointee->Kind == NdTypeKind::Struct)
+          (void)recordPointerSpelling(*Pointee);
         return Pointer.declaration(BindParam(Arg, ParamIdx));
       }
     }

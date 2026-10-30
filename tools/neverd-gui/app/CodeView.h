@@ -70,6 +70,8 @@ public:
   void load(Address function, const QString &representation,
             std::optional<QJsonObject> options = std::nullopt);
   const QJsonObject &sourceOptions() const { return sourceOptions_; }
+  const QJsonObject &recoveryReport() const { return RecoveryReport; }
+  const QJsonObject &recoveryOptions() const { return RecoveryOptions; }
   void setSourceOptions(const QJsonObject &options);
   /// The options a function opens with in this representation.
   QJsonObject defaultSourceOptions() const;
@@ -358,6 +360,7 @@ private:
   /// Why the source on its way is not the one asked for (showOrdinary).
   QString statusNote_;
   QJsonObject sourceOptions_, renderedOptions_;
+  QJsonObject RecoveryReport, RecoveryOptions;
   quint64 serial_ = 0;
   quint64 DocumentVersion = 0;
   bool inComment_ = false, loading_ = false, foldAfterLoad_ = false;

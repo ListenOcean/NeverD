@@ -16,6 +16,7 @@
 #include "neverd/ir/high/HighIR.h"
 
 #include <functional>
+#include <map>
 #include <memory>
 #include <optional>
 #include <set>
@@ -89,10 +90,89 @@ int maxRenameTag(const std::vector<HighStmt> &Stmts);
 /// Whether \p Stmts call a routine that unwinds a frame to a local target.
 bool callsLocalUnwind(const std::vector<HighStmt> &Stmts);
 
+/// Where a parent's HighIR prints its local-unwind exits
+/// (HighFunc::SEHLocalUnwindExits).  A copy of an exit is the run of
+/// statements that call the termination handlers it still calls, in its
+/// order, ended in the same statement list by a `goto` to its target or a
+/// `return`.  An exit with a handler call outside such a run is not
+/// structured: its handlers stay explicit calls.
+class UnwindExits {
+public:
+  explicit UnwindExits(HighFunc &Parent);
+
+  /// Whether \p S is the jump that ends a copy of an exit.
+  bool endsCopy(const HighStmt &S) const;
+
+  /// Whether \p Try's `__finally`, which \p Handler terminates, can run it
+  /// for every exit that leaves it: each such exit is structured, every copy
+  /// of it lies in the protected body and leaves it, and no handler the exit
+  /// still calls after this one, outside the try, would then run first.
+  bool canRunInClause(const HighStmt &Try, va_t Handler) const;
+
+  /// Delete \p Handler's calls from the copies of the exits that leave
+  /// \p Try, whose `__finally` now runs it, and keep their gotos jumps.
+  void runInClause(const HighStmt &Try, va_t Handler);
+
+  /// Find the copies again after the parent's statements changed.
+  void rebuild();
+
+  /// The exit whose handler calls end \p Stmts before \p End, followed by
+  /// nothing but the values its jump's block moves: a copy whose jump
+  /// structuring folded into falling off the list.
+  const MedSEHLocalUnwindExit *fallingCopy(const std::vector<HighStmt> &Stmts,
+                                           size_t End) const;
+
+private:
+  struct Copy {
+    std::vector<HighStmt> *List = nullptr;
+    /// The positions of the handler calls, in order, then of the jump.
+    std::vector<size_t> Calls;
+    size_t Jump = 0;
+    const MedSEHLocalUnwindExit *Exit = nullptr;
+  };
+
+  /// The handler a statement calls for an exit, as the whole statement.
+  const MedSEHLocalUnwindExit::Handler *
+  handlerCall(const HighStmt &S, const MedSEHLocalUnwindExit *&Exit) const;
+  void collect(std::vector<HighStmt> &Stmts);
+
+  HighFunc &Parent;
+  std::vector<Copy> Copies;
+  /// Exits with a handler call that no copy holds.
+  std::set<va_t> Unstructured;
+  /// The jump of each copy, and its exit's call address.
+  std::map<const HighStmt *, va_t> Jumps;
+};
+
+/// The addresses control reaches when it falls past \p Stmts[\p Index]: the
+/// statements after it up to the first that prints anything.
+std::set<va_t> fallthroughAddresses(const std::vector<HighStmt> &Stmts,
+                                    size_t Index);
+
+/// Remove the gotos that end \p Try's protected body only to land where the
+/// try falls through anyway, at an address of \p Continuation, unless a jump
+/// lands on one (\p Labels) or it ends a local unwind (\p Exits).  The
+/// writer leaves such a goto out; with a filled `__finally`, C would read it
+/// as a jump out of the try, an abnormal termination, where the machine
+/// leaves normally.
+void dropFallthroughExits(HighStmt &Try, const std::set<va_t> &Continuation,
+                          const std::set<va_t> &Labels,
+                          const UnwindExits &Exits);
+
+/// Give back the jump of each local-unwind copy (\p Exits) that ends \p Try's
+/// protected body by falling out of it to its target, an address of
+/// \p Continuation.  Structuring folds a jump to what follows into falling
+/// through, the same thing while the `__finally` is empty; a filled one runs
+/// for the jump, an abnormal termination, as the machine runs the handler.
+void restoreFallingUnwindJumps(HighStmt &Try,
+                               const std::set<va_t> &Continuation,
+                               const UnwindExits &Exits);
+
 /// Whether a filled `__finally` keeps \p Try's meaning: its protected body
-/// neither leaves the try by a jump nor nests another exception region, and
-/// does not unwind locally.
-bool protectedBodyQualifies(const HighStmt &Try);
+/// leaves the try by a jump only at the end of a local-unwind exit
+/// (\p Exits), nests no exception region but a `__finally` or an `__except`
+/// whose handler runs in its clause, and does not unwind locally otherwise.
+bool protectedBodyQualifies(const HighStmt &Try, const UnwindExits &Exits);
 
 /// What a dropped `return` still does: a call in its value, as a statement.
 std::optional<HighStmt> returnedWork(const HighStmt &Return);

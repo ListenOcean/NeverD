@@ -2228,7 +2228,7 @@ HFA 임포트 슬롯 테스트는 엄격한 C 프로토타입을 컴파일하고
 
 ## 스칼라 분기 검증
 
-`NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 충돌, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
+`NeverDConstantBranchTests`는 x86/x64/ARM64 및 PE, ELF, Mach-O에서 직접 선행 간선, 모든 경로가 일치하는 합류, 불변 읽기를 검사합니다. 증명되지 않은 후보, 미정의 입력, 호출에 의한 값 손실, 독립 진입점은 동적 분기로 남습니다. `NeverDConstantBranchSourceTests`는 최적화 활성/비활성, O0/O2 및 UBSan으로 x64/ARM64의 두 C 경로를 컴파일하고 실행합니다. 순수 정수 함수 본문에는 호스트 표준 헤더를 사용하며, 이는 네이티브 ARM64나 Windows 드라이버 검증이 아닙니다. worker의 독립 ELF x64 기계어 대조는 콜드 탐색, 참조, 건너뛴 E9 바이트도 확인합니다.
 
 먼저 현재 기본 블록만으로 증명할 수 있는 대상을 검사하여 무관한 선행 경로가 작업 예산을 소모하지 않도록 합니다. 긴 선행 경로 회귀 테스트도 이 경계를 검증합니다.
 
@@ -2241,3 +2241,30 @@ MedIR 상수 전파와 복사 전파는 `canPropagateConstantToOperand`를 공�
 `NeverDLowScalarConstantTests`와 `NeverDIndirectCallValueSourceTests`는 블록 간 호출과 거부 조건을 두 C 경로의 실행으로 확인합니다. `NeverDLLVMCSourcePointerTests`는 포인터, 콜백, 별칭과 외부 선언을 O0/O2 및 UBSan으로 실행합니다. 네이티브 경계 테스트는 공개 MinGW 예제를 컴파일하고 MSVCRT/UCRT 배치 불일치를 거부합니다. 커널 또는 ARM64 네이티브 실행 인증은 아닙니다.
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte`는 x64 COFF, ELF, Mach-O에서 양방향 복사와 같은 저장소를 채운 뒤 복사하는 경우를 검증합니다. 두 C 경로를 O0/O2 및 UBSan으로 컴파일하고 실행하며, 독립적으로 계산한 결과로 복사한 모든 바이트를 확인합니다. x64가 아닌 호스트에서는 실행 검사를 명시적으로 건너뜁니다.
+
+`NeverDFiniteScalarBranchTests`는 x86/x64/AArch64와 COFF/ELF/Mach-O의 테이블 없는 산술 분기, 희소 마스크, 모듈러 연산, 부분 쓰기, 값 손실, 임시값 수명, 예산, 외부 진입점과 새 간선을 검사합니다. `NeverDFiniteScalarBranchSourceTests`는 최적화 켜기/끄기, O0/O2, UBSan에서 두 C 경로의 모든 사례를 실행하고 동시에 저장되는 코드 포인터의 정체성과 SSA 생략 시 거부를 확인합니다.
+
+`NeverDCalleeSourceCLI`는 독립적으로 인코딩한 x64 PE/ELF 호출 체인을 실제 CLI로 검사합니다. 주소/이름 선택, 전이적 정의, 무관한 함수 제외, 단일 함수 출력, 깊이 한계와 초과, 순환, 루트/피호출 함수 거부를 다룹니다. 호출 폐쇄 실패 시 기존 출력을 보존합니다. 완전한 세 함수 C 단위를 O0/O2로 컴파일하고 실행해 독립적인 예상 결과를 확인합니다. 재귀 사례는 검사만 합니다.
+
+반복 이미지 접근 회귀는 같은 데이터 영역의 무관한 함수 포인터 재배치, 이미지 목적지, 주소처럼 보이는 정수 채움 값, 완료된 소스 변위와 갱신된 두 레지스터를 통한 후속 읽기도 검사한다. `ConstantAddressFactsExcludeUnprovedAndNonAddressResults`는 x86/x64에서 동적 입력, 세그먼트, 축소 폭, 잘못된 인터페이스 및 주소가 아닌 출력을 배제한다. `ZeroCountAndOffsetFormsKeepTheirNumericInputs`는 입력 유지를 검사하며 자연 폭의 횟수 0 사례만 호스트에서 실행한다. 전체 범위 검사는 잘린 매핑과 횟수 오버플로를 거부한다. 설치된 LLVM에 해당 네이티브 intrinsic이 없으면 관련 검사는 명시적으로 건너뛴다.
+
+## 반환 슬롯의 중립 원자 연산
+
+`NeverDMedPrologueSavesTests`는 폭, 오프셋, 사용 중인 값, 플래그/PHI 읽기, 본문 변경 후 증거 무효화를 검사합니다. `NeverDPipelineOutcomeTests`는 기계 및 패치 요청의 분리를 검사합니다. `NeverDX86NeutralAtomicSourceTests`는 독립적으로 작성한 원본 명령과 COFF/ELF/MachO의 두 C 경로를 비교하며, 조정된 스택 포인터도 O0/O2 및 UBSan으로 실행합니다. 실행 대조에는 Linux x64가 필요하며 i386 증명 테스트는 네이티브 i386 실행 검증을 의미하지 않습니다.
+
+
+## 표준 감독 모드 읽기 감사
+
+`InterpreterSpecialization.SupervisorRead*`는 실제 엄격한 리프트를 사용하고 `Missing`으로 낮춘 감사를 거부합니다. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery`는 원본 바이트 복원 경계 및 네이티브 증명과 소스 래핑의 지속적인 거부를 확인합니다.
+
+## OR/XOR 식의 상수 비트 포함
+
+`SymExprMask.ConstantCover*`는 모든 4비트 마스크와 입력, 8–257비트 값, 유효한 상위 비트, 깊은 공유 원본, 워드 및 항 예산 거부를 검사합니다. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries`는 솔버 질의 없는 고정 변위와 입력 의존 반례를 검사합니다. `NeverDSymbolicTests`와 `NeverDInterpreterSpecializationTests`를 실행합니다.
+
+## 이동하는 커서가 참조하는 이미지 저장소
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject`는 COFF/ELF/Mach-O의 정방향/역방향 루프, 중간 복사, 동일 너비 변환, 읽기/쓰기 및 쓰기 전용 경로를 O0/O2와 ASan/UBSan으로 실행합니다. `CursorStorageNeedsAnAddressPreservingMemoryPath`는 스칼라 상수, 로드된 포인터, 너비 축소 및 메모리 사용 없는 산술을 거부하며, `DirectBoundedTablesKeepTheirExtent`는 제한된 직접 인덱스 범위를 유지합니다. `NeverDLiftTests`를 빌드한 뒤 `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`를 실행합니다.
+
+LLVM C의 합성 스택 슬롯은 실행 중 선택한 64비트 절반을 읽기 전에 128비트 정수 저장 전체를 유지합니다. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords`는 문서화된 `-fno-strict-aliasing` 계약과 ASan/UBSan을 사용하여 O0/O2에서 덧셈 및 정렬 기반 OR 주소 계산을 검증합니다. `NeverDLLVMCValueTests`와 관련 프레임, 벡터, 표시 레코드 테스트를 실행하세요.
+
+`MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations`는 x64/AArch64 및 COFF/ELF/Mach-O의 가변 커서 루프를 LLVM C의 O0/O2와 ASan/UBSan으로 실행합니다. 명시적 원본 이미지 소스 모드에서는 관련 없는 포인터 재배치 옆에서도 확인된 주소가 공유 실행 이미지에 연결됩니다. 숫자가 같은 일반 정수는 스칼라로 유지되며 독립 포인터 미러의 기존 검증도 유지됩니다. `NeverDMedLLVMDirectDataTests`와 포인터 재배치 경계 테스트를 실행하세요.

@@ -2339,7 +2339,7 @@ Al modificar esta poscondición de memoria, ejecutar juntos `NeverDSymbolicCallE
 
 ## Validación de saltos escalares
 
-`NeverDConstantBranchTests` cubre x86/x64/ARM64 con PE, ELF y Mach-O: predecesores directos, uniones unánimes y lecturas inmutables. Los conflictos, entradas indefinidas, registros alterados por llamadas y entradas independientes siguen siendo dinámicos. `NeverDConstantBranchSourceTests` compila y ejecuta ambas rutas C de x64/ARM64, con y sin optimización del pipeline, en O0/O2 con UBSan. Los cuerpos de enteros usan cabeceras estándar del anfitrión; esto no certifica ARM64 nativo ni controladores Windows. La comparación del worker con código máquina ELF x64 independiente también comprueba navegación en frío, referencias y bytes E9 omitidos.
+`NeverDConstantBranchTests` cubre x86/x64/ARM64 con PE, ELF y Mach-O: predecesores directos, uniones unánimes y lecturas inmutables. Las alternativas no demostradas, entradas indefinidas, registros alterados por llamadas y entradas independientes siguen siendo dinámicos. `NeverDConstantBranchSourceTests` compila y ejecuta ambas rutas C de x64/ARM64, con y sin optimización del pipeline, en O0/O2 con UBSan. Los cuerpos de enteros usan cabeceras estándar del anfitrión; esto no certifica ARM64 nativo ni controladores Windows. La comparación del worker con código máquina ELF x64 independiente también comprueba navegación en frío, referencias y bytes E9 omitidos.
 
 Primero se comprueba el destino demostrable en el bloque actual, evitando que predecesores irrelevantes agoten su presupuesto. Una regresión con un prefijo largo verifica este límite.
 
@@ -2352,3 +2352,30 @@ La propagación de constantes y copias de MedIR comparte `canPropagateConstantTo
 `NeverDLowScalarConstantTests` y `NeverDIndirectCallValueSourceTests` cubren llamadas entre bloques y rechazos ejecutando ambas rutas C. `NeverDLLVMCSourcePointerTests` ejecuta punteros, callbacks, alias y declaraciones externas con O0/O2 y UBSan. La suite nativa compila un ejemplo público MinGW y rechaza disposiciones MSVCRT/UCRT incompatibles. No certifica ejecución nativa del kernel ni ARM64.
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` comprueba las copias en ambos sentidos y después de rellenar el mismo almacenamiento en x64 COFF, ELF y Mach-O. Ambas rutas C se compilan y ejecutan con O0/O2 y UBSan; un resultado calculado de forma independiente comprueba cada byte copiado. Los hosts que no son x64 omiten explícitamente esta comprobación de ejecución.
+
+`NeverDFiniteScalarBranchTests` cubre despachos aritméticos sin tabla en x86/x64/AArch64 y COFF/ELF/Mach-O: máscaras dispersas, aritmética modular, escrituras parciales, valores alterados, temporales, presupuestos, entradas ajenas y nuevas aristas. `NeverDFiniteScalarBranchSourceTests` ejecuta todos los casos por ambas rutas C con y sin optimización, O0/O2 y UBSan, y verifica punteros de código almacenados independientes y el rechazo cuando se omite SSA.
+
+`NeverDCalleeSourceCLI` comprueba cadenas x64 PE/ELF codificadas de forma independiente mediante la CLI real: selección por dirección/nombre, definiciones transitivas, exclusión de funciones ajenas, salida de una sola función, límites de profundidad exactos/superados, ciclos y rechazo de raíces/destinos. Si falla el cierre, conserva la salida existente. La unidad C completa de tres funciones se compila y ejecuta en O0/O2 con un resultado esperado independiente; los casos recursivos solo se inspeccionan.
+
+La regresión incluye reubicaciones ajenas de punteros a función en el mismo almacenamiento, destinos en la imagen, patrones enteros similares a direcciones, el desplazamiento final de origen y lecturas mediante ambos registros actualizados. `ConstantAddressFactsExcludeUnprovedAndNonAddressResults` verifica los límites x86/x64 para entradas dinámicas, segmentos, ancho reducido, interfaces malformadas y salidas que no son direcciones. `ZeroCountAndOffsetFormsKeepTheirNumericInputs` comprueba que se conserven las entradas; solo ejecuta en el anfitrión los casos de contador cero y ancho natural. Rechaza mapas truncados y contadores desbordados. Las comprobaciones de intrinsics nativos se omiten explícitamente si el LLVM instalado carece de ellos.
+
+## Transacciones neutras en la ranura de retorno
+
+`NeverDMedPrologueSavesTests` cubre anchuras, desplazamientos, valores vivos, lecturas de indicadores/PHI e invalidación tras editar el cuerpo. `NeverDPipelineOutcomeTests` comprueba la separación de solicitudes de máquina y parche. `NeverDX86NeutralAtomicSourceTests` compara instrucciones originales escritas de forma independiente con ambas rutas C para COFF/ELF/MachO, incluida la modificación del puntero de pila, en O0/O2 con UBSan. La ejecución requiere Linux x64; las pruebas de i386 no certifican ejecución nativa i386.
+
+
+## Auditorías de lecturas canónicas de supervisor
+
+`InterpreterSpecialization.SupervisorRead*` usa la elevación estricta real y rechaza una auditoría degradada a `Missing`. `BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` comprueba el límite de recuperación de los bytes originales y el rechazo continuado de pruebas nativas y envolturas de fuente.
+
+## Cobertura constante en expresiones OR/XOR
+
+`SymExprMask.ConstantCover*` comprueba exhaustivamente máscaras y entradas de cuatro bits, palabras de 8–257 bits, bits altos activos, fuentes profundas compartidas y rechazo por presupuesto de palabras o términos. `FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` comprueba un desplazamiento constante sin consultas al solucionador y un contraejemplo dependiente de la entrada. Ejecutar `NeverDSymbolicTests` y `NeverDInterpreterSpecializationTests`.
+
+## Almacenamiento de imagen recorrido por cursores
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` ejecuta recorridos hacia delante/atrás, copias intermedias, conversiones del mismo ancho y rutas de lectura/escritura o solo escritura para COFF/ELF/Mach-O en O0/O2 con ASan/UBSan. `CursorStorageNeedsAnAddressPreservingMemoryPath` rechaza constantes escalares, punteros cargados, reducciones de ancho y aritmética sin consumidor de memoria; `DirectBoundedTablesKeepTheirExtent` conserva los índices directos acotados. Compilar `NeverDLiftTests` y ejecutar `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`.
+
+Los espacios de pila sintéticos de LLVM C conservan la escritura entera de 128 bits antes de seleccionar en ejecución cualquiera de sus mitades de 64 bits. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` verifica las direcciones por suma y OR basado en alineación con O0/O2, ASan/UBSan y el contrato documentado `-fno-strict-aliasing`. Ejecutar `NeverDLLVMCValueTests` y las suites relacionadas de marcos, vectores y registros de presentación.
+
+`MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` ejecuta bucles de cursores modificables de x64/AArch64 y COFF/ELF/Mach-O mediante LLVM C con O0/O2 y ASan/UBSan. En el modo explícito de imagen original, las direcciones demostradas usan la imagen activa compartida incluso junto a reubicaciones de punteros ajenas. Las coincidencias numéricas siguen siendo escalares y los espejos independientes conservan su validación. Ejecutar `NeverDMedLLVMDirectDataTests` y las suites de límites de reubicación.

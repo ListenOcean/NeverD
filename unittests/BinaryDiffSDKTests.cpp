@@ -2564,6 +2564,91 @@ TEST_F(BinaryDiffSDK,
                   .value_or(false));
 }
 
+TEST_F(BinaryDiffSDK, InlinedTailCallerCandidatesSurviveEditsAndRestore) {
+  const auto Make = [](bool Merged) {
+    std::vector<uint8_t> Bytes{0xf3, 0x0f, 0x1e, 0xfa}; // endbr64
+    const auto Word = [&](uint32_t Value) {
+      for (unsigned Shift = 0; Shift < 32; Shift += 8)
+        Bytes.push_back(uint8_t(Value >> Shift));
+    };
+    const auto Prelude = [&] {
+      // Unknown global objects move between inputs. Their identity is not
+      // asserted by this candidate evidence.
+      Bytes.insert(Bytes.end(), {0x89, 0x3d}); // mov [rip+disp32], edi
+      Word((Merged ? 0x600 : 0x400) - uint32_t(Bytes.size() + 4));
+      Bytes.insert(Bytes.end(), {0xc7, 0x05}); // mov dword [rip+disp32], 1
+      Word((Merged ? 0x700 : 0x500) - uint32_t(Bytes.size() + 8));
+      Word(1);
+    };
+    if (!Merged) {
+      Prelude();
+      Bytes.push_back(0xe9);
+      Word(0x40 - uint32_t(Bytes.size() + 4));
+      Bytes.resize(0x40, 0xcc);
+      Bytes.insert(Bytes.end(), {0xf3, 0x0f, 0x1e, 0xfa});
+    }
+    Bytes.insert(Bytes.end(), {0xb8, 7, 0, 0, 0});
+    for (unsigned I = 0; I < 18; ++I) {
+      if (Merged && I == 2)
+        Prelude();
+      Bytes.insert(Bytes.end(), {0x83, 0xc0, uint8_t(I + 1)}); // add eax, imm8
+    }
+    Bytes.push_back(0xc3);
+    return Bytes;
+  };
+  const auto Before = input(Make(false)), After = input(Make(true), 0x8000);
+  ASSERT_EQ(neverd_func_create(Before, 0x1040), 0);
+  for (bool Reverse : {false, true}) {
+    SCOPED_TRACE(Reverse);
+    const auto C = compare(Reverse ? After : Before, Reverse ? Before : After,
+                           R"({"discover":false,"use_names":false})");
+    const auto Original = take(neverd_comparison_export_json(C));
+    auto Document = llvm::json::parse(Original);
+    ASSERT_TRUE(bool(Document));
+    ASSERT_TRUE(Document->getAsObject()->getArray("matches"));
+    EXPECT_TRUE(Document->getAsObject()->getArray("matches")->empty());
+    const auto Query =
+        render(llvm::json::Object{{"side", Reverse ? "secondary" : "primary"},
+                                  {"ambiguous_with", "0x8000"},
+                                  {"limit", 10}});
+    const auto Candidates =
+        parsed(neverd_comparison_functions_json(C, Query.c_str()));
+    const auto *Items = Candidates.getAsObject()->getArray("items");
+    ASSERT_TRUE(Items);
+    std::set<std::string> Addresses;
+    for (const auto &Item : *Items)
+      Addresses.insert(
+          Item.getAsObject()->getString("address").value_or("").str());
+    EXPECT_EQ(Addresses, (std::set<std::string>{"0x1000", "0x1040"}));
+    ASSERT_EQ(neverd_comparison_restore_json(C, Original.c_str()), 1)
+        << take(neverd_comparison_last_error(C));
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
+    const auto Override = render(
+        llvm::json::Object{{"kind", "match"},
+                           {"primary", Reverse ? "0x8000" : "0x1000"},
+                           {"secondary", Reverse ? "0x1000" : "0x8000"}});
+    ASSERT_EQ(neverd_comparison_override_json(C, Override.c_str()), 1);
+    const auto Edited = take(neverd_comparison_export_json(C));
+    auto Invalid = llvm::json::parse(Edited);
+    ASSERT_TRUE(bool(Invalid));
+    auto *Accepted = Invalid->getAsObject()->getArray("matches");
+    ASSERT_TRUE(Accepted);
+    ASSERT_EQ(Accepted->size(), 1u);
+    (*(*Accepted)[0].getAsObject())["step"] = "inlined_tail_call";
+    EXPECT_EQ(neverd_comparison_restore_json(C, render(*Invalid).c_str()), 0);
+    EXPECT_NE(take(neverd_comparison_last_error(C))
+                  .find("can only describe ambiguous candidates"),
+              std::string::npos);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+    ASSERT_EQ(neverd_comparison_undo(C), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
+    ASSERT_EQ(neverd_comparison_redo(C), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Edited);
+    ASSERT_EQ(neverd_comparison_restore_json(C, Original.c_str()), 1);
+    EXPECT_EQ(take(neverd_comparison_export_json(C)), Original);
+  }
+}
+
 TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Make = [](bool ReverseHelpers) {
     std::vector<uint8_t> Bytes;
@@ -2593,7 +2678,7 @@ TEST_F(BinaryDiffSDK, LongNativeCallContextSurvivesReorderingAndRestore) {
   const auto Saved = take(neverd_comparison_export_json(C));
   const auto Document = parsed(neverd_comparison_export_json(C));
   ASSERT_TRUE(Document.getAsObject());
-  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 9);
+  EXPECT_EQ(Document.getAsObject()->getInteger("matcher_version"), 13);
   const auto *Matches = Document.getAsObject()->getArray("matches");
   ASSERT_TRUE(Matches);
   const std::map<std::string, std::string> Expected = {{"0x3000", "0xa010"},

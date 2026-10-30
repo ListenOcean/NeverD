@@ -369,5 +369,6 @@ Int3 = 1000, // int3  -> @llvm.debugtrap
     // access; both contracts carry explicit incoming and outgoing MXCSR.
     X86FPFmaState, X86FPFmaMemoryState,
 
-    // Append-only: operand-size-16 legacy x87 memory images.
-    X87Fldenv16, X87Fnstenv16, X87Frstor16, X87Fnsave16,
+    // Every identity the Intrinsic enum lists after this file is published.
+    // A new x86 intrinsic appends at the end of that enum (Intrinsics.h), not
+    // here.

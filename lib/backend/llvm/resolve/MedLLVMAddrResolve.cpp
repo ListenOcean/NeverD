@@ -20,6 +20,7 @@
 #include "neverd/ir/TargetRegInfo.h"
 #include "neverd/ir/X86/X86FPState.h"
 #include "neverd/ir/med/X86/I386PicAddress.h"
+#include "neverd/ir/med/X86/X86RepAddresses.h"
 #include "neverd/loader/ReadOnlyBytes.h"
 #include "neverd/loader/RelocationProvenance.h"
 #include "neverd/support/Diagnostic.h"
@@ -4899,6 +4900,8 @@ std::optional<uint64_t> MedLLVMEmitter::traceSSAConst(const MedVar &V) const {
     const MedOp *Def = lookupDef(Cur);
     if (!Def)
       return std::nullopt;
+    if (auto Address = x86RepConstantAddressOutput(*Def, Cur, TargetArch))
+      return Address;
     if (Def->Opcode == NdOp::COPY && Def->NumInputs >= 1) {
       if (Def->Output.Size == 0 || Def->Inputs[0].Size == 0 ||
           Def->Output.Size < Def->Inputs[0].Size)

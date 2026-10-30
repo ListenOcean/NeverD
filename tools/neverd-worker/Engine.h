@@ -59,6 +59,8 @@ public:
   /// Whether the engine exposes its static x87 support matrix, independently
   /// of binary loading, host probing or execution.
   static bool reportsX87Capabilities();
+  /// Whether versioned machine-source recovery is available for source views.
+  static bool recoversInterpreterSource();
   /// Whether the engine can query unwind metadata at an exact address.
   static bool reportsUnwindFrames();
   /// Whether the engine keeps function edits (function_create/_delete).

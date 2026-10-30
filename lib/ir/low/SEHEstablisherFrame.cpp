@@ -122,7 +122,8 @@ static llvm::Expected<LowSEHEstablisherFrame>
 proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
                 bool OrdinaryEntry, size_t &WorkRemaining,
                 llvm::StringRef LocalUnwindDigest, bool CxxContinuation,
-                std::optional<FrameCFG> &CachedCFG, LowSEHFrameUse Use) {
+                std::optional<FrameCFG> &CachedCFG, LowSEHFrameUse Use,
+                llvm::ArrayRef<LowSEHLocalUnwindExitSource> Exits = {}) {
   auto Fail = [](const std::string &Why) {
     return llvm::createStringError(llvm::errc::not_supported, Why);
   };
@@ -256,6 +257,29 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
       if (Target <= 0 || Source < 0 || Entry.FrameOffset >= 0)
         return Fail("stale local-unwind continuation certificate");
       LocalUnwindSources[Target].emplace_back(Source, Entry.FrameOffset);
+      LocalUnwindSuccessors[Source].push_back(Target);
+    }
+  // A certified exit enters its target from its call, as the evidence above
+  // does from a call the runtime still makes.
+  if (!CxxContinuation)
+    for (const LowSEHLocalUnwindExitSource &Exit : Exits) {
+      if (!Charge(N + 1))
+        return Fail("frame propagation budget exhausted");
+      int Target = -1, Source = -1;
+      for (size_t B = 0; B < N; ++B) {
+        if (Low.Blocks[B].StartAddr == Exit.Target)
+          Target = static_cast<int>(B);
+        if (!Charge(Low.Blocks[B].Ops.size()))
+          return Fail("frame propagation budget exhausted");
+        if (llvm::any_of(Low.Blocks[B].Ops, [&](const LowOp &Op) {
+              return Op.Addr == Exit.CallAddr && Op.Seq == Exit.CallSeq &&
+                     Op.Opcode == NdOp::CALL;
+            }))
+          Source = static_cast<int>(B);
+      }
+      if (Target <= 0 || Source < 0 || Exit.FrameOffset >= 0)
+        return Fail("stale local-unwind exit");
+      LocalUnwindSources[Target].emplace_back(Source, Exit.FrameOffset);
       LocalUnwindSuccessors[Source].push_back(Target);
     }
   const bool IsLocalUnwindTarget = LocalUnwindSources.count(HandlerId);
@@ -761,15 +785,14 @@ proveInFrameCFG(const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
   return Result;
 }
 
-llvm::Expected<LowSEHEstablisherFrame>
-proveLowSEHEstablisherFrame(const LowFunc &Low, va_t Handler,
-                            const TargetRegInfo &TRI, bool OrdinaryEntry,
-                            size_t &WorkRemaining,
-                            llvm::StringRef LocalUnwindDigest,
-                            bool CxxContinuation, LowSEHFrameUse Use) {
+llvm::Expected<LowSEHEstablisherFrame> proveLowSEHEstablisherFrame(
+    const LowFunc &Low, va_t Handler, const TargetRegInfo &TRI,
+    bool OrdinaryEntry, size_t &WorkRemaining,
+    llvm::StringRef LocalUnwindDigest, bool CxxContinuation, LowSEHFrameUse Use,
+    llvm::ArrayRef<LowSEHLocalUnwindExitSource> Exits) {
   std::optional<FrameCFG> CFG;
   return proveInFrameCFG(Low, Handler, TRI, OrdinaryEntry, WorkRemaining,
-                         LocalUnwindDigest, CxxContinuation, CFG, Use);
+                         LocalUnwindDigest, CxxContinuation, CFG, Use, Exits);
 }
 
 namespace {
@@ -1049,6 +1072,51 @@ llvm::Expected<uint64_t> proveLowSEHTerminationFrame(const LowFunc &Low,
   if (!Frame)
     return Frame.takeError();
   return proveTerminationHandler(Low, *Frame, Handler, TRI, WorkRemaining);
+}
+
+llvm::Expected<uint64_t> proveLowSEHFixedFrame(const LowFunc &Low,
+                                               const TargetRegInfo &TRI,
+                                               size_t &WorkRemaining) {
+  auto Frame = prepareTerminationFrame(Low, TRI, WorkRemaining);
+  if (!Frame)
+    return Frame.takeError();
+  // The decoded prologue makes exactly the allocations the unwind codes
+  // record, at the same instruction ends.
+  std::map<uint32_t, uint64_t> ActualAdjustments;
+  const LowBlock &Prologue = Low.Blocks.front();
+  if (!chargeTerminationWork(WorkRemaining,
+                             Prologue.Ops.size() +
+                                 Prologue.InstructionBoundaries.size()))
+    return terminationFrameError("work budget exhausted");
+  for (const LowInstructionBoundary &Boundary :
+       Prologue.InstructionBoundaries) {
+    if (Boundary.Address >= Frame->PrologueEnd)
+      break;
+    for (size_t I = Boundary.FirstOp;
+         I < Boundary.FirstOp + Boundary.OpCount && I < Prologue.Ops.size();
+         ++I) {
+      const LowOp &Op = Prologue.Ops[I];
+      if (!Op.Output.isReg() || !Op.Output.Size ||
+          Op.Output.Offset >= TRI.StackPointer + 8 ||
+          Op.Output.Offset + Op.Output.Size <= TRI.StackPointer)
+        continue;
+      if (Op.Opcode != NdOp::INT_SUB || Op.Output.Size != 8 ||
+          Op.Output.Offset != TRI.StackPointer || Op.NumInputs != 2 ||
+          Op.Inputs[0] != NdVar::reg(TRI.StackPointer, 8) ||
+          !Op.Inputs[1].isConst() || Op.Inputs[1].Size != 8 ||
+          !ActualAdjustments
+               .emplace(static_cast<uint32_t>(Boundary.Address + Boundary.Size -
+                                              Low.Entry),
+                        Op.Inputs[1].Offset)
+               .second)
+        return terminationFrameError(
+            "prologue SP write is not an unwind allocation");
+    }
+  }
+  if (ActualAdjustments != Frame->ExpectedAdjustments)
+    return terminationFrameError(
+        "decoded prologue disagrees with unwind allocation");
+  return Frame->FrameBytes;
 }
 
 std::map<va_t, uint64_t> collectLowSEHTerminationFrames(const LowFunc &Low,

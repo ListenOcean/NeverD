@@ -2184,7 +2184,7 @@ HFA 匯入槽測試編譯嚴格的 C 原型，並對標頭宣告及本機宣告�
 
 ## 純量跳轉驗證
 
-`NeverDConstantBranchTests` 涵蓋 x86/x64/ARM64 與 PE、ELF、Mach-O 的直接前驅、所有前驅一致的匯合及不可變讀取；衝突、未定義輸入、呼叫破壞和獨立入口保留動態跳轉。`NeverDConstantBranchSourceTests` 在最佳化開啟/關閉時，編譯並執行 x64/ARM64 的兩條 C 路徑，涵蓋 O0/O2 與 UBSan。純整數函式本體使用主機標準標頭；這不等同原生 ARM64 或 Windows 驅動程式驗證。worker 的獨立 ELF x64 機器碼比對也檢查冷啟動導覽、參照及跳過的 E9 位元組。
+`NeverDConstantBranchTests` 涵蓋 x86/x64/ARM64 與 PE、ELF、Mach-O 的直接前驅、所有前驅一致的匯合及不可變讀取；未證明的備選、未定義輸入、呼叫破壞和獨立入口保留動態跳轉。`NeverDConstantBranchSourceTests` 在最佳化開啟/關閉時，編譯並執行 x64/ARM64 的兩條 C 路徑，涵蓋 O0/O2 與 UBSan。純整數函式本體使用主機標準標頭；這不等同原生 ARM64 或 Windows 驅動程式驗證。worker 的獨立 ELF x64 機器碼比對也檢查冷啟動導覽、參照及跳過的 E9 位元組。
 
 先驗證目前基本區塊能獨立證明的目標，避免無關前驅耗盡其工作預算。長前驅回歸也驗證此邊界。
 
@@ -2197,3 +2197,30 @@ MedIR 的常數傳播與複製傳播共用 `canPropagateConstantToOperand`：計
 `NeverDLowScalarConstantTests` 與 `NeverDIndirectCallValueSourceTests` 涵蓋跨區塊呼叫及拒絕邊界，並執行兩條 C 路線。`NeverDLLVMCSourcePointerTests` 以 O0/O2 及 UBSan 檢查物件指標、回呼、別名及外部宣告。原生指標套件編譯公開 MinGW 範例並拒絕 MSVCRT/UCRT 配置不符；不代表原生核心或 ARM64 執行驗證。
 
 `X86RepState.ImageCopiesRetainEveryAccessedByte` 在 x64 COFF、ELF 和 Mach-O 下執行雙向映像複製，以及填入後複製。兩條 C 路線均以 O0/O2 加 UBSan 編譯執行，獨立計算的結果檢查每個複製位元組；非 x64 主機明確略過執行檢查。
+
+`NeverDFiniteScalarBranchTests` 涵蓋 x86/x64/AArch64 與 COFF/ELF/Mach-O 的無表算術分派、稀疏遮罩、模運算、部分寫入、呼叫破壞、暫存量生命期、預算、外部入口及新增邊。`NeverDFiniteScalarBranchSourceTests` 在最佳化開關、O0/O2、UBSan 下執行兩條 C 路徑的所有案例，並驗證同時儲存程式碼指標的獨立身分及略過 SSA 的拒絕行為。
+
+`NeverDCalleeSourceCLI` 透過正式 CLI 檢查獨立編碼的 x64 PE/ELF 呼叫鏈：位址與名稱選取、遞移呼叫定義、排除無關函式、普通單函式輸出、剛好達到與超過深度上限、循環以及根函式與被呼叫函式的拒絕。呼叫閉包失敗時保留既有輸出。完整三函式 C 單元在 O0/O2 編譯執行並傳回獨立預期值；遞迴案例只做檢查。
+
+重複映像存取回歸亦涵蓋同一資料擁有者內的無關函式指標重定位、映像內目標、位元類似位址的整數填充值、來源暫存器完成位移，以及透過更新後的來源與目標暫存器再次讀取。`ConstantAddressFactsExcludeUnprovedAndNonAddressResults` 檢查 x86/x64 邊界：動態輸入、分段或縮減位址寬度、異常介面與非位址輸出不能取得完成事實。`ZeroCountAndOffsetFormsKeepTheirNumericInputs` 檢查輸入保持，僅自然寬度的零次數案例在主機執行。完整範圍測試拒絕截斷映射與溢出次數。本機 LLVM 缺少原生 intrinsic 時，相應測試明確跳過。
+
+## 返回槽上的中性原子操作
+
+`NeverDMedPrologueSavesTests` 涵蓋槽寬度、偏移、活躍值、旗標/PHI 讀取及修改後的證據失效。`NeverDPipelineOutcomeTests` 檢查機器與修補請求不會取得此投影。`NeverDX86NeutralAtomicSourceTests` 以獨立撰寫的原始指令對照 COFF/ELF/MachO 的兩條 C 路線，包含調整後的堆疊指標，並以 O0/O2 和 UBSan 執行。執行對照需要 Linux x64；i386 證明測試不代表原生 i386 執行涵蓋。
+
+
+## 標準監督態讀取稽核
+
+`InterpreterSpecialization.SupervisorRead*` 使用實際嚴格提升，並拒絕降級為 `Missing` 的稽核。`BinaryLowIRRefinement.SupervisorReadCompletesOnlyRawRecovery` 檢查原始位元組復原邊界，同時繼續拒絕原生證明和原始碼包裝。
+
+## OR/XOR 運算式的常數覆蓋
+
+`SymExprMask.ConstantCover*` 窮舉四位元遮罩與輸入，檢查 8–257 位元字、有效高位、深層共用來源及遮罩字數和項數預算拒絕。`FrameOffsets.ConstantCoveredBitsExposeOffsetsWithoutSolverQueries` 驗證零求解查詢下的固定位移，並拒絕依賴輸入的相鄰案例。執行 `NeverDSymbolicTests` 與 `NeverDInterpreterSpecializationTests`。
+
+## 遞增指標存取的映像儲存
+
+`CImageObjects.AdvancingCursorsKeepTheWholeMutableImageObject` 以 O0/O2 與 ASan/UBSan 執行 COFF/ELF/Mach-O 的正反向遍歷、中間複製、同寬轉換、讀寫及純寫路徑。`CursorStorageNeedsAnAddressPreservingMemoryPath` 拒絕純量常數、載入的指標、窄化及沒有記憶體消費者的算術；`DirectBoundedTablesKeepTheirExtent` 保留有界直接索引路徑。建置 `NeverDLiftTests` 後執行 `ctest --test-dir build-release -R '^CImageObjects[.]' --output-on-failure --parallel 4`。
+
+LLVM C 的合成堆疊槽保留完整的 128 位元整數寫入，再由執行期選擇讀取任一 64 位元半部。`LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` 在 O0/O2、ASan/UBSan 及文件規定的 `-fno-strict-aliasing` 契約下涵蓋加法與基於對齊的 OR 定址。執行 `NeverDLLVMCValueTests`；相關框架、向量及顯示記錄測試涵蓋周邊儲存路徑。
+
+`MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` 對 x64/AArch64 與 COFF/ELF/Mach-O 的可變游標迴圈執行 LLVM C 的 O0/O2 + ASan/UBSan 檢查。在明確的原始映像原始碼模式下，已確認的位址即使鄰近無關指標重定位，也使用共用的執行期映像。數值相同的一般整數保持純量；獨立指標映像保留既有驗證。執行 `NeverDMedLLVMDirectDataTests` 及指標重定位邊界測試。

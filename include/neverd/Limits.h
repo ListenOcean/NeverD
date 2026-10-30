@@ -62,6 +62,12 @@ constexpr uint64_t kMaxObjectExternStatedReach = 0x10000;
 /// Exhaustion preserves the original indirect transfers.
 constexpr size_t kMaxScalarBranchEvidenceWork = 262144;
 
+/// Pure scalar computed-code dispatch domains and total per-function work,
+/// including revalidation after newly discovered targets add CFG edges.
+constexpr size_t kMaxComputedBranchValues = 32;
+constexpr size_t kMaxComputedBranchProduct = 256;
+constexpr size_t kMaxComputedBranchEvidenceWork = 2000000;
+
 /// Optional symbolic fallback for unresolved straight-block scalar targets.
 /// Ordinary constant propagation runs first; these local caps also bound DAG
 /// construction before the shared per-function work account is charged.
@@ -71,6 +77,12 @@ constexpr unsigned kMaxScalarBranchSymbolicAtoms = 4;
 constexpr unsigned kMaxScalarBranchOptimalSynthesisAtoms = 2;
 constexpr size_t kMaxScalarBranchSymbolicRewriteWork = 8192;
 constexpr size_t kMaxScalarBranchSymbolicTableBytes = 65536;
+
+/// Finite scalar dispatch covers, including conservative child products.
+/// Larger domains and exhausted work preserve the original indirect branch.
+inline constexpr size_t kMaxScalarBranchFiniteValues = 64;
+inline constexpr size_t kMaxScalarBranchFiniteProducts = 4096;
+inline constexpr unsigned kMaxScalarBranchFiniteDepth = 64;
 
 /// Total register-byte, operand and graph work for bounded SGX/SMX leaf
 /// proofs, including revalidation after CFG discovery adds incoming edges.

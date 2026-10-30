@@ -169,19 +169,108 @@ verified `0f 01 de` instruction; they do not execute SKINIT or qualify reset,
 attestation, successful launch or architectural faults. Global completion and
 the later LLVM release/SDK/gitlink update remain separate work.
 
+## Native far-pointer compiler interfaces
+
+The LLVM fork provides `llvm.x86.lds16/32`, `llvm.x86.les16/32` and
+`llvm.x86.lfs16/32/64`, `llvm.x86.lgs16/32/64`, `llvm.x86.lss16/32/64`.
+Each takes a packed pointer image and returns its integer offset only after the
+native instruction completes. One instruction owns the 4/6/10-byte image read,
+selector validation, hidden segment installation and descriptor accessed-bit
+effects. Unknown descriptor reads/writes remain separate from the exact image
+read. Segment definitions and scheduling boundaries retain the state change;
+unused integer results do not remove it. NeverC exposes the nine valid long-mode
+`__builtin_ia32_lfs*`, `__builtin_ia32_lgs*` and `__builtin_ia32_lss*` spellings
+without inline assembly. LDS/LES require 32-bit code; 64-bit results require long
+mode, and code16 is explicitly refused.
+
+The selected segment remains ambient CPU state. Callers must maintain compiler
+ABI invariants, including TLS and the stack. The interface does not carry an
+original instruction's source segment, address-size/default-stack provenance,
+or an owned continuation. LSS does not establish MOV SS / POP SS interrupt/debug
+inhibition; the earlier claim that it did was incorrect. NeverD's ordinary lifting policies still refuse
+far-pointer loads. The separate explicit V6 continuation below supplies a
+bounded descriptor-state owner for LSS/LFS/LGS loads.
+
+Compiler checks cover both code modes, ELF/COFF/Mach-O, O0/O2, exact memory
+extents, segment effects, malformed signatures and invalid mode diagnostics.
+Six Linux x64 execution profiles compare LLVM, NeverC and NeverC IR through LLVM
+against original bytes. Each checks 4,320 paired state observations, 18 exact
+page boundaries and 186 faults. Faults retain the destination and all other
+GPRs, arithmetic flags/DF, selectors and FS/GS bases; page faults also check CR2.
+The 1,440 null-selector observations use the immediate debugger stop because a
+retained host reproduction shows Linux SIGTRAP return clearing selectors 1..3.
+They qualify the instruction result before return to userspace, without
+claiming post-interrupt continuation. No failing sample is retried or counted
+as passed. i386 execution, privileged descriptor-page faults, alignment checks
+and asynchronous interrupt delivery remain unqualified. See the exact tools,
+sources, host diagnosis and results in
+[the qualification record](evidence/x86-far-pointer-native-2026-10-29.json).
+
+## Explicit LSS/LFS/LGS continuation
+
+The [V6 continuation interface](x64-continuation-source.md) owns LSS/LFS/LGS
+under Intel's 16/32/64-bit operand rules. One x64 descriptor owner
+validates GDT/LDT bounds, type, presence and privilege; captures both source
+fields before the descriptor accessed-bit write; installs the selector,
+expanded limit, attributes and 32-bit descriptor base; and writes the GPR with
+the proper partial-register behavior. Descriptor decoding is shared with the
+existing return/event paths. Flags and NMI blocking are preserved, and execution
+continues at the exact native fallthrough.
+
+An exact byte parser retains ModRM/SIB, signed displacement, RIP/EIP-relative
+addressing, operand/address-size and original FS/GS base provenance. Offset and
+selector effective addresses wrap independently before segment addition,
+including addr32 pointer images crossing the 4 GiB boundary. It is used
+only by the explicit state provider. The provider does not invent ordinary
+LowIR or promote the missing undefined-output certificate. Both C routes
+consume the same state transition; ordinary source recovery and native proofs
+retain their refusal.
+
+Null-selector FS/GS base changes differ across processors. V6 now accepts an
+explicit `null_segment_base_policy` of `clear` or `preserve`; neither is inferred
+from a vendor name. Null loads without that binding still reject before
+descriptor access or state/RAM writes. LSS owns writable CPL0 data descriptors
+and null SS selector 0, with coupled partial/full GPR writes. Null SS 1..3 and
+invalid descriptors reject atomically. Null loads read no descriptor.
+[Intel SDM section 7.8.3](https://cdrdv2-public.intel.com/835754/253668-sdm-vol-3a.pdf)
+explicitly distinguishes LSS from MOV/POP SS: it does not inhibit the next
+instruction's events. This corrects the earlier shadow-state blocker; the
+historical evidence records retain that earlier limitation wording.
+i386/compatibility forms, AMD REX.W qualification and fault delivery remain
+open. The LLVM/NeverC native interfaces above are
+unchanged; this completion does not publish an SDK release or change pins.
+
+The [qualification record](evidence/x86-lfs-lgs-continuation-2026-10-29.json)
+binds the source snapshot and Release toolchain to 132,544 native state/RAM
+comparisons, 408 invalid-state refusals, 24 exact-width/read-only page checks,
+SDK driver execution and 387 passing regressions without skips. The independent
+CPU oracle exposed the addr32 selector-field wrap; a dedicated mapped 4 GiB
+boundary regression now checks it in all three operand widths and both segments.
+
+The [subsequent completion record](evidence/x86-far-load-continuation-2026-10-29.json)
+records 175,040 native state/RAM pairs including LSS and null FS/GS with the
+clearing policy. Every original far load stops at its immediate fallthrough and
+reports zero interrupt shadow. It includes all GPRs and widths, GDT/LDT and
+descriptor bits, accessed-bit aliasing into either pointer field, and independent
+addr32 wrapping. Both null policies execute in both C routes under sanitizers,
+including inaccessible descriptors, exact-width guard pages and old-base/new-base
+sequencing. SDK/CLI requests retain the policy in the manifest; an SDK driver
+test resumes through a coupled SS/RSP switch and uses the new stack.
+
 ## Known remaining gaps
 
 | Instructions or family | Missing contract |
 | --- | --- |
-| LDS, LES, LSS, LFS, LGS | Coupled GPR/segment-selector completion, hidden descriptor state and fault ordering. The former ordinary load/COPY approximation is now explicitly refused in both strict and permissive lifting. |
+| LDS, LES, LSS, LFS, LGS | LLVM provides 13 native interfaces and NeverC the nine valid long-mode builtins. Explicit V6 owns LSS/LFS/LGS GPR, selector, descriptor/cache and fallthrough state under Intel operand rules, including null SS at CPL0 and declared clear/preserve FS/GS base policies. i386/compatibility forms, other processor qualification and fault delivery remain open. Ordinary strict/permissive lifting still refuses the scalar load/COPY approximation. |
 | Unowned and i386 3DNow! operations | All 24 operations now retain their original instruction inside the owned x64 MMX/x87 context, qualified below. Typed/unowned and i386 paths still require a state contract. Strict and portable concrete execution refuse processor-dependent values. Physical execution and pending-#MF/stack-#SS behavior remain unqualified. LLVM and NeverC provide the native packed-value interfaces. |
 | Unowned FNOP/EMMS/FEMMS | Waiting behavior and tag/payload transitions require an owned x87 context. Owned x64 native and explicit portable paths retain all three instructions, including FEMMS payload invalidation; typed/unowned and i386 paths still refuse rather than emit NOP. Portable MMX data operations remain outside the admitted profile. |
 | VMRUN | Complete guest/host transition, including guest-modified unsaved GPRs and floating/vector state, plus the VM-exit continuation. |
 | GETSEC transferring or unproved leaves | Measured-environment entry/exit and a complete-machine-state continuation. Leaves 0 and 6..8 now use the bounded contract below when natural-width AX is proven constant. |
 | ENCLU entry/exit/resume or unproved leaves | Enclave entry/exit/resume and asynchronous exit state. Leaves 0, 1 and 5..11 now use the bounded contract below when natural-width AX is proven constant. |
 | ERETS, ERETU, UIRET | Return-frame and nonlocal control-transfer ownership. FRED returns explicitly fail decoding instead of aliasing CLAC; UIRET is not decoded. |
-| RETF/RETFQ, IRET/IRETD/IRETQ | Complete frame, privilege, segment and flag restoration. The integrated `af8d5e86a5` change supplies terminal analysis intrinsics with explicit frame-cell operands; the named no-return calls do not implement native restoration or an executable continuation. |
-| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Complete register, privilege, segment and SMM continuation state. Integrated `c464c93243` supplies terminal analysis intrinsics for SYSRET/SYSEXIT with explicit target state; their named no-return calls do not implement native restoration. SYSENTER and RSM remain refused. |
+| RETF/RETFQ, IRET/IRETD/IRETQ | Ordinary source still lacks complete frame, privilege, segment and flag restoration. The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile owns successful IRETQ and canonical RETFQ (with or without imm16) to long-mode CPL0..3, including hidden caches, descriptor accesses and outer-return segment invalidation. Its live CS.L/CS.D guard owns the absence of arbitrary GPR high halves; these instructions have no unconditional empty undefined-output audit. RETFQ preserves NMI blocking and applies unsigned parameter cleanup to both stacks; IRETQ unblocks NMIs. Faulting execution, compatibility returns, CET/FRED and the other forms remain unqualified. |
+| SYSENTER, SYSEXIT/SYSEXITQ, SYSRET/SYSRETQ, RSM | Ordinary source still lacks complete register, privilege, segment and SMM continuation state. The separate explicit x64 continuation V5/V6 profiles own canonical SYSRET/SYSRETQ with live STAR and CS/SS caches, flags and compatibility/64-bit target state. SYSRET explicitly consumes eight arbitrary values for the legacy GPR high halves; all defined bits are preserved or assigned as specified. Other forms and faulting transitions remain unqualified; SYSENTER and RSM remain refused. |
+| Native control-return interfaces in LLVM/NeverC | The fork's assembler encodes SYSENTER, SYSEXIT, SYSRET, IRET, RETF, RSM and FRED/UIRET, but these transfers still have no matching `llvm.x86.*` intrinsic and NeverC builtin. NeverD's ordinary LLVM route records some transfers as named no-return declarations; those are not native instruction implementations. The explicit state-C contracts above also do not perform host CPU transfers. Native APIs need explicit register/stack inputs, non-returning control and compiler-frame ownership before frontend exposure. |
 | BNDMK, BNDMOV, BNDCL, BNDCU, BNDCN, BNDLDX, BNDSTX | MPX bounds-register bank, bounds-table translation, enable state and #BR/partial-fault behavior. The old COPY/NOP approximations are removed. |
 | XACQUIRE/XRELEASE | HLE prefix ownership belongs to the associated memory operation. Prefixed LOCK operations, implicit-lock XCHG and XRELEASE MOV stores are explicitly refused before ordinary memory lowering; native transactional completion remains missing. |
 | XBEGIN and full RTM regions | The two-exit lift retains rel16 and rel32 fallbacks at the full code width, with conditional EAX updates. The pinned decoder's i386 displacement-sign errors are normalized before CFG discovery. Full register/memory checkpoint, nesting, fallback faults and hardware rollback remain unqualified; a status result alone does not establish these contracts. |
@@ -711,8 +800,21 @@ registers and stack restoration. Each route also passes 524 Linux x64 native
 sigreturn comparisons and four unhandled-fault checks against independent
 INT 2C bytes. Both C routes retain two Microsoft assertion contracts through
 object emission. All 54 focused intrinsic/header tests and 81 binary
-regressions pass. This does not qualify privileged interrupt gates or an
-arbitrary handler's machine-state ABI.
+regressions pass. Those raw compiler-interface checks do not qualify privileged
+interrupt gates or an arbitrary handler's machine-state ABI.
+
+The separate [explicit x64 continuation](x64-continuation-source.md) V6 profile
+now owns canonical `INT3` and all 256 `INT imm8` vectors at CPL0. It reads the
+selected IDT gate, applies descriptor accessed-bit effects, writes the complete
+five-word stack frame and returns the handler state before executing it. The
+source uses explicit architectural state instead of an inferred service ABI,
+including vectors 0x29/0x2c/0x2d. Both C routes at O0/O2 compare 65,536 INT imm8
+state/RAM outcomes against original bytes on an independent KVM vCPU. The
+[qualification record](evidence/x86-software-interrupts-2026-10-29.json)
+binds these checks and 363 passing continuation, audit, export and proof
+regressions to the tested sources and dependency snapshots. This
+does not cover prefixed encodings, INT1, CPL3 entry, hardware exception error
+codes, fault delivery, CET/FRED or execution of an arbitrary handler.
 
 REP qualification adds 1,000 LLVM cases across both code modes and 544 cases
 on each NeverC builtin spelling and the NeverC-to-fork route. MOVS/STOS execute

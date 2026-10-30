@@ -110,6 +110,9 @@ struct SpecializationTerminalImportEvidence {
 /// A complete, strictly lifted guest instruction. The provider owns decoding,
 /// mapping, relocation, and instruction-level exception checks. A missing or
 /// unsupported instruction must return an Error, never an empty approximation.
+/// A named ProfileProjection can instead retain exact native bytes for its
+/// explicit environment owner. Empty Ops in that case is an unexecuted native
+/// instruction, never a NOP or a complete architectural sidecar.
 struct SpecializationInstruction {
   std::vector<LowOp> Ops;
   LowInstructionBoundary Origin;
@@ -255,7 +258,7 @@ struct SpecializationOptions {
   /// contract is independent of X64SegmentedReads. Source and native proof
   /// interfaces without authenticated base inputs refuse it.
   bool X64SegmentedWrites = false;
-  /// Raw-only SWAPGS state under KernelX64NoFaultV1, explicit nonfaulting
+  /// Raw-only SWAPGS state under an explicit kernel flags profile, nonfaulting
   /// machine state and little-endian x64. The caller declares CR4.FRED = 0
   /// throughout execution. Active GS.base and IA32_KERNEL_GS_BASE are arbitrary
   /// 64-bit inputs; only modeled SWAPGS exchanges them. FS stays fixed. These
@@ -264,7 +267,7 @@ struct SpecializationOptions {
   /// Source and native proof interfaces without this state contract refuse it.
   bool X64LegacyGSState = false;
   /// Retain CR8 reads/writes with a symbolic four-bit task-priority state.
-  /// Requires explicit nonfaulting machine state and KernelX64NoFaultV1.
+  /// Requires explicit nonfaulting machine state and a kernel flags profile.
   /// Every retained memory access must be ordinary memory without device side
   /// effects or APIC/TPR aliases; only modeled MOV-to-CR8 writes may change the
   /// priority. These are caller preconditions, never inferred from addresses.
