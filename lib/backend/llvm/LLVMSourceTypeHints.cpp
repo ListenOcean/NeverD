@@ -18,12 +18,18 @@
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/IR/Argument.h"
 #include "llvm/IR/Attributes.h"
+#include "llvm/IR/DerivedTypes.h"
 #include "llvm/IR/Module.h"
+#include "llvm/Support/Error.h"
 #include "llvm/Support/JSON.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <cstdint>
+#include <limits>
 #include <string>
+#include <utility>
 
 namespace neverd {
 namespace {
@@ -114,7 +120,8 @@ TypeRef readLLVMSourcePointerParameter(const llvm::Argument &Argument) {
     const auto Signed = (*Fields)[2].getAsBoolean();
     const auto Name = (*Fields)[3].getAsString();
     if (!Kind || !Bytes || !Signed || !Name || *Bytes < 0 ||
-        *Bytes > UINT16_MAX || (!Name->empty() && !identifier(*Name)))
+        *Bytes > std::numeric_limits<uint16_t>::max() ||
+        (!Name->empty() && !identifier(*Name)))
       return nullptr;
     TypeRef Node;
     if (*Kind == "ptr" && Result)

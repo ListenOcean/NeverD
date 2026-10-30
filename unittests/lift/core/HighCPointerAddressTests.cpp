@@ -39877,7 +39877,7 @@ TEST(LLVMCPointerAddresses, AddressTakenArgListValuesStoreStays) {
       << Source;
 }
 
-TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
+TEST(LLVMCPointerAddresses, UndefinedPackedSiblingCannotInventCallResult) {
   auto Aux = NdType::makeNamedRecord("CAuxData", 64);
   Aux->FieldDisplayNames = {"m_type"};
   Aux->FieldDisplayOffsets = {24};
@@ -40028,8 +40028,9 @@ TEST(LLVMCPointerAddresses, LeftoverEaxPackedSiblingTakesCallResult) {
   EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
             std::string::npos)
       << Source;
-  // The packed sibling takes the call result.
-  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
+  // No store connects the call's result to the bytes copied from AuxP.
+  // A former call result in EAX cannot initialize unrelated unknown storage.
+  EXPECT_EQ(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;
@@ -40333,7 +40334,7 @@ TEST(LLVMCPointerAddresses, DistantArgListCopyOfNarrowCallPrintsTypes) {
 }
 
 TEST(LLVMCPointerAddresses,
-     LeftoverEaxPackedSiblingTakesCallResultThroughInvoke) {
+     UndefinedPackedSiblingCannotInventCallResultThroughInvoke) {
   auto Aux = NdType::makeNamedRecord("CAuxData", 64);
   Aux->FieldDisplayNames = {"m_type"};
   Aux->FieldDisplayOffsets = {24};
@@ -40503,8 +40504,8 @@ TEST(LLVMCPointerAddresses,
   EXPECT_NE(Source.find("LookupTextW(arg0, ((void*)0), &frame0.var_m38)"),
             std::string::npos)
       << Source;
-  // The packed sibling takes the call result.
-  EXPECT_NE(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
+  // The intervening invoke supplies no store of period into the copied bytes.
+  EXPECT_EQ(Source.find("*(uint32_t *)&frame0.var_m18 = period"),
             std::string::npos)
       << Source;
   EXPECT_NE(Source.find("GetPeriodID"), std::string::npos) << Source;

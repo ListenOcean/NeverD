@@ -17329,3 +17329,8 @@ It includes scalar, named record and nested pointers, explicit declarations,
 selected-function emission and preserved LLVM signatures. The accompanying
 malformed/carrier test rejects invalid JSON, widths, kinds, record extents,
 names and changed address spaces or data layouts.
+
+`LLVMCPointerAddresses.UndefinedPackedSiblingCannotInventCallResult` and its
+invoke variant retain unknown copied bytes instead of manufacturing a previous
+call result. The adjacent narrow-store/wide-copy case checks the positive
+control where an actual store connects that result to the copied memory.
