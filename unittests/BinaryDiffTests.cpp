@@ -1168,6 +1168,7 @@ struct DataContextInput {
 
 Program dataContextInput(bool Secondary, DataContextInput Options = {}) {
   ProgramIdentity Identity;
+  Identity.SHA256 = std::string(64, Secondary ? 'b' : 'a');
   Identity.Normalization = Options.AArch64 ? NativeAArch64Normalization.str()
                                            : NativeX86Normalization.str();
   ProgramBuilder Builder(Identity);
@@ -1296,7 +1297,8 @@ TEST(BinaryDiff, DataReferenceMatchesRestoreWithoutInventingDataIdentity) {
   const auto Read = readComparison(saved(R, P, S), Error);
   ASSERT_TRUE(Read) << Error;
   ComparisonResult Restored;
-  ASSERT_FALSE(bindComparison(*Read, P, S, Restored));
+  const auto Failure = bindComparison(*Read, P, S, Restored);
+  ASSERT_FALSE(Failure) << *Failure;
   EXPECT_EQ(savedWithoutTimings(R, P, S), savedWithoutTimings(Restored, P, S));
   const auto *M = Restored.matchOfPrimary(2);
   ASSERT_NE(M, nullptr);
