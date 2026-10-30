@@ -377,6 +377,14 @@ v10 C API `neverd_devirtualize_source_v10()` 與 `neverd_devirtualize_machine_so
 
 架構未定義輸出仍採用 LowIR 選定的實作值。若要匹配某個處理器的選擇，或證明這些選擇不影響原生觀測，仍須獨立的環境約定或無干擾證明；本原始碼校驗紀錄不提供這兩者。
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## 架構未定義純量取值
+
+C++ 原始區域介面可選擇 `SpecializationUndefinedModel::FreshScalarV1`。架構端完整的純量未定義效果記錄會在每次動態執行時產生獨立取值，並在分支與目標證明之前生效。同一次取值的複製保持關聯，重複執行使用新的取值。殘餘圖保留帶條件的位元更新，包括條件為假的產生記錄；原始區域憑據繫結所選模型。
+
+此選項目前要求明確的 x64 機態區域出口及完整的純量指令證據，不支援的效果或預算耗盡皆拒絕。現有區域 C 配接器、一般發射器與原生證明介面會拒絕此模型，直到提供明確的執行期取值環境；不會推斷處理器的特定取值或一般 ABI。
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## 待處理陷阱出口

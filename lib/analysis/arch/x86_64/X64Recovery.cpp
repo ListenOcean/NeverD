@@ -81,6 +81,11 @@ validateRawEnvironmentDeclarations(const SpecializationOptions &Options) {
   const auto Invalid = [](const char *Message) {
     return llvm::createStringError(llvm::errc::invalid_argument, "%s", Message);
   };
+  if (Options.UndefinedModel != SpecializationUndefinedModel::SelectedLowIR &&
+      (Options.UndefinedModel != SpecializationUndefinedModel::FreshScalarV1 ||
+       Options.X64MachineExits.empty()))
+    return Invalid(
+        "architectural choices require a supported raw-region model");
   const auto Exhausted = [] {
     return llvm::createStringError(
         std::make_error_code(std::errc::value_too_large),

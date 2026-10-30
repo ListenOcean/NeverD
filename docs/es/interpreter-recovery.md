@@ -450,6 +450,14 @@ Solo se admiten el perfil de usuario sin fallos y las operaciones escalares/cons
 
 Las salidas arquitectónicamente indefinidas conservan los valores elegidos por LowIR. Igualar las elecciones de un procesador o demostrar que no afectan las observaciones nativas requiere un entorno independiente o una prueba de no interferencia; este comprobante no proporciona ninguno.
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## Valores escalares arbitrarios de la arquitectura
+
+La API C++ de regiones de máquina permite elegir `SpecializationUndefinedModel::FreshScalarV1`. Los registros completos de efectos escalares indefinidos producen un valor independiente en cada visita dinámica, antes de demostrar ramas y destinos. Las copias comparten el mismo valor; las visitas repetidas usan valores nuevos. El grafo residual conserva las actualizaciones condicionales de bits, incluso las producciones con condición falsa, y el comprobante vincula el modelo.
+
+La opción exige salidas explícitas de regiones x64 y evidencia completa de instrucciones escalares. Rechaza efectos no admitidos o presupuestos agotados. El adaptador C actual, los emisores ordinarios y las interfaces de prueba nativa rechazan este modelo hasta disponer de un entorno explícito de valores en ejecución; no infieren valores de un procesador ni una ABI ordinaria.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Salidas antes de una trampa

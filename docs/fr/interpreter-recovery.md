@@ -451,6 +451,14 @@ Seuls le profil utilisateur sans faute et les opérations scalaires/requêtes/XM
 
 Les sorties architecturalement indéfinies gardent les valeurs choisies par LowIR. Reproduire les choix d’un processeur ou prouver leur absence d’effet sur les observations natives exige un environnement indépendant ou une preuve de non-interférence ; ce reçu source ne fournit ni l’un ni l’autre.
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## Valeurs scalaires arbitraires de l’architecture
+
+L’API C++ des régions machine permet `SpecializationUndefinedModel::FreshScalarV1`. Les descriptions complètes des effets scalaires indéfinis produisent une valeur indépendante à chaque visite dynamique, avant les preuves de branches et de cibles. Les copies partagent une même production ; les visites répétées utilisent de nouvelles valeurs. Le graphe résiduel conserve les mises à jour conditionnelles, y compris les productions dont la condition est fausse, et le reçu lie le modèle.
+
+Cette option exige des sorties de région x64 explicites et des preuves complètes pour les instructions scalaires. Les effets non pris en charge et les budgets épuisés sont refusés. L’adaptateur C actuel, les émetteurs ordinaires et les interfaces de preuve native refusent ce modèle sans environnement explicite de valeurs à l’exécution ; aucune valeur propre à un processeur ni ABI ordinaire n’est déduite.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Sorties avant un trap

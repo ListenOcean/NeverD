@@ -453,6 +453,14 @@ Zugelassen sind nur das fehlerfreie Benutzerprofil und vorhandene Skalar-/Abfrag
 
 Architektonisch undefinierte Ausgaben behalten die von LowIR gewählten Implementierungswerte. Die Übereinstimmung mit Prozessorentscheidungen oder deren Irrelevanz für native Beobachtungen erfordert eine unabhängige Umgebung oder einen Nichtinterferenzbeweis; dieser Quellnachweis liefert beides nicht.
 
+<!-- i18n-section: machine-region-architectural-choices -->
+
+## Architektonische skalare Werte
+
+Die C++-API für rohe Maschinenregionen unterstützt `SpecializationUndefinedModel::FreshScalarV1`. Vollständige architektureigene Beschreibungen undefinierter skalarer Ergebnisse erzeugen vor Verzweigungs- und Zielbeweisen bei jedem dynamischen Besuch einen unabhängigen Wert. Kopien behalten denselben Wert; wiederholte Besuche erhalten neue Werte. Der Restgraph bewahrt bedingte Bitaktualisierungen einschließlich Produktionen mit falscher Bedingung, und der Nachweis bindet das Modell.
+
+Die Option erfordert explizite x64-Regionsausgänge und vollständige skalare Instruktionsnachweise. Nicht unterstützte Effekte und erschöpfte Budgets werden abgelehnt. Der bisherige C-Adapter, gewöhnliche Emitter und native Beweisschnittstellen lehnen dieses Modell ohne explizite Laufzeitumgebung für die Werte ab. Es werden weder prozessorspezifische Werte noch eine gewöhnliche ABI abgeleitet.
+
 <!-- i18n-section: machine-region-pending-traps -->
 
 ## Ausgänge vor einem Trap
