@@ -63,6 +63,19 @@ static_assert(std::is_standard_layout_v<InterpreterMachineQueryStateX64V1>);
 static_assert(offsetof(InterpreterMachineQueryStateX64V1, Machine) == 0);
 static_assert(sizeof(InterpreterMachineQueryStateX64V1) == 160);
 
+/// A separate source layout that also binds every byte of XMM0 through XMM15.
+/// The query prefix retains its v1 layout. XMM words are low then high halves;
+/// only eight-byte state alignment is required. Wider vector banks, partial
+/// register operands and floating-point environment operations remain refused.
+struct alignas(8) InterpreterMachineQueryStateX64V2 {
+  InterpreterMachineQueryStateX64V1 Core;
+  uint64_t XMM[16][2] = {};
+};
+
+static_assert(std::is_standard_layout_v<InterpreterMachineQueryStateX64V2>);
+static_assert(offsetof(InterpreterMachineQueryStateX64V2, XMM) == 160);
+static_assert(sizeof(InterpreterMachineQueryStateX64V2) == 416);
+
 /// Check the caller-supplied entry state against the fixed user-mode profile.
 /// Generated source returns a nonzero status for the same invalid states.
 llvm::Error
@@ -129,6 +142,19 @@ llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineStateX64(
 /// hardware serialization/concurrency model. The existing v1 wrappers continue
 /// to refuse CPU queries; they do not infer or read this extended layout.
 llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineQueryStateX64(
+    const LowFunc &Residual, BinaryFormat SourceFormat = BinaryFormat::ELF,
+    InterpreterMachineStateProfile Profile =
+        InterpreterMachineStateProfile::UserX64NoFaultV1,
+    std::optional<InterpreterEntryAlignment> EntryAlignment = std::nullopt,
+    InterpreterMachineStateLayout Layout =
+        InterpreterMachineStateLayout::InlineReturns);
+
+/// The same ordered-query contract with complete XMM input/output storage.
+/// Whole 128-bit register operands and instruction-local temporary byte views
+/// are translated through ordinary scalar LowIR. Unbound temporary bytes and
+/// function-temporary aliases fail. Constant alignment checks require an exact
+/// proof; dynamic checks still fail. The old wrappers never read this layout.
+llvm::Expected<InterpreterMachineSource> wrapInterpreterMachineQueryStateX64V2(
     const LowFunc &Residual, BinaryFormat SourceFormat = BinaryFormat::ELF,
     InterpreterMachineStateProfile Profile =
         InterpreterMachineStateProfile::UserX64NoFaultV1,

@@ -81,14 +81,19 @@ protected:
             std::optional<InterpreterEntryAlignment> Alignment = std::nullopt,
             InterpreterMachineStateLayout Layout =
                 InterpreterMachineStateLayout::InlineReturns,
-            bool CPUQueryTape = false) {
-    auto Wrapped = CPUQueryTape
-                       ? wrapInterpreterMachineQueryStateX64(
-                             Function, BinaryFormat::ELF,
+            bool CPUQueryTape = false, bool VectorState = false,
+            BinaryFormat SourceFormat = BinaryFormat::ELF) {
+    auto Wrapped =
+        VectorState    ? wrapInterpreterMachineQueryStateX64V2(
+                             Function, SourceFormat,
+                             InterpreterMachineStateProfile::UserX64NoFaultV1,
+                             Alignment, Layout)
+        : CPUQueryTape ? wrapInterpreterMachineQueryStateX64(
+                             Function, SourceFormat,
                              InterpreterMachineStateProfile::UserX64NoFaultV1,
                              Alignment, Layout)
                        : wrapInterpreterMachineStateX64(
-                             Function, BinaryFormat::ELF,
+                             Function, SourceFormat,
                              InterpreterMachineStateProfile::UserX64NoFaultV1,
                              Alignment, Layout);
     ASSERT_TRUE(static_cast<bool>(Wrapped))
@@ -111,7 +116,7 @@ protected:
       llvm::raw_string_ostream OS(Source);
       CEmitterOptions Options;
       Options.TheArch = Arch::X64;
-      Options.Format = BinaryFormat::ELF;
+      Options.Format = SourceFormat;
       if (LLVM) {
         llvm::LLVMContext Context;
         MedLLVMEmitter Emitter;
@@ -132,7 +137,7 @@ protected:
             EXPECT_EQ(Source.find(Symbol.Name), std::string::npos) << Source;
       EXPECT_EQ(Source.find("__readeflags"), std::string::npos);
       EXPECT_EQ(Source.find("__writeeflags"), std::string::npos);
-      if (CPUQueryTape) {
+      if (CPUQueryTape || VectorState) {
         EXPECT_EQ(Source.find("cpuid"), std::string::npos);
         EXPECT_EQ(Source.find("__asm"), std::string::npos);
       }
@@ -145,12 +150,13 @@ protected:
         SCOPED_TRACE(Optimization);
         const auto Program = tmpFile(std::string("machine-source-test") +
                                      neverd::test::executableSuffix());
-        const auto Built = exec(
-            NEVERD_TEST_CLANG, {"-std=c11", Optimization, "-Werror=return-type",
-                                CPUQueryTape ? "-fsanitize=address,undefined"
-                                             : "-fsanitize=undefined",
-                                "-fsanitize-trap=undefined",
-                                SourceFile.string(), "-o", Program.string()});
+        const auto Built =
+            exec(NEVERD_TEST_CLANG,
+                 {"-std=c11", Optimization, "-Werror=return-type",
+                  CPUQueryTape || VectorState ? "-fsanitize=address,undefined"
+                                              : "-fsanitize=undefined",
+                  "-fsanitize-trap=undefined", SourceFile.string(), "-o",
+                  Program.string()});
         ASSERT_TRUE(Built.ok()) << Built.err << '\n' << Source;
         const auto Ran = exec(Program.string(), {});
         EXPECT_TRUE(Ran.ok()) << Ran.err << " exit " << Ran.exitCode << '\n'
@@ -421,6 +427,8 @@ int main(void) {
             {}, nullptr, std::nullopt,
             InterpreterMachineStateLayout::InlineReturns, true);
 }
+#include "InterpreterMachineVectorSourceTests.inc"
+
 LowFunc multipleReturns(bool Loop = false) {
   LowFunc F;
   F.Name = "generic_machine_source";
