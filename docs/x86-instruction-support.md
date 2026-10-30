@@ -3128,8 +3128,10 @@ require CPL0; 32-bit SYSEXIT retains the eight architectural arbitrary high
 halves through the existing compatibility-return owner. Every transfer stops
 before the destination executes, including destinations selected for export.
 
-The portable matrix compares 317,784 complete states at O0/O2 through HighC
-and LLVMC with sanitizers. The independent Intel KVM matrix compares 22,400
+The [qualification record](evidence/x86-fast-system-continuation-2026-10-30.json)
+binds 362 passing regression tests with no skips. The portable matrix compares
+317,784 complete states at O0/O2 through HighC and LLVMC with sanitizers.
+The independent Intel KVM matrix compares 22,400
 native contexts and 72 live MSR readbacks. It observes all mapped RAM and the
 available 4096-byte XSAVE image, with explicitly initialized x87/XMM payloads;
 larger XSAVE2/AMX and arbitrary full-vector hardware state are not qualified.

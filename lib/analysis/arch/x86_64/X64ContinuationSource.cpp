@@ -1356,7 +1356,8 @@ buildX64ContinuationSource(const BinaryImage &Image,
        *Options.PagingAddressBits != 57))
     return invalid(
         "V5 and later require the active 48- or 57-bit paging address width");
-  if (FastSystem && *Options.PagingAddressBits > *Options.SysenterMSRAddressBits)
+  if (FastSystem &&
+      *Options.PagingAddressBits > *Options.SysenterMSRAddressBits)
     return invalid("active paging cannot exceed the processor's address width");
   if (Options.NullSegmentBasePolicy &&
       (!hasEventState(Options) ||
