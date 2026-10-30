@@ -2596,6 +2596,8 @@ void LLVMCWriter::setupFunction(llvm::Function &Fn) {
   CrossBlockLoadValues.clear();
   KilledEntryZeroCache.clear();
   AllocaAddressTakenCache.clear();
+  AllocaHasLoadCache.clear();
+  FieldStoreCandidates.clear();
   UniqueImmediateUsers.clear();
   AllocaLastValues.clear();
   AllocaHomeValues.clear();
@@ -4916,6 +4918,38 @@ std::optional<std::string>
 LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
   if (!Slot)
     return std::nullopt;
+  auto [Candidate, Added] = FieldStoreCandidates.try_emplace(Slot);
+  if (Added) {
+    unsigned Work = limits::backend::kLLVMCFieldDefaultShapeWork;
+    for (const llvm::User *User : Slot->users()) {
+      if (!Work)
+        return std::nullopt;
+      --Work;
+      const auto *Store = llvm::dyn_cast<llvm::StoreInst>(User);
+      if (!Store || Store->getPointerOperand() != Slot)
+        continue;
+      const llvm::Value *Value = Store->getValueOperand();
+      llvm::SmallPtrSet<const llvm::Value *, 8> Seen;
+      while (Seen.insert(Value).second) {
+        if (!Work)
+          return std::nullopt;
+        --Work;
+        if (const auto *Freeze = llvm::dyn_cast<llvm::FreezeInst>(Value))
+          Value = Freeze->getOperand(0);
+        else if (const auto *Cast = llvm::dyn_cast<llvm::CastInst>(Value))
+          Value = Cast->getOperand(0);
+        else
+          break;
+      }
+      if (llvm::isa<llvm::LoadInst>(Value))
+        Candidate->second.Stores.push_back(Store);
+    }
+    Candidate->second.Complete = true;
+  }
+  // Numeric recurrences cannot be field/default joins. Reject them before
+  // folding every store again at each of their thousands of cross-block uses.
+  if (!Candidate->second.Complete || Candidate->second.Stores.empty())
+    return std::nullopt;
   // Field recognition loads the cursor home, which asks whether this slot
   // is a join default. A nested question is not itself that default.
   thread_local int Depth = 0;
@@ -4931,10 +4965,22 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
     return std::nullopt;
   if (llvm::isa<llvm::ArrayType>(Slot->getAllocatedType()))
     return std::nullopt;
+  unsigned Remaining = limits::backend::kLLVMCFieldDefaultQueryWork;
+  bool Exhausted = false;
+  const auto Charge = [&]() {
+    if (!Remaining) {
+      Exhausted = true;
+      return false;
+    }
+    --Remaining;
+    return true;
+  };
   auto FieldStore = [&](const llvm::Value *Stored) {
     const llvm::Value *Src = Stored;
     llvm::SmallPtrSet<const llvm::Value *, 8> Seen;
     while (Src && Seen.insert(Src).second) {
+      if (!Charge())
+        return false;
       if (storedTypedMemberLoad(Src))
         return true;
       if (const auto *Fr = llvm::dyn_cast<llvm::FreezeInst>(Src)) {
@@ -4961,6 +5007,8 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
       const llvm::Value *Addr = LI->getPointerOperand();
       llvm::SmallPtrSet<const llvm::Value *, 8> AddrSeen;
       while (Addr && AddrSeen.insert(Addr).second) {
+        if (!Charge())
+          return false;
         if (const auto *Fr = llvm::dyn_cast<llvm::FreezeInst>(Addr)) {
           Addr = Fr->getOperand(0);
           continue;
@@ -4978,6 +5026,8 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
           // looks like zero, so that store never becomes AllocaHomeValues.
           // The store instruction still carries the add.
           for (const llvm::User *AU : AddrSlot->users()) {
+            if (!Charge())
+              return false;
             const auto *ASI = llvm::dyn_cast<llvm::StoreInst>(AU);
             if (!ASI || asAllocaPointer(ASI->getPointerOperand()) != AddrSlot)
               continue;
@@ -5005,13 +5055,25 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
   std::optional<std::string> ImmText;
   llvm::SmallPtrSet<const llvm::BasicBlock *, 8> ImmBlocks;
   llvm::SmallPtrSet<const llvm::BasicBlock *, 8> FieldBlocks;
+  llvm::SmallPtrSet<const llvm::StoreInst *, 8> FieldStores;
+  for (const auto *Store : Candidate->second.Stores)
+    if (Store->getParent() && FieldStore(Store->getValueOperand())) {
+      FieldStores.insert(Store);
+      FieldBlocks.insert(Store->getParent());
+    }
+  // A parameter copied through an alloca is syntactically a load, but not
+  // a record-field arm. Establish at least one actual field before spending
+  // constant-fold work on the other (possibly thousands of) stores.
+  if (Exhausted || FieldStores.empty())
+    return std::nullopt;
   for (const llvm::User *U : Slot->users()) {
+    if (!Charge())
+      return std::nullopt;
     const auto *SI = llvm::dyn_cast<llvm::StoreInst>(U);
     if (!SI || !SI->getParent())
       continue;
     const llvm::Value *Stored = SI->getValueOperand();
-    if (FieldStore(Stored)) {
-      FieldBlocks.insert(SI->getParent());
+    if (FieldStores.count(SI)) {
       continue;
     }
     auto Imm = foldImmediate(Stored);
@@ -5031,13 +5093,18 @@ LLVMCWriter::joinFieldDefaultText(const llvm::AllocaInst *Slot) const {
     llvm::SmallPtrSet<const llvm::BasicBlock *, 16> Seen;
     llvm::SmallVector<const llvm::BasicBlock *, 8> Work{Start};
     while (!Work.empty()) {
+      if (!Charge())
+        return std::nullopt;
       const llvm::BasicBlock *Cur = Work.pop_back_val();
       if (!Cur || !Seen.insert(Cur).second)
         continue;
       if (Cur != Start && ImmBlocks.count(Cur))
         return std::nullopt;
-      for (const llvm::BasicBlock *Succ : llvm::successors(Cur))
+      for (const llvm::BasicBlock *Succ : llvm::successors(Cur)) {
+        if (!Charge())
+          return std::nullopt;
         Work.push_back(Succ);
+      }
     }
   }
   return ImmText;

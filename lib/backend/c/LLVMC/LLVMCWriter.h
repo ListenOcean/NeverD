@@ -985,6 +985,16 @@ public:
   /// address-escape classification until setupFunction selects another one.
   mutable llvm::DenseMap<const llvm::AllocaInst *, bool>
       AllocaAddressTakenCache;
+  mutable llvm::DenseMap<const llvm::AllocaInst *, bool> AllocaHasLoadCache;
+  /// A field/default join needs a store of a load (possibly cast or frozen).
+  /// This necessary shape depends only on immutable function IR, not on
+  /// current immediate, record, or variable-name projections.
+  struct FieldDefaultCandidates {
+    llvm::SmallVector<const llvm::StoreInst *, 2> Stores;
+    bool Complete = false;
+  };
+  mutable std::map<const llvm::AllocaInst *, FieldDefaultCandidates>
+      FieldStoreCandidates;
   struct ImmediateUser {
     const llvm::StoreInst *Store = nullptr;
     bool IsSelfCopy = false;

@@ -16,6 +16,7 @@
 #include "neverd/Common.h"
 #include "neverd/Limits.h"
 #include "neverd/backend/LLVMSourceUnknownValue.h"
+#include "neverd/backend/Limits.h"
 #include "neverd/backend/c/LLVMC/LLVMCEmitter.h"
 #include "neverd/backend/c/render/CTypeFormat.h"
 #include "neverd/backend/llvm/X86/LLVMX86DivRemAsm.h"
@@ -5044,6 +5045,75 @@ TEST(LLVMCValues, ConstantHomesStayInitializedAcrossRepeatedDiamonds) {
   ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, {}));
   Source += "\nint main(void) { return constant_diamonds(0) != 7 || "
             "constant_diamonds(1) != 7; }\n";
+  for (const char *Optimization : {"-O0", "-O2"})
+    compileAndRun(Source, Optimization, {}, true);
+}
+
+TEST(LLVMCValues, LargeMutableFieldHomesKeepEveryObservedAssignment) {
+  llvm::LLVMContext Context;
+  llvm::Module Module("bounded-field-defaults", Context);
+  auto *Word = llvm::Type::getInt64Ty(Context);
+  const unsigned Large =
+      2 * neverd::limits::backend::kLLVMCFieldDefaultShapeWork;
+  for (unsigned Rounds : {3u, Large}) {
+    auto *Function = llvm::Function::Create(
+        llvm::FunctionType::get(
+            Word, {llvm::PointerType::getUnqual(Context), Word}, false),
+        llvm::GlobalValue::ExternalLinkage,
+        Rounds == Large ? "large_field_defaults" : "small_field_defaults",
+        Module);
+    llvm::IRBuilder<> B(llvm::BasicBlock::Create(Context, "entry", Function));
+    auto *Home = B.CreateAlloca(Word);
+    auto *Sum = B.CreateAlloca(Word);
+    llvm::SmallVector<llvm::AllocaInst *, 8> Unread;
+    for (unsigned I = 0; I < 8; ++I)
+      Unread.push_back(B.CreateAlloca(Word));
+    B.CreateStore(B.getInt64(0), Sum);
+    for (unsigned I = 0; I < Rounds; ++I) {
+      auto *Field = llvm::BasicBlock::Create(Context, "field", Function);
+      auto *Join = llvm::BasicBlock::Create(Context, "join", Function);
+      auto *Default = llvm::BasicBlock::Create(Context, "default", Function);
+      auto *Bit = B.CreateAnd(B.CreateLShr(Function->getArg(1), I % 64), 1);
+      B.CreateCondBr(B.CreateICmpNE(Bit, B.getInt64(0)), Field, Default);
+      B.SetInsertPoint(Field);
+      auto *Address = B.CreateGEP(Word, Function->getArg(0), B.getInt64(1));
+      B.CreateStore(B.CreateLoad(Word, Address), Home);
+      B.CreateBr(Join);
+      B.SetInsertPoint(Default);
+      B.CreateStore(B.getInt64(7), Home);
+      B.CreateBr(Join);
+      B.SetInsertPoint(Join);
+      for (auto *Slot : Unread)
+        B.CreateStore(B.getInt64(I + 1), Slot);
+      B.CreateStore(
+          B.CreateAdd(B.CreateLoad(Word, Sum), B.CreateLoad(Word, Home)), Sum);
+    }
+    B.CreateRet(B.CreateLoad(Word, Sum));
+  }
+  ASSERT_FALSE(llvm::verifyModule(Module, &llvm::errs()));
+  neverd::CEmitterOptions Options;
+  Options.PreserveLLVMFunctionTypes = true;
+  std::string Source;
+  llvm::raw_string_ostream OS(Source);
+  ASSERT_TRUE(neverd::LLVMCEmitter().emit(Module, OS, Options));
+  Source += "\n#define LARGE_ROUNDS " + std::to_string(Large) + R"(
+int main(void) {
+  const uint64_t patterns[]={0,1,2,UINT64_MAX,UINT64_C(0x12870fed5432abcd)};
+  const uint64_t values[]={0,9,UINT64_MAX,UINT64_C(0xfedcba9876543210)};
+  for(unsigned p=0;p<sizeof(patterns)/sizeof(*patterns);++p)
+    for(unsigned v=0;v<sizeof(values)/sizeof(*values);++v) {
+      uint64_t record[]={19,values[v],23}, small=0, large=0;
+      for(unsigned i=0;i<LARGE_ROUNDS;++i) {
+        uint64_t term=((patterns[p]>>(i%64))&1)?record[1]:7;
+        large+=term; if(i<3) small+=term;
+      }
+      if(small_field_defaults(record,patterns[p])!=small) return 1;
+      if(large_field_defaults(record,patterns[p])!=large) return 2;
+      if(record[0]!=19 || record[1]!=values[v] || record[2]!=23) return 3;
+    }
+  return 0;
+}
+)";
   for (const char *Optimization : {"-O0", "-O2"})
     compileAndRun(Source, Optimization, {}, true);
 }

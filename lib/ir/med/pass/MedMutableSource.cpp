@@ -40,10 +40,14 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
   };
   if (Error)
     Error->clear();
-  if (!F.SkippedSSA || F.Blocks.empty() ||
-      F.Blocks.size() > ::neverd::limits::ir::kMedMutableSourceMaxBlocks ||
-      !F.ReturnType || F.Blocks.front().StartAddr != F.Entry)
-    return Fail("mutable source has no bounded explicit entry");
+  if (!F.SkippedSSA || F.Blocks.empty() || !F.ReturnType ||
+      F.Blocks.front().StartAddr != F.Entry)
+    return Fail("mutable source has no explicit entry");
+  if (F.Blocks.size() > ::neverd::limits::ir::kMedMutableSourceMaxBlocks)
+    return Fail(
+        "mutable source block budget exhausted: " +
+        std::to_string(F.Blocks.size()) + " blocks exceed " +
+        std::to_string(::neverd::limits::ir::kMedMutableSourceMaxBlocks));
   if (F.DoesNotReturn ||
       F.Params.size() > ::neverd::limits::ir::kMedMutableSourceMaxValues ||
       F.ExceptionMetadata || !F.CallInfos.empty() || !F.CallClobbers.empty() ||
@@ -63,6 +67,7 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
   MedMutableSourcePlan Plan;
   std::map<int, size_t> Indices;
   bool Valid = true;
+  bool StorageBudgetExceeded = false;
   const auto Observe = [&](const MedVar &V) {
     if (!scalarWidth(V.Size)) {
       Valid = false;
@@ -90,6 +95,7 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
               ::neverd::limits::ir::kMedMutableSourceMaxBlockValues /
                   F.Blocks.size()) {
         Valid = false;
+        StorageBudgetExceeded = true;
         return;
       }
       Indices.emplace(V.Id, Plan.Variables.size());
@@ -166,7 +172,9 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
                            O.Opcode == NdOp::RETURN;
       if (O.NumInputs > O.Inputs.size() || O.NumInputs > 6 ||
           !O.IntrinsicOutputs.empty() || O.CallSiteId || O.SourceCallHint ||
-          O.DoesNotReturn || O.MemoryOrdering != NdMemoryOrdering::None ||
+          O.DoesNotReturn || O.ReturnAddressRead ||
+          O.RegistrationRoot != MedOp::RegistrationRootKind::None ||
+          O.MemoryOrdering != NdMemoryOrdering::None ||
           O.MemoryAddressSpace != NdMemoryAddressSpace::Default)
         return Fail("mutable source has unsupported operation metadata");
       if (Control) {
@@ -187,8 +195,11 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
               }))
             return Fail("mutable source control disagrees with its CFG");
         }
-      } else if (OI + 1 == B.Ops.size()) {
-        return Fail("mutable source requires explicit terminal control");
+      } else if (OI + 1 == B.Ops.size() && B.Succs.size() != 1) {
+        // A straight-line block may end at a recovered CFG boundary without
+        // an explicit branch operation. Its one validated successor owns the
+        // continuation; block order and neighboring addresses do not.
+        return Fail("mutable source requires one explicit fallthrough edge");
       }
       if (O.Dead || O.Opcode == NdOp::NOP)
         continue;
@@ -212,7 +223,9 @@ analyzeMedMutableSource(const MedFunc &F, Arch Architecture,
       for (unsigned I = 0; I < O.NumInputs; ++I)
         Observe(O.Inputs[I]);
       if (!Valid)
-        return Fail("mutable source has inconsistent storage identities");
+        return Fail(StorageBudgetExceeded
+                        ? "mutable source storage matrix budget exhausted"
+                        : "mutable source has inconsistent storage identities");
     }
   }
   if (!HasReturn)
