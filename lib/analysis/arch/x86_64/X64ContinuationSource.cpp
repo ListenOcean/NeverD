@@ -211,13 +211,15 @@ bool faultAddressIntrinsic(const LowOp &Op,
 
 bool sysretIntrinsic(const LowOp &Op,
                      const X64ContinuationSourceOptions &Options) {
+  const auto Width = Op.Inputs[1].Size;
   return (Options.Profile == X64ContinuationProfile::KernelReturnNoFaultV5 ||
           Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6) &&
          Op.Opcode == NdOp::INTRINSIC && Op.NumInputs == 3 && !Op.Output.Size &&
          Op.Inputs[0].isConst() && Op.Inputs[0].Size == 2 &&
          Op.Inputs[0].Offset == uint64_t(Intrinsic::Sysretq) &&
-         Op.Inputs[1] == NdVar::reg(x86reg::RCX, 8) &&
-         Op.Inputs[2] == NdVar::reg(x86reg::R11, 8) &&
+         (Width == 4 || Width == 8) &&
+         Op.Inputs[1] == NdVar::reg(x86reg::RCX, Width) &&
+         Op.Inputs[2] == NdVar::reg(x86reg::R11, Width) &&
          Op.MemoryAddressSpace == NdMemoryAddressSpace::Default &&
          Op.MemoryOrdering == NdMemoryOrdering::None;
 }
@@ -772,15 +774,21 @@ struct Writer {
     }
   }
 
-  void sysret() {
-    const NdVar PC = read(NdVar::reg(x86reg::RCX, 8));
-    const NdVar Shifted = temporary(), Canonical = temporary();
-    const NdVar Bad = temporary(1);
-    const auto Shift = constant(64 - *Options.PagingAddressBits);
-    emit(NdOp::INT_LEFT, Shifted, {PC, Shift});
-    emit(NdOp::INT_ASHR, Canonical, {Shifted, Shift});
-    emit(NdOp::INT_NOTEQUAL, Bad, {Canonical, PC});
-    rejectIf(Bad);
+  void sysret(bool Wide, llvm::ArrayRef<LowUndefinedEffect> Effects) {
+    NdVar PC = read(NdVar::reg(x86reg::RCX, Wide ? 8 : 4));
+    if (Wide) {
+      const NdVar Shifted = temporary(), Canonical = temporary();
+      const NdVar Bad = temporary(1);
+      const auto Shift = constant(64 - *Options.PagingAddressBits);
+      emit(NdOp::INT_LEFT, Shifted, {PC, Shift});
+      emit(NdOp::INT_ASHR, Canonical, {Shifted, Shift});
+      emit(NdOp::INT_NOTEQUAL, Bad, {Canonical, PC});
+      rejectIf(Bad);
+    } else {
+      const auto Low = PC;
+      PC = temporary();
+      emit(NdOp::INT_ZEXT, PC, {Low});
+    }
     const NdVar Masked = temporary(), Packed = temporary(),
                 Selectors = temporary();
     emit(NdOp::INT_AND, Masked,
@@ -792,14 +800,15 @@ struct Writer {
       const auto Offset = Code ? offsetof(StateV5, CS) : offsetof(StateV5, SS);
       const NdVar Added = temporary(), User = temporary(),
                   Selector = temporary(2);
-      emit(NdOp::INT_ADD, Added, {Selectors, constant(Code ? 16 : 8)});
+      emit(NdOp::INT_ADD, Added,
+           {Selectors, constant(Code ? (Wide ? 16 : 0) : 8)});
       emit(NdOp::INT_OR, User, {Added, constant(3)});
       emit(NdOp::SUBBYTES, Selector, {User, constant(0)});
       store(Offset + offsetof(Segment, Base), constant(0));
       store(Offset + offsetof(Segment, Limit), constant(UINT32_MAX, 4));
       store(Offset + offsetof(Segment, Selector), Selector);
       store(Offset + offsetof(Segment, Attributes),
-            constant(Code ? 0xa0fb : 0xc0f3, 2));
+            constant(Code ? (Wide ? 0xa0fb : 0xc0fb) : 0xc0f3, 2));
     }
     if (Options.Profile == X64ContinuationProfile::KernelEventsNoFaultV6) {
       const auto Usable = temporary(1);
@@ -808,6 +817,8 @@ struct Writer {
       store(offsetof(StateV6, Unusable), Usable);
     }
     store(offsetof(State, RFlags), Packed);
+    for (size_t I = 0; I != Effects.size(); ++I)
+      undefined(Effects[I], I);
     leave(Exit::PrivilegeReturn, PC);
   }
 
@@ -1021,10 +1032,18 @@ buildInstruction(SpecializationInstruction Instruction,
                     InterpreterProfileProjection::X64FarPointerLoadV1
           ? detail::x64FarPointerLoad(Instruction.NativeBytes)
           : std::nullopt;
+  // These exact frame shapes have no unconditional empty undefined-output
+  // audit: their live CS descriptor may select compatibility mode. V6's shared
+  // descriptor owner checks CS.L=1 and CS.D=0 before any write, so only this
+  // bounded continuation can discharge the target-mode condition.
+  const bool OwnedFrameReturn =
+      (Iret || FarReturn) &&
+      Instruction.UndefinedEffects.Coverage == LowUndefinedCoverage::Missing &&
+      Instruction.UndefinedEffects.Effects.empty();
   if ((!FarPointer &&
        (Instruction.ProfileProjection != InterpreterProfileProjection::None ||
-        Instruction.UndefinedEffects.Coverage !=
-            LowUndefinedCoverage::Complete)) ||
+        (!OwnedFrameReturn && Instruction.UndefinedEffects.Coverage !=
+                                  LowUndefinedCoverage::Complete))) ||
       (Instruction.Origin.Control == LowInstructionControl::Terminator &&
        !Sysret && !Iret && !FarReturn && !Interrupt))
     RequireNative("instruction requires an explicit native environment");
@@ -1167,7 +1186,9 @@ buildInstruction(SpecializationInstruction Instruction,
     else
       Event.softwareInterrupt(*Interrupt, Instruction.Fallthrough.Address);
   } else if (Sysret) {
-    W.sysret();
+    Result.UndefinedEffects = Instruction.UndefinedEffects.Effects;
+    W.sysret(Instruction.Ops.front().Inputs[1].Size == 8,
+             Result.UndefinedEffects);
   } else {
     Result.UndefinedEffects = Instruction.UndefinedEffects.Effects;
     NdVar NextPC = constant(Instruction.Fallthrough.Address);

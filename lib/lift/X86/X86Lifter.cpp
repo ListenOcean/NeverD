@@ -13,6 +13,7 @@
 #include "neverd/lift/X86/X86Lifter.h"
 
 #include "X86BitTestUndefined.h"
+#include "X86CompatibilityReturnUndefined.h"
 #include "X86ControlMoveUndefined.h"
 #include "X86DivisionUndefined.h"
 #include "X86DoubleShiftUndefined.h"
@@ -1334,6 +1335,10 @@ void X86Lifter::liftImpl(const cs_insn *Insn, std::vector<LowOp> &Ops,
         : bmilogic::isInstruction(Id)
             ? bmilogic::matches(
                   Insn, llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
+                  EffectsDraft)
+        : Id == X86_INS_SYSRET && nativestateaudit::sysretForm(Insn, TargetArch)
+            ? compatibilityreturn::matches(
+                  llvm::ArrayRef<LowOp>(Ops).drop_front(S.OpsStart),
                   EffectsDraft)
         : controlmoveundefined::form(Insn, TargetArch)
             ? controlmoveundefined::matches(

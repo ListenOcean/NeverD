@@ -6998,9 +6998,31 @@ SSA version zero is not an incoming register, and a separately defined narrow
 register view does not redefine the full-width entry value.
 `PipelineSourcePointerParameters` owns declaration admission and runs candidate
 use graphs on the existing weighted workers. Explicit entry declarations remain
-authoritative. This x64/AArch64 source-only refinement produces `void*` carriers;
-it does not infer pointee records, supply missing machine state, authenticate
-addresses, or change native rewriting contracts.
+authoritative. The shared use graph also meets compatible declared object
+pointees: an SSA value moves from unobserved to one type and then, on conflict,
+to a generic pointer. Pointer depth, nominal record names and typedef identity
+must agree as well as the source carrier shape. Named records and scalar
+pointees therefore survive both source pipelines and native source-hint
+inference without repeated path exploration. The resulting candidate keeps
+nominal names and pointer depth, while discarding the callee's typedef aliases,
+record layouts and extents. HighC initially requests only an opaque record's
+tag; an actual member access uses its existing demand-driven completion pass.
+Forward-only wrappers therefore do not initialize the full record renderer.
+Unsupported pointee graphs and
+conflicting declarations keep generic pointers; scalar conflicts still prevent
+pointer refinement. This x64/AArch64 source candidate does not authenticate an
+original prototype, record storage, addresses, missing machine state or native
+rewriting contracts. Portable qualifiers and callback signatures remain owned
+by their existing declarations.
+
+`LLVMSourceTypeHints` carries supported pointee spellings on individual LLVM
+arguments, so opaque pointers and IR serialization do not erase them. The
+reader checks the actual pointer carrier and data-layout width; malformed or
+unsupported chains are ignored. Only scalar types, C record identifiers and
+pointer indirection survive this display transport. Record layouts and extents
+are deliberately absent. LLVMC's shared definition/call projection consumes
+these facts only in the absence of an explicit entry declaration, and respects
+selected-function and preserve-LLVM-types modes.
 
 When an unrelated unresolved value prevents a complete entry-demand graph,
 native helper inference may retain an independent full-word, call-preserved
@@ -9390,13 +9412,19 @@ fault-delivery model.
 `KernelReturnNoFaultV5` adds a separate 2,368-byte layout with STAR and
 visible/hidden CS and SS state. It requires CPL0 64-bit code, EFER.SCE and an
 explicit active paging width (48 or 57), with CET/FRED and asynchronous events
-excluded. SYSRETQ checks the return RIP against that paging width, preserves
-all GPRs including RSP, and produces RFLAGS plus the fixed CS/SS caches and
-wrapped STAR-derived selectors. `PrivilegeReturn` stops supervisor dispatch;
+excluded. SYSRETQ checks the return RIP against that paging width and preserves
+all GPRs including RSP. Canonical SYSRET selects compatibility mode, takes EIP
+from ECX and preserves the legacy GPR low halves; eight arbitrary slots select
+their architecturally undefined high halves in encoding order. R8–R15 remain
+preserved. The lifter owns the complete SYSRET undefined-output sidecar and
+both C routes consume it. Both forms produce RFLAGS plus the mode-specific
+fixed CS/SS caches and wrapped STAR-derived selectors. `PrivilegeReturn` stops
+supervisor dispatch;
 the source does not execute the returned user context. Invalid return RIP or
 entry code mode rejects before any state change. Earlier profiles still
-request native SYSRET execution. This models the explicit successful SYSRETQ
-transition; IRETQ, interrupt delivery and fault delivery remain outside it.
+request native SYSRET execution. This models the explicit successful SYSRET
+and SYSRETQ transitions; IRETQ, interrupt delivery and fault delivery remain
+outside V5.
 The [Intel instruction reference](https://cdrdv2-public.intel.com/782156/325383-sdm-vol-2abcd.pdf)
 owns the flag mask and segment-cache values; the paging canonicality rule is
 separate from the processor's MSR canonical width.
@@ -9426,6 +9454,13 @@ execution. The original bytes supply the unsigned discard count; the native
 audit separately authenticates Capstone's signed display value. Same-level
 returns never read an absent outer frame. Earlier layouts remain unsupported
 for these event transitions.
+
+Neither IRETQ nor RETFQ has an unconditional empty undefined-output audit:
+their live return descriptors may select compatibility mode and make legacy
+GPR high halves arbitrary. The earlier generic audit incorrectly erased this
+condition. V6's descriptor owner requires CS.L=1 and CS.D=0 before any write;
+that bounded profile owns its empty arbitrary-effect list. Ordinary LowIR
+keeps incomplete coverage and receives no native-preservation certificate.
 
 `X64ContinuationEvents` owns these transitions in LowIR above both C routes.
 Validation precedes all state and memory writes. Deferred descriptor accessed

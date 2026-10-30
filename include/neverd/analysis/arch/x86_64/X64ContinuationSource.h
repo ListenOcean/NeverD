@@ -77,8 +77,8 @@ struct X64ContinuationSegment {
   uint16_t Attributes = 0;
 };
 
-/// V5 records the explicit result of SYSRETQ, including hidden CS/SS caches.
-/// Other segment banks remain environment-owned and unchanged by SYSRETQ.
+/// V5 records the explicit result of SYSRET/SYSRETQ, including hidden CS/SS
+/// caches. Other segment banks remain environment-owned and unchanged.
 struct alignas(16) X64ContinuationStateV5 {
   X64ContinuationStateV4 Core;
   uint64_t STAR = 0;
@@ -174,8 +174,11 @@ enum class X64ContinuationProfile : uint8_t {
   /// paging, TLB or CR3 model is implied. Uses StateV4 and a distinct prefix.
   KernelFaultAddressNoFaultV4,
   /// V4 plus explicit STAR and CS/SS caches, EFER.SCE=1 and a declared paging
-  /// address width. SYSRETQ produces the full 64-bit user return context and
-  /// exits; it does not execute user code or change the host privilege level.
+  /// address width. SYSRET/SYSRETQ produce the full compatibility/64-bit user
+  /// return context and exit; they do not execute user code or change the host
+  /// privilege level. SYSRET zero-extends ECX into RIP and preserves ESP. Its
+  /// eight arbitrary slots choose the legacy GPR high halves in encoding order;
+  /// R8-R15 remain preserved. SYSRETQ preserves every complete GPR.
   /// Initial CS must describe CPL0 64-bit code. CET/FRED and asynchronous
   /// events remain disabled. Earlier state layouts are never extended.
   KernelReturnNoFaultV5,

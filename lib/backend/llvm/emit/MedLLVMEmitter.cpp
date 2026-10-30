@@ -30,6 +30,7 @@
 #include "neverd/backend/RewriteSourceIdentity.h"
 #include "neverd/backend/llvm/LLVMCallContract.h"
 #include "neverd/backend/llvm/LLVMName.h"
+#include "neverd/backend/llvm/LLVMSourceTypeHints.h"
 #include "neverd/backend/llvm/LanguageEHMetadata.h"
 #include "neverd/backend/llvm/PEImportShadow.h"
 #include "neverd/backend/llvm/SourceFrameBytes.h"
@@ -713,6 +714,10 @@ llvm::Function *MedLLVMEmitter::declareFunc(const MedFunc &Func) {
   auto *FuncTy = llvm::FunctionType::get(RetType, ParamTypes, Func.IsVariadic);
   auto *LLVMFunc = llvm::Function::Create(
       FuncTy, llvm::GlobalValue::ExternalLinkage, EmittedName, Mod);
+  if (HaveTypes)
+    for (auto &Argument : LLVMFunc->args())
+      writeLLVMSourcePointerParameter(
+          Argument, Func.TypedParams[Argument.getArgNo()].Type);
   // Recovered parameters are ordered by independent ABI register banks, then
   // incoming stack slots. A resolved indirect call can have surplus registers
   // in either bank; retaining these boundaries prevents positional coercion

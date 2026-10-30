@@ -12,6 +12,7 @@
 ///
 //===----------------------------------------------------------------------===//
 
+#include "X86CompatibilityReturnUndefined.h"
 #include "X86LiftDetail.h"
 
 #include "neverd/ir/intrinsics/Intrinsics.h"
@@ -356,6 +357,8 @@ bool X86Lifter::liftExt(LiftState &S, const cs_insn *Insn, const cs_x86 &X86) {
     // SYSRET transfers to ECX with EFLAGS from R11D; terminal.
     S.emitVoidIntrinsic(Intrinsic::Sysretq,
                         {NdVar::reg(x86reg::RCX, 4), NdVar::reg(x86reg::R11, 4)});
+    if (TargetArch == Arch::X64)
+      compatibilityreturn::record(S);
     break;
 
   // --- INT1 (ICEBP) ---

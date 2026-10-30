@@ -64,7 +64,7 @@ disjoint from each other and every guest access. CALL writes its original next
 PC to the physical guest stack. RET reads that stack, including changes made by
 an intervening callback. The environment can change every state field and guest
 byte before resuming. No source parameter count or callee preservation is
-assumed. Arithmetic arbitrary-value slots represent caller-selected choices
+assumed. Arbitrary-value slots represent caller-selected choices
 for each dynamic instruction; reusing them selects a subset of allowed runs.
 
 The driver continues ordinary instructions and jumps to listed addresses. Each
@@ -95,6 +95,24 @@ does not push a hardware exception's error code or acquire NMI blocking for
 vector 2. These transfers stop before the target executes. Status 5 is not
 emulated fault delivery. Other prefixed encodings remain native requests.
 
+Canonical SYSRET (`0F 07`) and SYSRETQ (`48 0F 07`) install user CS/SS caches
+from the live STAR field without reading descriptors. SYSRET selects a 32-bit
+compatibility context and takes EIP from ECX; SYSRETQ selects a 64-bit context
+and checks the full RCX against the declared canonical width. Both derive flags
+from R11 and stop with status 6 before user code executes, even if its address
+is selected. A returned context cannot reenter this CPL0 64-bit profile.
+
+SYSRET preserves ESP and the low halves of the other seven legacy GPRs. Their
+high halves are architecturally undefined on this mode switch; `Undefined[0..7]`
+supplies their new 32-bit values in RAX, RCX, RDX, RBX, RSP, RBP, RSI, RDI order.
+Only the low 32 bits of each slot are used. R8–R15 remain fully preserved.
+SYSRETQ preserves all GPRs. The manifest records all eight SYSRET arbitrary
+effects and their exact register ranges. This follows
+[Intel SDM Volume 1, section 3.4.1.1](https://cdrdv2-public.intel.com/835781/325462-sdm-vol-1-2abcd-3abcd-4.pdf);
+a particular CPU's high-half results are witnesses, not a preservation guarantee.
+Successful execution requires SYSCALL/SYSRET enabled and the profile's existing
+CET/FRED-disabled environment. Ordinary source and proof admission stay closed.
+
 RETFQ reads RIP/CS alone for a same-privilege return and retains SS. For a
 return to an outer privilege level, its unsigned imm16 skips parameter bytes
 before saved RSP/SS and also adjusts the restored RSP. The transition preserves
@@ -103,6 +121,14 @@ IOPL and VIF/VIP remain excluded). It consumes one driver step and stops even
 when the return target is selected; a returned CPL1–3 context cannot reenter
 this supervisor profile. Compatibility-mode and 16-/32-bit far returns still
 require native execution.
+
+IRETQ/RETFQ have no unconditional empty undefined-output certificate: a live
+return descriptor can select compatibility mode, where the legacy GPR high
+halves are arbitrary. V6's shared descriptor check requires CS.L=1 and CS.D=0
+before publishing state or descriptor writes. That checked long-mode domain
+owns the empty arbitrary-effect list for these continuations. It does not
+grant an ordinary LowIR or native-preservation certificate. Earlier generic
+audits incorrectly treated this profile condition as an instruction-wide fact.
 
 LSS/LFS/LGS also continue through V6. The shared descriptor owner loads the
 16/32/64-bit offset, validates the GDT or LDT descriptor, updates its accessed
@@ -225,6 +251,22 @@ sequence execute under ASan/UBSan; hardware qualifies the clearing policy on
 the measured Intel CPU. A public driver test switches SS/RSP, resumes a stack
 load and returns using the new physical stack. Fault delivery remains outside
 these successful-completion contracts.
+
+The [SYSRET32 qualification record](evidence/x86-sysret32-continuation-2026-10-29.json)
+records 14,040 complete native state comparisons and 468,000 portable state
+comparisons with independent arbitrary-value choices. It checks selector wrap,
+every R11 bit, noncanonical RCX high halves, both paging widths and V5/V6.
+The native breakpoint stops before compatibility code; the SDK manifest and
+driver retain all eight high-half choices and the privilege-return boundary.
+All 1,009 continuation, export, audit and proof regressions passed without skips.
+
+The [return-mode audit correction](evidence/x86-return-mode-audit-2026-10-29.json)
+records the two failing pre-fix audit tests and 1,011 passing regressions after
+the fix and integration with `dev`. Another 384 paired native/source cases
+confirm valid hardware compatibility returns while V6 retains its unchanged
+state/RAM refusal. The matrix spans both compatibility code widths, all four
+privilege levels, GDT/LDT, accessed-bit variants and the three qualified frame
+return encodings. It does not claim compatibility-return source support.
 
 `X64ContinuationIntegerTest` compares complete state and memory with original
 native instructions for audited legacy vector transfers, XOR and byte shifts,

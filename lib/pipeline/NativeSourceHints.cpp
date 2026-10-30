@@ -2343,14 +2343,15 @@ std::optional<SourceFunctionTypeHint> inferNativeSourceTypeHint(
       Hint.ReturnLocation = {};
     }
   }
-  const auto PointerParameters = inferMedSourcePointerParameters(Med);
+  const auto PointerParameters =
+      inferMedSourcePointerParameterTypes(Med, Image.Arch);
   size_t SourceIndex = 0;
   for (size_t Index = 0; Index < Med.Params.size(); ++Index) {
     if (Med.Params[Index].Id < 0)
       continue;
     auto &Parameter = Hint.Parameters[SourceIndex++];
     if (PointerParameters[Index] && Parameter.Type->Kind == NdTypeKind::Int)
-      Parameter.Type = NdType::makePtr(NdType::makeVoid());
+      Parameter.Type = PointerParameters[Index];
   }
   if (!validateSourceABI(Hint, Diagnostic))
     return std::nullopt;

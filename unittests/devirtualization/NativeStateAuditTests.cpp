@@ -9,6 +9,7 @@
 
 #include "../../lib/analysis/arch/x86_64/StringTransfer.h"
 #include "../../lib/analysis/core/RecoveryArchitecture.h"
+#include "../../lib/lift/X86/X86CompatibilityReturnUndefined.h"
 #include "../../lib/lift/X86/X86LegacyVectorMoveAudit.h"
 #include "../../lib/lift/X86/X86MultiplyUndefined.h"
 #include "../../lib/lift/X86/X86NativeStateAudit.h"
@@ -37,7 +38,9 @@ constexpr std::array<unsigned, 7> Flags = {x86reg::CF, x86reg::PF, x86reg::AF,
                                            x86reg::ZF, x86reg::SF, x86reg::DF,
                                            x86reg::OF};
 
-std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
+std::vector<LowOp>
+lift(llvm::ArrayRef<uint8_t> Bytes,
+     LowUndefinedCoverage ExpectedCoverage = LowUndefinedCoverage::Complete) {
   Decoder Dec;
   EXPECT_TRUE(Dec.init(Arch::X64));
   Dec.setStrict(true);
@@ -52,8 +55,7 @@ std::vector<LowOp> lift(llvm::ArrayRef<uint8_t> Bytes) {
   Preserved.Audit = LowPreservedStateAudit::LegacyIntegerV1;
   Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
   Dec.liftToLow(Insn, Plain);
-  EXPECT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
-      << Effects.Diagnostic;
+  EXPECT_EQ(Effects.Coverage, ExpectedCoverage) << Effects.Diagnostic;
   EXPECT_TRUE(Effects.Effects.empty());
   EXPECT_EQ(Effects.OpCount, Ops.size());
   EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
@@ -904,6 +906,100 @@ TEST(X86NativeStateAudit, SysretAuditBindsEncodingAndCompleteDefinedFlags) {
   expectUnaudited(Dec, Insn);
 }
 
+TEST(X86NativeStateAudit, SysretCompatibilityBindsEveryArbitraryHighHalf) {
+  Decoder Dec;
+  ASSERT_TRUE(Dec.init(Arch::X64));
+  Dec.setStrict(true);
+  const uint8_t Bytes[] = {0x0f, 0x07};
+  const auto Decode = [&] {
+    DecodedInsn I{};
+    EXPECT_EQ(Dec.decodeOneForLift(Bytes, sizeof(Bytes), CodeAddress, I), 2);
+    return I;
+  };
+  auto Insn = Decode();
+  std::vector<LowOp> Ops;
+  LowInstructionUndefinedEffects Effects;
+  LowInstructionPreservedState Preserved;
+  Dec.liftToLow(Insn, Ops, {}, {}, &Effects, &Preserved);
+  ASSERT_EQ(Effects.Coverage, LowUndefinedCoverage::Complete)
+      << Effects.Diagnostic;
+  ASSERT_EQ(Effects.OpCount, 1u);
+  ASSERT_EQ(Effects.Effects.size(), 8u);
+  EXPECT_EQ(Effects.OperationDigest, lowUndefinedOperationDigest(Ops));
+  EXPECT_EQ(Preserved, LowInstructionPreservedState{});
+  EXPECT_TRUE(compatibilityreturn::matches(Ops, Effects));
+  for (unsigned I = 0; I != 8; ++I) {
+    const auto &E = Effects.Effects[I];
+    EXPECT_EQ(E.AfterOp, 1u);
+    EXPECT_EQ(E.Output, NdVar::reg(I * 8, 8));
+    EXPECT_EQ(E.BitOffset, 32u);
+    EXPECT_EQ(E.BitCount, 32u);
+    EXPECT_FALSE(E.When);
+    for (unsigned Mutation = 0; Mutation != 6; ++Mutation) {
+      auto Bad = Effects;
+      auto &Changed = Bad.Effects[I];
+      switch (Mutation) {
+      case 0:
+        Changed.AfterOp = 0;
+        break;
+      case 1:
+        Changed.Output = NdVar::reg(x86reg::R8, 8);
+        break;
+      case 2:
+        Changed.BitOffset = 0;
+        break;
+      case 3:
+        Changed.BitCount = 31;
+        break;
+      case 4:
+        Changed.When = NdVar::cst(1, 1);
+        break;
+      case 5:
+        Bad.Effects.erase(Bad.Effects.begin() + I);
+        break;
+      }
+      EXPECT_FALSE(compatibilityreturn::matches(Ops, Bad));
+    }
+  }
+  auto Extra = Effects;
+  Extra.Effects.push_back(Effects.Effects.front());
+  EXPECT_FALSE(compatibilityreturn::matches(Ops, Extra));
+  for (unsigned Mutation = 0; Mutation != 9; ++Mutation) {
+    Insn = Decode();
+    auto &X = Insn.Raw->detail->x86;
+    switch (Mutation) {
+    case 0:
+      Insn.Raw->bytes[1] ^= 1;
+      break;
+    case 1:
+      Insn.Raw->id = X86_INS_SYSRETQ;
+      break;
+    case 2:
+      Insn.Raw->size = 3;
+      break;
+    case 3:
+      X.rex = 0x48;
+      break;
+    case 4:
+      X.prefix[2] = 0x66;
+      break;
+    case 5:
+      X.addr_size = 4;
+      break;
+    case 6:
+      X.op_count = 1;
+      break;
+    case 7:
+      X.eflags = 0;
+      break;
+    case 8:
+      X.opcode[1] ^= 1;
+      break;
+    }
+    expectUnaudited(Dec, Insn);
+  }
+}
+
 TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
   Decoder Dec;
   ASSERT_TRUE(Dec.init(Arch::X64));
@@ -911,7 +1007,9 @@ TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
   for (const auto &Bytes :
        std::vector<std::vector<uint8_t>>{{0x48, 0xcf}, {0xcc}}) {
     SCOPED_TRACE(Bytes.size());
-    EXPECT_FALSE(lift(Bytes).empty());
+    EXPECT_FALSE(lift(Bytes, Bytes.size() == 2 ? LowUndefinedCoverage::Missing
+                                               : LowUndefinedCoverage::Complete)
+                     .empty());
     const auto Decode = [&] {
       DecodedInsn I{};
       EXPECT_EQ(
@@ -922,16 +1020,21 @@ TEST(X86NativeStateAudit, LongModeEventsBindExactBytesWithoutOpaqueProof) {
     auto Insn = Decode();
     EXPECT_TRUE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X86));
+    EXPECT_EQ(nativestateaudit::form(Insn.Raw, Arch::X64), Bytes.size() == 1);
     Insn.Raw->bytes[0] ^= 1;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.eflags = 0;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.op_count = 1;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
     Insn = Decode();
     Insn.Raw->detail->x86.prefix[0] = 0xf3;
+    EXPECT_FALSE(nativestateaudit::longModeEventForm(Insn.Raw, Arch::X64));
     expectUnaudited(Dec, Insn);
   }
 }
@@ -1002,7 +1105,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
         Value == 65536 ? std::vector<uint8_t>{0x48, 0xcb}
                        : std::vector<uint8_t>{0x48, 0xca, uint8_t(Value),
                                               uint8_t(Value >> 8)};
-    const auto Ops = lift(Bytes);
+    const auto Ops = lift(Bytes, LowUndefinedCoverage::Missing);
     ASSERT_EQ(Ops.size(), 4u);
     EXPECT_EQ(Ops.back().Inputs[0], NdVar::cst(uint64_t(Intrinsic::Retf), 2));
     const auto Decode = [&] {
@@ -1015,6 +1118,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
     auto Insn = Decode();
     EXPECT_TRUE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X64));
     EXPECT_FALSE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X86));
+    EXPECT_FALSE(nativestateaudit::form(Insn.Raw, Arch::X64));
     for (unsigned Mutation = 0; Mutation != 16; ++Mutation) {
       SCOPED_TRACE(Mutation);
       Insn = Decode();
@@ -1070,6 +1174,7 @@ TEST(X86NativeStateAudit, FarReturnsBindCleanupEncodingWithoutOpaqueProof) {
         if (Mutation == 15)
           Insn.Raw->bytes[2] ^= 1;
       }
+      EXPECT_FALSE(nativestateaudit::farReturnForm(Insn.Raw, Arch::X64));
       expectUnaudited(Dec, Insn);
     }
   }
