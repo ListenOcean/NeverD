@@ -687,3 +687,11 @@ The opt-in C++ `wrapInterpreterMachineRegionSourceX64()` in `neverd/analysis/arc
 The adapter admits only the user nonfaulting profile and existing scalar/query/XMM operations. Traps, extra architectural banks, entry objects and supplemental code/import declarations are refused even when unused. Guest memory needs byte-copy or alignment-1 alias emission. Retain all caller memory/frame premises; only alignment is checked at runtime. The interface provides neither callee summaries, continuation composition, ordinary ABI recovery nor whole-function/native-equivalence certification. `InterpreterMachineRegionSourceTest.*` checks both C backends at O0/O2, full state and aliased stack bytes, multiple exits, query/alignment stops, and mutated or unsupported declarations.
 
 Architectural undefined outputs retain LowIR's selected implementation values. Matching a processor's choices, or proving those choices irrelevant to native observations, requires an independent environment or noninterference proof; this source receipt supplies neither.
+
+<!-- i18n-section: machine-region-pending-traps -->
+
+## Pending trap exits
+
+The overload taking `InterpreterMachineRegionSourceOptions` permits `StopBeforeTraps = true`. It retains the same 432-byte layout and emits `TrapPending` (4), with `PC` naming the original trap and all supported state immediately before that instruction. Earlier guest effects remain; the trap itself, exception-frame creation, handler execution and resumption are not performed. The default overload still refuses trap declarations, including unused ones. Exact trap identity and audit metadata remain authenticated by the raw-region owner; this option supplies no new architectural evidence. Query and alignment stops keep their existing statuses and state contracts.
+
+Validated regions also retain canonical dynamic `RequireAligned` operations. Both C backends keep their fail-fast guards; a violated instruction-alignment requirement supplies neither committed state nor exception continuation. Ordinary machine wrappers keep their existing restrictions.

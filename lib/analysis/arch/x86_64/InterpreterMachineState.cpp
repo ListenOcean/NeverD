@@ -49,6 +49,7 @@ constexpr auto &Flags = FlagProfile::Flags;
 struct MachineRegionSourcePlan {
   std::map<va_t, InterpreterMachineRegionExitX64V1> Exits;
   std::map<va_t, va_t> NativeAddresses;
+  std::map<va_t, va_t> PendingTraps;
 };
 
 llvm::Error invalid(const llvm::Twine &Message) {
@@ -889,6 +890,32 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
         // receipt authenticated the unique marker and the entire source graph.
         if (Region && isLowRawEnvironmentRequirement(Op))
           continue;
+        if (Region) {
+          const auto Trap = Region->PendingTraps.find(Boundary.Address);
+          if (Trap != Region->PendingTraps.end()) {
+            // The raw owner already authenticated the original trap and its
+            // exact retained span. Stop before it; do not model its exception
+            // delivery or infer architectural preservation after the trap.
+            if (Boundary.OpCount != 1 ||
+                Boundary.Control != LowInstructionControl::Terminator ||
+                &Boundary != &Block.InstructionBoundaries.back() ||
+                Index + 1 != Original.size() || !Block.Succs.empty() ||
+                !ConsumedRegionExits.insert(Boundary.Address).second)
+              return invalid("machine region has an invalid pending trap span");
+            Writer.store(offsetof(InterpreterMachineRegionStateX64V1, PC),
+                         scalar(Trap->second));
+            Writer.store(offsetof(InterpreterMachineRegionStateX64V1, ExitKind),
+                         scalar(uint64_t(
+                             InterpreterMachineRegionExitX64V1::TrapPending)));
+            Writer.leave();
+            Boundary.Control = LowInstructionControl::Return;
+            Boundary.ControlFlags = LowInstructionControlFlag::Return;
+            Boundary.TargetMode = LowInstructionTargetMode::Preserve;
+            Boundary.Immediate.reset();
+            HasReturn = true;
+            continue;
+          }
+        }
         if (Op.MemoryOrdering != NdMemoryOrdering::None ||
             Op.MemoryAddressSpace != NdMemoryAddressSpace::Default)
           return invalid(
@@ -1047,6 +1074,13 @@ buildMachineSource(const LowFunc &Residual, BinaryFormat SourceFormat,
                     "machine source constant address violates alignment");
               break;
             }
+            if (Region && x64::alignment::supportsOperation(Op, Options)) {
+              // Keep the exact dynamic guard. The ordinary C backends own
+              // its fail-fast semantics; this source adapter neither erases
+              // a memory precondition nor supplies exception continuation.
+              Block.Ops.push_back(Op);
+              break;
+            }
           }
           auto Transition = detail::lowerX64MachineFlags(
               Op, NdVar::reg(SystemFlags, 8),
@@ -1149,6 +1183,15 @@ llvm::Expected<InterpreterMachineRegionSource>
 wrapInterpreterMachineRegionSourceX64(const SpecializationResult &Result,
                                       const SpecializationOptions &Expected,
                                       BinaryFormat SourceFormat) {
+  return wrapInterpreterMachineRegionSourceX64(
+      Result, Expected, InterpreterMachineRegionSourceOptions{}, SourceFormat);
+}
+
+llvm::Expected<InterpreterMachineRegionSource>
+wrapInterpreterMachineRegionSourceX64(
+    const SpecializationResult &Result, const SpecializationOptions &Expected,
+    const InterpreterMachineRegionSourceOptions &SourceOptions,
+    BinaryFormat SourceFormat) {
   if (Expected.X64MachineExits.empty() ||
       Expected.X64FlagsProfile !=
           InterpreterMachineStateProfile::UserX64NoFaultV1 ||
@@ -1160,7 +1203,8 @@ wrapInterpreterMachineRegionSourceX64(const SpecializationResult &Result,
       !Expected.EntryFrameExcludedObjects.empty())
     return invalid("unsupported machine-region source environment");
   for (const auto &Exit : Expected.X64MachineExits)
-    if (Exit.Kind == SpecializationX64MachineExitKind::Trap)
+    if (Exit.Kind == SpecializationX64MachineExitKind::Trap &&
+        !SourceOptions.StopBeforeTraps)
       return invalid("machine-region source cannot supply trap continuation");
   if (auto Error = validateSpecializationRawEnvironment(Result, Expected))
     return std::move(Error);
@@ -1186,6 +1230,11 @@ wrapInterpreterMachineRegionSourceX64(const SpecializationResult &Result,
       break;
     case SpecializationX64MachineExitKind::Return:
       Kind = InterpreterMachineRegionExitX64V1::Return;
+      break;
+    case SpecializationX64MachineExitKind::Trap:
+      Kind = InterpreterMachineRegionExitX64V1::TrapPending;
+      Plan.PendingTraps.emplace(Exit.ResidualAddress,
+                                Exit.Original.Origin.Address);
       break;
     default:
       return invalid("unsupported machine-region source exit kind");
