@@ -405,3 +405,11 @@ Un `LOAD` ordinario cuyo conjunto finito de desplazamientos respecto al marco de
 ## Validez en ejecución entre nodos del grafo
 
 Con el descubrimiento del estado de control activado, un predicado no constante de validez en ejecución puede solicitar los bits del productor perdidos en un límite del grafo. La recuperación reintenta con los presupuestos compartidos existentes y debe demostrar la validez de cada estado entrante alcanzable. Esto conserva la alineación establecida y los valores enmascarados de registros de control entre nodos y bucles, sin suponer imposibles los estados rechazados ni eliminar la operación original.
+
+<!-- i18n-section: ordered-query-source -->
+
+## Consultas de CPU ordenadas al recuperar código C++
+
+`wrapInterpreterMachineQueryStateX64()` es una interfaz C++ opcional. Su estado de 160 bytes conserva el prefijo de máquina de 136 bytes y añade tres campos de 64 bits: dirección del arreglo, cantidad y cursor. Cada registro de 24 bytes contiene seis palabras de 32 bits: leaf, subleaf, EAX, EBX, ECX y EDX. Cada CPUID canónico consume en orden un registro coincidente y extiende con ceros los cuatro resultados. Selectores iguales pueden tener respuestas distintas. Ninguna instrucción de la CPU anfitriona proporciona respuestas.
+
+El agotamiento devuelve estado 3 y la discrepancia de selectores devuelve 4. Ambos detienen la ejecución antes de esa consulta, guardan el estado actual, conservan los efectos previos en memoria invitada y dejan el cursor intacto. El rechazo de alineación inicial sigue devolviendo 2 sin escrituras. El arreglo debe ser accesible, inmutable, sin desbordamiento de dirección y separado del estado y de la memoria invitada; una cantidad cero permite una dirección nula. Se mantienen los contratos existentes de estado y banderas. No se añade soporte de CLI, SDK C, GUI, equivalencia nativa ni serialización de hardware. Los envoltorios existentes siguen rechazando consultas de CPU, otros intrínsecos no admitidos y entornos sin modelar.
