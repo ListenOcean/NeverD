@@ -1192,6 +1192,11 @@ propose a consistent one-to-one relationship before the similarity threshold
 can accept a pair. Unresolved calls retain their positions and prevent this
 positional inference across their interval; they are not invented call-graph
 edges. Other matching features can still resolve those functions.
+Matcher version 14 also lets a fully consistent call position distinguish a
+nearby alternative whose measured body is no more similar and has no consistent
+call position of its own. Stronger bodies and competing positional proposals
+still prevent this decision; similarity thresholds and ambiguity margins are
+unchanged.
 
 There is no 1,024-call cutoff. Large call sequences retain exact anchor selection
 with linear score frontiers and bounded dense tables; identical known-call
@@ -1214,8 +1219,12 @@ named `sub_1234` remains eligible, as do names admitted by recognition. Display
 renames do not replace those names or change native snapshot revisions. Numeric
 suffixes added to distinguish equal names in the listing do not manufacture
 unique name evidence; literal suffixes in the original symbols remain intact. The
-`sdk-native-decode-v4` extraction identity records this contract and the v3
-address-evidence profile described in the architecture guide; historical
+`sdk-native-decode-v5` extraction identity records this contract, the v3
+address-evidence profile and known no-return call termination. The native reader
+shares the pipeline's target contracts: an unconditional known no-return call
+has no ordinary fallthrough and does not make a function incomplete merely
+because it is last in the layout. Conditional and unknown calls keep their
+possible fallthrough. Historical
 reports keep their original evidence and require a new comparison for fresh
 binding under the revised extraction profile.
 Use the [offline report workflow](binary-diff-lineage.md#open-a-report-from-an-older-analysis-profile)

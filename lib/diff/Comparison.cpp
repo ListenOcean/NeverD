@@ -981,7 +981,7 @@ unsigned Matcher::approximate() {
     }
     if (UndecidedA.contains(Pair.A) || UndecidedB.contains(Pair.B))
       continue;
-    // A consistent call position can distinguish equal measured bodies.
+    // A consistent call position can distinguish equal or weaker bodies.
     // It cannot overrule a more similar body or another positional proposal.
     const auto ConsistentPosition = [&](const Scored &Candidate) {
       const auto It = FeatureCandidates.find(pairKey(Candidate.A, Candidate.B));
@@ -992,7 +992,7 @@ unsigned Matcher::approximate() {
     // The sorting hint must not preserve a now-contradictory call position.
     const bool Positioned = ConsistentPosition(Pair);
     const auto Rival = [&](const Scored &Other) {
-      if (Other.Exact == Pair.Exact && Positioned && !ConsistentPosition(Other))
+      if (Other.Exact <= Pair.Exact && Positioned && !ConsistentPosition(Other))
         return false;
       return Other.Exact >= Pair.Exact ||
              Pair.Exact - Other.Exact < Settings.AmbiguityMargin;

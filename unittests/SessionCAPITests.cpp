@@ -3907,6 +3907,47 @@ TEST_F(SessionCAPITest,
   }
 }
 
+TEST(InstructionFlow, ConditionalCallsKeepTheUnexecutedArm) {
+  neverd::BinaryImage Image;
+  Image.Arch = neverd::Arch::ARM;
+  Image.Bits = neverd::Bitness::Bits32;
+  Image.Mode = neverd::InstructionMode::ARM;
+  Image.Format = neverd::BinaryFormat::ELF;
+  neverd::Segment Text;
+  Text.VA = 0x1000;
+  Text.Flags =
+      neverd::SegmentFlags::Readable | neverd::SegmentFlags::Executable;
+  Text.Data.resize(0x24);
+  Text.Size = Text.FileSz = Text.Data.size();
+  Image.Segments.push_back(std::move(Text));
+  auto Target = neverd::Symbol::makeFunc(0x1020, 4);
+  Target.Name = "abort";
+  Image.Symbols.push_back(Target);
+  neverd::Decoder Decoder;
+  ASSERT_TRUE(Decoder.init(Image));
+  for (bool Conditional : {false, true}) {
+    for (bool Patched : {false, true}) {
+      SCOPED_TRACE(Conditional);
+      SCOPED_TRACE(Patched);
+      // bl 0x1020 versus blne 0x1020 at 0x1000. An unexecuted BLNE
+      // continues at 0x1004 even when its target cannot return.
+      const std::array<uint8_t, 4> Bytes = {
+          6, 0, 0, static_cast<uint8_t>(Conditional ? 0x1b : 0xeb)};
+      std::copy(Bytes.begin(), Bytes.end(), Image.Segments[0].Data.begin());
+      Image.BytePatchRanges =
+          Patched ? std::vector<std::pair<neverd::va_t, uint64_t>>{{0x1020, 4}}
+                  : std::vector<std::pair<neverd::va_t, uint64_t>>{};
+      neverd::DecodedInsn Insn;
+      ASSERT_EQ(Decoder.decodeOne(Bytes.data(), Bytes.size(), 0x1000, Insn), 4);
+      const auto Flow =
+          neverd::sdk::SessionTestAccess::instructionFlow(Image, Decoder, Insn);
+      EXPECT_EQ(Flow.Kind, "call");
+      EXPECT_EQ(Flow.Target, 0x1020u);
+      EXPECT_EQ(Flow.NoReturn, !Conditional && !Patched);
+    }
+  }
+}
+
 TEST(InstructionDataAccesses, ScalarFilterAgreesWithCompleteLowIR) {
   for (auto Architecture : {neverd::Arch::X86, neverd::Arch::X64}) {
     neverd::BinaryImage Image;

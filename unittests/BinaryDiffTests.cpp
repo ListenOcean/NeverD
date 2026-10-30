@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <gtest/gtest.h>
 #include <map>
 #include <random>
@@ -1922,6 +1923,57 @@ TEST(BinaryDiff, AdditionalWeakEvidenceCannotSuppressMatchingCallContext) {
     const auto R = compare(P, S, Settings);
     ASSERT_EQ(R.Matches.size(), 2U);
     EXPECT_EQ(counterpart(R, P, S, "candidate"), "candidate");
+  }
+}
+
+TEST(BinaryDiff, CallPositionDistinguishesOnlyEqualOrWeakerNearTies) {
+  Fn A = leaf("candidate", 17, 40), B = A;
+  A.Source = B.Source = NameSource::Generated;
+  B.Blocks[0].insert(B.Blocks[0].begin(), {"div", "r6, r7"});
+  B.Blocks[0].insert(B.Blocks[0].begin(), {"imul", "r6, r7"});
+  Fn Anchor;
+  Anchor.Name = "anchor";
+  Anchor.Blocks = {{{"call", "candidate", InstructionFlow::Call, "candidate"},
+                    {"ret", "", InstructionFlow::Return}}};
+  for (int BodyLead : {-1, 0, 1}) {
+    Fn Rival = A;
+    Rival.Name = "rival";
+    Rival.Blocks[0].insert(Rival.Blocks[0].begin(), {"xor", "r5, r5"});
+    if (BodyLead <= 0)
+      Rival.Blocks[0].insert(Rival.Blocks[0].begin(), {"or", "r4, r4"});
+    if (BodyLead < 0)
+      Rival.Blocks[0].insert(Rival.Blocks[0].begin(), {"neg", "r3"});
+    for (bool Reverse : {false, true})
+      for (bool Reorder : {false, true}) {
+        SCOPED_TRACE(::testing::Message() << BodyLead << Reverse << Reorder);
+        const Program Before = build({Anchor, A}, 0x400000);
+        const Program After = build({Anchor, B, Rival}, 0x500000,
+                                    Reorder ? std::vector<size_t>{2, 0, 1}
+                                            : std::vector<size_t>{0, 1, 2});
+        const Program &P = Reverse ? After : Before;
+        const Program &S = Reverse ? Before : After;
+        const double ContextScore =
+            compareFunctions(Before, indexOf(Before, "candidate"), After,
+                             indexOf(After, "candidate"), {})
+                .Similarity;
+        const double RivalScore =
+            compareFunctions(Before, indexOf(Before, "candidate"), After,
+                             indexOf(After, "rival"), {})
+                .Similarity;
+        ComparisonSettings Settings;
+        EXPECT_EQ(RivalScore > ContextScore, BodyLead > 0);
+        EXPECT_EQ(RivalScore == ContextScore, BodyLead == 0);
+        ASSERT_LT(std::abs(RivalScore - ContextScore),
+                  Settings.AmbiguityMargin);
+        for (bool Approximate : {false, true}) {
+          Settings.Approximate = Approximate;
+          const auto R = compare(P, S, Settings);
+          // Consistent call position distinguishes equally or less similar
+          // alternatives. It cannot override a stronger measured body.
+          EXPECT_EQ(counterpart(R, P, S, "candidate") == "candidate",
+                    BodyLead <= 0);
+        }
+      }
   }
 }
 
