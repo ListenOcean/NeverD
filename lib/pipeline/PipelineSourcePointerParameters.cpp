@@ -118,13 +118,11 @@ void refineSourcePointerParameters(const BinaryImage &Image,
               }))
         continue;
       const auto Pointers =
-          inferMedSourcePointerParameters(Function, Image.Arch, Parameters);
+          inferMedSourcePointerParameterTypes(Function, Image.Arch, Parameters);
       for (size_t P = 0; P < Pointers.size(); ++P)
         if (Pointers[P] && Function.TypedParams[P].Type &&
             Function.TypedParams[P].Type->Kind == NdTypeKind::Int) {
-          auto Pointer = NdType::makePtr(NdType::makeVoid());
-          Pointer->Size = PointerBytes;
-          Function.TypedParams[P].Type = std::move(Pointer);
+          Function.TypedParams[P].Type = Pointers[P];
         }
     }
   });

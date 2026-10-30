@@ -17325,3 +17325,40 @@ The repeated-image regression also covers unrelated function-pointer relocations
 Synthetic LLVM C stack slots retain the complete 128-bit integer store before a runtime selection reads either 64-bit half. `LLVMCValues.WideFrameStoreRetainsBothRuntimeSelectedWords` covers addition and alignment-based OR addressing at O0/O2 with ASan/UBSan and the documented `-fno-strict-aliasing` contract. Run `NeverDLLVMCValueTests`; related frame, vector and display-record suites check the surrounding storage paths.
 
 `MedLLVMDirectData.OriginalImageCursorsIgnoreUnrelatedPointerRelocations` executes mutable cursor loops for x64/AArch64 and COFF/ELF/Mach-O through LLVM C at O0/O2 with ASan/UBSan. In the explicit original-image source mode, exact address occurrences use the shared live image span even beside unrelated pointer relocations. Numeric collisions remain scalars; standalone pointer mirrors retain their existing validation. Run `NeverDMedLLVMDirectDataTests` and the pointer relocation boundary suites.
+
+
+## Forwarded source pointee types
+
+`NativeSourceHints.ImportedPointerForwardersShareBothSourceSignatures` checks
+generic, named-record, scalar and nested pointer parameters across x64/ARM64,
+COFF/ELF/Mach-O and both C routes, with explicit integer prototypes remaining
+authoritative. Pointer-only wrappers request tags rather than record bodies,
+including imported typedefs with nominal sizes and display fields.
+`BoundCallsRetainTheirPointeeCandidates` checks native source hint inference
+without changing machine parameter types or inheriting object extents.
+`HighCSourceCalls.OpaqueParametersCompleteOnlyForMemberAccess` executes the
+contrast: an opaque parameter needs only a tag, while a field read triggers
+the existing completion pass and preserves the independent record's value.
+`PointeeConflictsConvergeThroughSharedPhiUses` reverses call and block order
+through a shared loop PHI and checks conflicting nominal tags, typedefs,
+indirection, scalar uses, missing callees and unsupported callback, array and
+enum inference. Enum definitions must not become opaque record tags.
+Run `NeverDSourceEntryBindingTests` with the Windows/SysV call-contract and
+source-pointer suites. Windows qualifier execution checks retain independent
+record/union providers; target compilation and host C execution do not certify
+native Windows kernel or ARM64 execution.
+
+`LLVMCSourcePointers.InferredPointeesSurviveSerializationAndShareCalls` serializes
+and reloads LLVM IR, checks the absence of transported record layouts, and
+executes generated definitions/calls at O0/O2 with undefined-behavior checks.
+It includes scalar, named record and nested pointers, explicit declarations,
+selected-function emission and preserved LLVM signatures. The accompanying
+malformed/carrier test rejects invalid JSON, widths, kinds, record extents,
+names and changed address spaces or data layouts.
+
+`LLVMCPointerAddresses.PackedSiblingPreservesFullSnapshot` and its invoke
+variant preserve independently initialized copied bytes instead of substituting
+a previous call result. The ordinary-call case executes both copies against
+the independent input after the source has been overwritten. The adjacent
+narrow-store/wide-copy case checks the positive control where an actual store
+connects that result to the copied memory.
