@@ -333,6 +333,10 @@ conversion now shares the declaration's portable spelling and preserves
 borrowed record identities without reconstructing recursive layouts.
 Nested x86 callbacks with explicit `__cdecl`/`__stdcall` retain their source
 qualifiers through the same admitted declaration and call conversion.
+LLVMC definition and call bridges also retain source pointer aliases when
+parameter recovery already produced LLVM pointers. The module's default
+address-space width must match the declaration; a narrower source pointer
+cannot supply that alias.
 Name-only Windows `swprintf`/`vswprintf` forwarding remains unavailable because
 legacy/kernel and ISO declarations differ; selected prototypes retain their
 own signatures.

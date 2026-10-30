@@ -17425,7 +17425,8 @@ executes forwarded arguments across the edge through HighC and LLVMC, with
 selected/whole projections, both pipeline optimization modes, x64/ARM64 and
 all three native containers. `NeverDLLVMCSourcePointerTests` executes object
 pointer and callback argument/result bridges at O0/O2 with UBSan, including
-caller-before-callee order, typedefs, selected externals and preserved LLVM
+caller-before-callee order, typedefs on integer and LLVM pointer carriers,
+mismatched source pointer widths, selected externals and preserved LLVM
 prototypes. The native pointer suite compiles a complete public MinGW toy and
 checks both matching CRT layouts and rejection of mismatched MSVCRT/UCRT
 headers or same-offset fields of a different type. These source checks do not certify native kernel or ARM64 execution.

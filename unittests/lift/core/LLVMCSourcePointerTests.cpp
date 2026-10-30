@@ -152,13 +152,14 @@ TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
   for (const auto Arch : {Arch::X64, Arch::AArch64})
     for (const auto Format :
          {BinaryFormat::COFF, BinaryFormat::ELF, BinaryFormat::MachO})
-      for (unsigned Mode = 0; Mode != 5; ++Mode) {
+      for (unsigned Mode = 0; Mode != 7; ++Mode) {
         SCOPED_TRACE(static_cast<int>(Arch));
         SCOPED_TRACE(static_cast<int>(Format));
         SCOPED_TRACE(Mode);
         const bool Selected = Mode == 1;
         const bool Preserved = Mode == 2;
-        const bool Alias = Mode == 3;
+        const bool Alias = Mode == 3 || Mode >= 5;
+        const bool PointerCarrier = Mode >= 5;
         llvm::LLVMContext C;
         llvm::Module M("source-pointer-calls", C);
         M.setDataLayout("e-p:64:64");
@@ -169,8 +170,12 @@ TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
         // carries no authority over a source prototype.
         auto *Caller = llvm::Function::Create(
             Unary, llvm::GlobalValue::ExternalLinkage, "bridge_entry", M);
+        llvm::Type *Address = Word;
+        if (PointerCarrier)
+          Address = B.getPtrTy();
         auto *RoundTrip = llvm::Function::Create(
-            Unary, llvm::GlobalValue::ExternalLinkage, "round_trip", M);
+            llvm::FunctionType::get(Address, {Address}, false),
+            llvm::GlobalValue::ExternalLinkage, "round_trip", M);
         auto *Apply = llvm::Function::Create(
             llvm::FunctionType::get(Word, {Word, Word}, false),
             llvm::GlobalValue::ExternalLinkage, "apply_callback", M);
@@ -179,9 +184,13 @@ TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
         rewrite_source::setOriginalVA(*RoundTrip, 0x2000);
         rewrite_source::setOriginalVA(*Apply, 0x3000);
         B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", Caller));
-        auto *Pointer = B.CreateCall(RoundTrip, {Caller->getArg(0)});
-        auto *Value =
-            B.CreateLoad(Word, B.CreateIntToPtr(Pointer, B.getPtrTy()));
+        auto *Pointer = B.CreateCall(
+            RoundTrip,
+            {PointerCarrier ? B.CreateIntToPtr(Caller->getArg(0), Address)
+                            : Caller->getArg(0)});
+        auto *Value = B.CreateLoad(
+            Word,
+            PointerCarrier ? Pointer : B.CreateIntToPtr(Pointer, B.getPtrTy()));
         B.CreateRet(
             B.CreateCall(Apply, {B.CreatePtrToInt(Callback, Word), Value}));
         B.SetInsertPoint(llvm::BasicBlock::Create(C, "entry", RoundTrip));
@@ -197,7 +206,7 @@ TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
         const auto PointerType = NdType::makePtr(Scalar);
         // A source pointer narrower than its machine carrier cannot change
         // either side of the signature into the compiler's native pointer.
-        if (Mode == 4)
+        if (Mode == 4 || Mode == 6)
           PointerType->Size = 4;
         if (Alias)
           PointerType->TypedefName = "WORD_POINTER";
@@ -236,6 +245,12 @@ TEST(LLVMCSourcePointers, DefinitionAndCallsShareObjectAndCallbackTypes) {
         ASSERT_TRUE(LLVMCEmitter().emit(M, Out, Options, &Debug, nullptr,
                                         Selected ? Caller : nullptr));
         Out.flush();
+        if (Alias)
+          EXPECT_EQ(
+              Text.find("WORD_POINTER round_trip(WORD_POINTER address)") !=
+                  std::string::npos,
+              Mode != 6)
+              << Text;
         if (Selected)
           Text += R"c(
 uint64_t round_trip(uint64_t address) { return address; }
